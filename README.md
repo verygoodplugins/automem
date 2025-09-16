@@ -55,6 +55,25 @@ is optional when you just want to exercise the graph API.
 make test
 ```
 
+### MCP bridge
+
+To exercise the API through an MCP client (Codex, Cursor, etc.) use the
+provided bridge script:
+
+```bash
+# Local API
+MCP_MEMORY_HTTP_ENDPOINT=http://127.0.0.1:8001 \
+  node scripts/http-bridge.js
+
+# Hosted Railway deployment
+MCP_MEMORY_HTTP_ENDPOINT=https://automem.up.railway.app \
+  node scripts/http-bridge.js
+```
+
+The bridge exposes three tools today: `store_memory`, `recall_memory`, and
+`check_database_health`. Point an MCP inspector at the command to invoke and
+test the endpoints.
+
 ## API Overview
 
 ### Store a memory
