@@ -23,52 +23,167 @@ make clean           # Clean up Docker containers/volumes
 black .              # Format Python code
 flake8               # Lint Python code
 
+# Testing specific features
+pytest                               # Run all tests
+pytest tests/test_app.py -v         # Run with verbose output
+pytest -k test_store_memory          # Run specific test by name
+pytest tests/test_consolidation_engine.py::TestMemoryConsolidator  # Run test class
+
 # Deployment
 make deploy          # Deploy to Railway
 make status          # Check deployment status
 ```
 
+## API Endpoints
+
+The API (`app.py`) provides 11 endpoints:
+
+### Core Memory Operations
+- `POST /memory` - Store a memory with content, tags, importance, metadata, and optional embedding
+- `GET /recall` - Recall memories via text search, vector similarity, time range, and tags
+- `PATCH /memory/<id>` - Update existing memory (content, tags, importance, metadata)
+- `DELETE /memory/<id>` - Remove memory from both graph and vector stores
+- `GET /memory/by-tag` - Filter memories by tags with importance/recency scoring
+
+### Relationship Management
+- `POST /associate` - Create relationships between memories (11 types available)
+
+### Consolidation & Analysis
+- `POST /consolidate` - Trigger memory consolidation tasks (decay, creative, cluster, forget, full)
+- `GET /consolidate/status` - Check consolidation scheduler status and last run times
+- `GET /startup-recall` - Retrieve memories for startup context
+- `GET /analyze` - Analyze graph statistics and memory patterns
+
+### Health
+- `GET /health` - Service health check with database connectivity status
+
 ## Architecture
 
-The API (`app.py`) provides three core endpoints:
-- `POST /memory` - Store a memory with content, tags, importance, and optional embedding
-- `GET /recall` - Recall memories via text search or vector similarity
-- `POST /associate` - Create relationships between memories (RELATES_TO, LEADS_TO, OCCURRED_BEFORE)
-
-Data flows through:
-1. **Flask API** (port 8001) - Request validation, orchestration
+### Data Flow
+1. **Flask API** (port 8001) - Request validation, orchestration, authentication
 2. **FalkorDB** (port 6379) - Graph storage for Memory nodes and relationship edges
-3. **Qdrant** (optional) - 768-dimensional vector search for semantic similarity
+3. **Qdrant** (optional, port 6333) - 768-dimensional vector search for semantic similarity
+4. **Consolidation Engine** - Background processing for memory maintenance
 
-Key implementation patterns:
-- Memory IDs are UUIDs stored in both databases for cross-referencing
-- When embeddings aren't provided:
-  - If `OPENAI_API_KEY` is set, generates real embeddings using text-embedding-3-small model
-  - Otherwise falls back to deterministic placeholder vectors using content hash
-- Graph writes always succeed even if vector storage fails (graceful degradation)
-- Timestamps are normalized to UTC ISO format
-- Recall supports both semantic search (with OpenAI embeddings) and keyword matching
+### Memory Consolidation Engine
+
+The `consolidation.py` module implements biological memory patterns:
+- **Decay** - Exponential importance reduction over time (every 5 minutes)
+- **Creative** - Discovers hidden associations during "REM-like" processing (hourly)
+- **Clustering** - Semantic grouping to compress related memories (every 6 hours)
+- **Forgetting** - Archives low-importance memories (daily)
+
+Scheduling is managed by `ConsolidationScheduler` with configurable intervals via environment variables.
+
+### Relationship Types
+
+AutoMem supports 11 relationship types with optional properties:
+```python
+# Original core relationships
+RELATES_TO         # General relationship
+LEADS_TO           # Causal relationship
+OCCURRED_BEFORE    # Temporal relationship
+
+# Enhanced PKG relationships
+PREFERS_OVER       # Preference relationship (context, strength, reason)
+EXEMPLIFIES        # Pattern example (pattern_type, confidence)
+CONTRADICTS        # Conflicting information (resolution, reason)
+REINFORCES         # Strengthens pattern (strength, observations)
+INVALIDATED_BY     # Superseded information (reason, timestamp)
+EVOLVED_INTO       # Evolution of knowledge (confidence, reason)
+DERIVED_FROM       # Derived knowledge (transformation, confidence)
+PART_OF            # Hierarchical relationship (role, context)
+```
+
+### Memory Type Classification
+
+Memories are classified into types for better organization:
+- `Decision` - Strategic choices and rationales
+- `Pattern` - Recurring behaviors and approaches
+- `Preference` - User preferences and settings
+- `Style` - Coding/writing style patterns
+- `Habit` - Regular practices and workflows
+- `Insight` - Learned insights and discoveries
+- `Context` - Environmental and project context
+- `Memory` - Default base type
+
+### Embedding Generation
+
+When embeddings aren't provided:
+1. If `OPENAI_API_KEY` is set → generates real embeddings using `text-embedding-3-small` model
+2. Otherwise → creates deterministic placeholder vectors using content hash
+3. Graph writes always succeed even if vector storage fails (graceful degradation)
 
 ## Testing
 
-Tests use pytest with a DummyGraph fixture to mock FalkorDB operations:
+Tests use pytest with a `DummyGraph` fixture to mock FalkorDB operations:
 
 ```bash
-pytest                        # Run all tests
-pytest tests/test_app.py -v   # Run with verbose output
-pytest -k test_store_memory   # Run specific test
+# Set environment variable to disable conflicting plugins
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+
+# Run tests
+pytest                                      # All tests
+pytest tests/test_app.py::test_recall -v   # Single test with verbose
+pytest -k "consolidat"                     # Tests matching pattern
+pytest --tb=short                          # Shorter traceback format
 ```
 
 ## Environment Configuration
 
-Key variables (see `.env.example`):
-- `FALKORDB_HOST` / `FALKORDB_PORT` - Graph database connection
-- `QDRANT_URL` / `QDRANT_API_KEY` - Vector database (optional)
-- `OPENAI_API_KEY` - OpenAI API key for generating real embeddings (optional)
-- `VECTOR_SIZE` - Embedding dimensions (default: 768)
+Key variables (create `.env` or `~/.config/automem/.env`):
+```bash
+# Core services
+FALKORDB_HOST=localhost       # Graph database host
+FALKORDB_PORT=6379           # Graph database port
+FALKORDB_GRAPH=memories      # Graph name
+QDRANT_URL=                  # Vector database URL (optional)
+QDRANT_API_KEY=              # Qdrant cloud API key (optional)
+QDRANT_COLLECTION=memories   # Collection name
+VECTOR_SIZE=768              # Embedding dimensions
 
-Local config can be placed in `~/.config/automem/.env` for persistent settings.
+# API configuration
+PORT=8001                    # API port
+AUTOMEM_API_TOKEN=           # Required for authentication
+ADMIN_API_TOKEN=             # For admin endpoints
 
-## Migration Tool
+# OpenAI (optional)
+OPENAI_API_KEY=              # For real embeddings
 
-The `scripts/migrate_legacy_memories.py` script migrates memories from the legacy MCP memory service's SQLite database to AutoMem, preserving content, tags, and importance scores.
+# Consolidation intervals (seconds)
+CONSOLIDATION_DECAY_INTERVAL_SECONDS=300      # 5 minutes
+CONSOLIDATION_CREATIVE_INTERVAL_SECONDS=3600  # 1 hour
+CONSOLIDATION_CLUSTER_INTERVAL_SECONDS=21600  # 6 hours
+CONSOLIDATION_FORGET_INTERVAL_SECONDS=86400   # 24 hours
+```
+
+## Migration Tools
+
+Several migration scripts help transition from legacy systems:
+
+```bash
+# Migrate from MCP memory service SQLite database
+python scripts/migrate_legacy_memories.py
+
+# Migrate from extracted memory dumps
+python migrate_extracted.py
+
+# Full MCP to PKG migration with relationships
+python migrate_mcp_to_pkg.py
+
+# Migrate memory project with validation
+python migrate_memory_project.py
+
+# Re-embed existing memories with OpenAI
+python scripts/reembed_embeddings.py
+```
+
+## Key Implementation Patterns
+
+- Memory IDs are UUIDs stored in both databases for cross-referencing
+- Timestamps are normalized to UTC ISO format
+- Recall scoring combines vector similarity, keyword match, tag overlap, and recency
+- Authentication supports Bearer token, X-API-Key header, or query parameter
+- Graph operations are atomic with automatic rollback on errors
+- Vector store errors are logged but don't block graph writes
+- Consolidation runs in background threads without blocking API requests

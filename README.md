@@ -1,88 +1,86 @@
 # AutoMem
 
-AutoMem is a small Flask service that gives AI assistants a durable memory. It
-persists structured memory records in FalkorDB (graph) and Qdrant (vector
-search) so downstream tools can store information, discover related memories and
-link them together.
+AutoMem is a Flask service that gives AI assistants durable memory. It keeps a
+canonical record in FalkorDB (graph) and mirrors semantic vectors in Qdrant so
+callers can mix structured lookups, relationship traversal, and semantic recall.
 
 ## Features
 
-- REST API with three endpoints: store a memory, recall memories, create
-  associations between memories.
-- FalkorDB graph storage for canonical memory records and relationships.
-- Optional Qdrant integration for semantic recall (skips gracefully when not
-  configured).
-- Deterministic placeholder embeddings when vectors are not provided, making it
-  possible to test the API without an embedding service.
-- Containerised development environment with FalkorDB, Qdrant and the API.
-- Automated tests for request validation and association handling.
+- REST API for the full memory lifecycle: store, recall (hybrid vector/keyword
+  search with metadata scoring), filter by time and tags, update, delete, and
+  create graph associations.
+- FalkorDB powers rich relationships and consolidation workflows (decay,
+  creative association discovery, clustering, controlled forgetting).
+- Qdrant integration for semantic recall. The service falls back gracefully when
+  Qdrant is unavailable and can regenerate embeddings on demand.
+- Deterministic placeholder embeddings when none are supplied, making local
+testing easy.
+- Built-in admin endpoint to re-embed existing data—no more manual tunnelling to
+  the database.
+- Containerised development environment with FalkorDB, Qdrant, and the API.
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.10+ (for local development commands)
-- Docker and Docker Compose
+- Python 3.10+
+- Docker & Docker Compose (for the bundle stack)
 
 ### Local development
 
 ```bash
-# Clone and install dependencies
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements-dev.txt
 
-# Run the full stack (FalkorDB + Qdrant + API)
+# Spin up FalkorDB + Qdrant + API
 make dev
 ```
 
-The API starts on `http://localhost:8001`, FalkorDB is available on
-`localhost:6379`, and Qdrant on `localhost:6333`.
+The API listens on `http://localhost:8001`, FalkorDB on `6379`, and Qdrant on
+`6333`.
 
-### Running the API without Docker
+### Bare API (no Docker)
 
 ```bash
 source venv/bin/activate
 PORT=8001 python app.py
 ```
 
-Make sure FalkorDB is reachable at the host defined by `FALKORDB_HOST`. Qdrant
-is optional when you just want to exercise the graph API.
-
-### Tests
-
-```bash
-make test
-```
-
-> **Note**
-> Some global pytest plugins conflict with the pinned pytest version. The
-> `make test` target sets `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to ensure the local
-> suite runs in isolation. If you invoke `pytest` directly, export the same
-> environment variable.
+Set `FALKORDB_HOST` / `FALKORDB_PORT` so the service can reach the graph. Qdrant
+params are optional if you only want graph operations.
 
 ### MCP bridge
 
-To exercise the API through an MCP client (Codex, Cursor, etc.) use the
-provided bridge script:
-
 ```bash
-# Local API
 MCP_MEMORY_HTTP_ENDPOINT=http://127.0.0.1:8001 \
-  node scripts/http-bridge.js
-
-# Hosted Railway deployment
-MCP_MEMORY_HTTP_ENDPOINT=https://automem.up.railway.app \
   node scripts/http-bridge.js
 ```
 
-The bridge exposes three tools today: `store_memory`, `recall_memory`, and
-`check_database_health`. Point an MCP inspector at the command to invoke and
-test the endpoints.
+Or point `MCP_MEMORY_HTTP_ENDPOINT` at your hosted deployment. The bridge exposes
+synchronised tools for AutoMem (store/recall/update/delete/etc.).
+
+## Authentication
+
+Set an API token on the server:
+
+```bash
+export AUTOMEM_API_TOKEN=super-secret
+```
+
+Provide it in one of the following ways (required for every endpoint except
+`/health`):
+
+- `Authorization: Bearer <token>` header (preferred)
+- `X-API-Key: <token>` header
+- `?api_key=<token>` query parameter (fallback)
+
+Administrative operations (e.g. re-embedding) require an additional
+`ADMIN_API_TOKEN` supplied via the `X-Admin-Token` header.
 
 ## API Overview
 
-### Store a memory
+### Store
 
 `POST /memory`
 
@@ -91,28 +89,73 @@ test the endpoints.
   "content": "Finished integrating FalkorDB",
   "tags": ["deployment", "success"],
   "importance": 0.9,
+  "metadata": {
+    "source": "slack",
+    "entities": { "people": ["vikas singhal"] }
+  },
+  "timestamp": "2025-09-16T12:37:21Z",
   "embedding": [0.12, 0.56, ...]  // optional
 }
 ```
 
-- Returns `201 Created` with the memory ID.
-- If Qdrant is configured but no embedding is provided, a deterministic
-  placeholder vector is generated so subsequent recall works consistently.
-- When Qdrant is not configured the graph write still succeeds and the
-  response indicates that the vector store was skipped.
+Returns `201 Created` with a deterministic ID. When Qdrant is configured but no
+embedding is supplied, the service generates a temporary placeholder.
 
-### Recall memories
+### Recall
 
 `GET /recall`
 
 Query parameters:
 
-- `query`: full-text search on FalkorDB memories.
-- `embedding`: comma-separated 768-d vector for Qdrant semantic search.
-- `limit`: maximum number of results (default 5, max 50).
+- `query`: full-text search string.
+- `embedding`: comma-separated 768-d vector for direct semantic lookup.
+- `limit`: number of results (default 5, max 50).
+- `time_query`: human phrases (`today`, `yesterday`, `last week`, `last 7 days`,
+  `this month`, etc.).
+- `start`, `end`: explicit ISO timestamps (override `time_query`).
+- `tags`: one or more tags (pass multiple `tags` params or a comma-separated
+  value).
 
-The response merges vector hits (when available) with graph matches and includes
-any related memories discovered via graph traversal.
+Responses include merged vector/keyword hits with scoring details:
+
+```json
+{
+  "status": "success",
+  "results": [
+    {
+      "id": "...",
+      "match_type": "vector",
+      "final_score": 0.82,
+      "score_components": {
+        "vector": 0.64,
+        "tag": 0.50,
+        "recency": 0.90,
+        "exact": 1.00
+      },
+      "memory": { ... }
+    }
+  ],
+  "time_window": { "start": "2025-09-01T00:00:00+00:00", "end": "2025-09-30T23:59:59+00:00" },
+  "tags": ["vikas singhal"],
+  "count": 5
+}
+```
+
+### Update
+
+`PATCH /memory/<id>` mirrors the POST payload (content, tags, importance,
+metadata, timestamps, etc.). New embeddings are generated automatically when
+the content changes.
+
+### Delete
+
+`DELETE /memory/<id>` removes the record from FalkorDB and its vector from
+Qdrant.
+
+### Filter by tag
+
+`GET /memory/by-tag?tags=foo&tags=bar&limit=50` returns the most recent/important
+memories matching any requested tag.
 
 ### Create an association
 
@@ -122,59 +165,60 @@ any related memories discovered via graph traversal.
 {
   "memory1_id": "uuid-of-source",
   "memory2_id": "uuid-of-target",
-  "type": "RELATES_TO",  // one of RELATES_TO, LEADS_TO, OCCURRED_BEFORE
-  "strength": 0.8          // 0.0 – 1.0
+  "type": "RELATES_TO",
+  "strength": 0.8
 }
 ```
 
-Associations are validated to prevent self-links and unexpected relationship
-types. A `404` is returned if either memory is missing.
+Associations prevent self-links and validate relationship types.
+
+### Admin: re-embed
+
+`POST /admin/reembed`
+
+```bash
+curl -X POST https://.../admin/reembed \
+  -H 'Authorization: Bearer ${AUTOMEM_API_TOKEN}' \
+  -H 'X-Admin-Token: ${ADMIN_API_TOKEN}' \
+  -d '{"batch_size": 32, "limit": 100}'
+```
+
+Regenerates embeddings in controlled batches—perfect for migrations.
 
 ## Configuration
-
-Environment variables recognised by the service:
 
 | Variable | Description | Default |
 | --- | --- | --- |
 | `PORT` | API port | `8001` |
-| `FALKORDB_HOST` | Hostname for FalkorDB | `localhost` |
-| `FALKORDB_PORT` | TCP port for FalkorDB | `6379` |
+| `FALKORDB_HOST` | FalkorDB host | `localhost` |
+| `FALKORDB_PORT` | FalkorDB port | `6379` |
 | `FALKORDB_GRAPH` | Graph name | `memories` |
-| `QDRANT_URL` | Base URL for Qdrant API | _unset_ (disables Qdrant) |
-| `QDRANT_API_KEY` | API key for Qdrant Cloud | _optional_ |
+| `QDRANT_URL` | Qdrant API URL | _unset_ |
+| `QDRANT_API_KEY` | Qdrant API key | _optional_ |
 | `QDRANT_COLLECTION` | Qdrant collection name | `memories` |
 | `VECTOR_SIZE` | Embedding vector size | `768` |
+| `AUTOMEM_API_TOKEN` | Required API token | _unset_ |
+| `ADMIN_API_TOKEN` | Token for `/admin/reembed` | _unset_ |
+| `SEARCH_WEIGHT_*` | Optional scoring weights (vector, keyword, tag, etc.) | see app defaults |
 
-For local work you can create `~/.config/automem/.env` (or similar); the
-application automatically loads that file in addition to a project-level `.env`
-if present. A checked-in `.env.example` with placeholders is recommended for
-teams.
+The application loads environment variables from the process, `.env` in the
+project root, and `~/.config/automem/.env`.
 
 ## Deployment
 
-The included `Dockerfile` builds a slim Python image for the API. Deploy it
-alongside managed FalkorDB/Qdrant services, or use the provided Docker Compose
-stack for self-hosting.
-
-Railway deployment is supported out of the box: point Railway to this repository
-and it will build using the Dockerfile. Configure the environment variables in
-Railway to connect to your FalkorDB and Qdrant instances.
-
-## Roadmap / Ideas
-
-- Integrate a real embedding generator (OpenAI, local model, etc.).
-- Scheduled consolidation / pruning jobs for the graph.
-- Authentication, rate limiting and privacy tooling.
-- Richer analytics endpoints (importance trends, recent recalls, etc.).
+Use the provided Dockerfile or Compose stack. Railway works out of the box—set
+the environment variables in the dashboard to point at your FalkorDB and Qdrant
+instances, plus `AUTOMEM_API_TOKEN` and `ADMIN_API_TOKEN`.
 
 ## Troubleshooting
 
-- `503 FalkorDB is unavailable`: ensure the FalkorDB container is running and
-  reachable at the host configured by `FALKORDB_HOST`.
-- `Embedding must contain exactly 768 values`: either supply the full embedding
-  vector or omit the field so the placeholder generator runs.
-- Qdrant errors are logged but do not stop FalkorDB writes; inspect the service
-  logs for the exact failure reason.
+- `401 Unauthorized`: ensure `AUTOMEM_API_TOKEN` matches the client’s
+  token/header.
+- `503 FalkorDB is unavailable`: confirm the graph is reachable at `FALKORDB_HOST`.
+- `Embedding must contain exactly 768 values`: supply the full vector or omit the
+  field to let the placeholder generate.
+- Qdrant errors are logged but do not block FalkorDB writes; inspect application
+  logs to diagnose failures.
 
 ## License
 

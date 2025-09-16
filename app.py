@@ -132,6 +132,8 @@ SEARCH_WEIGHT_CONFIDENCE = float(os.getenv("SEARCH_WEIGHT_CONFIDENCE", "0.05"))
 SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.1"))
 SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.15"))
 
+API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
+
 
 def _normalize_tag_list(raw: Any) -> List[str]:
     if raw is None:
@@ -761,6 +763,38 @@ class ServiceState:
 
 
 state = ServiceState()
+
+
+def _extract_api_token() -> Optional[str]:
+    if not API_TOKEN:
+        return None
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+
+    api_key_header = request.headers.get("X-API-Key")
+    if api_key_header:
+        return api_key_header.strip()
+
+    api_key_param = request.args.get("api_key")
+    if api_key_param:
+        return api_key_param.strip()
+
+    return None
+
+
+@app.before_request
+def require_api_token() -> None:
+    if not API_TOKEN:
+        return
+
+    if request.endpoint in {None, 'health'}:
+        return
+
+    token = _extract_api_token()
+    if token != API_TOKEN:
+        abort(401, description="Unauthorized")
 
 
 def init_openai() -> None:
