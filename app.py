@@ -9,16 +9,17 @@ is unavailable.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import random
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from threading import Thread
+from threading import Thread, Event
 from queue import Queue
 import time
 
@@ -48,6 +49,25 @@ COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "memories")
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "768"))
 GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "memories")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
+
+# Consolidation scheduling defaults (seconds unless noted)
+CONSOLIDATION_TICK_SECONDS = int(os.getenv("CONSOLIDATION_TICK_SECONDS", "60"))
+CONSOLIDATION_DECAY_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_DECAY_INTERVAL_SECONDS", "300"))
+CONSOLIDATION_CREATIVE_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_CREATIVE_INTERVAL_SECONDS", str(3600)))
+CONSOLIDATION_CLUSTER_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(21600)))
+CONSOLIDATION_FORGET_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(86400)))
+CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD = float(os.getenv("CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD", "0.7"))
+CONSOLIDATION_HISTORY_LIMIT = int(os.getenv("CONSOLIDATION_HISTORY_LIMIT", "20"))
+CONSOLIDATION_CONTROL_LABEL = "ConsolidationControl"
+CONSOLIDATION_RUN_LABEL = "ConsolidationRun"
+CONSOLIDATION_CONTROL_NODE_ID = os.getenv("CONSOLIDATION_CONTROL_NODE_ID", "global")
+CONSOLIDATION_TASK_FIELDS = {
+    "decay": "decay_last_run",
+    "creative": "creative_last_run",
+    "cluster": "cluster_last_run",
+    "forget": "forget_last_run",
+    "full": "full_last_run",
+}
 
 # Memory types for classification
 MEMORY_TYPES = {
@@ -79,6 +99,24 @@ ALLOWED_RELATIONS = set(RELATIONSHIP_TYPES.keys())
 def utc_now() -> str:
     """Return an ISO formatted UTC timestamp."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse ISO strings that may end with Z into aware datetimes."""
+    if not value:
+        return None
+
+    candidate = value.strip()
+    if not candidate:
+        return None
+
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
 
 
 def _normalize_timestamp(raw: Any) -> str:
@@ -200,6 +238,8 @@ class ServiceState:
     openai_client: Optional[OpenAI] = None
     enrichment_queue: Optional[Queue] = None
     enrichment_thread: Optional[Thread] = None
+    consolidation_thread: Optional[Thread] = None
+    consolidation_stop_event: Optional[Event] = None
 
 
 state = ServiceState()
@@ -307,6 +347,209 @@ def init_enrichment_pipeline() -> None:
     state.enrichment_thread.start()
     logger.info("Enrichment pipeline initialized")
 
+
+def _load_control_record(graph: Any) -> Dict[str, Any]:
+    """Fetch or create the consolidation control node."""
+    try:
+        result = graph.query(
+            f"""
+            MERGE (c:{CONSOLIDATION_CONTROL_LABEL} {{id: $id}})
+            RETURN c
+            """,
+            {"id": CONSOLIDATION_CONTROL_NODE_ID},
+        )
+    except Exception:
+        logger.exception("Failed to load consolidation control record")
+        return {}
+
+    if not getattr(result, "result_set", None):
+        return {}
+
+    node = result.result_set[0][0]
+    properties = getattr(node, "properties", None)
+    if isinstance(properties, dict):
+        return dict(properties)
+    if isinstance(node, dict):
+        return dict(node)
+    return {}
+
+
+def _load_recent_runs(graph: Any, limit: int) -> List[Dict[str, Any]]:
+    """Return recent consolidation run records."""
+    try:
+        result = graph.query(
+            f"""
+            MATCH (r:{CONSOLIDATION_RUN_LABEL})
+            RETURN r
+            ORDER BY r.started_at DESC
+            LIMIT $limit
+            """,
+            {"limit": limit},
+        )
+    except Exception:
+        logger.exception("Failed to load consolidation history")
+        return []
+
+    runs: List[Dict[str, Any]] = []
+    for row in getattr(result, "result_set", []) or []:
+        node = row[0]
+        properties = getattr(node, "properties", None)
+        if isinstance(properties, dict):
+            runs.append(dict(properties))
+        elif isinstance(node, dict):
+            runs.append(dict(node))
+    return runs
+
+
+def _apply_scheduler_overrides(scheduler: ConsolidationScheduler) -> None:
+    """Override default scheduler intervals using configuration."""
+    overrides = {
+        'decay': timedelta(seconds=CONSOLIDATION_DECAY_INTERVAL_SECONDS),
+        'creative': timedelta(seconds=CONSOLIDATION_CREATIVE_INTERVAL_SECONDS),
+        'cluster': timedelta(seconds=CONSOLIDATION_CLUSTER_INTERVAL_SECONDS),
+        'forget': timedelta(seconds=CONSOLIDATION_FORGET_INTERVAL_SECONDS),
+    }
+
+    for task, interval in overrides.items():
+        if task in scheduler.schedules:
+            scheduler.schedules[task]['interval'] = interval
+
+
+def _tasks_for_mode(mode: str) -> List[str]:
+    """Map a consolidation mode to its task identifiers."""
+    if mode == 'full':
+        return ['decay', 'creative', 'cluster', 'forget', 'full']
+    if mode in CONSOLIDATION_TASK_FIELDS:
+        return [mode]
+    return [mode]
+
+
+def _persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:
+    """Record consolidation outcomes and update scheduler metadata."""
+    mode = result.get('mode', 'unknown')
+    completed_at = result.get('completed_at') or utc_now()
+    started_at = result.get('started_at') or completed_at
+    success = bool(result.get('success'))
+    dry_run = bool(result.get('dry_run'))
+
+    try:
+        graph.query(
+            f"""
+            CREATE (r:{CONSOLIDATION_RUN_LABEL} {{
+                id: $id,
+                mode: $mode,
+                task: $task,
+                success: $success,
+                dry_run: $dry_run,
+                started_at: $started_at,
+                completed_at: $completed_at,
+                result: $result
+            }})
+            """,
+            {
+                "id": uuid.uuid4().hex,
+                "mode": mode,
+                "task": mode,
+                "success": success,
+                "dry_run": dry_run,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "result": json.dumps(result, default=str),
+            },
+        )
+    except Exception:
+        logger.exception("Failed to record consolidation run history")
+
+    for task in _tasks_for_mode(mode):
+        field = CONSOLIDATION_TASK_FIELDS.get(task)
+        if not field:
+            continue
+        try:
+            graph.query(
+                f"""
+                MERGE (c:{CONSOLIDATION_CONTROL_LABEL} {{id: $id}})
+                SET c.{field} = $timestamp
+                """,
+                {
+                    "id": CONSOLIDATION_CONTROL_NODE_ID,
+                    "timestamp": completed_at,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to update consolidation control for task %s", task)
+
+    try:
+        graph.query(
+            f"""
+            MATCH (r:{CONSOLIDATION_RUN_LABEL})
+            WITH r ORDER BY r.started_at DESC
+            SKIP $keep
+            DELETE r
+            """,
+            {"keep": CONSOLIDATION_HISTORY_LIMIT},
+        )
+    except Exception:
+        logger.exception("Failed to prune consolidation history")
+
+
+def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
+    vector_store = get_qdrant_client()
+    consolidator = MemoryConsolidator(graph, vector_store)
+    scheduler = ConsolidationScheduler(consolidator)
+    _apply_scheduler_overrides(scheduler)
+
+    control = _load_control_record(graph)
+    for task, field in CONSOLIDATION_TASK_FIELDS.items():
+        iso_value = control.get(field)
+        last_run = _parse_iso_datetime(iso_value)
+        if last_run and task in scheduler.schedules:
+            scheduler.schedules[task]['last_run'] = last_run
+
+    return scheduler
+
+
+def _run_consolidation_tick() -> None:
+    graph = get_memory_graph()
+    if graph is None:
+        return
+
+    scheduler = _build_scheduler_from_graph(graph)
+    if scheduler is None:
+        return
+
+    try:
+        results = scheduler.run_scheduled_tasks(
+            decay_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD
+        )
+        for result in results:
+            _persist_consolidation_run(graph, result)
+    except Exception:
+        logger.exception("Consolidation scheduler tick failed")
+
+
+def consolidation_worker() -> None:
+    """Background loop that triggers consolidation tasks."""
+    logger.info("Consolidation scheduler thread started")
+    while state.consolidation_stop_event and not state.consolidation_stop_event.wait(CONSOLIDATION_TICK_SECONDS):
+        _run_consolidation_tick()
+
+
+def init_consolidation_scheduler() -> None:
+    """Ensure the background consolidation scheduler is running."""
+    if state.consolidation_thread and state.consolidation_thread.is_alive():
+        return
+
+    stop_event = Event()
+    state.consolidation_stop_event = stop_event
+    state.consolidation_thread = Thread(
+        target=consolidation_worker,
+        daemon=True,
+        name="consolidation-scheduler",
+    )
+    state.consolidation_thread.start()
+    # Kick off an initial tick so schedules are populated quickly.
+    _run_consolidation_tick()
+    logger.info("Consolidation scheduler initialized")
 
 def enrichment_worker() -> None:
     """Background worker that processes memories for enrichment."""
@@ -523,6 +766,14 @@ def store_memory() -> Any:
     importance = _coerce_importance(payload.get("importance"))
     memory_id = payload.get("id") or str(uuid.uuid4())
 
+    metadata_raw = payload.get("metadata")
+    if metadata_raw is None:
+        metadata: Dict[str, Any] = {}
+    elif isinstance(metadata_raw, dict):
+        metadata = metadata_raw
+    else:
+        abort(400, description="'metadata' must be an object")
+
     # Classify the memory type
     memory_type, type_confidence = memory_classifier.classify(content)
 
@@ -567,6 +818,24 @@ def store_memory() -> Any:
     else:
         created_at = utc_now()
 
+    updated_at = payload.get("updated_at")
+    if updated_at:
+        try:
+            updated_at = _normalize_timestamp(updated_at)
+        except ValueError as exc:
+            abort(400, description=f"Invalid updated_at: {exc}")
+    else:
+        updated_at = created_at
+
+    last_accessed = payload.get("last_accessed")
+    if last_accessed:
+        try:
+            last_accessed = _normalize_timestamp(last_accessed)
+        except ValueError as exc:
+            abort(400, description=f"Invalid last_accessed: {exc}")
+    else:
+        last_accessed = updated_at
+
     try:
         graph.query(
             """
@@ -579,6 +848,9 @@ def store_memory() -> Any:
                 m.confidence = $confidence,
                 m.t_valid = $t_valid,
                 m.t_invalid = $t_invalid,
+                m.updated_at = $updated_at,
+                m.last_accessed = $last_accessed,
+                m.metadata = $metadata,
                 m.processed = false
             RETURN m
             """,
@@ -592,6 +864,9 @@ def store_memory() -> Any:
                 "confidence": type_confidence,
                 "t_valid": t_valid or created_at,
                 "t_invalid": t_invalid,
+                "updated_at": updated_at,
+                "last_accessed": last_accessed,
+                "metadata": metadata,
             },
         )
     except Exception:  # pragma: no cover - log full stack trace in production
@@ -618,6 +893,9 @@ def store_memory() -> Any:
                             "timestamp": created_at,
                             "type": memory_type,
                             "confidence": type_confidence,
+                            "updated_at": updated_at,
+                            "last_accessed": last_accessed,
+                            "metadata": metadata,
                         },
                     )
                 ],
@@ -636,6 +914,10 @@ def store_memory() -> Any:
         "qdrant": qdrant_result or "unconfigured",
         "embedding_status": embedding_status,
         "enrichment": "queued" if state.enrichment_queue else "disabled",
+        "metadata": metadata,
+        "timestamp": created_at,
+        "updated_at": updated_at,
+        "last_accessed": last_accessed,
     }
     return jsonify(response), 201
 
@@ -852,10 +1134,15 @@ def consolidate_memories() -> Any:
     if graph is None:
         abort(503, description="FalkorDB is unavailable")
 
+    init_consolidation_scheduler()
+
     try:
         vector_store = get_qdrant_client()
         consolidator = MemoryConsolidator(graph, vector_store)
         results = consolidator.consolidate(mode=mode, dry_run=dry_run)
+
+        if not dry_run:
+            _persist_consolidation_run(graph, results)
 
         return jsonify({
             "status": "success",
@@ -877,14 +1164,17 @@ def consolidation_status() -> Any:
         abort(503, description="FalkorDB is unavailable")
 
     try:
-        vector_store = get_qdrant_client()
-        consolidator = MemoryConsolidator(graph, vector_store)
-        scheduler = ConsolidationScheduler(consolidator)
+        init_consolidation_scheduler()
+        scheduler = _build_scheduler_from_graph(graph)
+        history = _load_recent_runs(graph, CONSOLIDATION_HISTORY_LIMIT)
+        next_runs = scheduler.get_next_runs() if scheduler else {}
 
         return jsonify({
             "status": "success",
-            "next_runs": scheduler.get_next_runs(),
-            "history": scheduler.history[-10:]  # Last 10 runs
+            "next_runs": next_runs,
+            "history": history,
+            "thread_alive": bool(state.consolidation_thread and state.consolidation_thread.is_alive()),
+            "tick_seconds": CONSOLIDATION_TICK_SECONDS,
         }), 200
     except Exception as e:
         logger.error(f"Failed to get consolidation status: {e}")
@@ -1247,4 +1537,5 @@ if __name__ == "__main__":
     init_qdrant()
     init_openai()
     init_enrichment_pipeline()
+    init_consolidation_scheduler()
     app.run(host="0.0.0.0", port=port, debug=False)

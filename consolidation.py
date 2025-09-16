@@ -516,7 +516,8 @@ class MemoryConsolidator:
     def consolidate(
         self,
         mode: str = 'full',
-        dry_run: bool = True
+        dry_run: bool = True,
+        decay_threshold: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Run full consolidation cycle.
@@ -539,7 +540,8 @@ class MemoryConsolidator:
             # Step 1: Update relevance scores (decay)
             if mode in ['full', 'decay']:
                 logger.info("Applying exponential decay to memories...")
-                decay_stats = self._apply_decay()
+                threshold = decay_threshold if mode == 'decay' else None
+                decay_stats = self._apply_decay(importance_threshold=threshold)
                 results['steps']['decay'] = decay_stats
 
             # Step 2: Discover creative associations
@@ -650,7 +652,7 @@ class MemoryConsolidator:
 
         return results
 
-    def _apply_decay(self) -> Dict[str, Any]:
+    def _apply_decay(self, importance_threshold: Optional[float] = None) -> Dict[str, Any]:
         """Apply decay to all memories and return statistics."""
         stats = {
             'processed': 0,
@@ -664,17 +666,24 @@ class MemoryConsolidator:
             }
         }
 
-        # Get all memories
-        all_query = """
+        filters = ["(m.archived IS NULL OR m.archived = false)"]
+        params: Dict[str, Any] = {}
+
+        if importance_threshold is not None:
+            filters.append("m.importance IS NOT NULL AND m.importance >= $importance_threshold")
+            params["importance_threshold"] = float(importance_threshold)
+
+        where_clause = " AND ".join(filters)
+        all_query = f"""
             MATCH (m:Memory)
-            WHERE m.archived IS NULL OR m.archived = false
+            WHERE {where_clause}
             RETURN m.id as id, m.content as content,
                    m.timestamp as timestamp, m.importance as importance,
                    m.last_accessed as last_accessed,
                    m.relevance_score as old_score
         """
 
-        memories = self._query_graph(all_query, {})
+        memories = self._query_graph(all_query, params)
         if not memories:
             return stats
 
@@ -763,12 +772,13 @@ class ConsolidationScheduler:
         time_since = datetime.now(timezone.utc) - schedule['last_run']
         return time_since >= schedule['interval']
 
-    def run_scheduled_tasks(self, force: Optional[str] = None) -> List[Dict]:
+    def run_scheduled_tasks(self, force: Optional[str] = None, decay_threshold: Optional[float] = None) -> List[Dict]:
         """
         Run scheduled consolidation tasks.
 
         Args:
             force: Force run a specific task type regardless of schedule
+            decay_threshold: Optional importance filter for decay runs
         """
         results = []
 
@@ -782,10 +792,17 @@ class ConsolidationScheduler:
             logger.info(f"Running scheduled {task_type} consolidation...")
 
             # Run with appropriate mode
-            result = self.consolidator.consolidate(
-                mode=task_type,
-                dry_run=False  # Actually perform the operations
-            )
+            if task_type == 'decay':
+                result = self.consolidator.consolidate(
+                    mode=task_type,
+                    dry_run=False,
+                    decay_threshold=decay_threshold,
+                )
+            else:
+                result = self.consolidator.consolidate(
+                    mode=task_type,
+                    dry_run=False
+                )
 
             # Update schedule
             self.schedules[task_type]['last_run'] = datetime.now(timezone.utc)

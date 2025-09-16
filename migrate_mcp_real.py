@@ -1,546 +1,410 @@
 #!/usr/bin/env python3
-"""
-Real MCP to PKG Migration Script
-Extracts actual memories from MCP Memory Service and migrates them to AutoMem PKG
+"""SQLite → AutoMem migration utility.
+
+This script extracts memories from the legacy MCP SQLite-vec database and
+replays them into the AutoMem service so they benefit from the new graph and
+vector infrastructure. It keeps original timestamps, rehydrates tags, and
+stores the legacy metadata for future reference.
 """
 
+from __future__ import annotations
+
+import argparse
 import json
-import time
-import requests
-import hashlib
-from datetime import datetime, timedelta
-import random
-import re
-from typing import Dict, List, Any, Tuple
+import sqlite3
 import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 
-BASE_URL = "http://localhost:8001"
-MCP_URL = "http://localhost:8010"  # MCP Memory Service endpoint
+import requests
 
-class MCPToPKGMigrator:
-    def __init__(self):
-        self.memories = []
-        self.relationships = []
-        self.entities = {
-            'tools': set(),
-            'projects': set(),
-            'people': set(),
-            'concepts': set()
-        }
-        self.patterns = {}
-        self.preferences = {}
-        self.memory_map = {}  # Old ID to new ID mapping
+DEFAULT_AUTOMEM_URL = "https://automem.up.railway.app"
+DEFAULT_DB_PATH = Path.home() / "Library" / "Application Support" / "mcp-memory" / "sqlite_vec.db"
 
-    def extract_mcp_memories(self) -> List[Dict]:
-        """Extract memories from MCP Memory Service"""
-        print("📥 Extracting memories from MCP Memory Service...")
 
-        all_memories = []
-        batch_size = 50
-        offset = 0
+IMPORTANCE_MAP: Dict[str, float] = {
+    "critical": 0.95,
+    "highest": 0.9,
+    "high": 0.85,
+    "medium": 0.6,
+    "normal": 0.5,
+    "low": 0.3,
+    "lowest": 0.2,
+}
 
-        # Try to get all memories in batches
-        while True:
-            try:
-                # Use the MCP memory service endpoint
-                response = requests.post(
-                    f"{MCP_URL}",
-                    json={
-                        "jsonrpc": "2.0",
-                        "method": "tools/call",
-                        "params": {
-                            "name": "retrieve_memory",
-                            "arguments": {
-                                "query": "*",
-                                "n_results": batch_size
-                            }
-                        },
-                        "id": 1
-                    }
-                )
 
-                if response.status_code != 200:
-                    # Try alternative: search by common tags
-                    print(f"  Trying alternative extraction method...")
-                    return self.extract_via_tags()
+@dataclass
+class LegacyMemory:
+    """Representation of a row stored by the old MCP SQLite backend."""
 
-                data = response.json()
-                if 'result' in data and 'results' in data['result']:
-                    batch = data['result']['results']
-                    if not batch:
-                        break
-                    all_memories.extend(batch)
-                    offset += len(batch)
-                    print(f"  Extracted {offset} memories...")
+    row_id: int
+    content_hash: str
+    content: str
+    tags_raw: Optional[str]
+    memory_type: Optional[str]
+    metadata_json: Optional[str]
+    created_at_iso: str
+    updated_at_iso: str
+    created_at_epoch: Optional[float]
+    updated_at_epoch: Optional[float]
 
-                    if len(batch) < batch_size:
-                        break
+    def parse_metadata(self) -> Dict[str, Any]:
+        if not self.metadata_json:
+            return {}
+        try:
+            decoded = json.loads(self.metadata_json)
+        except json.JSONDecodeError:
+            return {"raw_metadata": self.metadata_json}
+
+        if isinstance(decoded, dict):
+            return decoded
+
+        # Keep non-dict payloads so nothing is lost during migration.
+        return {"raw_metadata": decoded}
+
+
+class AutoMemMigrator:
+    """Streams memories from SQLite into AutoMem."""
+
+    def __init__(
+        self,
+        db_path: Path,
+        automem_url: str,
+        batch_size: int = 25,
+        sleep_seconds: float = 0.1,
+        dry_run: bool = False,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> None:
+        self.db_path = db_path
+        self.automem_url = automem_url.rstrip("/")
+        self.batch_size = max(1, batch_size)
+        self.sleep_seconds = max(0.0, sleep_seconds)
+        self.dry_run = dry_run
+        self.limit = limit
+        self.offset = max(0, offset)
+        self.session = requests.Session()
+
+    def run(self) -> int:
+        if not self.db_path.exists():
+            print(f"❌ SQLite database not found at {self.db_path}", file=sys.stderr)
+            return 1
+
+        print("🚀 Starting migration from SQLite to AutoMem")
+        print(f"   • Database : {self.db_path}")
+        print(f"   • AutoMem  : {self.automem_url}")
+        print(f"   • Dry run  : {'yes' if self.dry_run else 'no'}")
+
+        successes = 0
+        failures = 0
+        processed = 0
+
+        for batch in self._stream_legacy_batches():
+            payloads = [self._build_payload(memory) for memory in batch]
+
+            for memory, payload in zip(batch, payloads):
+                processed += 1
+
+                if self.dry_run:
+                    self._print_preview(memory, payload)
+                    successes += 1
+                    continue
+
+                try:
+                    response = self.session.post(
+                        f"{self.automem_url}/memory",
+                        json=payload,
+                        timeout=30,
+                    )
+                except requests.RequestException as exc:
+                    failures += 1
+                    print(
+                        f"❌ Failed to migrate {memory.content_hash[:8]}…: {exc}",
+                        file=sys.stderr,
+                    )
+                    continue
+
+                if response.status_code in (200, 201):
+                    successes += 1
                 else:
+                    failures += 1
+                    try:
+                        details = response.json()
+                    except ValueError:
+                        details = {"body": response.text}
+                    print(
+                        "❌ AutoMem rejected memory {hash}: {status} {details}".format(
+                            hash=memory.content_hash[:12],
+                            status=response.status_code,
+                            details=details,
+                        ),
+                        file=sys.stderr,
+                    )
+
+                if self.sleep_seconds:
+                    time.sleep(self.sleep_seconds)
+
+            print(
+                f"… processed {processed} memories (ok: {successes}, failed: {failures})",
+                flush=True,
+            )
+
+        print("\n✅ Migration complete")
+        print(f"   • Total migrated : {successes}")
+        if failures:
+            print(f"   • Failed         : {failures}")
+
+        return 0 if failures == 0 else 2
+
+    def _stream_legacy_batches(self) -> Iterator[List[LegacyMemory]]:
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+
+        query = (
+            "SELECT id, content_hash, content, tags, memory_type, metadata, "
+            "created_at_iso, updated_at_iso, created_at, updated_at "
+            "FROM memories ORDER BY id"
+        )
+
+        cursor = connection.execute(query)
+
+        # Skip offset rows if requested.
+        if self.offset:
+            cursor.fetchmany(self.offset)
+
+        rows_yielded = 0
+        try:
+            while True:
+                if self.limit is not None and rows_yielded >= self.limit:
                     break
 
-            except Exception as e:
-                print(f"  Error extracting batch: {e}")
-                break
+                remaining = None
+                if self.limit is not None:
+                    remaining = self.limit - rows_yielded
+                    if remaining <= 0:
+                        break
 
-        print(f"✅ Extracted {len(all_memories)} memories from MCP")
-        return all_memories
+                fetch_size = self.batch_size
+                if remaining is not None:
+                    fetch_size = min(fetch_size, remaining)
 
-    def extract_via_tags(self) -> List[Dict]:
-        """Alternative extraction using common tags"""
-        memories = []
-        common_tags = [
-            'project', 'development', 'user', 'workflow',
-            'communication', 'daily', 'technical', 'memory'
-        ]
+                rows = cursor.fetchmany(fetch_size)
+                if not rows:
+                    break
 
-        for tag in common_tags:
-            try:
-                response = requests.post(
-                    f"{MCP_URL}",
-                    json={
-                        "jsonrpc": "2.0",
-                        "method": "tools/call",
-                        "params": {
-                            "name": "search_by_tag",
-                            "arguments": {"tags": [tag]}
-                        },
-                        "id": 1
-                    }
-                )
+                batch = [self._row_to_memory(row) for row in rows]
+                rows_yielded += len(batch)
+                yield batch
+        finally:
+            cursor.close()
+            connection.close()
 
-                if response.status_code == 200:
-                    data = response.json()
-                    if 'result' in data and 'results' in data['result']:
-                        for mem in data['result']['results']:
-                            # Avoid duplicates
-                            if not any(m.get('hash') == mem.get('hash') for m in memories):
-                                memories.append(mem)
+    @staticmethod
+    def _row_to_memory(row: sqlite3.Row) -> LegacyMemory:
+        return LegacyMemory(
+            row_id=row["id"],
+            content_hash=row["content_hash"],
+            content=row["content"],
+            tags_raw=row["tags"],
+            memory_type=row["memory_type"],
+            metadata_json=row["metadata"],
+            created_at_iso=row["created_at_iso"],
+            updated_at_iso=row["updated_at_iso"],
+            created_at_epoch=row["created_at"],
+            updated_at_epoch=row["updated_at"],
+        )
 
-            except Exception as e:
-                print(f"    Error extracting tag '{tag}': {e}")
+    def _build_payload(self, memory: LegacyMemory) -> Dict[str, Any]:
+        metadata = memory.parse_metadata()
+        tags = self._merge_tags(memory.tags_raw, metadata.get("tags"))
 
-        return memories
+        importance = self._derive_importance(metadata)
 
-    def classify_memory_type(self, content: str) -> Tuple[str, float]:
-        """Classify memory into PKG types"""
-        content_lower = content.lower()
-
-        patterns = {
-            'Decision': [
-                r'decided to', r'chose \w+ over', r'selected',
-                r'went with', r'picked', r'opted for'
-            ],
-            'Pattern': [
-                r'usually', r'typically', r'always', r'often',
-                r'tend to', r'pattern', r'consistently'
-            ],
-            'Preference': [
-                r'prefer', r'like', r'favorite', r'love',
-                r'better than', r'instead of', r'rather than'
-            ],
-            'Style': [
-                r'style', r'approach', r'way of', r'method',
-                r'write', r'communicate', r'format'
-            ],
-            'Habit': [
-                r'habit', r'routine', r'every day', r'daily',
-                r'morning', r'evening', r'regularly'
-            ],
-            'Insight': [
-                r'realized', r'discovered', r'found that', r'learned',
-                r'insight', r'understood', r'breakthrough'
-            ],
-            'Context': [
-                r'context', r'background', r'situation', r'environment',
-                r'working on', r'project', r'currently'
-            ],
-            'Achievement': [
-                r'completed', r'finished', r'accomplished', r'succeeded',
-                r'solved', r'fixed', r'implemented'
-            ],
-            'Relationship': [
-                r'partner', r'collaboration', r'working with', r'team',
-                r'relationship', r'interaction'
-            ]
+        legacy_packet: Dict[str, Any] = {
+            "storage": "mcp-sqlite-vec",
+            "row_id": memory.row_id,
+            "content_hash": memory.content_hash,
+            "memory_type": memory.memory_type,
+            "created_at_epoch": memory.created_at_epoch,
+            "updated_at_epoch": memory.updated_at_epoch,
+            "tags_raw": memory.tags_raw,
         }
 
-        best_type = 'Memory'
-        best_score = 0.0
+        if metadata:
+            legacy_packet["metadata"] = metadata
 
-        for mem_type, type_patterns in patterns.items():
-            score = 0
-            for pattern in type_patterns:
-                if re.search(pattern, content_lower):
-                    score += 1
+        last_accessed = metadata.get("last_accessed") if isinstance(metadata, dict) else None
+        if not isinstance(last_accessed, str) or not last_accessed.strip():
+            last_accessed = memory.updated_at_iso
 
-            normalized_score = score / len(type_patterns)
-            if normalized_score > best_score:
-                best_score = normalized_score
-                best_type = mem_type
-
-        confidence = min(0.95, 0.6 + best_score * 0.35)
-        return best_type, confidence
-
-    def extract_entities(self, content: str) -> Dict[str, List[str]]:
-        """Extract entities from content"""
-        entities = {
-            'tools': [],
-            'projects': [],
-            'people': [],
-            'concepts': []
-        }
-
-        # Tool patterns
-        tool_patterns = [
-            r'Claude(?:\s+(?:Code|Desktop|AI))?', r'GitHub', r'Slack',
-            r'WhatsApp', r'Gmail', r'Todoist', r'FreeScout', r'WordPress',
-            r'WP Fusion', r'Docker', r'Railway', r'FalkorDB', r'Qdrant',
-            r'Playwright', r'Evernote', r'MCP', r'InstaWP', r'Toggl'
-        ]
-
-        for pattern in tool_patterns:
-            if re.search(pattern, content, re.IGNORECASE):
-                tool = re.search(pattern, content, re.IGNORECASE).group()
-                entities['tools'].append(tool)
-                self.entities['tools'].add(tool)
-
-        # Project patterns
-        project_patterns = [
-            r'automation[\s-]hub', r'personal[\s-]ai[\s-]memory',
-            r'wp[\s-]fusion', r'very[\s-]good[\s-]plugins',
-            r'automem', r'mcp-\w+', r'freescout-gpt'
-        ]
-
-        for pattern in project_patterns:
-            if re.search(pattern, content, re.IGNORECASE):
-                project = re.search(pattern, content, re.IGNORECASE).group()
-                entities['projects'].append(project)
-                self.entities['projects'].add(project)
-
-        # People (look for names)
-        people_patterns = [
-            r'Jack(?:\s+Arturo)?', r'Vikas(?:\s+Singhal)?',
-            r'Rich(?:\s+Tabor)?', r'Adrian', r'Spencer', r'Blair'
-        ]
-
-        for pattern in people_patterns:
-            if re.search(pattern, content):
-                person = re.search(pattern, content).group()
-                entities['people'].append(person)
-                self.entities['people'].add(person)
-
-        return entities
-
-    def process_memory(self, mcp_memory: Dict) -> Dict:
-        """Convert MCP memory to PKG format"""
-        content = mcp_memory.get('content', '')
-        tags = mcp_memory.get('tags', [])
-
-        # Handle both string and list tags
-        if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(',')]
-
-        # Classify memory type
-        memory_type, confidence = self.classify_memory_type(content)
-
-        # Extract entities
-        entities = self.extract_entities(content)
-
-        # Create PKG memory
-        memory_id = hashlib.sha256(content.encode()).hexdigest()[:16]
-
-        pkg_memory = {
-            'memory_id': memory_id,
-            'content': content,
-            'type': memory_type,
-            'confidence': confidence,
-            'tags': tags,
-            'entities': entities,
-            'timestamp': mcp_memory.get('timestamp', datetime.now().isoformat()),
-            'hash': mcp_memory.get('hash', ''),
-            'original_relevance': mcp_memory.get('relevance_score', 0.0)
-        }
-
-        # Store mapping
-        if 'hash' in mcp_memory:
-            self.memory_map[mcp_memory['hash']] = memory_id
-
-        return pkg_memory
-
-    def detect_patterns(self):
-        """Detect patterns across memories"""
-        print("\n🔍 Detecting patterns...")
-
-        # Group memories by type
-        type_groups = {}
-        for mem in self.memories:
-            mem_type = mem['type']
-            if mem_type not in type_groups:
-                type_groups[mem_type] = []
-            type_groups[mem_type].append(mem)
-
-        # Find patterns within each type
-        for mem_type, mems in type_groups.items():
-            if len(mems) >= 3:  # Need at least 3 to form a pattern
-                # Simple pattern: frequently mentioned together
-                common_entities = {}
-                for mem in mems:
-                    for entity_type, entity_list in mem['entities'].items():
-                        for entity in entity_list:
-                            key = f"{entity_type}:{entity}"
-                            common_entities[key] = common_entities.get(key, 0) + 1
-
-                # Patterns are entities mentioned in >40% of memories
-                threshold = len(mems) * 0.4
-                patterns = [k for k, v in common_entities.items() if v >= threshold]
-
-                if patterns:
-                    pattern_id = f"pattern_{mem_type}_{len(self.patterns)}"
-                    self.patterns[pattern_id] = {
-                        'type': mem_type,
-                        'confidence': min(0.9, 0.5 + len(patterns) * 0.1),
-                        'observations': len(mems),
-                        'common_elements': patterns
-                    }
-
-    def build_relationships(self):
-        """Build relationships between memories"""
-        print("\n🔗 Building relationships...")
-
-        # Temporal relationships (if memories are close in time)
-        for i, mem1 in enumerate(self.memories):
-            for mem2 in self.memories[i+1:i+5]:  # Check next 5 memories
-                # Similar content = related
-                content1 = mem1['content'].lower()
-                content2 = mem2['content'].lower()
-
-                # Simple similarity check
-                words1 = set(content1.split())
-                words2 = set(content2.split())
-                overlap = len(words1 & words2)
-
-                if overlap > min(len(words1), len(words2)) * 0.3:
-                    self.relationships.append({
-                        'from': mem1['memory_id'],
-                        'to': mem2['memory_id'],
-                        'type': 'RELATES_TO',
-                        'strength': min(0.9, overlap / min(len(words1), len(words2)))
-                    })
-
-                # Check for preferences
-                if 'prefer' in content1 and 'over' in content1:
-                    if any(word in content2 for word in words1):
-                        self.relationships.append({
-                            'from': mem1['memory_id'],
-                            'to': mem2['memory_id'],
-                            'type': 'PREFERS_OVER',
-                            'strength': 0.8,
-                            'context': 'extracted_preference'
-                        })
-
-    def migrate_to_pkg(self):
-        """Migrate processed memories to PKG system"""
-        print("\n📤 Migrating to PKG system...")
-
-        success_count = 0
-        failed_count = 0
-
-        # Store memories
-        for i, memory in enumerate(self.memories[:100]):  # Limit for testing
-            try:
-                # Prepare payload
-                payload = {
-                    'content': memory['content'],
-                    'tags': memory['tags'],
-                    'importance': memory.get('original_relevance', 0.5),
-                    'metadata': {
-                        'type': memory['type'],
-                        'confidence': memory['confidence'],
-                        'entities': memory['entities'],
-                        'original_hash': memory.get('hash', '')
-                    }
-                }
-
-                # Call AutoMem API
-                response = requests.post(f"{BASE_URL}/memory", json=payload)
-
-                if response.status_code == 201:
-                    data = response.json()
-                    memory['new_id'] = data.get('memory_id')
-                    success_count += 1
-
-                    if (i + 1) % 10 == 0:
-                        print(f"  Migrated {i + 1}/{len(self.memories)} memories...")
-                else:
-                    failed_count += 1
-                    print(f"  Failed to migrate memory: {response.status_code}")
-
-                # Rate limiting
-                time.sleep(0.05)
-
-            except Exception as e:
-                failed_count += 1
-                print(f"  Error migrating memory: {e}")
-
-        # Create relationships
-        rel_success = 0
-        for relationship in self.relationships[:50]:  # Limit for testing
-            try:
-                payload = {
-                    'memory1_id': relationship['from'],
-                    'memory2_id': relationship['to'],
-                    'type': relationship['type'],
-                    'strength': relationship['strength']
-                }
-
-                response = requests.post(f"{BASE_URL}/associate", json=payload)
-                if response.status_code == 201:
-                    rel_success += 1
-
-            except Exception as e:
-                print(f"  Error creating relationship: {e}")
-
-        print(f"\n✅ Migration complete!")
-        print(f"  Memories: {success_count} successful, {failed_count} failed")
-        print(f"  Relationships: {rel_success} created")
-
-        return success_count, failed_count
-
-    def generate_analytics(self):
-        """Generate analytics report"""
-        print("\n📊 Generating analytics...")
-
-        # Get PKG analytics
-        response = requests.get(f"{BASE_URL}/analyze")
-        if response.status_code == 200:
-            pkg_analytics = response.json()['analytics']
-        else:
-            pkg_analytics = {}
-
-        # Compare with original
-        report = {
-            'migration_summary': {
-                'total_memories': len(self.memories),
-                'classified_memories': sum(1 for m in self.memories if m['type'] != 'Memory'),
-                'relationships_created': len(self.relationships),
-                'patterns_detected': len(self.patterns),
-                'entities_extracted': {
-                    k: len(v) for k, v in self.entities.items()
-                }
+        payload: Dict[str, Any] = {
+            "id": memory.content_hash,
+            "content": memory.content,
+            "tags": tags,
+            "importance": importance,
+            "timestamp": memory.created_at_iso,
+            "updated_at": memory.updated_at_iso,
+            "last_accessed": last_accessed,
+            "metadata": {
+                "origin": "migration:mcp-sqlite-vec",
+                "legacy": legacy_packet,
             },
-            'classification_breakdown': {},
-            'top_entities': {
-                k: list(v)[:10] for k, v in self.entities.items()
-            },
-            'pattern_summary': self.patterns,
-            'pkg_analytics': pkg_analytics
         }
 
-        # Count by type
-        for memory in self.memories:
-            mem_type = memory['type']
-            if mem_type not in report['classification_breakdown']:
-                report['classification_breakdown'][mem_type] = {
-                    'count': 0,
-                    'avg_confidence': 0
-                }
-            report['classification_breakdown'][mem_type]['count'] += 1
-            report['classification_breakdown'][mem_type]['avg_confidence'] += memory['confidence']
+        # Preserve explicit `t_valid` or `t_invalid` markers if they exist in metadata.
+        for key in ("t_valid", "t_invalid"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value:
+                payload[key] = value
 
-        # Average confidence
-        for mem_type in report['classification_breakdown']:
-            count = report['classification_breakdown'][mem_type]['count']
-            if count > 0:
-                report['classification_breakdown'][mem_type]['avg_confidence'] /= count
+        return payload
 
-        return report
+    @staticmethod
+    def _merge_tags(primary: Optional[str], metadata_tags: Any) -> List[str]:
+        collected: List[str] = []
 
-    def run_migration(self):
-        """Run the complete migration process"""
-        print("🚀 Starting MCP to PKG Migration")
-        print("=" * 50)
+        if primary:
+            collected.extend(part.strip() for part in primary.split(",") if part.strip())
 
-        # Extract memories from MCP
-        mcp_memories = self.extract_mcp_memories()
+        collected.extend(AutoMemMigrator._coerce_tag_list(metadata_tags))
 
-        if not mcp_memories:
-            print("❌ No memories found in MCP. Exiting.")
-            return
+        seen = set()
+        normalized: List[str] = []
+        for tag in collected:
+            lower = tag.lower()
+            if lower not in seen:
+                seen.add(lower)
+                normalized.append(tag)
+        return normalized
 
-        # Process each memory
-        print(f"\n🔄 Processing {len(mcp_memories)} memories...")
-        for i, mcp_mem in enumerate(mcp_memories):
-            pkg_mem = self.process_memory(mcp_mem)
-            self.memories.append(pkg_mem)
+    @staticmethod
+    def _coerce_tag_list(source: Any) -> List[str]:
+        if source is None:
+            return []
 
-            if (i + 1) % 50 == 0:
-                print(f"  Processed {i + 1}/{len(mcp_memories)} memories...")
+        if isinstance(source, list):
+            return [str(item).strip() for item in source if str(item).strip()]
 
-        # Detect patterns
-        self.detect_patterns()
+        if isinstance(source, str):
+            stripped = source.strip()
+            if not stripped:
+                return []
 
-        # Build relationships
-        self.build_relationships()
+            # Some entries store JSON inside the string; try to decode first.
+            try:
+                decoded = json.loads(stripped)
+            except json.JSONDecodeError:
+                decoded = None
 
-        # Migrate to PKG
-        success, failed = self.migrate_to_pkg()
+            if isinstance(decoded, list):
+                return [str(item).strip() for item in decoded if str(item).strip()]
 
-        # Generate analytics
-        report = self.generate_analytics()
+            # Fall back to comma-separated parsing.
+            return [part.strip() for part in stripped.split(",") if part.strip()]
 
-        # Display report
-        print("\n" + "=" * 50)
-        print("📊 MIGRATION REPORT")
-        print("=" * 50)
+        return []
 
-        print(f"\n📥 Source: MCP Memory Service")
-        print(f"  Total memories: {len(mcp_memories)}")
+    @staticmethod
+    def _derive_importance(metadata: Dict[str, Any]) -> float:
+        candidate = metadata.get("importance") or metadata.get("priority")
+        if candidate is None:
+            return 0.6
 
-        print(f"\n🎯 Classification Results:")
-        for mem_type, stats in report['classification_breakdown'].items():
-            print(f"  {mem_type}: {stats['count']} memories (avg confidence: {stats['avg_confidence']:.2f})")
+        if isinstance(candidate, (int, float)):
+            return AutoMemMigrator._clamp_importance(float(candidate))
 
-        print(f"\n🔍 Entity Extraction:")
-        for entity_type, count in report['migration_summary']['entities_extracted'].items():
-            print(f"  {entity_type}: {count} unique entities")
+        if isinstance(candidate, str):
+            lowered = candidate.strip().lower()
+            if lowered in IMPORTANCE_MAP:
+                return IMPORTANCE_MAP[lowered]
 
-        print(f"\n🔗 Relationships:")
-        print(f"  Created: {report['migration_summary']['relationships_created']} relationships")
+            try:
+                numeric = float(lowered)
+            except ValueError:
+                return 0.6
+            return AutoMemMigrator._clamp_importance(numeric)
 
-        print(f"\n📈 Pattern Detection:")
-        print(f"  Discovered: {len(self.patterns)} patterns")
+        return 0.6
 
-        if self.patterns:
-            print("\n  Sample patterns:")
-            for pid, pattern in list(self.patterns.items())[:3]:
-                print(f"    - {pattern['type']} pattern (confidence: {pattern['confidence']:.2f})")
+    @staticmethod
+    def _clamp_importance(value: float) -> float:
+        if value < 0:
+            return 0.0
+        if value > 1:
+            return 1.0
+        return value
 
-        print("\n✨ PKG Improvements over MCP:")
-        print("  ✓ Automatic type classification")
-        print("  ✓ Rich relationship graph")
-        print("  ✓ Entity extraction and linking")
-        print("  ✓ Pattern detection and reinforcement")
-        print("  ✓ Advanced analytics capabilities")
+    def _print_preview(self, memory: LegacyMemory, payload: Dict[str, Any]) -> None:
+        print(
+            f"• {memory.row_id}: {memory.content_hash[:12]} | tags={payload['tags']} | "
+            f"timestamp={payload['timestamp']}"
+        )
+        print(f"    content : {memory.content[:120].replace('\n', ' ')}")
+        print(
+            f"    metadata: {{'origin': {payload['metadata']['origin']}, 'legacy_type': {memory.memory_type}}}"
+        )
 
-        # Save report
-        with open('migration_report.json', 'w') as f:
-            json.dump(report, f, indent=2, default=str)
-            print("\n📄 Full report saved to migration_report.json")
 
-        print("\n🎉 Migration complete!")
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Migrate MCP SQLite memories into AutoMem")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help="Path to sqlite_vec.db exported by the MCP memory service",
+    )
+    parser.add_argument(
+        "--automem-url",
+        default=DEFAULT_AUTOMEM_URL,
+        help="Base URL for the AutoMem service (default: http://localhost:8001)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=25,
+        help="Number of rows to fetch from SQLite for each iteration",
+    )
+    parser.add_argument(
+        "--sleep",
+        type=float,
+        default=0.1,
+        help="Delay (in seconds) between POST requests to avoid overwhelming AutoMem",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Maximum number of memories to migrate",
+    )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Number of initial rows to skip before migration",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the transformed payloads without calling AutoMem",
+    )
+
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = parse_args(argv)
+    migrator = AutoMemMigrator(
+        db_path=args.db.expanduser(),
+        automem_url=args.automem_url,
+        batch_size=args.batch_size,
+        sleep_seconds=args.sleep,
+        dry_run=args.dry_run,
+        limit=args.limit,
+        offset=args.offset,
+    )
+    return migrator.run()
 
 
 if __name__ == "__main__":
-    # Check if AutoMem is running
-    try:
-        response = requests.get(f"{BASE_URL}/health")
-        if response.status_code != 200:
-            print("❌ AutoMem service not responding. Start it with 'make dev'")
-            sys.exit(1)
-    except requests.ConnectionError:
-        print("❌ AutoMem service is not running. Start it with 'make dev'")
-        sys.exit(1)
-
-    # Run migration
-    migrator = MCPToPKGMigrator()
-    migrator.run_migration()
+    sys.exit(main())
