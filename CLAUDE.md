@@ -42,9 +42,12 @@ Data flows through:
 
 Key implementation patterns:
 - Memory IDs are UUIDs stored in both databases for cross-referencing
-- When embeddings aren't provided, deterministic placeholder vectors are generated using content hash
+- When embeddings aren't provided:
+  - If `OPENAI_API_KEY` is set, generates real embeddings using text-embedding-3-small model
+  - Otherwise falls back to deterministic placeholder vectors using content hash
 - Graph writes always succeed even if vector storage fails (graceful degradation)
 - Timestamps are normalized to UTC ISO format
+- Recall supports both semantic search (with OpenAI embeddings) and keyword matching
 
 ## Testing
 
@@ -61,6 +64,7 @@ pytest -k test_store_memory   # Run specific test
 Key variables (see `.env.example`):
 - `FALKORDB_HOST` / `FALKORDB_PORT` - Graph database connection
 - `QDRANT_URL` / `QDRANT_API_KEY` - Vector database (optional)
+- `OPENAI_API_KEY` - OpenAI API key for generating real embeddings (optional)
 - `VECTOR_SIZE` - Embedding dimensions (default: 768)
 
 Local config can be placed in `~/.config/automem/.env` for persistent settings.

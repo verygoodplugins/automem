@@ -5,6 +5,7 @@ This module focuses on being resilient: it validates requests, handles
 transient outages, and degrades gracefully when one of the backing services
 is unavailable.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -23,7 +24,6 @@ from falkordb import FalkorDB
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from werkzeug.exceptions import HTTPException
-import openai
 from openai import OpenAI
 
 # Load environment variables before configuring the application.
@@ -83,12 +83,12 @@ def init_openai() -> None:
     """Initialize OpenAI client for embedding generation."""
     if state.openai_client is not None:
         return
-    
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         logger.warning("OpenAI API key not provided; embeddings will be placeholders")
         return
-    
+
     try:
         state.openai_client = OpenAI(api_key=api_key)
         logger.info("OpenAI client initialized for embedding generation")
@@ -239,7 +239,7 @@ def store_memory() -> Any:
     if graph is None:
         abort(503, description="FalkorDB is unavailable")
 
-    created_at = data.get("timestamp")
+    created_at = payload.get("timestamp")
     if created_at:
         try:
             created_at = _normalize_timestamp(created_at)
@@ -315,7 +315,7 @@ def recall_memories() -> Any:
     qdrant_client = get_qdrant_client()
     if qdrant_client is not None:
         embedding = None
-        
+
         # If no embedding provided but we have query text, generate one
         if not embedding_param and query_text:
             logger.debug("Generating embedding for query: %s", query_text)
@@ -325,7 +325,7 @@ def recall_memories() -> Any:
                 embedding = _coerce_embedding(embedding_param)
             except ValueError as exc:
                 abort(400, description=str(exc))
-        
+
         if embedding:
             try:
                 vector_results = qdrant_client.search(
@@ -368,18 +368,22 @@ def recall_memories() -> Any:
                 """,
                 {"query": query_text, "limit": limit},
             )
-            
+
             # If no exact phrase matches, try word-by-word matching
             if len(text_results.result_set) == 0:
                 # Split query into words for better matching
                 query_words = query_text.lower().split()
                 if len(query_words) > 1:
-                    logger.debug("No exact match, trying word-by-word for: %s", query_words)
+                    logger.debug(
+                        "No exact match, trying word-by-word for: %s", query_words
+                    )
                     # Create a Cypher query that matches all words
-                    conditions = " AND ".join([
-                        f"toLower(m.content) CONTAINS '{word}'" 
-                        for word in query_words
-                    ])
+                    conditions = " AND ".join(
+                        [
+                            f"toLower(m.content) CONTAINS '{word}'"
+                            for word in query_words
+                        ]
+                    )
                     text_results = graph.query(
                         f"""
                         MATCH (m:Memory)
@@ -390,7 +394,7 @@ def recall_memories() -> Any:
                         """,
                         {"limit": limit},
                     )
-            
+
             for row in text_results.result_set:
                 node = row[0]
                 data = _serialize_node(node)
@@ -406,14 +410,16 @@ def recall_memories() -> Any:
                         "relations": _fetch_relations(graph, memory_id),
                     }
                 )
-            logger.debug("Graph search returned %d new results", 
-                        len([r for r in results if r["source"] == "graph"]))
+            logger.debug(
+                "Graph search returned %d new results",
+                len([r for r in results if r["source"] == "graph"]),
+            )
         except Exception:  # pragma: no cover - log full stack trace in production
             logger.exception("Graph text search failed")
 
     # Sort results by score (vector results first, then graph results)
     results.sort(key=lambda x: (x["score"] is None, -x["score"] if x["score"] else 0))
-    
+
     return jsonify({"status": "success", "results": results, "count": len(results)})
 
 
@@ -433,7 +439,9 @@ def create_association() -> Any:
     if memory1_id == memory2_id:
         abort(400, description="Cannot associate a memory with itself")
     if relation_type not in ALLOWED_RELATIONS:
-        abort(400, description=f"Relation type must be one of {sorted(ALLOWED_RELATIONS)}")
+        abort(
+            400, description=f"Relation type must be one of {sorted(ALLOWED_RELATIONS)}"
+        )
 
     graph = get_memory_graph()
     if graph is None:
@@ -508,7 +516,9 @@ def _coerce_embedding(value: Any) -> Optional[List[float]]:
     elif isinstance(value, str):
         vector = [part.strip() for part in value.split(",") if part.strip()]
     else:
-        raise ValueError("Embedding must be a list of floats or a comma-separated string")
+        raise ValueError(
+            "Embedding must be a list of floats or a comma-separated string"
+        )
 
     if len(vector) != VECTOR_SIZE:
         raise ValueError(f"Embedding must contain exactly {VECTOR_SIZE} values")
@@ -530,20 +540,22 @@ def _generate_placeholder_embedding(content: str) -> List[float]:
 def _generate_real_embedding(content: str) -> List[float]:
     """Generate a real semantic embedding using OpenAI's API."""
     init_openai()
-    
+
     if state.openai_client is None:
         logger.debug("OpenAI client not available, falling back to placeholder")
         return _generate_placeholder_embedding(content)
-    
+
     try:
         # Use the smaller, cheaper model for embeddings
         response = state.openai_client.embeddings.create(
             input=content,
             model="text-embedding-3-small",
-            dimensions=VECTOR_SIZE  # OpenAI allows specifying dimensions
+            dimensions=VECTOR_SIZE,  # OpenAI allows specifying dimensions
         )
         embedding = response.data[0].embedding
-        logger.debug("Generated OpenAI embedding for content (length: %d)", len(content))
+        logger.debug(
+            "Generated OpenAI embedding for content (length: %d)", len(content)
+        )
         return embedding
     except Exception as e:
         logger.warning("Failed to generate OpenAI embedding: %s", str(e))
