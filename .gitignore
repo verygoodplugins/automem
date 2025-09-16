@@ -1,3 +1,6 @@
 .claude/settings.local.json
 *.code-workspace
 .env
+/tests
+/__pycache__
+full-scope.md
