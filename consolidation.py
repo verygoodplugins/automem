@@ -17,6 +17,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Protocol, Sequence, Set
 from uuid import uuid4
 
+try:  # pragma: no cover - optional dependency in tests
+    from qdrant_client.http import models as qdrant_models
+except ImportError:  # pragma: no cover - degraded mode when qdrant is absent
+    qdrant_models = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -468,10 +473,14 @@ class MemoryConsolidator:
                     # Delete from vector store if present
                     if self.vector_store:
                         try:
-                            selector = {"point_ids": [memory['id']]}
+                            if qdrant_models is not None:
+                                selector = qdrant_models.PointIdsList(points=[memory['id']])
+                            else:  # Fallback for dummy clients during tests
+                                selector = {"points": [memory['id']]}
+
                             self.vector_store.delete(
                                 collection_name="memories",
-                                points_selector=selector
+                                points_selector=selector,
                             )
                         except Exception:
                             logger.exception("Vector store deletion failed for %s", memory['id'])
