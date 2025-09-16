@@ -35,7 +35,7 @@ dev:
 # Run tests
 test:
 	@echo "🧪 Running tests..."
-	./venv/bin/pytest
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest
 
 # Show logs
 logs:

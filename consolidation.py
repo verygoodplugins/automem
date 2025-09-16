@@ -12,19 +12,93 @@ Implements biological memory consolidation patterns:
 import json
 import logging
 import math
-import random
-import time
-from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Set
 from uuid import uuid4
 
-import numpy as np
-from flask import current_app
-from scipy.spatial.distance import cosine
-from sklearn.cluster import DBSCAN
-
 logger = logging.getLogger(__name__)
+
+
+class GraphLike(Protocol):
+    """Protocol describing the single method we rely on from FalkorDB graphs."""
+
+    def query(self, query: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        ...
+
+
+class VectorStoreProtocol(Protocol):
+    """Minimal protocol for the vector store client used by the consolidator."""
+
+    def delete(self, collection_name: str, points_selector: Any) -> Any:  # pragma: no cover - protocol definition
+        ...
+
+
+@dataclass
+class MemoryRow:
+    """Normalized representation of a memory row returned by the graph."""
+
+    id: str
+    content: str
+    timestamp: Optional[str] = None
+    importance: Optional[float] = None
+    type: Optional[str] = None
+    embeddings: Optional[Any] = None
+    confidence: Optional[float] = None
+    last_accessed: Optional[str] = None
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse timestamp strings that may use the `Z` suffix."""
+
+    if not value or not isinstance(value, str):
+        return None
+
+    normalized = value.replace('Z', '+00:00')
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        logger.debug("Failed to parse timestamp %s", value)
+        return None
+
+
+def _load_embedding(raw: Any) -> Optional[List[float]]:
+    """Convert stored embedding payloads into a list of floats."""
+
+    if raw is None:
+        return None
+
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.debug("Invalid embedding JSON payload")
+            return None
+
+    if isinstance(raw, (list, tuple)):
+        try:
+            return [float(v) for v in raw]
+        except (TypeError, ValueError):
+            return None
+
+    return None
+
+
+def _cosine_similarity(vec1: Sequence[float], vec2: Sequence[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+
+    if len(vec1) != len(vec2):
+        return 0.0
+
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    norm_a = math.sqrt(sum(a * a for a in vec1))
+    norm_b = math.sqrt(sum(b * b for b in vec2))
+
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+
+    similarity = dot_product / (norm_a * norm_b)
+    return max(-1.0, min(1.0, similarity))
 
 
 class MemoryConsolidator:
@@ -37,7 +111,7 @@ class MemoryConsolidator:
     - Forgetting is controlled and serves learning
     """
 
-    def __init__(self, graph: Any, vector_store: Any = None):
+    def __init__(self, graph: GraphLike, vector_store: Optional[VectorStoreProtocol] = None):
         self.graph = graph
         self.vector_store = vector_store
 
@@ -54,13 +128,18 @@ class MemoryConsolidator:
         self.archive_threshold = 0.2  # Archive below this relevance
         self.delete_threshold = 0.05  # Delete below this (very old, unused)
 
-    def _query_graph(self, query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Execute graph query and return result set."""
-        result = self.graph.query(query, params or {})
-        # Handle FalkorDB QueryResult object
-        if hasattr(result, 'result_set'):
-            return result.result_set
-        return result if result else []
+    def _query_graph(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Sequence[Any]]:
+        """Execute graph query and return the raw result set from FalkorDB."""
+
+        params = params or {}
+        try:
+            result = self.graph.query(query, params)
+        except Exception as exc:  # pragma: no cover - surface errors to caller
+            logger.exception("Graph query failed: %s", exc)
+            raise
+
+        rows = getattr(result, "result_set", result)
+        return list(rows or [])
 
     def calculate_relevance_score(
         self,
@@ -80,22 +159,19 @@ class MemoryConsolidator:
             current_time = datetime.now(timezone.utc)
 
         # Parse timestamps
-        timestamp_str = memory.get('timestamp') or current_time.isoformat()
-        created_at = datetime.fromisoformat(
-            timestamp_str.replace('Z', '+00:00') if timestamp_str else current_time.isoformat()
-        )
-
-        last_accessed_str = memory.get('last_accessed') or memory.get('timestamp') or current_time.isoformat()
-        last_accessed = datetime.fromisoformat(
-            last_accessed_str.replace('Z', '+00:00') if last_accessed_str else current_time.isoformat()
+        created_at = _parse_iso_datetime(memory.get('timestamp')) or current_time
+        last_accessed = (
+            _parse_iso_datetime(memory.get('last_accessed'))
+            or _parse_iso_datetime(memory.get('timestamp'))
+            or current_time
         )
 
         # Calculate age-based decay
-        age_days = (current_time - created_at).days
+        age_days = max(0, (current_time - created_at).days)
         decay_factor = math.exp(-self.base_decay_rate * age_days)
 
         # Calculate access-based reinforcement
-        access_recency_days = (current_time - last_accessed).days
+        access_recency_days = max(0, (current_time - last_accessed).days)
         access_factor = 1.0 if access_recency_days < 1 else math.exp(-0.05 * access_recency_days)
 
         # Get relationship count for this memory
@@ -103,15 +179,17 @@ class MemoryConsolidator:
             MATCH (m:Memory {id: $id})-[r]-(other:Memory)
             RETURN COUNT(DISTINCT r) as rel_count
         """
-        result = self._query_graph(relationship_query, {"id": memory['id']})
-        rel_count = result[0][0] if result else 0  # First column of first row
-        relationship_factor = 1.0 + (self.relationship_preservation * math.log1p(rel_count))
+        rel_result = self._query_graph(relationship_query, {"id": memory['id']})
+        rel_count = 0
+        if rel_result and len(rel_result[0]) > 0 and rel_result[0][0] is not None:
+            rel_count = float(rel_result[0][0])
+        relationship_factor = 1.0 + (self.relationship_preservation * math.log1p(max(rel_count, 0)))
 
         # Importance factor (user-defined priority)
-        importance = float(memory.get('importance', 0.5))
+        importance = float(memory.get('importance', 0.5) or 0.0)
 
         # Confidence factor (well-classified memories are preserved)
-        confidence = float(memory.get('confidence', 0.5))
+        confidence = float(memory.get('confidence', 0.5) or 0.0)
 
         # Combined relevance score
         relevance = (
@@ -134,9 +212,8 @@ class MemoryConsolidator:
         Like REM sleep, randomly activates disparate memories
         and looks for hidden patterns or connections.
         """
-        associations = []
+        associations: List[Dict[str, Any]] = []
 
-        # Sample random memories for creative processing
         sample_query = """
             MATCH (m:Memory)
             WHERE m.relevance_score > 0.3
@@ -146,91 +223,82 @@ class MemoryConsolidator:
             LIMIT $limit
         """
 
-        sample_result = self._query_graph(sample_query, {"limit": sample_size})
-        if len(sample_result) < 2:
+        sample_rows = self._query_graph(sample_query, {"limit": sample_size})
+        if len(sample_rows) < 2:
             return associations
 
-        # Convert rows to dicts for easier access
-        memories = []
-        for row in sample_result:
-            # Result row order: id, content, type, embeddings, timestamp
-            memories.append({
-                'id': row[0],
-                'content': row[1],
-                'type': row[2],
-                'embeddings': row[3],
-                'timestamp': row[4] if len(row) > 4 else None
-            })
+        memories: List[MemoryRow] = []
+        for row in sample_rows:
+            timestamp = row[4] if len(row) > 4 else None
+            memories.append(
+                MemoryRow(
+                    id=str(row[0]),
+                    content=row[1] or "",
+                    type=row[2] or "Memory",
+                    embeddings=_load_embedding(row[3]),
+                    timestamp=timestamp,
+                )
+            )
 
-        # Look for creative connections
-        for i, mem1 in enumerate(memories):
-            for mem2 in memories[i+1:]:
-                # Skip if already connected
+        for idx, mem1 in enumerate(memories):
+            for mem2 in memories[idx + 1 :]:
                 existing_check = """
                     MATCH (m1:Memory {id: $id1})-[r]-(m2:Memory {id: $id2})
                     RETURN COUNT(r) as count
                 """
-                existing = self._query_graph(
+                existing_rows = self._query_graph(
                     existing_check,
-                    {"id1": mem1['id'], "id2": mem2['id']}
+                    {"id1": mem1.id, "id2": mem2.id},
                 )
-                if existing and existing[0][0] > 0:  # First column of first row
+                if existing_rows and existing_rows[0] and existing_rows[0][0]:
                     continue
 
-                # Calculate semantic similarity if embeddings exist
-                similarity = 0
-                if mem1.get('embeddings') and mem2.get('embeddings'):
+                similarity = 0.0
+                if mem1.embeddings and mem2.embeddings:
                     try:
-                        emb1 = json.loads(mem1['embeddings']) if isinstance(mem1['embeddings'], str) else mem1['embeddings']
-                        emb2 = json.loads(mem2['embeddings']) if isinstance(mem2['embeddings'], str) else mem2['embeddings']
-                        similarity = 1 - cosine(emb1, emb2)
-                    except:
-                        pass
+                        similarity = _cosine_similarity(mem1.embeddings, mem2.embeddings)
+                        if math.isnan(similarity):
+                            similarity = 0.0
+                    except Exception:
+                        logger.debug(
+                            "Unable to compute similarity between %s and %s",
+                            mem1.id,
+                            mem2.id,
+                        )
+                        similarity = 0.0
 
-                # Look for conceptual bridges
-                connection_type = None
-                confidence = 0
+                connection_type: Optional[str] = None
+                confidence = 0.0
 
-                # Pattern: Opposite decisions/preferences might be interesting
-                if mem1.get('type') == 'Decision' and mem2.get('type') == 'Decision':
-                    if similarity < 0.3:  # Low similarity = potentially opposite
-                        connection_type = 'CONTRASTS_WITH'
+                if mem1.type == "Decision" and mem2.type == "Decision":
+                    if similarity < 0.3:
+                        connection_type = "CONTRASTS_WITH"
                         confidence = 0.6
-
-                # Pattern: Insights often explain patterns
-                elif 'Insight' in [mem1.get('type'), mem2.get('type')] and \
-                     'Pattern' in [mem1.get('type'), mem2.get('type')]:
-                    if similarity > 0.5:
-                        connection_type = 'EXPLAINS'
-                        confidence = 0.7
-
-                # Pattern: Similar contexts suggest common themes
-                elif similarity > 0.7 and mem1.get('type') != mem2.get('type'):
-                    connection_type = 'SHARES_THEME'
-                    confidence = similarity
-
-                # Pattern: Temporal proximity with different domains
-                try:
-                    t1 = datetime.fromisoformat(mem1.get('timestamp', '').replace('Z', '+00:00'))
-                    t2 = datetime.fromisoformat(mem2.get('timestamp', '').replace('Z', '+00:00'))
-                    time_diff_days = abs((t1 - t2).days)
-
-                    if time_diff_days < 7 and similarity < 0.4:
-                        # Different topics discussed in same week - might be parallel concerns
-                        connection_type = 'PARALLEL_CONTEXT'
-                        confidence = 0.5
-                except:
-                    pass
+                elif {mem1.type, mem2.type} == {"Insight", "Pattern"} and similarity > 0.5:
+                    connection_type = "EXPLAINS"
+                    confidence = 0.7
+                elif similarity > 0.7 and (mem1.type or "") != (mem2.type or ""):
+                    connection_type = "SHARES_THEME"
+                    confidence = min(1.0, similarity)
+                else:
+                    t1 = _parse_iso_datetime(mem1.timestamp)
+                    t2 = _parse_iso_datetime(mem2.timestamp)
+                    if t1 and t2:
+                        if abs((t1 - t2).days) < 7 and similarity < 0.4:
+                            connection_type = "PARALLEL_CONTEXT"
+                            confidence = 0.5
 
                 if connection_type:
-                    associations.append({
-                        'memory1_id': mem1['id'],
-                        'memory2_id': mem2['id'],
-                        'type': connection_type,
-                        'confidence': confidence,
-                        'similarity': similarity,
-                        'discovered_at': datetime.now(timezone.utc).isoformat()
-                    })
+                    associations.append(
+                        {
+                            "memory1_id": mem1.id,
+                            "memory2_id": mem2.id,
+                            "type": connection_type,
+                            "confidence": confidence,
+                            "similarity": similarity,
+                            "discovered_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
 
         return associations
 
@@ -257,55 +325,66 @@ class MemoryConsolidator:
             return clusters
 
         # Extract embeddings
-        memories = []
-        embeddings = []
+        memories: List[MemoryRow] = []
+        embeddings: List[List[float]] = []
         for row in result:
-            # Result row order: id, content, embeddings, type
-            mem = {
-                'id': row[0],
-                'content': row[1],
-                'embeddings': row[2],
-                'type': row[3]
-            }
-            try:
-                emb = json.loads(mem['embeddings']) if isinstance(mem['embeddings'], str) else mem['embeddings']
-                embeddings.append(emb)
-                memories.append(mem)
-            except:
+            embedding = _load_embedding(row[2] if len(row) > 2 else None)
+            if embedding is None:
                 continue
+
+            memories.append(
+                MemoryRow(
+                    id=str(row[0]),
+                    content=row[1] or "",
+                    embeddings=embedding,
+                    type=row[3] if len(row) > 3 else "Memory",
+                )
+            )
+            embeddings.append(embedding)
 
         if len(embeddings) < self.min_cluster_size:
             return clusters
 
-        # Perform clustering
-        X = np.array(embeddings)
-        clustering = DBSCAN(
-            eps=(1 - self.similarity_threshold),  # Convert similarity to distance
-            min_samples=self.min_cluster_size,
-            metric='cosine'
-        ).fit(X)
+        adjacency: Dict[int, Set[int]] = {idx: set() for idx in range(len(memories))}
+        for i in range(len(memories)):
+            for j in range(i + 1, len(memories)):
+                similarity = _cosine_similarity(embeddings[i], embeddings[j])
+                if similarity >= self.similarity_threshold:
+                    adjacency[i].add(j)
+                    adjacency[j].add(i)
 
-        # Group memories by cluster
-        cluster_groups = defaultdict(list)
-        for idx, label in enumerate(clustering.labels_):
-            if label != -1:  # Skip noise points
-                cluster_groups[label].append(memories[idx])
+        components: List[List[MemoryRow]] = []
+        visited: Set[int] = set()
 
-        # Create cluster summaries
-        for cluster_id, cluster_mems in cluster_groups.items():
+        for idx in range(len(memories)):
+            if idx in visited:
+                continue
+
+            stack = [idx]
+            component: List[int] = []
+
+            while stack:
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                component.append(current)
+                stack.extend(adjacency[current] - visited)
+
+            if len(component) >= self.min_cluster_size:
+                components.append([memories[i] for i in sorted(component)])
+
+        for cluster_mems in components:
             # Calculate cluster theme
-            types = [m.get('type', 'Memory') for m in cluster_mems]
+            types = [m.type or 'Memory' for m in cluster_mems]
             dominant_type = max(set(types), key=types.count)
 
             # Find temporal range
             timestamps = []
             for m in cluster_mems:
-                try:
-                    timestamps.append(
-                        datetime.fromisoformat(m.get('timestamp', '').replace('Z', '+00:00'))
-                    )
-                except:
-                    pass
+                parsed = _parse_iso_datetime(m.timestamp)
+                if parsed:
+                    timestamps.append(parsed)
 
             if timestamps:
                 time_span_days = (max(timestamps) - min(timestamps)).days
@@ -314,11 +393,11 @@ class MemoryConsolidator:
 
             clusters.append({
                 'cluster_id': str(uuid4()),
-                'memory_ids': [m['id'] for m in cluster_mems],
+                'memory_ids': [m.id for m in cluster_mems],
                 'size': len(cluster_mems),
                 'dominant_type': dominant_type,
                 'time_span_days': time_span_days,
-                'sample_content': cluster_mems[0]['content'][:100],
+                'sample_content': cluster_mems[0].content[:100],
                 'created_at': datetime.now(timezone.utc).isoformat()
             })
 
@@ -345,7 +424,8 @@ class MemoryConsolidator:
             MATCH (m:Memory)
             RETURN m.id as id, m.content as content,
                    m.relevance_score as score, m.timestamp as timestamp,
-                   m.type as type, m.importance as importance
+                   m.type as type, m.importance as importance,
+                   m.last_accessed as last_accessed
         """
 
         result = self._query_graph(all_memories_query, {})
@@ -354,14 +434,15 @@ class MemoryConsolidator:
         for row in result:
             stats['examined'] += 1
 
-            # Result row order: id, content, score, timestamp, type, importance
+            # Result row order: id, content, score, timestamp, type, importance, last_accessed
             memory = {
                 'id': row[0],
                 'content': row[1],
                 'relevance_score': row[2],
                 'timestamp': row[3],
                 'type': row[4],
-                'importance': row[5]
+                'importance': row[5],
+                'last_accessed': row[6] if len(row) > 6 else None
             }
 
             # Calculate current relevance
@@ -387,12 +468,13 @@ class MemoryConsolidator:
                     # Delete from vector store if present
                     if self.vector_store:
                         try:
+                            selector = {"point_ids": [memory['id']]}
                             self.vector_store.delete(
                                 collection_name="memories",
-                                points_selector={"filter": {"match": {"id": memory['id']}}}
+                                points_selector=selector
                             )
-                        except:
-                            pass
+                        except Exception:
+                            logger.exception("Vector store deletion failed for %s", memory['id'])
 
             elif relevance < self.archive_threshold:
                 stats['archived'].append({

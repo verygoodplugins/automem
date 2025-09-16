@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import random
 import re
 import uuid
 from dataclasses import dataclass
@@ -21,7 +22,6 @@ from threading import Thread
 from queue import Queue
 import time
 
-import numpy as np
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from falkordb import FalkorDB
@@ -1176,8 +1176,8 @@ def _generate_placeholder_embedding(content: str) -> List[float]:
     """Generate a deterministic embedding vector from the content."""
     digest = hashlib.sha256(content.encode("utf-8")).digest()
     seed = int.from_bytes(digest[:8], "little", signed=False)
-    rng = np.random.default_rng(seed)
-    return rng.random(VECTOR_SIZE).tolist()
+    rng = random.Random(seed)
+    return [rng.random() for _ in range(VECTOR_SIZE)]
 
 
 def _generate_real_embedding(content: str) -> List[float]:

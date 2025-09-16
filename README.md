@@ -55,6 +55,12 @@ is optional when you just want to exercise the graph API.
 make test
 ```
 
+> **Note**
+> Some global pytest plugins conflict with the pinned pytest version. The
+> `make test` target sets `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to ensure the local
+> suite runs in isolation. If you invoke `pytest` directly, export the same
+> environment variable.
+
 ### MCP bridge
 
 To exercise the API through an MCP client (Codex, Cursor, etc.) use the
