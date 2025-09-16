@@ -1190,23 +1190,14 @@ def recall_memories() -> Any:
     graph = get_memory_graph()
     qdrant_client = get_qdrant_client()
 
-    results: List[Dict[str, Any]] = []
     vector_matches = _vector_search(qdrant_client, graph, query_text, embedding_param, limit, seen_ids)
-    results.extend(vector_matches)
+    results: List[Dict[str, Any]] = vector_matches[:limit]
 
-    if graph is not None:
-        graph_matches = _graph_keyword_search(graph, query_text, limit, seen_ids)
-        results.extend(graph_matches)
+    remaining_slots = max(0, limit - len(results))
 
-    results.sort(
-        key=lambda item: (
-            0 if item.get("source") == "qdrant" else 1,
-            -float(item.get("match_score", item.get("score", 0.0)) or 0.0),
-            -float(item.get("memory", {}).get("importance", 0.0) or 0.0),
-        )
-    )
-
-    results = results[:limit]
+    if remaining_slots and graph is not None:
+        graph_matches = _graph_keyword_search(graph, query_text, remaining_slots, seen_ids)
+        results.extend(graph_matches[:remaining_slots])
 
     response = {
         "status": "success",
