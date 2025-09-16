@@ -1,27 +1,21 @@
-# Dockerfile - Complete setup
-FROM falkordb/falkordb:latest
+# Dockerfile - Flask API runtime image
+FROM python:3.11-slim
 
-# Install Python and dependencies for API
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install system deps (none currently, but keep hook for Falkor client libs if needed)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy application files
-WORKDIR /app
-COPY requirements.txt .
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create virtual environment and install dependencies (Python 3.11+ best practice)
-RUN python3 -m venv /app/venv && \
-    /app/venv/bin/pip install --no-cache-dir -r requirements.txt
+COPY app.py ./
 
-COPY app.py .
+EXPOSE 8001
 
-# Expose ports
-EXPOSE 6379 3000 8001
-
-# Start both Redis/FalkorDB and Flask API
-CMD redis-server --loadmodule /FalkorDB/bin/linux-x64-release/src/falkordb.so --daemonize yes && \
-    sleep 2 && \
-    /app/venv/bin/python app.py
+CMD ["python", "app.py"]

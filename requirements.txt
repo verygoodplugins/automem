@@ -3,3 +3,4 @@ flask==3.0.3
 falkordb==1.0.9
 qdrant-client==1.11.3
 numpy==1.26.4
+python-dotenv==1.0.1

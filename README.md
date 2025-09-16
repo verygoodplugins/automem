@@ -1,402 +1,156 @@
-# 🧠 AutoMem - Personal AI Memory Service
+# AutoMem
 
-A cloud-native memory system that gives AI assistants persistent, searchable memory with relationship tracking. Built to integrate with the Claude Automation Hub and provide a foundation for truly personalized AI interactions.
+AutoMem is a small Flask service that gives AI assistants a durable memory. It
+persists structured memory records in FalkorDB (graph) and Qdrant (vector
+search) so downstream tools can store information, discover related memories and
+link them together.
 
-## 🎯 Project Vision
+## Features
 
-Create a memory service that enables AI assistants to:
-- **Remember** conversations, decisions, and patterns across sessions
-- **Learn** your communication style, preferences, and decision-making patterns
-- **Associate** related memories through graph relationships with varying strengths
-- **Consolidate** memories using neurobiologically-inspired algorithms
-- **Scale** from personal use to millions of memories without degradation
+- REST API with three endpoints: store a memory, recall memories, create
+  associations between memories.
+- FalkorDB graph storage for canonical memory records and relationships.
+- Optional Qdrant integration for semantic recall (skips gracefully when not
+  configured).
+- Deterministic placeholder embeddings when vectors are not provided, making it
+  possible to test the API without an embedding service.
+- Containerised development environment with FalkorDB, Qdrant and the API.
+- Automated tests for request validation and association handling.
 
-The ultimate goal: AI that works exactly like you would, maintaining context across all interactions.
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│     Client Applications (Claude, Automation Hub) │
-└────────────┬───────────────────┬────────────────┘
-             │    REST API        │
-             ▼                    ▼
-┌─────────────────────────────────────────────────┐
-│           Memory Service API (Flask)             │
-│                  Port: 8000                      │
-└────────────┬───────────────────┬────────────────┘
-             │                    │
-      ┌──────▼──────┐      ┌─────▼──────┐
-      │  FalkorDB   │      │   Qdrant   │
-      │   (Graph)   │      │  (Vectors) │
-      ├─────────────┤      ├────────────┤
-      │ • Relations │      │ • Semantic │
-      │ • Patterns  │      │ • 768-dim  │
-      │ • Decisions │      │ • Similarity│
-      │ Port: 6379  │      │ Cloud API  │
-      └─────────────┘      └────────────┘
-```
-
-## ✅ Completed
-
-### Infrastructure
-- [x] FalkorDB deployed on Railway (graph database for relationships)
-- [x] Redis 7.4 with FalkorDB module v4.12.5
-- [x] 48 thread pool for high-performance graph operations
-- [x] Qdrant Cloud cluster configured (vector search)
-- [x] Railway project initialized and connected
-- [x] Docker containerization working
-
-### Core Decisions
-- [x] Chose FalkorDB over ArangoDB (200x faster, simpler deployment, $5/mo vs $150/mo)
-- [x] Hybrid architecture design (local + cloud sync)
-- [x] Separated memory service from automation hub for modularity
-
-## 🚧 In Progress
-
-### Memory API Development
-- [ ] Complete Flask API with endpoints:
-  - [ ] `/memory` - Store new memories
-  - [ ] `/recall` - Retrieve memories (semantic + graph)
-  - [ ] `/associate` - Create relationships between memories
-  - [ ] `/consolidate` - Trigger memory consolidation
-- [ ] Integration with Qdrant for vector storage
-- [ ] Graph traversal algorithms for pattern recognition
-
-### Consolidation Engine
-- [ ] Micro-consolidation every 5 minutes (importance > 0.7)
-- [ ] Nightly batch consolidation (dream phase)
-- [ ] Pattern recognition across memory domains
-- [ ] Strength adjustment for associations
-
-## 📋 TODO
-
-### Phase 1: Core Functionality (Week 1)
-- [ ] Implement embedding generation (OpenAI/local model)
-- [ ] Create memory scoring algorithm (recency, frequency, importance)
-- [ ] Build graph traversal queries for related memories
-- [ ] Add authentication/API keys
-- [ ] Set up health monitoring
-
-### Phase 2: Intelligence Layer (Week 2-3)
-- [ ] Decision pattern recognition
-- [ ] Communication style extraction
-- [ ] Temporal pattern analysis
-- [ ] Cross-domain correlation engine
-- [ ] Memory pruning for efficiency
-
-### Phase 3: Integration (Week 4)
-- [ ] MCP bridge for Claude Desktop
-- [ ] Automation Hub webhooks
-- [ ] WhatsApp notification system
-- [ ] Backup/restore functionality
-- [ ] Memory export tools
-
-### Phase 4: Advanced Features (Month 2)
-- [ ] Predictive memory loading
-- [ ] Speculative execution
-- [ ] Memory compression
-- [ ] Multi-user support
-- [ ] Privacy controls
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- Railway account with CLI installed
-- Qdrant Cloud account (free tier works)
-- Python 3.8+
-- Docker (for local testing)
 
-### Local Development
+- Python 3.10+ (for local development commands)
+- Docker and Docker Compose
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/automem.git
-cd automem
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Set environment variables
-export QDRANT_URL="https://your-cluster.qdrant.io"
-export QDRANT_API_KEY="your-api-key"
-export RAILWAY_STATIC_URL="localhost"  # for local testing
-
-# Run locally with Docker
-docker run -p 6379:6379 -p 3000:3000 falkordb/falkordb:latest
-
-# Start the API
-python app.py
-```
-
-### Deployment
+### Local development
 
 ```bash
-# Deploy to Railway
-railway up
+# Clone and install dependencies
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements-dev.txt
 
-# Set production variables
-railway variables set QDRANT_URL=your-qdrant-url
-railway variables set QDRANT_API_KEY=your-api-key
-
-# Get your public URL
-railway domain
+# Run the full stack (FalkorDB + Qdrant + API)
+make dev
 ```
 
-## 📊 Memory Schema
+The API starts on `http://localhost:8001`, FalkorDB is available on
+`localhost:6379`, and Qdrant on `localhost:6333`.
 
-### FalkorDB (Graph Structure)
-```cypher
-(:Memory {
-  id: String,           // UUID
-  content: String,      // Memory text
-  timestamp: DateTime,  // When created
-  importance: Float,    // 0.0-1.0 score
-  tags: [String]        // Categories
-})
+### Running the API without Docker
 
--[:RELATES_TO {strength: Float}]->  // Association strength
--[:LEADS_TO {confidence: Float}]->  // Decision chains
--[:OCCURRED_BEFORE]->                // Temporal relationships
+```bash
+source venv/bin/activate
+PORT=8001 python app.py
 ```
 
-### Qdrant (Vector Storage)
+Make sure FalkorDB is reachable at the host defined by `FALKORDB_HOST`. Qdrant
+is optional when you just want to exercise the graph API.
+
+### Tests
+
+```bash
+make test
+```
+
+## API Overview
+
+### Store a memory
+
+`POST /memory`
+
 ```json
 {
-  "id": "uuid",
-  "vector": [768 dimensions],
-  "payload": {
-    "content": "memory text",
-    "tags": ["tag1", "tag2"],
-    "importance": 0.8,
-    "timestamp": "2025-09-16T00:00:00Z"
-  }
+  "content": "Finished integrating FalkorDB",
+  "tags": ["deployment", "success"],
+  "importance": 0.9,
+  "embedding": [0.12, 0.56, ...]  // optional
 }
 ```
 
-## 🔌 API Endpoints
+- Returns `201 Created` with the memory ID.
+- If Qdrant is configured but no embedding is provided, a deterministic
+  placeholder vector is generated so subsequent recall works consistently.
+- When Qdrant is not configured the graph write still succeeds and the
+  response indicates that the vector store was skipped.
 
-### Store Memory
-```bash
-POST /memory
+### Recall memories
+
+`GET /recall`
+
+Query parameters:
+
+- `query`: full-text search on FalkorDB memories.
+- `embedding`: comma-separated 768-d vector for Qdrant semantic search.
+- `limit`: maximum number of results (default 5, max 50).
+
+The response merges vector hits (when available) with graph matches and includes
+any related memories discovered via graph traversal.
+
+### Create an association
+
+`POST /associate`
+
+```json
 {
-  "content": "Important decision about...",
-  "embedding": [768 floats],
-  "tags": ["decision", "architecture"],
-  "importance": 0.9
+  "memory1_id": "uuid-of-source",
+  "memory2_id": "uuid-of-target",
+  "type": "RELATES_TO",  // one of RELATES_TO, LEADS_TO, OCCURRED_BEFORE
+  "strength": 0.8          // 0.0 – 1.0
 }
 ```
 
-### Recall Memories
-```bash
-GET /recall?query=architecture&limit=10
-# Returns semantically similar + graph-related memories
-```
+Associations are validated to prevent self-links and unexpected relationship
+types. A `404` is returned if either memory is missing.
 
-### Create Association
-```bash
-POST /associate
-{
-  "memory1_id": "uuid-1",
-  "memory2_id": "uuid-2",
-  "strength": 0.8,
-  "type": "RELATES_TO"
-}
-```
+## Configuration
 
-## 📈 Performance Targets
+Environment variables recognised by the service:
 
-- **Storage**: 1M+ memories
-- **Retrieval**: <50ms latency (cloud), <5ms (local)
-- **Consolidation**: 5-minute micro-cycles, nightly batch
-- **Graph traversal**: 3-depth in <100ms
-- **Vector search**: Top-10 in <20ms
+| Variable | Description | Default |
+| --- | --- | --- |
+| `PORT` | API port | `8001` |
+| `FALKORDB_HOST` | Hostname for FalkorDB | `localhost` |
+| `FALKORDB_PORT` | TCP port for FalkorDB | `6379` |
+| `FALKORDB_GRAPH` | Graph name | `memories` |
+| `QDRANT_URL` | Base URL for Qdrant API | _unset_ (disables Qdrant) |
+| `QDRANT_API_KEY` | API key for Qdrant Cloud | _optional_ |
+| `QDRANT_COLLECTION` | Qdrant collection name | `memories` |
+| `VECTOR_SIZE` | Embedding vector size | `768` |
 
-## 💰 Cost Analysis
+For local work you can create `~/.config/automem/.env` (or similar); the
+application automatically loads that file in addition to a project-level `.env`
+if present. A checked-in `.env.example` with placeholders is recommended for
+teams.
 
-### Current (FalkorDB + Qdrant Cloud)
-- FalkorDB on Railway: ~$5/month
-- Qdrant Cloud (free tier): $0/month (up to 1GB)
-- Total: ~$5/month for personal use
+## Deployment
 
-### Scaling Costs
-- 100K memories: ~$5/month
-- 1M memories: ~$20/month
-- 10M memories: ~$50/month
+The included `Dockerfile` builds a slim Python image for the API. Deploy it
+alongside managed FalkorDB/Qdrant services, or use the provided Docker Compose
+stack for self-hosting.
 
-## 🧪 Testing
+Railway deployment is supported out of the box: point Railway to this repository
+and it will build using the Dockerfile. Configure the environment variables in
+Railway to connect to your FalkorDB and Qdrant instances.
 
-### Test FalkorDB Connection
-```python
-from falkordb import FalkorDB
-db = FalkorDB(host='your-railway-url', port=6379)
-graph = db.select_graph('memories')
-print("Connected!")
-```
+## Roadmap / Ideas
 
-### Test Memory Storage
-```python
-# Store a memory
-result = graph.query("""
-    CREATE (m:Memory {
-        id: 'test-001',
-        content: 'Test memory',
-        timestamp: datetime(),
-        importance: 0.5
-    }) RETURN m
-""")
-```
+- Integrate a real embedding generator (OpenAI, local model, etc.).
+- Scheduled consolidation / pruning jobs for the graph.
+- Authentication, rate limiting and privacy tooling.
+- Richer analytics endpoints (importance trends, recent recalls, etc.).
 
-### Test Qdrant Integration
-```python
-from qdrant_client import QdrantClient
-client = QdrantClient(
-    url="https://your-cluster.qdrant.io",
-    api_key="your-api-key"
-)
-print(client.get_collections())
-```
+## Troubleshooting
 
-## 🔧 Configuration
+- `503 FalkorDB is unavailable`: ensure the FalkorDB container is running and
+  reachable at the host configured by `FALKORDB_HOST`.
+- `Embedding must contain exactly 768 values`: either supply the full embedding
+  vector or omit the field so the placeholder generator runs.
+- Qdrant errors are logged but do not stop FalkorDB writes; inspect the service
+  logs for the exact failure reason.
 
-### Environment Variables
-```env
-# Railway
-RAILWAY_STATIC_URL=your-app.up.railway.app
-RAILWAY_PRIVATE_DOMAIN=your-app.railway.internal
-PORT=8001
+## License
 
-# Qdrant
-QDRANT_URL=https://your-cluster.qdrant.io
-QDRANT_API_KEY=your-api-key-here
-QDRANT_COLLECTION=memories
-
-# Optional
-OPENAI_API_KEY=sk-...  # For embeddings
-CONSOLIDATION_INTERVAL=300  # 5 minutes
-IMPORTANCE_THRESHOLD=0.7
-```
-
-## 📝 Memory Types
-
-The system recognizes several memory patterns:
-
-### Decision Memories
-```python
-{
-  "type": "decision",
-  "content": "Chose FalkorDB over ArangoDB",
-  "factors": ["cost", "performance", "simplicity"],
-  "outcome": "successful",
-  "importance": 0.9
-}
-```
-
-### Knowledge Memories
-```python
-{
-  "type": "knowledge",
-  "content": "FalkorDB uses sparse matrices",
-  "domain": "database",
-  "confidence": 0.95,
-  "source": "documentation"
-}
-```
-
-### Pattern Memories
-```python
-{
-  "type": "pattern",
-  "content": "User prefers morning coding sessions",
-  "frequency": "daily",
-  "confidence": 0.8,
-  "evidence_count": 15
-}
-```
-
-## 🤝 Integration Points
-
-### Claude Desktop (MCP)
-```javascript
-// MCP configuration
-{
-  "memory": {
-    "command": "node",
-    "args": ["bridge.js"],
-    "env": {
-      "MEMORY_API": "https://automem.up.railway.app"
-    }
-  }
-}
-```
-
-### Automation Hub
-```python
-# In automation hub
-from memory_client import MemoryClient
-memory = MemoryClient(api_url="https://automem.up.railway.app")
-memory.store("Automation completed successfully")
-```
-
-### WhatsApp Bridge
-```python
-# Auto-capture WhatsApp decisions
-@on_message_sent
-def capture_decision(message):
-    if "decided" in message.lower():
-        memory.store(message, tags=["whatsapp", "decision"])
-```
-
-## 🔐 Security
-
-- [ ] API authentication via Bearer tokens
-- [ ] End-to-end encryption for sensitive memories
-- [ ] Rate limiting (100 req/min per client)
-- [ ] GDPR compliance (right to forget)
-- [ ] Automatic PII detection and masking
-
-## 📚 References
-
-- [FalkorDB Documentation](https://docs.falkordb.com)
-- [Qdrant Documentation](https://qdrant.tech/documentation)
-- [Railway Deployment Guide](https://docs.railway.app)
-- [MCP Protocol Spec](https://modelcontextprotocol.io)
-
-## 🐛 Troubleshooting
-
-### FalkorDB won't start
-```bash
-# Check logs
-railway logs
-
-# Verify Redis is running
-redis-cli ping
-
-# Check module is loaded
-redis-cli MODULE LIST
-```
-
-### Qdrant connection failed
-```bash
-# Test with curl
-curl https://your-cluster.qdrant.io/collections \
-  -H "api-key: your-api-key"
-```
-
-### Memory API errors
-```bash
-# Check health endpoint
-curl https://your-app.up.railway.app:8001/health
-```
-
-## 👥 Contributors
-
-- Jack Arturo - Initial architecture and implementation
-
-## 📄 License
-
-MIT License - Use freely for personal AI memory systems
-
----
-
-**Remember**: The more memories you store, the smarter your AI becomes! 🚀
+MIT License
