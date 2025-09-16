@@ -95,6 +95,34 @@ RELATIONSHIP_TYPES = {
 
 ALLOWED_RELATIONS = set(RELATIONSHIP_TYPES.keys())
 
+SEARCH_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "into",
+    "using",
+    "have",
+    "will",
+    "your",
+    "about",
+    "after",
+    "before",
+    "when",
+    "then",
+    "than",
+    "also",
+    "just",
+    "very",
+    "more",
+    "less",
+    "over",
+    "under",
+}
+
 
 def utc_now() -> str:
     """Return an ISO formatted UTC timestamp."""
@@ -135,6 +163,221 @@ def _normalize_timestamp(raw: Any) -> str:
 
     return parsed.astimezone(timezone.utc).isoformat()
 
+
+def _extract_keywords(text: str) -> List[str]:
+    """Convert a raw query string into normalized keyword tokens."""
+    if not text:
+        return []
+
+    words = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
+    keywords: List[str] = []
+    seen: set[str] = set()
+
+    for word in words:
+        cleaned = word.strip("-_")
+        if len(cleaned) < 3:
+            continue
+        if cleaned in SEARCH_STOPWORDS:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        keywords.append(cleaned)
+
+    return keywords
+
+
+def _format_graph_result(
+    graph: Any,
+    node: Any,
+    score: Optional[float],
+    match_type: str,
+    seen_ids: set[str],
+) -> Optional[Dict[str, Any]]:
+    data = _serialize_node(node)
+    memory_id = str(data.get("id")) if data.get("id") is not None else None
+    if not memory_id or memory_id in seen_ids:
+        return None
+
+    seen_ids.add(memory_id)
+    relations: List[Dict[str, Any]] = _fetch_relations(graph, memory_id)
+
+    numeric_score = float(score) if score is not None else 0.0
+    return {
+        "id": memory_id,
+        "score": numeric_score,
+        "match_score": numeric_score,
+        "match_type": match_type,
+        "source": "graph",
+        "memory": data,
+        "relations": relations,
+    }
+
+
+def _graph_trending_results(graph: Any, limit: int, seen_ids: set[str]) -> List[Dict[str, Any]]:
+    """Return high-importance memories when no specific query is supplied."""
+    try:
+        query = """
+            MATCH (m:Memory)
+            WHERE coalesce(m.archived, false) = false
+            RETURN m
+            ORDER BY m.importance DESC, m.timestamp DESC
+            LIMIT $limit
+        """
+        result = graph.query(query, {"limit": limit})
+    except Exception:
+        logger.exception("Failed to load trending memories")
+        return []
+
+    trending: List[Dict[str, Any]] = []
+    for row in getattr(result, "result_set", []) or []:
+        record = _format_graph_result(graph, row[0], None, "trending", seen_ids)
+        if record is None:
+            continue
+        # Use importance as a pseudo-score for ordering consistency
+        importance = record["memory"].get("importance")
+        record["score"] = float(importance) if isinstance(importance, (int, float)) else 0.0
+        record["match_score"] = record["score"]
+        trending.append(record)
+
+    return trending
+
+
+def _graph_keyword_search(
+    graph: Any,
+    query_text: str,
+    limit: int,
+    seen_ids: set[str],
+) -> List[Dict[str, Any]]:
+    """Perform a keyword-oriented search in the graph store."""
+    normalized = query_text.strip().lower()
+    if not normalized or normalized == "*":
+        return _graph_trending_results(graph, limit, seen_ids)
+
+    keywords = _extract_keywords(normalized)
+    phrase = normalized if len(normalized) >= 3 else ""
+
+    try:
+        if keywords:
+            query = """
+                MATCH (m:Memory)
+                WHERE m.content IS NOT NULL
+                WITH m,
+                     toLower(m.content) AS content,
+                     [tag IN coalesce(m.tags, []) | toLower(tag)] AS tags
+                UNWIND $keywords AS kw
+                WITH m, content, tags, kw,
+                     CASE WHEN content CONTAINS kw THEN 2 ELSE 0 END +
+                     CASE WHEN any(tag IN tags WHERE tag CONTAINS kw) THEN 1 ELSE 0 END AS kw_score
+                WITH m, content, tags, SUM(kw_score) AS keyword_score
+                WITH m, keyword_score +
+                     CASE WHEN $phrase <> '' AND content CONTAINS $phrase THEN 2 ELSE 0 END +
+                     CASE WHEN $phrase <> '' AND any(tag IN tags WHERE tag CONTAINS $phrase) THEN 1 ELSE 0 END AS score
+                WHERE score > 0
+                RETURN m, score
+                ORDER BY score DESC, m.importance DESC, m.timestamp DESC
+                LIMIT $limit
+            """
+            params = {"keywords": keywords, "phrase": phrase, "limit": limit}
+            result = graph.query(query, params)
+        elif phrase:
+            query = """
+                MATCH (m:Memory)
+                WHERE m.content IS NOT NULL
+                WITH m,
+                     toLower(m.content) AS content,
+                     [tag IN coalesce(m.tags, []) | toLower(tag)] AS tags
+                WITH m,
+                     CASE WHEN content CONTAINS $phrase THEN 2 ELSE 0 END +
+                     CASE WHEN any(tag IN tags WHERE tag CONTAINS $phrase) THEN 1 ELSE 0 END AS score
+                WHERE score > 0
+                RETURN m, score
+                ORDER BY score DESC, m.importance DESC, m.timestamp DESC
+                LIMIT $limit
+            """
+            result = graph.query(query, {"phrase": phrase, "limit": limit})
+        else:
+            return _graph_trending_results(graph, limit, seen_ids)
+    except Exception:
+        logger.exception("Graph keyword search failed")
+        return []
+
+    matches: List[Dict[str, Any]] = []
+    for row in getattr(result, "result_set", []) or []:
+        node = row[0]
+        score = row[1] if len(row) > 1 else None
+        record = _format_graph_result(graph, node, score, "keyword", seen_ids)
+        if record is None:
+            continue
+        matches.append(record)
+
+    return matches
+
+def _vector_search(
+    qdrant_client: Optional[QdrantClient],
+    graph: Any,
+    query_text: str,
+    embedding_param: Optional[str],
+    limit: int,
+    seen_ids: set[str],
+) -> List[Dict[str, Any]]:
+    """Perform vector search against Qdrant when configured."""
+    if qdrant_client is None:
+        return []
+
+    normalized = (query_text or "").strip()
+    if not embedding_param and normalized in {"", "*"}:
+        return []
+
+    embedding: Optional[List[float]] = None
+
+    if embedding_param:
+        try:
+            embedding = _coerce_embedding(embedding_param)
+        except ValueError as exc:
+            abort(400, description=str(exc))
+    elif normalized:
+        logger.debug("Generating embedding for query: %s", normalized)
+        embedding = _generate_real_embedding(normalized)
+
+    if not embedding:
+        return []
+
+    try:
+        vector_results = qdrant_client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=embedding,
+            limit=limit,
+            with_payload=True,
+        )
+    except Exception:
+        logger.exception("Qdrant search failed")
+        return []
+
+    matches: List[Dict[str, Any]] = []
+    for hit in vector_results:
+        memory_id = str(hit.id)
+        if memory_id in seen_ids:
+            continue
+
+        seen_ids.add(memory_id)
+        payload = hit.payload or {}
+        relations = _fetch_relations(graph, memory_id) if graph is not None else []
+        score = float(hit.score) if hit.score is not None else 0.0
+
+        matches.append(
+            {
+                "id": memory_id,
+                "score": score,
+                "match_score": score,
+                "match_type": "vector",
+                "source": "qdrant",
+                "memory": payload,
+                "relations": relations,
+            }
+        )
+
+    return matches
 
 class MemoryClassifier:
     """Classifies memories into specific types based on content patterns."""
@@ -928,119 +1171,43 @@ def recall_memories() -> Any:
     limit = max(1, min(int(request.args.get("limit", 5)), 50))
     embedding_param = request.args.get("embedding")
 
-    results: List[Dict[str, Any]] = []
     seen_ids: set[str] = set()
-
-    # Try vector search first
-    qdrant_client = get_qdrant_client()
-    if qdrant_client is not None:
-        embedding = None
-
-        # If no embedding provided but we have query text, generate one
-        if not embedding_param and query_text:
-            logger.debug("Generating embedding for query: %s", query_text)
-            embedding = _generate_real_embedding(query_text)
-        elif embedding_param:
-            try:
-                embedding = _coerce_embedding(embedding_param)
-            except ValueError as exc:
-                abort(400, description=str(exc))
-
-        if embedding:
-            try:
-                vector_results = qdrant_client.search(
-                    collection_name=COLLECTION_NAME,
-                    query_vector=embedding,
-                    limit=limit,
-                )
-                graph = get_memory_graph()
-                for hit in vector_results:
-                    memory_id = str(hit.id)
-                    seen_ids.add(memory_id)
-                    base = {
-                        "id": memory_id,
-                        "score": hit.score,
-                        "source": "qdrant",
-                        "memory": hit.payload,
-                        "relations": [],
-                    }
-                    if graph is not None:
-                        relations = _fetch_relations(graph, memory_id)
-                        if relations:
-                            base["relations"] = relations
-                    results.append(base)
-                logger.debug("Vector search returned %d results", len(vector_results))
-            except Exception:  # pragma: no cover - log full stack trace in production
-                logger.exception("Qdrant search failed")
-
-    # Also do keyword search if we have query text
     graph = get_memory_graph()
-    if graph is not None and query_text:
-        try:
-            # First try exact phrase match
-            text_results = graph.query(
-                """
-                MATCH (m:Memory)
-                WHERE toLower(m.content) CONTAINS toLower($query)
-                RETURN m
-                ORDER BY m.importance DESC
-                LIMIT $limit
-                """,
-                {"query": query_text, "limit": limit},
-            )
+    qdrant_client = get_qdrant_client()
 
-            # If no exact phrase matches, try word-by-word matching
-            if len(text_results.result_set) == 0:
-                # Split query into words for better matching
-                query_words = query_text.lower().split()
-                if len(query_words) > 1:
-                    logger.debug(
-                        "No exact match, trying word-by-word for: %s", query_words
-                    )
-                    # Create a Cypher query that matches all words
-                    conditions = " AND ".join(
-                        [
-                            f"toLower(m.content) CONTAINS '{word}'"
-                            for word in query_words
-                        ]
-                    )
-                    text_results = graph.query(
-                        f"""
-                        MATCH (m:Memory)
-                        WHERE {conditions}
-                        RETURN m
-                        ORDER BY m.importance DESC
-                        LIMIT $limit
-                        """,
-                        {"limit": limit},
-                    )
+    results: List[Dict[str, Any]] = []
+    vector_matches = _vector_search(qdrant_client, graph, query_text, embedding_param, limit, seen_ids)
+    results.extend(vector_matches)
 
-            for row in text_results.result_set:
-                node = row[0]
-                data = _serialize_node(node)
-                memory_id = str(data.get("id"))
-                if memory_id in seen_ids:
-                    continue
-                results.append(
-                    {
-                        "id": memory_id,
-                        "score": None,
-                        "source": "graph",
-                        "memory": data,
-                        "relations": _fetch_relations(graph, memory_id),
-                    }
-                )
-            logger.debug(
-                "Graph search returned %d new results",
-                len([r for r in results if r["source"] == "graph"]),
-            )
-        except Exception:  # pragma: no cover - log full stack trace in production
-            logger.exception("Graph text search failed")
+    if graph is not None:
+        graph_matches = _graph_keyword_search(graph, query_text, limit, seen_ids)
+        results.extend(graph_matches)
 
-    # Sort results by score (vector results first, then graph results)
-    results.sort(key=lambda x: (x["score"] is None, -x["score"] if x["score"] else 0))
+    results.sort(
+        key=lambda item: (
+            0 if item.get("source") == "qdrant" else 1,
+            -float(item.get("match_score", item.get("score", 0.0)) or 0.0),
+            -float(item.get("memory", {}).get("importance", 0.0) or 0.0),
+        )
+    )
 
-    return jsonify({"status": "success", "results": results, "count": len(results)})
+    results = results[:limit]
+
+    response = {
+        "status": "success",
+        "query": query_text,
+        "results": results,
+        "count": len(results),
+        "vector_search": {
+            "enabled": qdrant_client is not None,
+            "matched": bool(vector_matches),
+        },
+    }
+
+    if query_text:
+        response["keywords"] = _extract_keywords(query_text)
+
+    return jsonify(response)
 
 
 @app.route("/associate", methods=["POST"])
