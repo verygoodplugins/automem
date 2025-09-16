@@ -133,6 +133,22 @@ SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.1"))
 SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.15"))
 
 
+def _normalize_tag_list(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        if not raw.strip():
+            return []
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    if isinstance(raw, (list, tuple, set)):
+        tags: List[str] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                tags.append(item.strip())
+        return tags
+    return []
+
+
 def utc_now() -> str:
     """Return an ISO formatted UTC timestamp."""
     return datetime.now(timezone.utc).isoformat()
@@ -194,6 +210,77 @@ def _extract_keywords(text: str) -> List[str]:
         keywords.append(cleaned)
 
     return keywords
+
+
+def _parse_time_expression(expression: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    if not expression:
+        return None, None
+
+    expr = expression.strip().lower()
+    if not expr:
+        return None, None
+
+    now = datetime.now(timezone.utc)
+
+    def start_of_day(dt: datetime) -> datetime:
+        return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def end_of_day(dt: datetime) -> datetime:
+        return start_of_day(dt) + timedelta(days=1)
+
+    if expr in {"today", "this day"}:
+        start = start_of_day(now)
+        end = end_of_day(now)
+    elif expr in {"yesterday"}:
+        start = start_of_day(now - timedelta(days=1))
+        end = start + timedelta(days=1)
+    elif expr in {"last 24 hours", "past 24 hours"}:
+        end = now
+        start = now - timedelta(hours=24)
+    elif expr in {"last 48 hours", "past 48 hours"}:
+        end = now
+        start = now - timedelta(hours=48)
+    elif expr in {"this week"}:
+        start = start_of_day(now - timedelta(days=now.weekday()))
+        end = start + timedelta(days=7)
+    elif expr in {"last week", "past week"}:
+        end = start_of_day(now - timedelta(days=now.weekday()))
+        start = end - timedelta(days=7)
+    elif expr in {"this month"}:
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1)
+        else:
+            end = start.replace(month=start.month + 1)
+    elif expr in {"last month", "past month"}:
+        current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if current_month_start.month == 1:
+            previous_month_start = current_month_start.replace(year=current_month_start.year - 1, month=12)
+        else:
+            previous_month_start = current_month_start.replace(month=current_month_start.month - 1)
+        start = previous_month_start
+        end = current_month_start
+    elif expr.startswith("last ") and expr.endswith(" days"):
+        try:
+            days = int(expr.split()[1])
+            end = now
+            start = now - timedelta(days=days)
+        except ValueError:
+            return None, None
+    elif expr in {"last year", "past year", "this year"}:
+        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        if expr.startswith("last") or expr.startswith("past"):
+            end = start
+            start = start.replace(year=start.year - 1)
+        else:
+            if start.year == 9999:
+                end = now
+            else:
+                end = start.replace(year=start.year + 1)
+    else:
+        return None, None
+
+    return start.isoformat(), end.isoformat()
 
 
 def _parse_metadata_field(value: Any) -> Any:
@@ -305,6 +392,35 @@ def _compute_metadata_score(
     return final, components
 
 
+def _result_passes_filters(
+    result: Dict[str, Any],
+    start_time: Optional[str],
+    end_time: Optional[str],
+    tag_filters: Optional[List[str]] = None,
+) -> bool:
+    memory = result.get("memory", {}) or {}
+    timestamp = memory.get("timestamp")
+    if start_time or end_time:
+        parsed = _parse_iso_datetime(timestamp) if timestamp else None
+        parsed_start = _parse_iso_datetime(start_time) if start_time else None
+        parsed_end = _parse_iso_datetime(end_time) if end_time else None
+        if parsed is None:
+            return False
+        if parsed_start and parsed < parsed_start:
+            return False
+        if parsed_end and parsed > parsed_end:
+            return False
+
+    if tag_filters:
+        tags = memory.get("tags") or []
+        lowered = {str(tag).lower() for tag in tags if isinstance(tag, str)}
+        filter_set = {tag.lower() for tag in tag_filters}
+        if not lowered.intersection(filter_set):
+            return False
+
+    return True
+
+
 def _format_graph_result(
     graph: Any,
     node: Any,
@@ -332,17 +448,38 @@ def _format_graph_result(
     }
 
 
-def _graph_trending_results(graph: Any, limit: int, seen_ids: set[str]) -> List[Dict[str, Any]]:
+def _graph_trending_results(
+    graph: Any,
+    limit: int,
+    seen_ids: set[str],
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    tag_filters: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """Return high-importance memories when no specific query is supplied."""
     try:
-        query = """
+        where_clauses = ["coalesce(m.archived, false) = false"]
+        params: Dict[str, Any] = {"limit": limit}
+        if start_time:
+            where_clauses.append("m.timestamp >= $start_time")
+            params["start_time"] = start_time
+        if end_time:
+            where_clauses.append("m.timestamp <= $end_time")
+            params["end_time"] = end_time
+        if tag_filters:
+            where_clauses.append(
+                "ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tag_filters)"
+            )
+            params["tag_filters"] = [tag.lower() for tag in tag_filters]
+
+        query = f"""
             MATCH (m:Memory)
-            WHERE coalesce(m.archived, false) = false
+            WHERE {' AND '.join(where_clauses)}
             RETURN m
             ORDER BY m.importance DESC, m.timestamp DESC
             LIMIT $limit
         """
-        result = graph.query(query, {"limit": limit})
+        result = graph.query(query, params)
     except Exception:
         logger.exception("Failed to load trending memories")
         return []
@@ -366,20 +503,40 @@ def _graph_keyword_search(
     query_text: str,
     limit: int,
     seen_ids: set[str],
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    tag_filters: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Perform a keyword-oriented search in the graph store."""
     normalized = query_text.strip().lower()
     if not normalized or normalized == "*":
-        return _graph_trending_results(graph, limit, seen_ids)
+        return _graph_trending_results(graph, limit, seen_ids, start_time, end_time, tag_filters)
 
     keywords = _extract_keywords(normalized)
     phrase = normalized if len(normalized) >= 3 else ""
 
     try:
+        base_where = ["m.content IS NOT NULL"]
+        params: Dict[str, Any] = {"limit": limit}
+        if start_time:
+            base_where.append("m.timestamp >= $start_time")
+            params["start_time"] = start_time
+        if end_time:
+            base_where.append("m.timestamp <= $end_time")
+            params["end_time"] = end_time
+        if tag_filters:
+            base_where.append(
+                "ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tag_filters)"
+            )
+            params["tag_filters"] = [tag.lower() for tag in tag_filters]
+
+        where_clause = " AND ".join(base_where)
+
         if keywords:
-            query = """
+            params.update({"keywords": keywords, "phrase": phrase})
+            query = f"""
                 MATCH (m:Memory)
-                WHERE m.content IS NOT NULL
+                WHERE {where_clause}
                 WITH m,
                      toLower(m.content) AS content,
                      [tag IN coalesce(m.tags, []) | toLower(tag)] AS tags
@@ -396,12 +553,12 @@ def _graph_keyword_search(
                 ORDER BY score DESC, m.importance DESC, m.timestamp DESC
                 LIMIT $limit
             """
-            params = {"keywords": keywords, "phrase": phrase, "limit": limit}
             result = graph.query(query, params)
         elif phrase:
-            query = """
+            params.update({"phrase": phrase})
+            query = f"""
                 MATCH (m:Memory)
-                WHERE m.content IS NOT NULL
+                WHERE {where_clause}
                 WITH m,
                      toLower(m.content) AS content,
                      [tag IN coalesce(m.tags, []) | toLower(tag)] AS tags
@@ -413,9 +570,9 @@ def _graph_keyword_search(
                 ORDER BY score DESC, m.importance DESC, m.timestamp DESC
                 LIMIT $limit
             """
-            result = graph.query(query, {"phrase": phrase, "limit": limit})
+            result = graph.query(query, params)
         else:
-            return _graph_trending_results(graph, limit, seen_ids)
+            return _graph_trending_results(graph, limit, seen_ids, start_time, end_time, tag_filters)
     except Exception:
         logger.exception("Graph keyword search failed")
         return []
@@ -1284,11 +1441,222 @@ def store_memory() -> Any:
     return jsonify(response), 201
 
 
+@app.route("/memory/<memory_id>", methods=["PATCH"])
+def update_memory(memory_id: str) -> Any:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(400, description="JSON body is required")
+
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
+    if not getattr(result, "result_set", None):
+        abort(404, description="Memory not found")
+
+    current_node = result.result_set[0][0]
+    current = _serialize_node(current_node)
+
+    new_content = payload.get("content", current.get("content"))
+    tags = _normalize_tag_list(payload.get("tags", current.get("tags")))
+    importance = payload.get("importance", current.get("importance"))
+    memory_type = payload.get("type", current.get("type"))
+    confidence = payload.get("confidence", current.get("confidence"))
+    timestamp = payload.get("timestamp", current.get("timestamp"))
+    metadata_raw = payload.get("metadata", _parse_metadata_field(current.get("metadata")))
+    updated_at = payload.get("updated_at", current.get("updated_at", utc_now()))
+    last_accessed = payload.get("last_accessed", current.get("last_accessed"))
+
+    if metadata_raw is None:
+        metadata: Dict[str, Any] = {}
+    elif isinstance(metadata_raw, dict):
+        metadata = metadata_raw
+    else:
+        abort(400, description="'metadata' must be an object")
+    metadata_json = json.dumps(metadata, default=str)
+
+    if timestamp:
+        try:
+            timestamp = _normalize_timestamp(timestamp)
+        except ValueError as exc:
+            abort(400, description=f"Invalid timestamp: {exc}")
+
+    if updated_at:
+        try:
+            updated_at = _normalize_timestamp(updated_at)
+        except ValueError as exc:
+            abort(400, description=f"Invalid updated_at: {exc}")
+
+    if last_accessed:
+        try:
+            last_accessed = _normalize_timestamp(last_accessed)
+        except ValueError as exc:
+            abort(400, description=f"Invalid last_accessed: {exc}")
+
+    update_query = """
+        MATCH (m:Memory {id: $id})
+        SET m.content = $content,
+            m.tags = $tags,
+            m.importance = $importance,
+            m.type = $type,
+            m.confidence = $confidence,
+            m.timestamp = $timestamp,
+            m.metadata = $metadata,
+            m.updated_at = $updated_at,
+            m.last_accessed = $last_accessed
+        RETURN m
+    """
+
+    graph.query(
+        update_query,
+        {
+            "id": memory_id,
+            "content": new_content,
+            "tags": tags,
+            "importance": importance,
+            "type": memory_type,
+            "confidence": confidence,
+            "timestamp": timestamp,
+            "metadata": metadata_json,
+            "updated_at": updated_at,
+            "last_accessed": last_accessed,
+        },
+    )
+
+    qdrant_client = get_qdrant_client()
+    vector = None
+    if qdrant_client is not None:
+        if new_content != current.get("content"):
+            vector = _generate_real_embedding(new_content)
+        else:
+            try:
+                existing = qdrant_client.retrieve(
+                    collection_name=COLLECTION_NAME,
+                    ids=[memory_id],
+                    with_vectors=True,
+                )
+                if existing:
+                    vector = existing[0].vector
+            except Exception:
+                logger.exception("Failed to retrieve existing vector; regenerating")
+                vector = _generate_real_embedding(new_content)
+
+        if vector is not None:
+            payload = {
+                "content": new_content,
+                "tags": tags,
+                "importance": importance,
+                "timestamp": timestamp,
+                "type": memory_type,
+                "confidence": confidence,
+                "updated_at": updated_at,
+                "last_accessed": last_accessed,
+                "metadata": metadata,
+            }
+            qdrant_client.upsert(
+                collection_name=COLLECTION_NAME,
+                points=[PointStruct(id=memory_id, vector=vector, payload=payload)],
+            )
+
+    return jsonify({"status": "success", "memory_id": memory_id})
+
+
+@app.route("/memory/<memory_id>", methods=["DELETE"])
+def delete_memory(memory_id: str) -> Any:
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
+    if not getattr(result, "result_set", None):
+        abort(404, description="Memory not found")
+
+    graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": memory_id})
+
+    qdrant_client = get_qdrant_client()
+    if qdrant_client is not None:
+        try:
+            if 'qdrant_models' in globals() and qdrant_models is not None:
+                selector = qdrant_models.PointIdsList(points=[memory_id])
+            else:
+                selector = {"points": [memory_id]}
+            qdrant_client.delete(collection_name=COLLECTION_NAME, points_selector=selector)
+        except Exception:
+            logger.exception("Failed to delete vector for memory %s", memory_id)
+
+    return jsonify({"status": "success", "memory_id": memory_id})
+
+
+@app.route("/memory/by-tag", methods=["GET"])
+def memories_by_tag() -> Any:
+    raw_tags = request.args.getlist("tags") or request.args.get("tags")
+    tags = _normalize_tag_list(raw_tags)
+    if not tags:
+        abort(400, description="'tags' query parameter is required")
+
+    limit = max(1, min(int(request.args.get("limit", 20)), 200))
+
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    params = {
+        "tags": [tag.lower() for tag in tags],
+        "limit": limit,
+    }
+
+    query = """
+        MATCH (m:Memory)
+        WHERE ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tags)
+        RETURN m
+        ORDER BY m.importance DESC, m.timestamp DESC
+        LIMIT $limit
+    """
+
+    try:
+        result = graph.query(query, params)
+    except Exception:
+        logger.exception("Tag search failed")
+        abort(500, description="Failed to search by tag")
+
+    memories: List[Dict[str, Any]] = []
+    for row in getattr(result, "result_set", []) or []:
+        data = _serialize_node(row[0])
+        data["metadata"] = _parse_metadata_field(data.get("metadata"))
+        memories.append(data)
+
+    return jsonify({"status": "success", "tags": tags, "count": len(memories), "memories": memories})
+
+
 @app.route("/recall", methods=["GET"])
 def recall_memories() -> Any:
     query_text = (request.args.get("query") or "").strip()
     limit = max(1, min(int(request.args.get("limit", 5)), 50))
     embedding_param = request.args.get("embedding")
+    time_query = request.args.get("time_query") or request.args.get("time")
+    start_param = request.args.get("start")
+    end_param = request.args.get("end")
+    tags_param = request.args.getlist("tags") or request.args.get("tags")
+
+    time_start, time_end = _parse_time_expression(time_query)
+
+    start_time = time_start
+    end_time = time_end
+
+    if start_param:
+        try:
+            start_time = _normalize_timestamp(start_param)
+        except ValueError as exc:
+            abort(400, description=f"Invalid start time: {exc}")
+
+    if end_param:
+        try:
+            end_time = _normalize_timestamp(end_param)
+        except ValueError as exc:
+            abort(400, description=f"Invalid end time: {exc}")
+
+    tag_filters = _normalize_tag_list(tags_param)
 
     seen_ids: set[str] = set()
     graph = get_memory_graph()
@@ -1298,12 +1666,24 @@ def recall_memories() -> Any:
     vector_matches: List[Dict[str, Any]] = []
     if qdrant_client is not None:
         vector_matches = _vector_search(qdrant_client, graph, query_text, embedding_param, limit, seen_ids)
+        if start_time or end_time or tag_filters:
+            vector_matches = [
+                res for res in vector_matches if _result_passes_filters(res, start_time, end_time, tag_filters)
+            ]
     results.extend(vector_matches[:limit])
 
     remaining_slots = max(0, limit - len(results))
 
     if remaining_slots and graph is not None:
-        graph_matches = _graph_keyword_search(graph, query_text, remaining_slots, seen_ids)
+        graph_matches = _graph_keyword_search(
+            graph,
+            query_text,
+            remaining_slots,
+            seen_ids,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_filters,
+        )
         results.extend(graph_matches[:remaining_slots])
 
     query_tokens = _extract_keywords(query_text.lower()) if query_text else []
@@ -1314,6 +1694,12 @@ def recall_memories() -> Any:
         result["final_score"] = final_score
         result["original_score"] = result.get("score", 0.0)
         result["score"] = final_score
+
+    results = [
+        res
+        for res in results
+        if _result_passes_filters(res, start_time, end_time, tag_filters)
+    ]
 
     results.sort(
         key=lambda r: (
@@ -1337,6 +1723,10 @@ def recall_memories() -> Any:
 
     if query_text:
         response["keywords"] = query_tokens
+    if start_time or end_time:
+        response["time_window"] = {"start": start_time, "end": end_time}
+    if tag_filters:
+        response["tags"] = tag_filters
 
     return jsonify(response)
 
