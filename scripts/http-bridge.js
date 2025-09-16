@@ -8,6 +8,8 @@
  */
 
 const { URL } = require('url');
+const http = require('http');
+const https = require('https');
 
 class AutoMemBridge {
   constructor() {
@@ -205,17 +207,50 @@ class AutoMemBridge {
     return this.fetch(url, options);
   }
 
-  async fetch(url, options) {
-    try {
-      const res = await fetch(url, options);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { ok: false, status: res.status, data, error: data?.message || data?.detail };
-      }
-      return { ok: true, status: res.status, data };
-    } catch (error) {
-      return { ok: false, status: 0, error: error.message };
+  async fetch(url, options = {}) {
+    const method = options.method || 'GET';
+    const headers = options.headers || {};
+    const body = options.body ? Buffer.from(options.body) : null;
+
+    const requestOptions = {
+      method,
+      headers,
+      timeout: 10000,
+    };
+
+    return new Promise(resolve => {
+    const transport = url.protocol === 'https:' ? https : http;
+    if (url.protocol === 'https:' && process.env.MCP_MEMORY_REJECT_UNAUTHORIZED === 'false') {
+      requestOptions.rejectUnauthorized = false;
     }
+      const req = transport.request(url, requestOptions, res => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try {
+            data = raw ? JSON.parse(raw) : {};
+          } catch (error) {
+            data = { raw };
+          }
+          const ok = res.statusCode >= 200 && res.statusCode < 300;
+          const errorMessage = !ok
+            ? data?.message || data?.detail || raw || `HTTP ${res.statusCode}`
+            : undefined;
+          resolve({ ok, status: res.statusCode, data, error: errorMessage });
+        });
+      });
+
+      req.on('error', error => {
+        resolve({ ok: false, status: 0, error: error.message });
+      });
+
+      if (body) {
+        req.write(body);
+      }
+      req.end();
+    });
   }
 }
 
