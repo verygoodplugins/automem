@@ -1,0 +1,149 @@
+{
+  "migration_summary": {
+    "total_memories": 10,
+    "memory_types": {
+      "Relationship": 1,
+      "Style": 1,
+      "Preference": 1,
+      "Habit": 3,
+      "Decision": 1,
+      "Achievement": 2,
+      "Insight": 1
+    },
+    "relationships_created": 10,
+    "patterns_detected": 2,
+    "preferences_found": 2,
+    "entities_extracted": {
+      "tools": 9,
+      "projects": 3,
+      "people": 4,
+      "concepts": 0
+    }
+  },
+  "improvements": {
+    "classification_rate": 1.0,
+    "avg_confidence": 0.7545833333333333,
+    "relationship_density": 1.0,
+    "entity_coverage": 0.9
+  },
+  "patterns": {
+    "pattern_Habit_0": {
+      "type": "Habit",
+      "confidence": 0.6,
+      "observations": 3,
+      "elements": [
+        "people:Jack"
+      ]
+    },
+    "pattern_Achievement_1": {
+      "type": "Achievement",
+      "confidence": 0.9,
+      "observations": 2,
+      "elements": [
+        "tools:Toggl",
+        "tools:MCP",
+        "projects:MCP",
+        "tools:Claude",
+        "tools:Slack",
+        "people:Claude"
+      ]
+    }
+  },
+  "preferences": [
+    {
+      "prefers": "falkordb",
+      "over": "arangodb",
+      "source": "8178e38b5c156fa2",
+      "strength": 0.8
+    },
+    {
+      "prefers": "FalkorDB",
+      "over": "ArangoDB",
+      "context": "cost-performance",
+      "source": "8178e38b5c156fa2",
+      "strength": 0.95
+    }
+  ],
+  "pkg_analytics": {
+    "confidence_distribution": {
+      "high": 1,
+      "medium": 9
+    },
+    "entity_frequency": {
+      "projects": [
+        [
+          "Write prompts, not issues",
+          1
+        ],
+        [
+          "Hey [name]",
+          1
+        ],
+        [
+          "Best",
+          1
+        ],
+        [
+          "J",
+          1
+        ],
+        [
+          "Recent Updates",
+          1
+        ]
+      ],
+      "tools": [
+        [
+          "FalkorDB",
+          2
+        ],
+        [
+          "AutoMem",
+          1
+        ],
+        [
+          "Playwright",
+          1
+        ]
+      ]
+    },
+    "memory_types": {
+      "Context": {
+        "average_confidence": 0.6,
+        "count": 1
+      },
+      "Decision": {
+        "average_confidence": 0.6,
+        "count": 1
+      },
+      "Habit": {
+        "average_confidence": 0.65,
+        "count": 4
+      },
+      "Memory": {
+        "average_confidence": 0.3,
+        "count": 4
+      }
+    },
+    "patterns": [],
+    "preferences": [],
+    "temporal_insights": {
+      "hour_06": {
+        "avg_importance": 1.0,
+        "count": 1
+      },
+      "hour_09": {
+        "avg_importance": 0.725,
+        "count": 4
+      },
+      "hour_10": {
+        "avg_importance": 0.7,
+        "count": 5
+      },
+      "hour_11": {
+        "avg_importance": 0.755,
+        "count": 10
+      }
+    }
+  }
+}

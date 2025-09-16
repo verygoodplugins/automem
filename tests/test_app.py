@@ -12,26 +12,80 @@ class DummyGraph:
     def __init__(self):
         self.queries = []
         self.nodes: set[str] = set()
+        self.memories = []
 
-    def query(self, query, params):
+    def query(self, query, params=None):
+        params = params or {}
         self.queries.append((query, params))
+
+        # Store memory creation
         if "MERGE (m:Memory {id:" in query:
-            self.nodes.add(params["id"])
-            return SimpleNamespace(result_set=[[SimpleNamespace(properties={"id": params["id"]})]])
+            memory_id = params["id"]
+            self.nodes.add(memory_id)
+            self.memories.append({
+                "id": memory_id,
+                "content": params.get("content", ""),
+                "type": params.get("type", "Memory"),
+                "confidence": params.get("confidence", 0.5),
+                "importance": params.get("importance", 0.5),
+            })
+            return SimpleNamespace(result_set=[[SimpleNamespace(properties={"id": memory_id})]])
+
+        # Analytics queries
+        if "MATCH (m:Memory)" in query and "RETURN m.type, COUNT(m)" in query:
+            # Return memory type distribution
+            types_count = {}
+            for mem in self.memories:
+                mem_type = mem.get("type", "Memory")
+                if mem_type not in types_count:
+                    types_count[mem_type] = {"count": 0, "total_conf": 0}
+                types_count[mem_type]["count"] += 1
+                types_count[mem_type]["total_conf"] += mem.get("confidence", 0.5)
+
+            result_set = []
+            for mem_type, data in types_count.items():
+                avg_conf = data["total_conf"] / data["count"] if data["count"] > 0 else 0
+                result_set.append([mem_type, data["count"], avg_conf])
+            return SimpleNamespace(result_set=result_set)
+
+        # Pattern queries
+        if "MATCH (p:Pattern)" in query:
+            return SimpleNamespace(result_set=[])
+
+        # Preference queries
+        if "MATCH (m1:Memory)-[r:PREFERS_OVER]" in query:
+            return SimpleNamespace(result_set=[])
+
+        # Temporal insights query
+        if "toInteger(substring(m.timestamp" in query:
+            return SimpleNamespace(result_set=[])
+
+        # Confidence distribution query
+        if "WHEN m.confidence" in query:
+            return SimpleNamespace(result_set=[["medium", len(self.memories)]])
+
+        # Entity extraction query
+        if "MATCH (m:Memory)" in query and "RETURN m.content" in query:
+            result_set = [[mem["content"]] for mem in self.memories[:100]]
+            return SimpleNamespace(result_set=result_set)
+
         # Simulate an association creation returning a stub relation
         if "MERGE (m1)-[r:" in query:
-            return SimpleNamespace(result_set=[["RELATES_TO", params["strength"], {"properties": {"id": params["id2"]}}]])
+            return SimpleNamespace(result_set=[["RELATES_TO", params.get("strength", 0.5), {"properties": {"id": params.get("id2", "")}}]])
+
         # Graph recall relations query
         if "MATCH (m:Memory {id:" in query and "RETURN type" in query:
             return SimpleNamespace(result_set=[])
+
         # Text search query should return stored node
-        if "MATCH (m:Memory)" in query and "RETURN m" in query:
+        if "MATCH (m:Memory)" in query and "RETURN m" in query and "WHERE" in query:
             data = {
                 "id": params.get("query", "memory-1"),
                 "content": "Example",
                 "importance": 0.9,
             }
             return SimpleNamespace(result_set=[[SimpleNamespace(properties=data)]])
+
         return SimpleNamespace(result_set=[])
 
 
@@ -101,3 +155,124 @@ def test_create_association_success(client, reset_state):
     assert response.status_code == 201
     body = response.get_json()
     assert body["relation_type"] == "RELATES_TO"
+
+
+def test_memory_classification(client, reset_state):
+    """Test that memories are automatically classified."""
+    # Decision memory
+    response = client.post(
+        "/memory",
+        data=json.dumps({"content": "I decided to use FalkorDB over ArangoDB"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["type"] == "Decision"
+    assert body["confidence"] >= 0.6
+
+    # Preference memory
+    response = client.post(
+        "/memory",
+        data=json.dumps({"content": "I prefer Railway for deployments"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["type"] == "Preference"
+
+    # Pattern memory
+    response = client.post(
+        "/memory",
+        data=json.dumps({"content": "I usually write tests before implementation"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["type"] == "Pattern"
+
+
+def test_temporal_validity_fields(client, reset_state):
+    """Test temporal validity fields t_valid and t_invalid."""
+    response = client.post(
+        "/memory",
+        data=json.dumps({
+            "content": "This was valid in 2023",
+            "t_valid": "2023-01-01T00:00:00Z",
+            "t_invalid": "2024-01-01T00:00:00Z",
+        }),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["status"] == "success"
+
+
+def test_new_relationship_types(client, reset_state):
+    """Test new PKG relationship types with properties."""
+    # Create memories for preference relationship
+    response = client.post(
+        "/memory",
+        data=json.dumps({"id": "tool1", "content": "FalkorDB"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+
+    response = client.post(
+        "/memory",
+        data=json.dumps({"id": "tool2", "content": "ArangoDB"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+
+    # Create PREFERS_OVER relationship with properties
+    response = client.post(
+        "/associate",
+        data=json.dumps({
+            "memory1_id": "tool1",
+            "memory2_id": "tool2",
+            "type": "PREFERS_OVER",
+            "strength": 0.95,
+            "context": "cost-effectiveness",
+            "reason": "30x cost difference",
+        }),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["relation_type"] == "PREFERS_OVER"
+    assert body["context"] == "cost-effectiveness"
+    assert body["reason"] == "30x cost difference"
+
+
+def test_analytics_endpoint(client, reset_state):
+    """Test the analytics endpoint."""
+    # Add some test memories first
+    memories = [
+        {"content": "I decided to use Python", "tags": ["decision", "language"]},
+        {"content": "I prefer dark mode", "tags": ["preference"]},
+        {"content": "I usually code at night", "tags": ["pattern", "habit"]},
+    ]
+
+    for memory in memories:
+        response = client.post(
+            "/memory",
+            data=json.dumps(memory),
+            content_type="application/json",
+        )
+        assert response.status_code == 201
+
+    # Get analytics
+    response = client.get("/analyze")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["status"] == "success"
+    assert "analytics" in body
+    analytics = body["analytics"]
+
+    # Check analytics structure
+    assert "memory_types" in analytics
+    assert "patterns" in analytics
+    assert "preferences" in analytics
+    assert "temporal_insights" in analytics
+    assert "entity_frequency" in analytics
+    assert "confidence_distribution" in analytics

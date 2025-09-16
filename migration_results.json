@@ -1,0 +1,195 @@
+{
+  "stats": {
+    "total": 8,
+    "migrated": 8,
+    "classified": 4,
+    "relationships": 2,
+    "patterns": 3,
+    "preferences": 0,
+    "entities": 0,
+    "errors": 0
+  },
+  "analytics": {
+    "confidence_distribution": {
+      "high": 1,
+      "medium": 64
+    },
+    "entity_frequency": {
+      "projects": [
+        [
+          "Write prompts, not issues",
+          1
+        ],
+        [
+          "Hey [name]",
+          1
+        ],
+        [
+          "Best",
+          1
+        ],
+        [
+          "J",
+          1
+        ],
+        [
+          "Recent Updates",
+          1
+        ]
+      ],
+      "tools": [
+        [
+          "FalkorDB",
+          12
+        ],
+        [
+          "Railway",
+          3
+        ],
+        [
+          "AutoMem",
+          1
+        ],
+        [
+          "Playwright",
+          1
+        ]
+      ]
+    },
+    "memory_types": {
+      "Context": {
+        "average_confidence": 0.6,
+        "count": 1
+      },
+      "Decision": {
+        "average_confidence": 0.6,
+        "count": 9
+      },
+      "Habit": {
+        "average_confidence": 0.633,
+        "count": 6
+      },
+      "Insight": {
+        "average_confidence": 0.6,
+        "count": 3
+      },
+      "Memory": {
+        "average_confidence": 0.3,
+        "count": 30
+      },
+      "Pattern": {
+        "average_confidence": 0.6,
+        "count": 8
+      },
+      "Preference": {
+        "average_confidence": 0.6,
+        "count": 8
+      }
+    },
+    "patterns": [],
+    "preferences": [
+      {
+        "context": "cost-effectiveness",
+        "over": "ArangoDB",
+        "prefers": "FalkorDB",
+        "strength": 0.95
+      },
+      {
+        "context": "cost-effectiveness",
+        "over": "ArangoDB",
+        "prefers": "FalkorDB",
+        "strength": 0.95
+      },
+      {
+        "context": "cost-effectiveness",
+        "over": "ArangoDB",
+        "prefers": "FalkorDB",
+        "strength": 0.95
+      },
+      {
+        "context": "ease-of-use",
+        "over": "Heroku",
+        "prefers": "Railway",
+        "strength": 0.8
+      },
+      {
+        "context": "ease-of-use",
+        "over": "Heroku",
+        "prefers": "Railway",
+        "strength": 0.8
+      },
+      {
+        "context": "ease-of-use",
+        "over": "Heroku",
+        "prefers": "Railway",
+        "strength": 0.8
+      }
+    ],
+    "temporal_insights": {
+      "hour_06": {
+        "avg_importance": 1.0,
+        "count": 1
+      },
+      "hour_09": {
+        "avg_importance": 0.717,
+        "count": 6
+      },
+      "hour_10": {
+        "avg_importance": 0.7,
+        "count": 7
+      },
+      "hour_11": {
+        "avg_importance": 0.558,
+        "count": 51
+      },
+      "hour_12": {
+        "avg_importance": 0.7,
+        "count": 2
+      },
+      "hour_14": {
+        "avg_importance": 0.7,
+        "count": 2
+      },
+      "hour_15": {
+        "avg_importance": 0.7,
+        "count": 2
+      },
+      "hour_16": {
+        "avg_importance": 0.7,
+        "count": 2
+      },
+      "hour_22": {
+        "avg_importance": 0.7,
+        "count": 2
+      }
+    }
+  },
+  "relationships": [
+    {
+      "from": "7af09d54",
+      "to": "02123e83",
+      "type": "REINFORCES"
+    },
+    {
+      "from": "7af09d54",
+      "to": "02123e83",
+      "type": "EXEMPLIFIES"
+    }
+  ],
+  "entities": {
+    "projects": [
+      "wp-fusion",
+      "claude-automation-hub"
+    ],
+    "tools": [
+      "FalkorDB",
+      "ArangoDB",
+      "claude",
+      "Railway"
+    ],
+    "people": [
+      "Jack"
+    ]
+  },
+  "preferences": []
+}
