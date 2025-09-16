@@ -29,6 +29,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from werkzeug.exceptions import HTTPException
 from openai import OpenAI
+from consolidation import MemoryConsolidator, ConsolidationScheduler
 
 # Load environment variables before configuring the application.
 load_dotenv()
@@ -838,6 +839,129 @@ def create_association() -> Any:
             response[prop] = relationship_props[prop]
 
     return jsonify(response), 201
+
+
+@app.route("/consolidate", methods=["POST"])
+def consolidate_memories() -> Any:
+    """Run memory consolidation."""
+    data = request.get_json() or {}
+    mode = data.get('mode', 'full')
+    dry_run = data.get('dry_run', True)
+
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    try:
+        vector_store = get_qdrant_client()
+        consolidator = MemoryConsolidator(graph, vector_store)
+        results = consolidator.consolidate(mode=mode, dry_run=dry_run)
+
+        return jsonify({
+            "status": "success",
+            "consolidation": results
+        }), 200
+    except Exception as e:
+        logger.error(f"Consolidation failed: {e}")
+        return jsonify({
+            "error": "Consolidation failed",
+            "details": str(e)
+        }), 500
+
+
+@app.route("/consolidate/status", methods=["GET"])
+def consolidation_status() -> Any:
+    """Get consolidation scheduler status."""
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    try:
+        vector_store = get_qdrant_client()
+        consolidator = MemoryConsolidator(graph, vector_store)
+        scheduler = ConsolidationScheduler(consolidator)
+
+        return jsonify({
+            "status": "success",
+            "next_runs": scheduler.get_next_runs(),
+            "history": scheduler.history[-10:]  # Last 10 runs
+        }), 200
+    except Exception as e:
+        logger.error(f"Failed to get consolidation status: {e}")
+        return jsonify({
+            "error": "Failed to get status",
+            "details": str(e)
+        }), 500
+
+
+@app.route("/startup-recall", methods=["GET"])
+def startup_recall() -> Any:
+    """Recall critical lessons at session startup."""
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    try:
+        # Search for critical lessons and system rules
+        lesson_query = """
+            MATCH (m:Memory)
+            WHERE 'critical' IN m.tags OR 'lesson' IN m.tags OR 'ai-assistant' IN m.tags
+            RETURN m.id as id, m.content as content, m.tags as tags,
+                   m.importance as importance, m.type as type, m.metadata as metadata
+            ORDER BY m.importance DESC
+            LIMIT 10
+        """
+
+        lesson_results = graph.query(lesson_query)
+        lessons = []
+
+        if lesson_results.result_set:
+            for row in lesson_results.result_set:
+                lessons.append({
+                    'id': row[0],
+                    'content': row[1],
+                    'tags': row[2] if row[2] else [],
+                    'importance': row[3] if row[3] else 0.5,
+                    'type': row[4] if row[4] else 'Memory',
+                    'metadata': json.loads(row[5]) if row[5] else {}
+                })
+
+        # Get system rules
+        system_query = """
+            MATCH (m:Memory)
+            WHERE 'system' IN m.tags OR 'memory-recall' IN m.tags
+            RETURN m.id as id, m.content as content, m.tags as tags
+            LIMIT 5
+        """
+
+        system_results = graph.query(system_query)
+        system_rules = []
+
+        if system_results.result_set:
+            for row in system_results.result_set:
+                system_rules.append({
+                    'id': row[0],
+                    'content': row[1],
+                    'tags': row[2] if row[2] else []
+                })
+
+        response = {
+            'status': 'success',
+            'critical_lessons': lessons,
+            'system_rules': system_rules,
+            'lesson_count': len(lessons),
+            'has_critical': any(l.get('importance', 0) >= 0.9 for l in lessons),
+            'summary': f"Recalled {len(lessons)} lesson(s) and {len(system_rules)} system rule(s)"
+        }
+
+        return jsonify(response), 200
+
+    except Exception as e:
+        logger.error(f"Startup recall failed: {e}")
+        return jsonify({
+            "error": "Startup recall failed",
+            "details": str(e)
+        }), 500
 
 
 @app.route("/analyze", methods=["GET"])

@@ -5,3 +5,5 @@ qdrant-client==1.11.3
 numpy==1.26.4
 python-dotenv==1.0.1
 openai==1.55.3
+scipy==1.16.2
+scikit-learn==1.7.2
