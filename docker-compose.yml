@@ -1,0 +1,41 @@
+# docker-compose.yml - Local development environment
+version: '3.8'
+
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"  # Redis/FalkorDB
+      - "3000:3000"  # Browser UI
+    volumes:
+      - falkordb_data:/var/lib/falkordb/data
+    environment:
+      - REDIS_ARGS=--save 60 1000
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  flask-api:
+    build: .
+    ports:
+      - "8001:8001"  # Flask API
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - RAILWAY_PRIVATE_DOMAIN=falkordb
+      - QDRANT_URL=${QDRANT_URL}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/venv  # Exclude venv from bind mount
+    environment:
+      - PORT=8001
+    command: /app/venv/bin/python app.py
+
+volumes:
+  falkordb_data:
