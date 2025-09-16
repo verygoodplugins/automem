@@ -187,6 +187,20 @@ def _extract_keywords(text: str) -> List[str]:
     return keywords
 
 
+def _parse_metadata_field(value: Any) -> Any:
+    """Convert stored metadata value back into a dictionary when possible."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            decoded = json.loads(value)
+            if isinstance(decoded, dict):
+                return decoded
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
 def _format_graph_result(
     graph: Any,
     node: Any,
@@ -1016,6 +1030,7 @@ def store_memory() -> Any:
         metadata = metadata_raw
     else:
         abort(400, description="'metadata' must be an object")
+    metadata_json = json.dumps(metadata, default=str)
 
     # Classify the memory type
     memory_type, type_confidence = memory_classifier.classify(content)
@@ -1109,7 +1124,7 @@ def store_memory() -> Any:
                 "t_invalid": t_invalid,
                 "updated_at": updated_at,
                 "last_accessed": last_accessed,
-                "metadata": metadata,
+                "metadata": metadata_json,
             },
         )
     except Exception:  # pragma: no cover - log full stack trace in production
@@ -1665,11 +1680,16 @@ def _generate_real_embedding(content: str) -> List[float]:
 def _serialize_node(node: Any) -> Dict[str, Any]:
     properties = getattr(node, "properties", None)
     if isinstance(properties, dict):
-        return dict(properties)
-    # When FalkorDB returns plain dictionaries already
-    if isinstance(node, dict):
-        return dict(node)
-    return {"value": node}
+        data = dict(properties)
+    elif isinstance(node, dict):
+        data = dict(node)
+    else:
+        return {"value": node}
+
+    if "metadata" in data:
+        data["metadata"] = _parse_metadata_field(data["metadata"])
+
+    return data
 
 
 def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
