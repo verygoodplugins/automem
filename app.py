@@ -23,6 +23,8 @@ from falkordb import FalkorDB
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from werkzeug.exceptions import HTTPException
+import openai
+from openai import OpenAI
 
 # Load environment variables before configuring the application.
 load_dotenv()
@@ -49,14 +51,50 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalize_timestamp(raw: Any) -> str:
+    """Validate and normalise an incoming timestamp string to UTC ISO format."""
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("Timestamp must be a non-empty ISO formatted string")
+
+    candidate = raw.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:  # pragma: no cover - validation path
+        raise ValueError("Invalid ISO timestamp") from exc
+
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
 @dataclass
 class ServiceState:
     falkordb: Optional[FalkorDB] = None
     memory_graph: Any = None
     qdrant: Optional[QdrantClient] = None
+    openai_client: Optional[OpenAI] = None
 
 
 state = ServiceState()
+
+
+def init_openai() -> None:
+    """Initialize OpenAI client for embedding generation."""
+    if state.openai_client is not None:
+        return
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        logger.warning("OpenAI API key not provided; embeddings will be placeholders")
+        return
+    
+    try:
+        state.openai_client = OpenAI(api_key=api_key)
+        logger.info("OpenAI client initialized for embedding generation")
+    except Exception:
+        logger.exception("Failed to initialize OpenAI client")
+        state.openai_client = None
 
 
 def init_falkordb() -> None:
@@ -191,8 +229,9 @@ def store_memory() -> Any:
     embedding_status = "skipped"
 
     if embedding is None and qdrant_client is not None:
-        embedding = _generate_placeholder_embedding(content)
-        embedding_status = "placeholder"
+        # Generate real embedding using OpenAI API or fallback
+        embedding = _generate_real_embedding(content)
+        embedding_status = "generated" if state.openai_client else "placeholder"
     elif embedding is not None:
         embedding_status = "provided"
 
@@ -200,7 +239,14 @@ def store_memory() -> Any:
     if graph is None:
         abort(503, description="FalkorDB is unavailable")
 
-    created_at = utc_now()
+    created_at = data.get("timestamp")
+    if created_at:
+        try:
+            created_at = _normalize_timestamp(created_at)
+        except ValueError as exc:
+            abort(400, description=str(exc))
+    else:
+        created_at = utc_now()
     try:
         graph.query(
             """
@@ -265,40 +311,53 @@ def recall_memories() -> Any:
     results: List[Dict[str, Any]] = []
     seen_ids: set[str] = set()
 
+    # Try vector search first
     qdrant_client = get_qdrant_client()
-    if qdrant_client is not None and embedding_param:
-        try:
-            embedding = _coerce_embedding(embedding_param)
-        except ValueError as exc:
-            abort(400, description=str(exc))
-        try:
-            vector_results = qdrant_client.search(
-                collection_name=COLLECTION_NAME,
-                query_vector=embedding,
-                limit=limit,
-            )
-            graph = get_memory_graph()
-            for hit in vector_results:
-                memory_id = str(hit.id)
-                seen_ids.add(memory_id)
-                base = {
-                    "id": memory_id,
-                    "score": hit.score,
-                    "source": "qdrant",
-                    "memory": hit.payload,
-                    "relations": [],
-                }
-                if graph is not None:
-                    relations = _fetch_relations(graph, memory_id)
-                    if relations:
-                        base["relations"] = relations
-                results.append(base)
-        except Exception:  # pragma: no cover - log full stack trace in production
-            logger.exception("Qdrant search failed")
+    if qdrant_client is not None:
+        embedding = None
+        
+        # If no embedding provided but we have query text, generate one
+        if not embedding_param and query_text:
+            logger.debug("Generating embedding for query: %s", query_text)
+            embedding = _generate_real_embedding(query_text)
+        elif embedding_param:
+            try:
+                embedding = _coerce_embedding(embedding_param)
+            except ValueError as exc:
+                abort(400, description=str(exc))
+        
+        if embedding:
+            try:
+                vector_results = qdrant_client.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=embedding,
+                    limit=limit,
+                )
+                graph = get_memory_graph()
+                for hit in vector_results:
+                    memory_id = str(hit.id)
+                    seen_ids.add(memory_id)
+                    base = {
+                        "id": memory_id,
+                        "score": hit.score,
+                        "source": "qdrant",
+                        "memory": hit.payload,
+                        "relations": [],
+                    }
+                    if graph is not None:
+                        relations = _fetch_relations(graph, memory_id)
+                        if relations:
+                            base["relations"] = relations
+                    results.append(base)
+                logger.debug("Vector search returned %d results", len(vector_results))
+            except Exception:  # pragma: no cover - log full stack trace in production
+                logger.exception("Qdrant search failed")
 
+    # Also do keyword search if we have query text
     graph = get_memory_graph()
     if graph is not None and query_text:
         try:
+            # First try exact phrase match
             text_results = graph.query(
                 """
                 MATCH (m:Memory)
@@ -309,6 +368,29 @@ def recall_memories() -> Any:
                 """,
                 {"query": query_text, "limit": limit},
             )
+            
+            # If no exact phrase matches, try word-by-word matching
+            if len(text_results.result_set) == 0:
+                # Split query into words for better matching
+                query_words = query_text.lower().split()
+                if len(query_words) > 1:
+                    logger.debug("No exact match, trying word-by-word for: %s", query_words)
+                    # Create a Cypher query that matches all words
+                    conditions = " AND ".join([
+                        f"toLower(m.content) CONTAINS '{word}'" 
+                        for word in query_words
+                    ])
+                    text_results = graph.query(
+                        f"""
+                        MATCH (m:Memory)
+                        WHERE {conditions}
+                        RETURN m
+                        ORDER BY m.importance DESC
+                        LIMIT $limit
+                        """,
+                        {"limit": limit},
+                    )
+            
             for row in text_results.result_set:
                 node = row[0]
                 data = _serialize_node(node)
@@ -324,9 +406,14 @@ def recall_memories() -> Any:
                         "relations": _fetch_relations(graph, memory_id),
                     }
                 )
+            logger.debug("Graph search returned %d new results", 
+                        len([r for r in results if r["source"] == "graph"]))
         except Exception:  # pragma: no cover - log full stack trace in production
             logger.exception("Graph text search failed")
 
+    # Sort results by score (vector results first, then graph results)
+    results.sort(key=lambda x: (x["score"] is None, -x["score"] if x["score"] else 0))
+    
     return jsonify({"status": "success", "results": results, "count": len(results)})
 
 
@@ -440,6 +527,29 @@ def _generate_placeholder_embedding(content: str) -> List[float]:
     return rng.random(VECTOR_SIZE).tolist()
 
 
+def _generate_real_embedding(content: str) -> List[float]:
+    """Generate a real semantic embedding using OpenAI's API."""
+    init_openai()
+    
+    if state.openai_client is None:
+        logger.debug("OpenAI client not available, falling back to placeholder")
+        return _generate_placeholder_embedding(content)
+    
+    try:
+        # Use the smaller, cheaper model for embeddings
+        response = state.openai_client.embeddings.create(
+            input=content,
+            model="text-embedding-3-small",
+            dimensions=VECTOR_SIZE  # OpenAI allows specifying dimensions
+        )
+        embedding = response.data[0].embedding
+        logger.debug("Generated OpenAI embedding for content (length: %d)", len(content))
+        return embedding
+    except Exception as e:
+        logger.warning("Failed to generate OpenAI embedding: %s", str(e))
+        return _generate_placeholder_embedding(content)
+
+
 def _serialize_node(node: Any) -> Dict[str, Any]:
     properties = getattr(node, "properties", None)
     if isinstance(properties, dict):
@@ -480,4 +590,5 @@ if __name__ == "__main__":
     logger.info("Starting Flask API on port %s", port)
     init_falkordb()
     init_qdrant()
+    init_openai()
     app.run(host="0.0.0.0", port=port, debug=False)
