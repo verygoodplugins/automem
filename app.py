@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from threading import Thread, Event
 from queue import Queue
 import time
@@ -123,6 +123,15 @@ SEARCH_STOPWORDS = {
     "under",
 }
 
+# Search weighting parameters (can be overridden via environment variables)
+SEARCH_WEIGHT_VECTOR = float(os.getenv("SEARCH_WEIGHT_VECTOR", "0.35"))
+SEARCH_WEIGHT_KEYWORD = float(os.getenv("SEARCH_WEIGHT_KEYWORD", "0.35"))
+SEARCH_WEIGHT_TAG = float(os.getenv("SEARCH_WEIGHT_TAG", "0.15"))
+SEARCH_WEIGHT_IMPORTANCE = float(os.getenv("SEARCH_WEIGHT_IMPORTANCE", "0.1"))
+SEARCH_WEIGHT_CONFIDENCE = float(os.getenv("SEARCH_WEIGHT_CONFIDENCE", "0.05"))
+SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.1"))
+SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.15"))
+
 
 def utc_now() -> str:
     """Return an ISO formatted UTC timestamp."""
@@ -199,6 +208,101 @@ def _parse_metadata_field(value: Any) -> Any:
         except json.JSONDecodeError:
             return value
     return value
+
+
+def _collect_metadata_terms(metadata: Dict[str, Any]) -> Set[str]:
+    terms: Set[str] = set()
+
+    def visit(item: Any) -> None:
+        if isinstance(item, str):
+            trimmed = item.strip()
+            if not trimmed:
+                return
+            if len(trimmed) <= 256:
+                lower = trimmed.lower()
+                terms.add(lower)
+                for token in re.findall(r"[a-z0-9_\-]+", lower):
+                    terms.add(token)
+        elif isinstance(item, (list, tuple, set)):
+            for sub in item:
+                visit(sub)
+        elif isinstance(item, dict):
+            for sub in item.values():
+                visit(sub)
+
+    visit(metadata)
+    return terms
+
+
+def _compute_recency_score(timestamp: Optional[str]) -> float:
+    if not timestamp:
+        return 0.0
+    parsed = _parse_iso_datetime(timestamp)
+    if not parsed:
+        return 0.0
+    age_days = max((datetime.now(timezone.utc) - parsed).total_seconds() / 86400.0, 0.0)
+    if age_days <= 0:
+        return 1.0
+    # Linear decay over 180 days
+    return max(0.0, 1.0 - (age_days / 180.0))
+
+
+def _compute_metadata_score(
+    result: Dict[str, Any],
+    query: str,
+    tokens: List[str],
+) -> Tuple[float, Dict[str, float]]:
+    memory = result.get("memory", {})
+    metadata = _parse_metadata_field(memory.get("metadata")) if memory else {}
+    metadata_terms = _collect_metadata_terms(metadata) if isinstance(metadata, dict) else set()
+
+    tags = memory.get("tags") or []
+    tag_terms = {str(tag).lower() for tag in tags if isinstance(tag, str)}
+
+    token_hits = 0
+    for token in tokens:
+        if token in tag_terms or token in metadata_terms:
+            token_hits += 1
+
+    exact_match = 0.0
+    normalized_query = query.lower().strip()
+    if normalized_query and normalized_query in metadata_terms:
+        exact_match = 1.0
+
+    importance = memory.get("importance")
+    importance_score = float(importance) if isinstance(importance, (int, float)) else 0.0
+
+    confidence = memory.get("confidence")
+    confidence_score = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+
+    recency_score = _compute_recency_score(memory.get("timestamp"))
+
+    tag_score = token_hits / max(len(tokens), 1) if tokens else 0.0
+
+    vector_component = result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
+    keyword_component = result.get("match_score", 0.0) if result.get("match_type") in {"keyword", "trending"} else 0.0
+
+    final = (
+        SEARCH_WEIGHT_VECTOR * vector_component
+        + SEARCH_WEIGHT_KEYWORD * keyword_component
+        + SEARCH_WEIGHT_TAG * tag_score
+        + SEARCH_WEIGHT_IMPORTANCE * importance_score
+        + SEARCH_WEIGHT_CONFIDENCE * confidence_score
+        + SEARCH_WEIGHT_RECENCY * recency_score
+        + SEARCH_WEIGHT_EXACT * exact_match
+    )
+
+    components = {
+        "vector": vector_component,
+        "keyword": keyword_component,
+        "tag": tag_score,
+        "importance": importance_score,
+        "confidence": confidence_score,
+        "recency": recency_score,
+        "exact": exact_match,
+    }
+
+    return final, components
 
 
 def _format_graph_result(
@@ -1190,14 +1294,35 @@ def recall_memories() -> Any:
     graph = get_memory_graph()
     qdrant_client = get_qdrant_client()
 
-    vector_matches = _vector_search(qdrant_client, graph, query_text, embedding_param, limit, seen_ids)
-    results: List[Dict[str, Any]] = vector_matches[:limit]
+    results: List[Dict[str, Any]] = []
+    vector_matches: List[Dict[str, Any]] = []
+    if qdrant_client is not None:
+        vector_matches = _vector_search(qdrant_client, graph, query_text, embedding_param, limit, seen_ids)
+    results.extend(vector_matches[:limit])
 
     remaining_slots = max(0, limit - len(results))
 
     if remaining_slots and graph is not None:
         graph_matches = _graph_keyword_search(graph, query_text, remaining_slots, seen_ids)
         results.extend(graph_matches[:remaining_slots])
+
+    query_tokens = _extract_keywords(query_text.lower()) if query_text else []
+    for result in results:
+        final_score, components = _compute_metadata_score(result, query_text or "", query_tokens)
+        result.setdefault("score_components", components)
+        result["score_components"].update(components)
+        result["final_score"] = final_score
+        result["original_score"] = result.get("score", 0.0)
+        result["score"] = final_score
+
+    results.sort(
+        key=lambda r: (
+            -float(r.get("final_score", 0.0)),
+            r.get("source") != "qdrant",
+            -float(r.get("original_score", 0.0)),
+            -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
+        )
+    )
 
     response = {
         "status": "success",
@@ -1211,7 +1336,7 @@ def recall_memories() -> Any:
     }
 
     if query_text:
-        response["keywords"] = _extract_keywords(query_text)
+        response["keywords"] = query_tokens
 
     return jsonify(response)
 
