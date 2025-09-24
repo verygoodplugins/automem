@@ -11,6 +11,8 @@ callers can mix structured lookups, relationship traversal, and semantic recall.
   create graph associations.
 - FalkorDB powers rich relationships and consolidation workflows (decay,
   creative association discovery, clustering, controlled forgetting).
+- Background enrichment pipeline extracts entities, writes summaries, links
+  temporal/semantic neighbors, and queues retries with health reporting.
 - Qdrant integration for semantic recall. The service falls back gracefully when
   Qdrant is unavailable and can regenerate embeddings on demand.
 - Deterministic placeholder embeddings when none are supplied, making local
@@ -39,6 +41,14 @@ make dev
 
 The API listens on `http://localhost:8001`, FalkorDB on `6379`, and Qdrant on
 `6333`.
+
+Optional: install spaCy for richer entity extraction inside the enrichment
+pipeline:
+
+```bash
+pip install spacy
+python -m spacy download en_core_web_sm
+```
 
 ### Bare API (no Docker)
 
@@ -185,6 +195,29 @@ curl -X POST https://.../admin/reembed \
 
 Regenerates embeddings in controlled batches—perfect for migrations.
 
+## Enrichment Pipeline
+
+The enrichment worker runs asynchronously to augment each memory after it is
+stored:
+
+- Extracts entities (tools, projects, people, organisations, concepts) and
+  stores them in metadata while tagging memories (`entity:<type>:<slug>`).
+- Generates lightweight summaries (first-sentence snippets) and timestamps the
+  enrichment run.
+- Adds temporal links (`PRECEDED_BY`) to the most recent predecessors, keeping a
+  `count` of reinforcement.
+- Detects emerging patterns for each memory type and strengthens shared
+  `Pattern` nodes with key terms.
+- Uses Qdrant similarity search to connect close neighbours via
+  `SIMILAR_TO` relationships (symmetric) with stored cosine scores.
+- Exposes metrics and queue health at `GET /enrichment/status`, including
+  pending/in-flight counts and last success/error details.
+- Supports forced reprocessing through `POST /enrichment/reprocess` (requires an
+  admin token).
+
+Install `spacy` and an English model (e.g. `en_core_web_sm`) to unlock richer
+entity extraction, or rely on the built-in heuristics.
+
 ## Consolidation Engine
 
 AutoMem runs a background consolidator that keeps memories fresh even when the
@@ -225,6 +258,13 @@ frequent runs produce incremental but meaningful updates.
 | `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Creative association interval | `3600` |
 | `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `21600` |
 | `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forgetting interval | `86400` |
+| `ENRICHMENT_MAX_ATTEMPTS` | Automatic retry limit for failed enrichments | `3` |
+| `ENRICHMENT_SIMILARITY_LIMIT` | Number of semantic neighbours to consider | `5` |
+| `ENRICHMENT_SIMILARITY_THRESHOLD` | Minimum cosine score for `SIMILAR_TO` links | `0.8` |
+| `ENRICHMENT_IDLE_SLEEP_SECONDS` | Worker sleep when queue is empty | `2` |
+| `ENRICHMENT_FAILURE_BACKOFF_SECONDS` | Backoff between retry attempts | `5` |
+| `ENRICHMENT_ENABLE_SUMMARIES` | Enable automatic summary generation | `true` |
+| `ENRICHMENT_SPACY_MODEL` | spaCy model name for entity extraction | `en_core_web_sm` |
 | `SEARCH_WEIGHT_*` | Optional scoring weights (vector, keyword, tag, etc.) | see app defaults |
 
 The application loads environment variables from the process, `.env` in the

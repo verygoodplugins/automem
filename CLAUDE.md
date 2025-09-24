@@ -36,7 +36,7 @@ make status          # Check deployment status
 
 ## API Endpoints
 
-The API (`app.py`) provides 11 endpoints:
+The API (`app.py`) provides 13 endpoints:
 
 ### Core Memory Operations
 - `POST /memory` - Store a memory with content, tags, importance, metadata, and optional embedding
@@ -53,6 +53,10 @@ The API (`app.py`) provides 11 endpoints:
 - `GET /consolidate/status` - Check consolidation scheduler status and last run times
 - `GET /startup-recall` - Retrieve memories for startup context
 - `GET /analyze` - Analyze graph statistics and memory patterns
+
+### Enrichment
+- `GET /enrichment/status` - Inspect queue depth, worker state, and throughput metrics
+- `POST /enrichment/reprocess` - Force reprocessing of specific memories (requires `X-Admin-Token`)
 
 ### Health
 - `GET /health` - Service health check with database connectivity status
@@ -74,6 +78,15 @@ The `consolidation.py` module implements biological memory patterns:
 - **Forgetting** - Archives low-importance memories (daily)
 
 Scheduling is managed by `ConsolidationScheduler` with configurable intervals via environment variables.
+
+### Enrichment Pipeline
+
+- Queue-backed worker consumes `EnrichmentJob`s created on each memory write and optional reprocess calls.
+- Extracts entities (tools/projects/people/organisations/concepts) using spaCy when available, otherwise regex heuristics, and writes them to metadata plus entity tags (`entity:<type>:<slug>`).
+- Adds short summaries, timestamps (`enriched_at`), and per-run metrics under `metadata.enrichment`.
+- Establishes temporal (`PRECEDED_BY`) and semantic (`SIMILAR_TO`) edges, including symmetric cosine scores from Qdrant.
+- Detects recurring patterns per memory type, strengthens shared `Pattern` nodes, and links memories via `EXEMPLIFIES` relationships with key terms.
+- Metrics exposed at `GET /enrichment/status` include processed counts, last success/error, queue depth, and inflight jobs.
 
 ### Relationship Types
 
@@ -156,6 +169,22 @@ CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD=0.3  # Only skip truly low-importance i
 CONSOLIDATION_CREATIVE_INTERVAL_SECONDS=3600  # 1 hour
 CONSOLIDATION_CLUSTER_INTERVAL_SECONDS=21600  # 6 hours
 CONSOLIDATION_FORGET_INTERVAL_SECONDS=86400   # 24 hours
+
+# Enrichment controls
+ENRICHMENT_MAX_ATTEMPTS=3                     # Retry attempts before giving up
+ENRICHMENT_SIMILARITY_LIMIT=5                 # Neighbour links via Qdrant
+ENRICHMENT_SIMILARITY_THRESHOLD=0.8           # Minimum cosine to link memories
+ENRICHMENT_IDLE_SLEEP_SECONDS=2               # Worker sleep when idle
+ENRICHMENT_FAILURE_BACKOFF_SECONDS=5          # Backoff between retries
+ENRICHMENT_ENABLE_SUMMARIES=true              # Toggle automatic summary creation
+ENRICHMENT_SPACY_MODEL=en_core_web_sm         # spaCy model for entity extraction
+```
+
+Install spaCy locally to improve entity extraction:
+
+```bash
+pip install spacy
+python -m spacy download en_core_web_sm
 ```
 
 ## Migration Tools

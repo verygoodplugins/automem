@@ -11,16 +11,18 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
 import uuid
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
-from threading import Thread, Event
-from queue import Queue
+from threading import Thread, Event, Lock
+from queue import Empty, Queue
 import time
 
 from dotenv import load_dotenv
@@ -31,6 +33,11 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 from werkzeug.exceptions import HTTPException
 from openai import OpenAI
 from consolidation import MemoryConsolidator, ConsolidationScheduler
+
+try:
+    import spacy  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    spacy = None
 
 # Load environment variables before configuring the application.
 load_dotenv()
@@ -73,6 +80,15 @@ CONSOLIDATION_TASK_FIELDS = {
     "forget": "forget_last_run",
     "full": "full_last_run",
 }
+
+# Enrichment configuration
+ENRICHMENT_MAX_ATTEMPTS = int(os.getenv("ENRICHMENT_MAX_ATTEMPTS", "3"))
+ENRICHMENT_SIMILARITY_LIMIT = int(os.getenv("ENRICHMENT_SIMILARITY_LIMIT", "5"))
+ENRICHMENT_SIMILARITY_THRESHOLD = float(os.getenv("ENRICHMENT_SIMILARITY_THRESHOLD", "0.8"))
+ENRICHMENT_IDLE_SLEEP_SECONDS = float(os.getenv("ENRICHMENT_IDLE_SLEEP_SECONDS", "2"))
+ENRICHMENT_FAILURE_BACKOFF_SECONDS = float(os.getenv("ENRICHMENT_FAILURE_BACKOFF_SECONDS", "5"))
+ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").lower() not in {"0", "false", "no"}
+ENRICHMENT_SPACY_MODEL = os.getenv("ENRICHMENT_SPACY_MODEL", "en_core_web_sm")
 
 # Memory types for classification
 MEMORY_TYPES = {
@@ -138,6 +154,7 @@ SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.1"))
 SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.15"))
 
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
+ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
 
 
 def _normalize_tag_list(raw: Any) -> List[str]:
@@ -722,37 +739,155 @@ class MemoryClassifier:
 memory_classifier = MemoryClassifier()
 
 
+_SPACY_NLP = None
+_SPACY_INIT_LOCK = Lock()
+
+
+def _get_spacy_nlp():  # type: ignore[return-type]
+    global _SPACY_NLP
+    if spacy is None:
+        return None
+
+    with _SPACY_INIT_LOCK:
+        if _SPACY_NLP is not None:
+            return _SPACY_NLP
+
+        try:
+            _SPACY_NLP = spacy.load(ENRICHMENT_SPACY_MODEL)
+            logger.info("Loaded spaCy model '%s' for enrichment", ENRICHMENT_SPACY_MODEL)
+        except Exception:  # pragma: no cover - optional dependency
+            logger.warning("Failed to load spaCy model '%s'", ENRICHMENT_SPACY_MODEL)
+            _SPACY_NLP = None
+
+        return _SPACY_NLP
+
+
+def _slugify(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", value.lower())
+    return cleaned.strip("-")
+
+
+def generate_summary(content: str, fallback: Optional[str] = None, *, max_length: int = 240) -> Optional[str]:
+    text = (content or "").strip()
+    if not text:
+        return fallback
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    summary = sentences[0] if sentences else text
+    summary = summary.strip()
+
+    if not summary:
+        return fallback
+
+    if len(summary) > max_length:
+        truncated = summary[:max_length].rsplit(" ", 1)[0]
+        summary = truncated.strip() if truncated else summary[:max_length].strip()
+
+    if fallback and fallback.strip() == summary:
+        return fallback
+
+    return summary
+
+
 def extract_entities(content: str) -> Dict[str, List[str]]:
-    """Extract entities from memory content."""
-    entities = {
-        "tools": [],
-        "projects": [],
-        "people": [],
-        "concepts": [],
+    """Extract entities from memory content using spaCy when available."""
+    result: Dict[str, Set[str]] = {
+        "tools": set(),
+        "projects": set(),
+        "people": set(),
+        "concepts": set(),
+        "organizations": set(),
     }
 
-    # Simple pattern-based extraction (can be enhanced with NER)
+    text = (content or "").strip()
+    if not text:
+        return {key: [] for key in result}
+
+    nlp = _get_spacy_nlp()
+    if nlp is not None:
+        try:
+            doc = nlp(text)
+            for ent in doc.ents:
+                value = ent.text.strip()
+                if not value:
+                    continue
+                if ent.label_ in {"PERSON"}:
+                    result["people"].add(value)
+                elif ent.label_ in {"ORG"}:
+                    result["organizations"].add(value)
+                elif ent.label_ in {"PRODUCT", "WORK_OF_ART", "LAW"}:
+                    result["tools"].add(value)
+                elif ent.label_ in {"EVENT", "GPE", "LOC", "NORP"}:
+                    result["concepts"].add(value)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("spaCy entity extraction failed")
+
+    # Regex-based fallbacks to capture simple patterns
+    for match in re.findall(r"(?:with|met with|meeting with|talked to|spoke with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", text):
+        result["people"].add(match.strip())
+
     tool_patterns = [
-        r"(?:use|using|deploy|deployed|with|via)\s+([A-Z][a-zA-Z]+(?:DB|JS|\.js|\.py)?)",
-        r"([A-Z][a-zA-Z]+)\s+(?:vs|versus|over|instead of)",
+        r"(?:use|using|deploy|deployed|with|via)\s+([A-Z][\w\-]+)",
+        r"([A-Z][\w\-]+)\s+(?:vs|versus|over|instead of)",
     ]
-
     for pattern in tool_patterns:
-        matches = re.findall(pattern, content)
-        entities["tools"].extend(matches)
+        for match in re.findall(pattern, text, flags=re.IGNORECASE):
+            result["tools"].add(match.strip())
 
-    # Extract project names (words in quotes or capitalized phrases)
-    project_patterns = [
-        r'"([^"]+)"',  # Quoted strings
-        r'`([^`]+)`',  # Backtick strings
-        r'\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\b',  # Capitalized phrases
-    ]
+    for match in re.findall(r'`([^`]+)`', text):
+        result["projects"].add(match.strip())
 
-    for pattern in project_patterns[:2]:  # Only quotes and backticks for projects
-        matches = re.findall(pattern, content)
-        entities["projects"].extend(matches)
+    for match in re.findall(r'"([^"]+)"', text):
+        result["projects"].add(match.strip())
 
-    return entities
+    for match in re.findall(r"Project\s+([A-Z][\w\-]+)", text, flags=re.IGNORECASE):
+        result["projects"].add(match.strip())
+
+    result["tools"].difference_update(result["people"])
+
+    cleaned = {key: sorted({value for value in values if value}) for key, values in result.items()}
+    return cleaned
+
+
+@dataclass
+class EnrichmentStats:
+    processed_total: int = 0
+    successes: int = 0
+    failures: int = 0
+    last_success_id: Optional[str] = None
+    last_success_at: Optional[str] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[str] = None
+
+    def record_success(self, memory_id: str) -> None:
+        self.processed_total += 1
+        self.successes += 1
+        self.last_success_id = memory_id
+        self.last_success_at = utc_now()
+
+    def record_failure(self, error: str) -> None:
+        self.processed_total += 1
+        self.failures += 1
+        self.last_error = error
+        self.last_error_at = utc_now()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "processed_total": self.processed_total,
+            "successes": self.successes,
+            "failures": self.failures,
+            "last_success_id": self.last_success_id,
+            "last_success_at": self.last_success_at,
+            "last_error": self.last_error,
+            "last_error_at": self.last_error_at,
+        }
+
+
+@dataclass
+class EnrichmentJob:
+    memory_id: str
+    attempt: int = 0
+    forced: bool = False
 
 
 @dataclass
@@ -763,6 +898,10 @@ class ServiceState:
     openai_client: Optional[OpenAI] = None
     enrichment_queue: Optional[Queue] = None
     enrichment_thread: Optional[Thread] = None
+    enrichment_stats: EnrichmentStats = field(default_factory=EnrichmentStats)
+    enrichment_inflight: Set[str] = field(default_factory=set)
+    enrichment_pending: Set[str] = field(default_factory=set)
+    enrichment_lock: Lock = field(default_factory=Lock)
     consolidation_thread: Optional[Thread] = None
     consolidation_stop_event: Optional[Event] = None
 
@@ -787,6 +926,20 @@ def _extract_api_token() -> Optional[str]:
         return api_key_param.strip()
 
     return None
+
+
+def _require_admin_token() -> None:
+    if not ADMIN_TOKEN:
+        abort(403, description="Admin token not configured")
+
+    provided = (
+        request.headers.get("X-Admin-Token")
+        or request.headers.get("X-Admin-Api-Key")
+        or request.args.get("admin_token")
+    )
+
+    if provided != ADMIN_TOKEN:
+        abort(401, description="Admin authorization required")
 
 
 @app.before_request
@@ -903,6 +1056,22 @@ def init_enrichment_pipeline() -> None:
     state.enrichment_thread = Thread(target=enrichment_worker, daemon=True)
     state.enrichment_thread.start()
     logger.info("Enrichment pipeline initialized")
+
+
+def enqueue_enrichment(memory_id: str, *, forced: bool = False, attempt: int = 0) -> None:
+    if not memory_id or state.enrichment_queue is None:
+        return
+
+    job = EnrichmentJob(memory_id=memory_id, attempt=attempt, forced=forced)
+
+    with state.enrichment_lock:
+        if not forced and (
+            memory_id in state.enrichment_pending or memory_id in state.enrichment_inflight
+        ):
+            return
+
+        state.enrichment_pending.add(memory_id)
+        state.enrichment_queue.put(job)
 
 
 def _load_control_record(graph: Any) -> Dict[str, Any]:
@@ -1112,62 +1281,160 @@ def enrichment_worker() -> None:
     """Background worker that processes memories for enrichment."""
     while True:
         try:
-            if state.enrichment_queue and not state.enrichment_queue.empty():
-                memory_id = state.enrichment_queue.get(timeout=1)
-                enrich_memory(memory_id)
+            if state.enrichment_queue is None:
+                time.sleep(ENRICHMENT_IDLE_SLEEP_SECONDS)
+                continue
+
+            try:
+                job: EnrichmentJob = state.enrichment_queue.get(timeout=ENRICHMENT_IDLE_SLEEP_SECONDS)
+            except Empty:
+                continue
+
+            with state.enrichment_lock:
+                state.enrichment_pending.discard(job.memory_id)
+                state.enrichment_inflight.add(job.memory_id)
+
+            try:
+                processed = enrich_memory(job.memory_id, forced=job.forced)
+                state.enrichment_stats.record_success(job.memory_id)
+                if not processed:
+                    logger.debug("Enrichment skipped for %s (already processed)", job.memory_id)
+            except Exception as exc:  # pragma: no cover - background thread
+                state.enrichment_stats.record_failure(str(exc))
+                logger.exception("Failed to enrich memory %s", job.memory_id)
+                if job.attempt + 1 < ENRICHMENT_MAX_ATTEMPTS:
+                    time.sleep(ENRICHMENT_FAILURE_BACKOFF_SECONDS)
+                    enqueue_enrichment(job.memory_id, forced=job.forced, attempt=job.attempt + 1)
+                else:
+                    logger.error(
+                        "Giving up on enrichment for %s after %s attempts",
+                        job.memory_id,
+                        job.attempt + 1,
+                    )
+            finally:
+                with state.enrichment_lock:
+                    state.enrichment_inflight.discard(job.memory_id)
                 state.enrichment_queue.task_done()
-            else:
-                time.sleep(2)  # Sleep when queue is empty
-        except Exception:
-            logger.exception("Error in enrichment worker")
-            time.sleep(5)  # Back off on error
+        except Exception:  # pragma: no cover - defensive catch-all
+            logger.exception("Error in enrichment worker loop")
+            time.sleep(ENRICHMENT_FAILURE_BACKOFF_SECONDS)
 
 
-def enrich_memory(memory_id: str) -> None:
+def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     """Enrich a memory with relationships, patterns, and entity extraction."""
     graph = get_memory_graph()
     if graph is None:
-        return
+        raise RuntimeError("FalkorDB unavailable for enrichment")
 
-    try:
-        # Get the memory
-        result = graph.query(
-            "MATCH (m:Memory {id: $id}) RETURN m",
-            {"id": memory_id}
-        )
+    result = graph.query(
+        "MATCH (m:Memory {id: $id}) RETURN m",
+        {"id": memory_id}
+    )
 
-        if not result.result_set:
-            return
+    if not result.result_set:
+        logger.debug("Skipping enrichment for %s; memory not found", memory_id)
+        return False
 
-        memory = result.result_set[0][0]
-        content = memory.properties.get("content", "")
+    node = result.result_set[0][0]
+    properties = getattr(node, "properties", None)
+    if not isinstance(properties, dict):
+        properties = dict(getattr(node, "__dict__", {}))
 
-        # Extract entities (for future use)
-        extract_entities(content)
+    metadata_raw = properties.get("metadata")
+    metadata = _parse_metadata_field(metadata_raw) or {}
+    if not isinstance(metadata, dict):
+        metadata = {"_raw_metadata": metadata}
 
-        # Find related memories (temporal proximity)
-        find_temporal_relationships(graph, memory_id)
+    already_processed = bool(properties.get("processed"))
+    if already_processed and not forced:
+        return False
 
-        # Detect patterns
-        detect_patterns(graph, memory_id, content)
+    content = properties.get("content", "") or ""
+    entities = extract_entities(content)
 
-        # Mark as processed
-        graph.query(
-            "MATCH (m:Memory {id: $id}) SET m.processed = true",
-            {"id": memory_id}
-        )
+    tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
+    entity_tags: Set[str] = set()
 
-        logger.debug("Enriched memory %s", memory_id)
+    if entities:
+        entities_section = metadata.setdefault("entities", {})
+        if not isinstance(entities_section, dict):
+            entities_section = {}
+        for category, values in entities.items():
+            if not values:
+                continue
+            entities_section[category] = sorted(values)
+            for value in values:
+                slug = _slugify(value)
+                if slug:
+                    entity_tags.add(f"entity:{category}:{slug}")
+        metadata["entities"] = entities_section
 
-    except Exception:
-        logger.exception("Failed to enrich memory %s", memory_id)
+    if entity_tags:
+        tags = list(dict.fromkeys(tags + sorted(entity_tags)))
+
+    temporal_links = find_temporal_relationships(graph, memory_id)
+    pattern_info = detect_patterns(graph, memory_id, content)
+    semantic_neighbors = link_semantic_neighbors(graph, memory_id)
+
+    if ENRICHMENT_ENABLE_SUMMARIES:
+        existing_summary = properties.get("summary")
+        summary = generate_summary(content, existing_summary if forced else None)
+    else:
+        summary = properties.get("summary")
+
+    enrichment_meta = metadata.setdefault("enrichment", {})
+    if not isinstance(enrichment_meta, dict):
+        enrichment_meta = {}
+    enrichment_meta.update(
+        {
+            "last_run": utc_now(),
+            "forced": forced,
+            "temporal_links": temporal_links,
+            "patterns_detected": pattern_info,
+            "semantic_neighbors": [
+                {"id": neighbour_id, "score": score}
+                for neighbour_id, score in semantic_neighbors
+            ],
+        }
+    )
+    metadata["enrichment"] = enrichment_meta
+
+    update_payload = {
+        "id": memory_id,
+        "metadata": json.dumps(metadata, default=str),
+        "tags": tags,
+        "summary": summary,
+        "enriched_at": utc_now(),
+    }
+
+    graph.query(
+        """
+        MATCH (m:Memory {id: $id})
+        SET m.metadata = $metadata,
+            m.tags = $tags,
+            m.summary = $summary,
+            m.enriched = true,
+            m.enriched_at = $enriched_at,
+            m.processed = true
+        """,
+        update_payload,
+    )
+
+    logger.debug(
+        "Enriched memory %s (temporal=%s, patterns=%s, semantic=%s)",
+        memory_id,
+        temporal_links,
+        pattern_info,
+        len(semantic_neighbors),
+    )
+
+    return True
 
 
-def find_temporal_relationships(graph: Any, memory_id: str) -> None:
+def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> int:
     """Find and create temporal relationships with recent memories."""
+    created = 0
     try:
-        # Find memories from recent time window
-        # Note: FalkorDB doesn't support datetime() function, use string comparison
         result = graph.query(
             """
             MATCH (m1:Memory {id: $id})
@@ -1176,37 +1443,40 @@ def find_temporal_relationships(graph: Any, memory_id: str) -> None:
                 AND m2.timestamp IS NOT NULL
                 AND m1.timestamp IS NOT NULL
                 AND m2.timestamp < m1.timestamp
-            RETURN m2.id, m2.content
+            RETURN m2.id
             ORDER BY m2.timestamp DESC
-            LIMIT 5
+            LIMIT $limit
             """,
-            {"id": memory_id}
+            {"id": memory_id, "limit": limit}
         )
 
-        for related_id, related_content in result.result_set:
-            # Create PRECEDED_BY relationship
+        timestamp = utc_now()
+        for related_id, in result.result_set:
+            if not related_id:
+                continue
             graph.query(
                 """
                 MATCH (m1:Memory {id: $id1})
                 MATCH (m2:Memory {id: $id2})
-                MERGE (m1)-[r:PRECEDED_BY {
-                    created_at: $timestamp
-                }]->(m2)
+                MERGE (m1)-[r:PRECEDED_BY]->(m2)
+                SET r.updated_at = $timestamp,
+                    r.count = COALESCE(r.count, 0) + 1
                 """,
-                {"id1": memory_id, "id2": related_id, "timestamp": utc_now()}
+                {"id1": memory_id, "id2": related_id, "timestamp": timestamp},
             )
-
+            created += 1
     except Exception:
         logger.exception("Failed to find temporal relationships")
 
+    return created
 
-def detect_patterns(graph: Any, memory_id: str, content: str) -> None:
+
+def detect_patterns(graph: Any, memory_id: str, content: str) -> List[Dict[str, Any]]:
     """Detect if this memory exemplifies or creates patterns."""
-    try:
-        # Look for similar memories to detect patterns
-        memory_type, confidence = memory_classifier.classify(content)
+    detected: List[Dict[str, Any]] = []
 
-        # Search for similar memories of the same type
+    try:
+        memory_type, confidence = memory_classifier.classify(content)
         result = graph.query(
             """
             MATCH (m:Memory)
@@ -1219,13 +1489,25 @@ def detect_patterns(graph: Any, memory_id: str, content: str) -> None:
             {"type": memory_type, "id": memory_id}
         )
 
+        similar_texts = [content]
+        similar_texts.extend(row[1] for row in result.result_set if len(row) > 1)
         similar_count = len(result.result_set)
 
         if similar_count >= 3:
-            # We might have a pattern!
-            pattern_id = f"pattern-{memory_type}-{uuid.uuid4().hex[:8]}"
+            tokens = Counter()
+            for text in similar_texts:
+                for token in re.findall(r"[a-zA-Z]{4,}", (text or "").lower()):
+                    if token in SEARCH_STOPWORDS:
+                        continue
+                    tokens[token] += 1
 
-            # Create or strengthen pattern
+            top_terms = [term for term, _ in tokens.most_common(5)]
+            pattern_id = f"pattern-{memory_type}-{uuid.uuid4().hex[:8]}"
+            description = (
+                f"Pattern across {similar_count + 1} {memory_type} memories"
+                + (f" highlighting {', '.join(top_terms)}" if top_terms else "")
+            )
+
             graph.query(
                 """
                 MERGE (p:Pattern {type: $type})
@@ -1234,43 +1516,181 @@ def detect_patterns(graph: Any, memory_id: str, content: str) -> None:
                     p.content = $description,
                     p.confidence = $initial_confidence,
                     p.observations = 1,
+                    p.key_terms = $key_terms,
                     p.created_at = $timestamp
                 ON MATCH SET
                     p.confidence = CASE
                         WHEN p.confidence < 0.95 THEN p.confidence + 0.05
                         ELSE 0.95
                     END,
-                    p.observations = p.observations + 1
+                    p.observations = p.observations + 1,
+                    p.key_terms = $key_terms,
+                    p.updated_at = $timestamp
                 """,
                 {
                     "type": memory_type,
                     "pattern_id": pattern_id,
-                    "description": f"Pattern of {memory_type}",
-                    "initial_confidence": 0.3,
-                    "timestamp": utc_now()
-                }
+                    "description": description,
+                    "initial_confidence": 0.35,
+                    "key_terms": top_terms,
+                    "timestamp": utc_now(),
+                },
             )
 
-            # Create EXEMPLIFIES relationship
             graph.query(
                 """
                 MATCH (m:Memory {id: $memory_id})
                 MATCH (p:Pattern {type: $type})
-                MERGE (m)-[r:EXEMPLIFIES {
-                    confidence: $confidence,
-                    created_at: $timestamp
-                }]->(p)
+                MERGE (m)-[r:EXEMPLIFIES]->(p)
+                SET r.confidence = $confidence,
+                    r.updated_at = $timestamp
                 """,
                 {
                     "type": memory_type,
                     "memory_id": memory_id,
                     "confidence": confidence,
-                    "timestamp": utc_now()
-                }
+                    "timestamp": utc_now(),
+                },
             )
 
+            detected.append(
+                {
+                    "type": memory_type,
+                    "similar_memories": similar_count,
+                    "key_terms": top_terms,
+                }
+            )
     except Exception:
         logger.exception("Failed to detect patterns")
+
+    return detected
+
+
+def link_semantic_neighbors(graph: Any, memory_id: str) -> List[Tuple[str, float]]:
+    client = get_qdrant_client()
+    if client is None:
+        return []
+
+    try:
+        points = client.retrieve(
+            collection_name=COLLECTION_NAME,
+            ids=[memory_id],
+            with_vectors=True,
+            with_payload=False,
+        )
+    except Exception:
+        logger.exception("Failed to fetch vector for memory %s", memory_id)
+        return []
+
+    if not points or getattr(points[0], "vector", None) is None:
+        return []
+
+    query_vector = points[0].vector
+
+    try:
+        neighbors = client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=query_vector,
+            limit=ENRICHMENT_SIMILARITY_LIMIT + 1,
+            with_payload=False,
+        )
+    except Exception:
+        logger.exception("Semantic neighbor search failed for %s", memory_id)
+        return []
+
+    created: List[Tuple[str, float]] = []
+    timestamp = utc_now()
+
+    for neighbour in neighbors:
+        neighbour_id = str(neighbour.id)
+        if neighbour_id == memory_id:
+            continue
+
+        score = float(neighbour.score or 0.0)
+        if score < ENRICHMENT_SIMILARITY_THRESHOLD:
+            continue
+
+        params = {
+            "id1": memory_id,
+            "id2": neighbour_id,
+            "score": score,
+            "timestamp": timestamp,
+        }
+
+        graph.query(
+            """
+            MATCH (a:Memory {id: $id1})
+            MATCH (b:Memory {id: $id2})
+            MERGE (a)-[r:SIMILAR_TO]->(b)
+            SET r.score = $score,
+                r.updated_at = $timestamp
+            """,
+            params,
+        )
+
+        graph.query(
+            """
+            MATCH (a:Memory {id: $id1})
+            MATCH (b:Memory {id: $id2})
+            MERGE (b)-[r:SIMILAR_TO]->(a)
+            SET r.score = $score,
+                r.updated_at = $timestamp
+            """,
+            params,
+        )
+
+        created.append((neighbour_id, score))
+
+    return created
+
+
+@app.route("/enrichment/status", methods=["GET"])
+def enrichment_status() -> Any:
+    queue_size = state.enrichment_queue.qsize() if state.enrichment_queue else 0
+    thread_alive = bool(state.enrichment_thread and state.enrichment_thread.is_alive())
+
+    with state.enrichment_lock:
+        pending = len(state.enrichment_pending)
+        inflight = len(state.enrichment_inflight)
+
+    response = {
+        "status": "running" if thread_alive else "stopped",
+        "queue_size": queue_size,
+        "pending": pending,
+        "inflight": inflight,
+        "max_attempts": ENRICHMENT_MAX_ATTEMPTS,
+        "stats": state.enrichment_stats.to_dict(),
+    }
+
+    return jsonify(response)
+
+
+@app.route("/enrichment/reprocess", methods=["POST"])
+def enrichment_reprocess() -> Any:
+    _require_admin_token()
+
+    payload = request.get_json(silent=True) or {}
+    ids: Set[str] = set()
+
+    raw_ids = payload.get("ids") or request.args.get("ids")
+    if isinstance(raw_ids, str):
+        ids.update(part.strip() for part in raw_ids.split(",") if part.strip())
+    elif isinstance(raw_ids, list):
+        for item in raw_ids:
+            if isinstance(item, str) and item.strip():
+                ids.add(item.strip())
+
+    if not ids:
+        abort(400, description="No memory ids provided for reprocessing")
+
+    for memory_id in ids:
+        enqueue_enrichment(memory_id, forced=True)
+
+    return jsonify({
+        "status": "queued",
+        "count": len(ids),
+        "ids": sorted(ids),
+    }), 202
 
 
 @app.errorhandler(Exception)
@@ -1432,8 +1852,7 @@ def store_memory() -> Any:
         abort(500, description="Failed to store memory in FalkorDB")
 
     # Queue for enrichment
-    if state.enrichment_queue is not None:
-        state.enrichment_queue.put(memory_id)
+    enqueue_enrichment(memory_id)
 
     qdrant_result: Optional[str] = None
     if qdrant_client is not None and embedding is not None:
