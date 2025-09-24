@@ -6,14 +6,19 @@ Uses the memories already extracted from the conversation
 
 import json
 import time
-import requests
-import hashlib
 from datetime import datetime
-import re
+from pathlib import Path
 from typing import Dict, List, Tuple
+
+import hashlib
+import re
+import requests
 import sys
 
 BASE_URL = "http://localhost:8001"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+REPORTS_DIR = REPO_ROOT / "reports"
+REPORTS_DIR.mkdir(exist_ok=True)
 
 # Sample of extracted memories from MCP (first 50)
 EXTRACTED_MEMORIES = [
@@ -432,9 +437,10 @@ class PKGMigrator:
         print("  ✓ Preference and decision tracking")
 
         # Save report
-        with open('migration_demo_report.json', 'w') as f:
+        report_path = REPORTS_DIR / 'migration_demo_report.json'
+        with report_path.open('w') as f:
             json.dump(report, f, indent=2, default=str)
-            print("\n📄 Report saved to migration_demo_report.json")
+        print(f"\n📄 Report saved to {report_path.relative_to(REPO_ROOT)}")
 
         print("\n🎉 Migration demonstration complete!")
 

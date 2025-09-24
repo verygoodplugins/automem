@@ -2,4 +2,3 @@
 *.code-workspace
 .env
 /__pycache__
-full-scope.md

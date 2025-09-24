@@ -5,10 +5,14 @@ Test recall performance comparison between flat MCP and PKG system
 
 import json
 import time
+from pathlib import Path
+from typing import Dict, List, Tuple
+
 import requests
-from typing import List, Dict, Tuple
 
 BASE_URL = "http://localhost:8001"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+REPORTS_DIR = REPO_ROOT / "reports"
 
 def test_recall(query: str) -> Tuple[List[Dict], float]:
     """Test recall with a query and measure time"""
@@ -65,10 +69,11 @@ def run_tests():
     ]
 
     # Load migrated memories for comparison
+    report_path = REPORTS_DIR / 'migration_demo_report.json'
     try:
-        with open('migration_demo_report.json', 'r') as f:
+        with report_path.open('r') as f:
             report = json.load(f)
-    except:
+    except Exception:
         report = {}
 
     # Simulate flat memories (without enrichment)

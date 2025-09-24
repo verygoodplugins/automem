@@ -7,15 +7,20 @@ Migrates memories from flat storage to intelligent Personal Knowledge Graph.
 import json
 import re
 import time
-from datetime import datetime
-from typing import Dict, List, Tuple, Any
-import requests
 from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Tuple, Any
+
 import hashlib
+import requests
 
 # Configuration
 AUTOMEM_URL = "http://localhost:8001"
 BATCH_SIZE = 50
+REPO_ROOT = Path(__file__).resolve().parents[2]
+REPORTS_DIR = REPO_ROOT / "reports"
+REPORTS_DIR.mkdir(exist_ok=True)
 
 # Type mapping from MCP tags to PKG types
 TAG_TO_TYPE_MAP = {
@@ -495,9 +500,10 @@ def main():
     results = migrator.run_migration()
 
     # Save results
-    with open("migration_results.json", "w") as f:
+    report_path = REPORTS_DIR / "migration_results.json"
+    with report_path.open("w") as f:
         json.dump(results, f, indent=2)
-    print(f"\n📁 Results saved to migration_results.json")
+    print(f"\n📁 Results saved to {report_path.relative_to(REPO_ROOT)}")
 
 
 if __name__ == "__main__":

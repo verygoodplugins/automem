@@ -17,9 +17,9 @@ Successfully transformed AutoMem from a simple memory storage system into an int
 
 ### 2. **Migration Tools** 🔧
 Created three migration scripts:
-- `migrate_mcp_to_pkg.py` - Basic demo with sample memories
-- `migrate_mcp_full.py` - Comprehensive migration for 553 memories
-- `migrate_extracted.py` - Working demo with real extracted memories
+- `scripts/migrations/migrate_mcp_to_pkg.py` - Basic demo with sample memories
+- `scripts/migrations/migrate_mcp_full.py` - Comprehensive migration for 553 memories
+- `scripts/migrations/migrate_extracted.py` - Working demo with real extracted memories
 
 ### 3. **Test Results** 📊
 
@@ -175,10 +175,10 @@ GET /analyze
 - `PKG_FEATURES.md` - Complete feature documentation
 
 ### Migration Tools
-- `migrate_mcp_to_pkg.py` - Basic migration demo
-- `migrate_mcp_full.py` - Full 553-memory migration
-- `migrate_extracted.py` - Working demo with real data
-- `migrate_mcp_real.py` - Production migration script
+- `scripts/migrations/migrate_mcp_to_pkg.py` - Basic migration demo
+- `scripts/migrations/migrate_mcp_full.py` - Full 553-memory migration
+- `scripts/migrations/migrate_extracted.py` - Working demo with real data
+- `scripts/migrations/migrate_mcp_real.py` - Production migration script
 - `test_recall_performance.py` - Performance comparison
 
 ## Next Steps

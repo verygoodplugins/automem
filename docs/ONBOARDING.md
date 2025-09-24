@@ -512,10 +512,10 @@ Local development uses `.env` file (not committed).
 ### Project Documentation
 - `README.md` - Project overview and API reference
 - `CLAUDE.md` - AI assistance context
-- `full-scope.md` - Complete vision and roadmap
+- `archive/full-scope.md` - Complete vision and roadmap
 - `CONSOLIDATION_FEATURES.md` - Memory processing details
-- `PKG_FEATURES.md` - Personal Knowledge Graph capabilities
-- `ideas.md` - Future architecture plans
+- `archive/PKG_FEATURES.md` - Personal Knowledge Graph capabilities
+- `archive/ideas.md` - Future architecture plans
 
 ### Code Examples
 - `scripts/consolidation_demo.py` - Consolidation examples

@@ -7,18 +7,23 @@ Extracts all 553 memories from MCP and migrates to PKG with intelligence.
 import json
 import re
 import time
-import hashlib
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Any, Optional
-import requests
 from collections import defaultdict
-import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import aiohttp
+import asyncio
+import hashlib
+import requests
 
 # Configuration
 AUTOMEM_URL = "http://localhost:8001"
 MCP_BATCH_SIZE = 50
 MIGRATION_BATCH_SIZE = 10
+REPO_ROOT = Path(__file__).resolve().parents[2]
+REPORTS_DIR = REPO_ROOT / "reports"
+REPORTS_DIR.mkdir(exist_ok=True)
 
 # Enhanced type mapping
 TYPE_PATTERNS = {
@@ -648,11 +653,12 @@ class AdvancedMemoryMigrator:
             "migration_time": datetime.now().isoformat()
         }
 
-        with open("migration_complete.json", "w") as f:
+        report_path = REPORTS_DIR / "migration_complete.json"
+        with report_path.open("w") as f:
             json.dump(results, f, indent=2)
 
         print("\n✨ MIGRATION COMPLETE!")
-        print(f"📁 Full results saved to migration_complete.json")
+        print(f"📁 Full results saved to {report_path.relative_to(REPO_ROOT)}")
         print(f"\n🎉 Success Rate: {(self.stats['migrated']/self.stats['total']*100):.1f}%")
         print(f"🧠 Your flat memory storage is now an intelligent Personal Knowledge Graph!")
 

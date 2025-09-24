@@ -139,7 +139,7 @@ pytest tests/test_app.py -v
 
 Run the demo script:
 ```bash
-python demo_pkg_features.py
+python scripts/demo_pkg_features.py
 ```
 
 ## 🎯 Benefits

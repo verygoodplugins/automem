@@ -70,6 +70,11 @@ MCP_MEMORY_HTTP_ENDPOINT=http://127.0.0.1:8001 \
 Or point `MCP_MEMORY_HTTP_ENDPOINT` at your hosted deployment. The bridge exposes
 synchronised tools for AutoMem (store/recall/update/delete/etc.).
 
+## Documentation
+
+- `docs/ONBOARDING.md` – project overview, environment setup, and service access
+- `docs/archive/` – historical documents (PKG feature deep dives, architecture notes, ideas)
+
 ## Authentication
 
 Set an API token on the server:

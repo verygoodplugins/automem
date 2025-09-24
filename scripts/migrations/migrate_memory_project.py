@@ -6,14 +6,19 @@ Focuses on the past month of development work
 
 import json
 import time
-import requests
-import hashlib
 from datetime import datetime, timedelta
-import re
+from pathlib import Path
 from typing import Dict, List, Tuple
+
+import hashlib
+import re
+import requests
 import sys
 
 BASE_URL = "http://localhost:8001"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+REPORTS_DIR = REPO_ROOT / "reports"
+REPORTS_DIR.mkdir(exist_ok=True)
 
 # Memory system related memories extracted from MCP
 MEMORY_PROJECT_MEMORIES = [
@@ -537,9 +542,10 @@ class MemoryProjectMigrator:
                 print(f"    Reason: {pref['reason']}")
 
         # Save report
-        with open('memory_project_migration_report.json', 'w') as f:
+        report_path = REPORTS_DIR / 'memory_project_migration_report.json'
+        with report_path.open('w') as f:
             json.dump(report, f, indent=2, default=str)
-            print("\n📄 Full report saved to memory_project_migration_report.json")
+        print(f"\n📄 Full report saved to {report_path.relative_to(REPO_ROOT)}")
 
         print("\n🎉 Memory project migration complete!")
         print("\n💡 Next Steps:")
