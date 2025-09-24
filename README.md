@@ -270,6 +270,7 @@ frequent runs produce incremental but meaningful updates.
 | `ENRICHMENT_FAILURE_BACKOFF_SECONDS` | Backoff between retry attempts | `5` |
 | `ENRICHMENT_ENABLE_SUMMARIES` | Enable automatic summary generation | `true` |
 | `ENRICHMENT_SPACY_MODEL` | spaCy model name for entity extraction | `en_core_web_sm` |
+| `RECALL_RELATION_LIMIT` | Max related memories returned per result | `5` |
 | `SEARCH_WEIGHT_*` | Optional scoring weights (vector, keyword, tag, etc.) | see app defaults |
 
 The application loads environment variables from the process, `.env` in the

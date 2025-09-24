@@ -89,6 +89,7 @@ ENRICHMENT_IDLE_SLEEP_SECONDS = float(os.getenv("ENRICHMENT_IDLE_SLEEP_SECONDS",
 ENRICHMENT_FAILURE_BACKOFF_SECONDS = float(os.getenv("ENRICHMENT_FAILURE_BACKOFF_SECONDS", "5"))
 ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").lower() not in {"0", "false", "no"}
 ENRICHMENT_SPACY_MODEL = os.getenv("ENRICHMENT_SPACY_MODEL", "en_core_web_sm")
+RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 
 # Memory types for classification
 MEMORY_TYPES = {
@@ -142,6 +143,20 @@ SEARCH_STOPWORDS = {
     "less",
     "over",
     "under",
+}
+
+ENTITY_STOPWORDS = {
+    "you",
+    "your",
+    "yours",
+    "whatever",
+    "today",
+    "tomorrow",
+    "project",
+    "projects",
+    "office",
+    "session",
+    "meeting",
 }
 
 # Search weighting parameters (can be overridden via environment variables)
@@ -767,6 +782,31 @@ def _slugify(value: str) -> str:
     return cleaned.strip("-")
 
 
+def _is_valid_entity(value: str, *, allow_lower: bool = False, max_words: Optional[int] = None) -> bool:
+    if not value:
+        return False
+
+    cleaned = value.strip()
+    if len(cleaned) < 3:
+        return False
+
+    words = cleaned.split()
+    if max_words is not None and len(words) > max_words:
+        return False
+
+    lowered = cleaned.lower()
+    if lowered in SEARCH_STOPWORDS or lowered in ENTITY_STOPWORDS:
+        return False
+
+    if not any(ch.isalpha() for ch in cleaned):
+        return False
+
+    if not allow_lower and cleaned[0].islower() and not cleaned.isupper():
+        return False
+
+    return True
+
+
 def generate_summary(content: str, fallback: Optional[str] = None, *, max_length: int = 240) -> Optional[str]:
     text = (content or "").strip()
     if not text:
@@ -809,7 +849,7 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
             doc = nlp(text)
             for ent in doc.ents:
                 value = ent.text.strip()
-                if not value:
+                if not _is_valid_entity(value, allow_lower=False, max_words=6):
                     continue
                 if ent.label_ in {"PERSON"}:
                     result["people"].add(value)
@@ -832,16 +872,24 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
     ]
     for pattern in tool_patterns:
         for match in re.findall(pattern, text, flags=re.IGNORECASE):
-            result["tools"].add(match.strip())
+            cleaned = match.strip()
+            if _is_valid_entity(cleaned):
+                result["tools"].add(cleaned)
 
     for match in re.findall(r'`([^`]+)`', text):
-        result["projects"].add(match.strip())
+        cleaned = match.strip()
+        if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
+            result["projects"].add(cleaned)
 
     for match in re.findall(r'"([^"]+)"', text):
-        result["projects"].add(match.strip())
+        cleaned = match.strip()
+        if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
+            result["projects"].add(cleaned)
 
-    for match in re.findall(r"Project\s+([A-Z][\w\-]+)", text, flags=re.IGNORECASE):
-        result["projects"].add(match.strip())
+    for match in re.findall(r"Project\s+([A-Z][\w\-]+)", text):
+        cleaned = match.strip()
+        if _is_valid_entity(cleaned):
+            result["projects"].add(cleaned)
 
     result["tools"].difference_update(result["people"])
 
@@ -2656,14 +2704,37 @@ def _serialize_node(node: Any) -> Dict[str, Any]:
     return data
 
 
+def _summarize_relation_node(data: Dict[str, Any]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {}
+
+    for key in ("id", "type", "timestamp", "summary", "importance", "confidence"):
+        if key in data:
+            summary[key] = data[key]
+
+    content = data.get("content")
+    if "summary" not in summary and isinstance(content, str):
+        snippet = content.strip()
+        if len(snippet) > 160:
+            snippet = snippet[:157].rsplit(" ", 1)[0] + "…"
+        summary["content"] = snippet
+
+    tags = data.get("tags")
+    if isinstance(tags, list) and tags:
+        summary["tags"] = tags[:5]
+
+    return summary
+
+
 def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
     try:
         records = graph.query(
             """
             MATCH (m:Memory {id: $id})-[r]->(related:Memory)
             RETURN type(r) as relation_type, r.strength as strength, related
+            ORDER BY coalesce(r.updated_at, related.timestamp) DESC
+            LIMIT $limit
             """,
-            {"id": memory_id},
+            {"id": memory_id, "limit": RECALL_RELATION_LIMIT},
         )
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to fetch relations for memory %s", memory_id)
@@ -2675,7 +2746,7 @@ def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
             {
                 "type": relation_type,
                 "strength": strength,
-                "memory": _serialize_node(related),
+                "memory": _summarize_relation_node(_serialize_node(related)),
             }
         )
     return connections
