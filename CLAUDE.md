@@ -68,7 +68,7 @@ The API (`app.py`) provides 11 endpoints:
 ### Memory Consolidation Engine
 
 The `consolidation.py` module implements biological memory patterns:
-- **Decay** - Exponential importance reduction over time (every 5 minutes)
+- **Decay** - Hourly exponential relevance updates (fractional-day decay keeps quick passes meaningful)
 - **Creative** - Discovers hidden associations during "REM-like" processing (hourly)
 - **Clustering** - Semantic grouping to compress related memories (every 6 hours)
 - **Forgetting** - Archives low-importance memories (daily)
@@ -151,7 +151,8 @@ ADMIN_API_TOKEN=             # For admin endpoints
 OPENAI_API_KEY=              # For real embeddings
 
 # Consolidation intervals (seconds)
-CONSOLIDATION_DECAY_INTERVAL_SECONDS=300      # 5 minutes
+CONSOLIDATION_DECAY_INTERVAL_SECONDS=3600     # 1 hour
+CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD=0.3  # Only skip truly low-importance items
 CONSOLIDATION_CREATIVE_INTERVAL_SECONDS=3600  # 1 hour
 CONSOLIDATION_CLUSTER_INTERVAL_SECONDS=21600  # 6 hours
 CONSOLIDATION_FORGET_INTERVAL_SECONDS=86400   # 24 hours

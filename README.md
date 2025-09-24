@@ -185,6 +185,27 @@ curl -X POST https://.../admin/reembed \
 
 Regenerates embeddings in controlled batches—perfect for migrations.
 
+## Consolidation Engine
+
+AutoMem runs a background consolidator that keeps memories fresh even when the
+API is idle. The scheduler (see `consolidation.py`) cycles through four
+processes:
+
+- **Decay** (hourly by default) recalculates relevance scores with finer-grained
+  exponential decay so short-lived activity still nudges scores.
+- **Creative** (hourly) samples mid/high relevance memories and adds
+  `DISCOVERED` edges for surprising pairings.
+- **Cluster** (every 6 hours) groups similar embeddings and can emit
+  `MetaMemory` summaries for large clusters.
+- **Forget** (daily) archives or deletes low-relevance memories while keeping
+  Qdrant and FalkorDB in sync.
+
+You can override cadences with environment variables such as
+`CONSOLIDATION_DECAY_INTERVAL_SECONDS` or switch attendance filters via
+`CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` (defaults to `0.3`, set empty to
+process everything). The decay pass now uses fractional days when scoring, so
+frequent runs produce incremental but meaningful updates.
+
 ## Configuration
 
 | Variable | Description | Default |
@@ -199,6 +220,11 @@ Regenerates embeddings in controlled batches—perfect for migrations.
 | `VECTOR_SIZE` | Embedding vector size | `768` |
 | `AUTOMEM_API_TOKEN` | Required API token | _unset_ |
 | `ADMIN_API_TOKEN` | Token for `/admin/reembed` | _unset_ |
+| `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Cadence for decay run (seconds) | `3600` |
+| `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Minimum importance to include (blank = all) | `0.3` |
+| `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Creative association interval | `3600` |
+| `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `21600` |
+| `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forgetting interval | `86400` |
 | `SEARCH_WEIGHT_*` | Optional scoring weights (vector, keyword, tag, etc.) | see app defaults |
 
 The application loads environment variables from the process, `.env` in the

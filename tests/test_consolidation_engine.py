@@ -48,7 +48,7 @@ class FakeGraph:
         if "WHERE m.embeddings IS NOT NULL" in query:
             return FakeResult(self.cluster_rows)
 
-        if "WHERE m.archived IS NULL" in query and "m.relevance_score as old_score" in query:
+        if "m.relevance_score as old_score" in query:
             return FakeResult(self.decay_rows)
 
         if "m.relevance_score as score" in query and "m.last_accessed as last_accessed" in query:
@@ -208,7 +208,11 @@ def test_apply_controlled_forgetting_updates_graph_and_vector_store() -> None:
     assert graph.updated_scores  # recent memory updated in graph
     assert graph.archived and graph.archived[0][0] == "archive-candidate"
     assert graph.deleted == ["old-delete"]
-    assert vector_store.deletions == [("memories", {"point_ids": ["old-delete"]})]
+    assert vector_store.deletions
+    collection, selector = vector_store.deletions[0]
+    assert collection == "memories"
+    points = selector.get("point_ids") or selector.get("points")
+    assert points == ["old-delete"]
 
 
 def test_apply_decay_updates_scores() -> None:

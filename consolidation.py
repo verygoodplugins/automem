@@ -171,12 +171,12 @@ class MemoryConsolidator:
             or current_time
         )
 
-        # Calculate age-based decay
-        age_days = max(0, (current_time - created_at).days)
+        # Calculate age-based decay (hours-scale resolution keeps frequent runs meaningful)
+        age_days = max(0.0, (current_time - created_at).total_seconds() / 86400)
         decay_factor = math.exp(-self.base_decay_rate * age_days)
 
-        # Calculate access-based reinforcement
-        access_recency_days = max(0, (current_time - last_accessed).days)
+        # Calculate access-based reinforcement using the same finer-grained clock
+        access_recency_days = max(0.0, (current_time - last_accessed).total_seconds() / 86400)
         access_factor = 1.0 if access_recency_days < 1 else math.exp(-0.05 * access_recency_days)
 
         # Get relationship count for this memory
