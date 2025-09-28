@@ -278,9 +278,94 @@ project root, and `~/.config/automem/.env`.
 
 ## Deployment
 
-Use the provided Dockerfile or Compose stack. Railway works out of the box—set
-the environment variables in the dashboard to point at your FalkorDB and Qdrant
-instances, plus `AUTOMEM_API_TOKEN` and `ADMIN_API_TOKEN`.
+### Railway (recommended)
+
+AutoMem is designed to run as two services inside a Railway project: this Flask
+API, and a dedicated FalkorDB instance with persistent storage. Qdrant can stay
+on Qdrant Cloud (provide `QDRANT_URL`/`QDRANT_API_KEY`) or be omitted if you only
+need graph recall.
+
+#### 1. Prerequisites
+
+- Install the Railway CLI: `npm i -g @railway/cli`
+- Log in: `railway login`
+- (Optional) initialise the project from this repo: `railway init`
+
+#### 2. Provision FalkorDB
+
+1. Create a new Railway service using the `falkordb/falkordb:latest` image.
+2. Attach a persistent volume so the graph survives restarts.
+3. Note the internal host/port Railway assigns (shown in the service settings).
+   If you enable password auth, keep the password handy—you will pass it to the
+   AutoMem service.
+
+**FalkorDB environment variable**
+
+| Variable | Description |
+| --- | --- |
+| `REDIS_PASSWORD` | *(optional)* password for the graph database |
+
+Railway automatically exposes `REDIS_HOST`, `REDIS_PORT`, and `REDIS_PASSWORD`
+for other services; you can reference them via `${{service.<name>.internalHost}}`
+when configuring AutoMem.
+
+#### 3. Deploy AutoMem
+
+1. From this repo run `railway up` (or connect the repo in the Railway UI with
+   auto-deploys). The Dockerfile already installs spaCy and the
+   `en_core_web_sm` model.
+2. Configure the following variables on the AutoMem service:
+
+| Variable | Description |
+| --- | --- |
+| `AUTOMEM_API_TOKEN` | Required auth token for all client calls |
+| `ADMIN_API_TOKEN` | Required for admin/enrichment endpoints |
+| `OPENAI_API_KEY` | Enables real embeddings (otherwise deterministic placeholders) |
+| `FALKORDB_HOST` | Internal hostname of the FalkorDB service |
+| `FALKORDB_PORT` | Port (usually `6379`) |
+| `FALKORDB_PASSWORD` | *(optional)* only if you set one on FalkorDB |
+| `QDRANT_URL` | *(optional)* Qdrant Cloud endpoint |
+| `QDRANT_API_KEY` | *(optional)* Qdrant API key |
+| `CONSOLIDATION_*`, `ENRICHMENT_*` | *(optional)* override defaults listed earlier |
+
+3. Redeploy, then verify health:
+
+```bash
+curl https://<your-app>.up.railway.app/health
+```
+
+Expect `{ "status": "healthy" }`. A `503` typically means the API cannot reach
+FalkorDB—double-check host/port/password values.
+
+#### 4. Seed and reprocess (optional)
+
+- Store a memory to confirm writes work:
+
+  ```bash
+  curl -X POST https://<your-app>.up.railway.app/memory \
+    -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"content":"First memory from Railway","importance":0.7}'
+  ```
+
+- Re-enqueue existing memories now that spaCy is available:
+
+  ```bash
+  curl -X POST https://<your-app>.up.railway.app/enrichment/reprocess \
+    -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \
+    -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"ids":["memory-id-1","memory-id-2"]}'
+  ```
+
+  Track progress with `GET /enrichment/status`.
+
+#### 5. Local vs production
+
+Locally you can run `make dev` (Docker Compose) or point the app at the remote
+FalkorDB/Qdrant by setting the same environment variables. In production keep
+AutoMem, FalkorDB (and optionally Qdrant) as separate services so rolling
+deploys and scaling do not interrupt the database.
 
 ## Troubleshooting
 
