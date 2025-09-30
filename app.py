@@ -3226,6 +3226,195 @@ def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
     return connections
 
 
+@app.route("/sync-qdrant-to-falkordb", methods=["POST"])
+def sync_qdrant_to_falkordb():
+    """Sync memories that exist in Qdrant but not in FalkorDB.
+    
+    This fixes the issue where update_memory fails with 'Memory not found'
+    for memories that were migrated directly to Qdrant.
+    
+    Request body (optional):
+        {
+            "dry_run": true,  // If true, only reports what would be synced
+            "limit": 100      // Maximum memories to sync (default: no limit)
+        }
+    
+    Returns:
+        {
+            "success": true,
+            "dry_run": bool,
+            "stats": {
+                "falkordb_total": int,
+                "qdrant_total": int,
+                "qdrant_only": int,
+                "synced": int,
+                "errors": int
+            },
+            "synced_ids": [...],  // List of synced memory IDs
+            "errors": [...]       // List of error details
+        }
+    """
+    if not state.memory_graph:
+        abort(503, description="FalkorDB is unavailable")
+    if not state.qdrant:
+        abort(503, description="Qdrant is unavailable")
+    
+    data = request.json or {}
+    dry_run = data.get("dry_run", False)
+    limit = data.get("limit")
+    
+    try:
+        # Get all memory IDs from FalkorDB
+        logger.info("Fetching all memory IDs from FalkorDB...")
+        falkordb_result = state.memory_graph.query("MATCH (m:Memory) RETURN m.id AS id")
+        falkordb_ids = {row[0] for row in falkordb_result.result_set} if falkordb_result.result_set else set()
+        logger.info("Found %d memories in FalkorDB", len(falkordb_ids))
+        
+        # Get all memory IDs from Qdrant
+        logger.info("Fetching all memory IDs from Qdrant...")
+        qdrant_ids = set()
+        offset = None
+        
+        while True:
+            response = state.qdrant.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=100,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            points, offset = response
+            if not points:
+                break
+            for point in points:
+                qdrant_ids.add(str(point.id))
+            if offset is None:
+                break
+        
+        logger.info("Found %d memories in Qdrant", len(qdrant_ids))
+        
+        # Find memories only in Qdrant
+        qdrant_only = qdrant_ids - falkordb_ids
+        logger.info("Found %d Qdrant-only memories (need sync)", len(qdrant_only))
+        
+        if not qdrant_only:
+            return jsonify({
+                "success": True,
+                "dry_run": dry_run,
+                "stats": {
+                    "falkordb_total": len(falkordb_ids),
+                    "qdrant_total": len(qdrant_ids),
+                    "qdrant_only": 0,
+                    "synced": 0,
+                    "errors": 0
+                },
+                "message": "All Qdrant memories already exist in FalkorDB"
+            })
+        
+        # Sync missing memories
+        synced_ids = []
+        error_details = []
+        to_sync = list(qdrant_only)[:limit] if limit else list(qdrant_only)
+        
+        for i, memory_id in enumerate(to_sync, 1):
+            try:
+                # Fetch the full payload from Qdrant
+                points = state.qdrant.retrieve(
+                    collection_name=COLLECTION_NAME,
+                    ids=[memory_id],
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                
+                if not points:
+                    error_details.append({
+                        "memory_id": memory_id,
+                        "error": "Not found in Qdrant"
+                    })
+                    continue
+                
+                payload = points[0].payload
+                
+                if dry_run:
+                    synced_ids.append(memory_id)
+                    logger.info("[%d/%d] Would sync: %s", i, len(to_sync), memory_id)
+                else:
+                    # Create FalkorDB node
+                    content = payload.get("content", "")
+                    tags = payload.get("tags", [])
+                    tag_prefixes = _compute_tag_prefixes(tags)
+                    importance = payload.get("importance", 0.5)
+                    memory_type = payload.get("type", "Memory")
+                    confidence = payload.get("confidence", 0.6)
+                    timestamp = payload.get("timestamp") or datetime.now(timezone.utc).isoformat()
+                    updated_at = payload.get("updated_at") or timestamp
+                    last_accessed = payload.get("last_accessed") or updated_at
+                    metadata = payload.get("metadata", {})
+                    
+                    # Convert metadata to JSON string
+                    metadata_json = json.dumps(metadata) if isinstance(metadata, dict) else str(metadata)
+                    
+                    query = """
+                        MERGE (m:Memory {id: $id})
+                        SET m.content = $content,
+                            m.timestamp = $timestamp,
+                            m.importance = $importance,
+                            m.tags = $tags,
+                            m.tag_prefixes = $tag_prefixes,
+                            m.type = $type,
+                            m.confidence = $confidence,
+                            m.t_valid = $timestamp,
+                            m.t_invalid = null,
+                            m.updated_at = $updated_at,
+                            m.last_accessed = $last_accessed,
+                            m.metadata = $metadata,
+                            m.processed = false
+                        RETURN m
+                    """
+                    
+                    state.memory_graph.query(query, {
+                        "id": memory_id,
+                        "content": content,
+                        "timestamp": timestamp,
+                        "importance": importance,
+                        "tags": tags,
+                        "tag_prefixes": tag_prefixes,
+                        "type": memory_type,
+                        "confidence": confidence,
+                        "updated_at": updated_at,
+                        "last_accessed": last_accessed,
+                        "metadata": metadata_json,
+                    })
+                    
+                    synced_ids.append(memory_id)
+                    logger.info("[%d/%d] Synced: %s", i, len(to_sync), memory_id)
+                    
+            except Exception as e:
+                error_details.append({
+                    "memory_id": memory_id,
+                    "error": str(e)
+                })
+                logger.exception("Error syncing memory %s", memory_id)
+        
+        return jsonify({
+            "success": True,
+            "dry_run": dry_run,
+            "stats": {
+                "falkordb_total": len(falkordb_ids),
+                "qdrant_total": len(qdrant_ids),
+                "qdrant_only": len(qdrant_only),
+                "synced": len(synced_ids),
+                "errors": len(error_details)
+            },
+            "synced_ids": synced_ids,
+            "errors": error_details
+        })
+        
+    except Exception as e:
+        logger.exception("Sync failed")
+        abort(500, description=f"Sync failed: {str(e)}")
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8001"))
     logger.info("Starting Flask API on port %s", port)
