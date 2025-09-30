@@ -4,5 +4,6 @@ falkordb==1.0.9
 qdrant-client==1.11.3
 python-dotenv==1.0.1
 openai==1.55.3
-spacy==3.7.2
-en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz
+spacy==3.8.7
+requests==2.31.0
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0.tar.gz

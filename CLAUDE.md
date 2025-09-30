@@ -189,23 +189,21 @@ python -m spacy download en_core_web_sm
 
 ## Migration Tools
 
-Several migration scripts help transition from legacy systems:
+Use the consolidated helper to migrate from the legacy MCP SQLite store, then
+optionally re-embed:
 
 ```bash
-# Migrate from MCP memory service SQLite database
-python scripts/migrate_legacy_memories.py
+# Preview what will be imported
+python scripts/migrate_mcp_sqlite.py --dry-run
 
-# Migrate from extracted memory dumps
-python migrate_extracted.py
+# Run migration against a deployed instance
+python scripts/migrate_mcp_sqlite.py \
+  --db /path/to/sqlite_vec.db \
+  --automem-url https://automem.example.com \
+  --api-token $AUTOMEM_API_TOKEN
 
-# Full MCP to PKG migration with relationships
-python migrate_mcp_to_pkg.py
-
-# Migrate memory project with validation
-python migrate_memory_project.py
-
-# Re-embed existing memories with OpenAI
-python scripts/reembed_embeddings.py
+# Refresh embeddings after the migration
+python scripts/reembed_embeddings.py --limit 200
 ```
 
 ## Key Implementation Patterns

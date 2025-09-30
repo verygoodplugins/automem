@@ -202,6 +202,35 @@ curl -X POST https://.../admin/reembed \
 
 Regenerates embeddings in controlled batches—perfect for migrations.
 
+## Migrating from the MCP SQLite memory service
+
+Use the consolidated helper at `scripts/migrate_mcp_sqlite.py` to move memories
+from the legacy MCP SQLite backend into AutoMem:
+
+```bash
+# Preview the payloads that would be sent
+python scripts/migrate_mcp_sqlite.py --dry-run
+
+# Run a real migration (overrides defaults as needed)
+python scripts/migrate_mcp_sqlite.py \
+  --db /path/to/sqlite_vec.db \
+  --automem-url https://automem.example.com \
+  --api-token "$AUTOMEM_API_TOKEN"
+```
+
+The script:
+
+- Detects the SQLite database automatically on macOS, Linux, and Windows (pass
+  `--db` to override).
+- Streams memories in batches, preserving timestamps, tags, importance, and
+  metadata inlined under `metadata.legacy`.
+- Accepts `--limit`, `--offset`, and `--sleep` to control migration pace.
+- Works with authenticated deployments via `--api-token` (defaults to the
+  `AUTOMEM_API_TOKEN` environment variable if set).
+
+Start with `--dry-run` to inspect the payloads, then rerun without it to import
+into AutoMem.
+
 ## Enrichment Pipeline
 
 The enrichment worker runs asynchronously to augment each memory after it is

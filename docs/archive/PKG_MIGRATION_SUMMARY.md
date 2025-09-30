@@ -16,10 +16,8 @@ Successfully transformed AutoMem from a simple memory storage system into an int
 - **Analytics Endpoint**: Rich insights and metrics
 
 ### 2. **Migration Tools** 🔧
-Created three migration scripts:
-- `scripts/migrations/migrate_mcp_to_pkg.py` - Basic demo with sample memories
-- `scripts/migrations/migrate_mcp_full.py` - Comprehensive migration for 553 memories
-- `scripts/migrations/migrate_extracted.py` - Working demo with real extracted memories
+Created a consolidated migration CLI:
+- `scripts/migrate_mcp_sqlite.py` – Streams memories out of the MCP SQLite service and into AutoMem (replaces the earlier prototype scripts under `scripts/migrations/`).
 
 ### 3. **Test Results** 📊
 
@@ -175,10 +173,7 @@ GET /analyze
 - `PKG_FEATURES.md` - Complete feature documentation
 
 ### Migration Tools
-- `scripts/migrations/migrate_mcp_to_pkg.py` - Basic migration demo
-- `scripts/migrations/migrate_mcp_full.py` - Full 553-memory migration
-- `scripts/migrations/migrate_extracted.py` - Working demo with real data
-- `scripts/migrations/migrate_mcp_real.py` - Production migration script
+- `scripts/migrate_mcp_sqlite.py` - Consolidated migration CLI for MCP SQLite exports
 - `test_recall_performance.py` - Performance comparison
 
 ## Next Steps

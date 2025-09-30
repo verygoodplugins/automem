@@ -28,7 +28,7 @@ import time
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from falkordb import FalkorDB
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models as qdrant_models
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from werkzeug.exceptions import HTTPException
 from openai import OpenAI
@@ -186,6 +186,76 @@ def _normalize_tag_list(raw: Any) -> List[str]:
                 tags.append(item.strip())
         return tags
     return []
+
+
+def _expand_tag_prefixes(tag: str) -> List[str]:
+    """Expand a tag into all prefixes using ':' as the canonical delimiter."""
+    parts = re.split(r"[:/]", tag)
+    prefixes: List[str] = []
+    accumulator: List[str] = []
+    for part in parts:
+        if not part:
+            continue
+        accumulator.append(part)
+        prefixes.append(":".join(accumulator))
+    return prefixes
+
+
+def _compute_tag_prefixes(tags: List[str]) -> List[str]:
+    """Compute unique, lowercased tag prefixes for fast prefix filtering."""
+    seen: Set[str] = set()
+    prefixes: List[str] = []
+    for tag in tags or []:
+        normalized = (tag or "").strip().lower()
+        if not normalized:
+            continue
+        for prefix in _expand_tag_prefixes(normalized):
+            if prefix not in seen:
+                seen.add(prefix)
+                prefixes.append(prefix)
+    return prefixes
+
+
+def _prepare_tag_filters(tag_filters: Optional[List[str]]) -> List[str]:
+    """Normalize incoming tag filters for matching and persistence."""
+    return [
+        tag.strip().lower()
+        for tag in (tag_filters or [])
+        if isinstance(tag, str) and tag.strip()
+    ]
+
+
+def _build_graph_tag_predicate(tag_mode: str, tag_match: str) -> str:
+    """Construct a Cypher predicate for tag filtering with mode/match semantics."""
+    normalized_mode = "all" if tag_mode == "all" else "any"
+    normalized_match = "prefix" if tag_match == "prefix" else "exact"
+    tags_expr = "[tag IN coalesce(m.tags, []) | toLower(tag)]"
+
+    if normalized_match == "exact":
+        if normalized_mode == "all":
+            return f"ALL(req IN $tag_filters WHERE req IN {tags_expr})"
+        return f"ANY(tag IN {tags_expr} WHERE tag IN $tag_filters)"
+
+    prefixes_expr = "coalesce(m.tag_prefixes, [])"
+    prefix_any = f"ANY(req IN $tag_filters WHERE req IN {prefixes_expr})"
+    prefix_all = f"ALL(req IN $tag_filters WHERE req IN {prefixes_expr})"
+    fallback_any = (
+        f"ANY(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
+    )
+    fallback_all = (
+        f"ALL(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
+    )
+
+    if normalized_mode == "all":
+        return (
+            f"((size({prefixes_expr}) > 0 AND {prefix_all}) "
+            f"OR (size({prefixes_expr}) = 0 AND {fallback_all}))"
+        )
+
+    return (
+        f"((size({prefixes_expr}) > 0 AND {prefix_any}) "
+        f"OR (size({prefixes_expr}) = 0 AND {fallback_any}))"
+    )
 
 
 def utc_now() -> str:
@@ -436,6 +506,8 @@ def _result_passes_filters(
     start_time: Optional[str],
     end_time: Optional[str],
     tag_filters: Optional[List[str]] = None,
+    tag_mode: str = "any",
+    tag_match: str = "prefix",
 ) -> bool:
     memory = result.get("memory", {}) or {}
     timestamp = memory.get("timestamp")
@@ -451,11 +523,60 @@ def _result_passes_filters(
             return False
 
     if tag_filters:
-        tags = memory.get("tags") or []
-        lowered = {str(tag).lower() for tag in tags if isinstance(tag, str)}
-        filter_set = {tag.lower() for tag in tag_filters}
-        if not lowered.intersection(filter_set):
-            return False
+        normalized_filters = _prepare_tag_filters(tag_filters)
+        if normalized_filters:
+            normalized_mode = "all" if tag_mode == "all" else "any"
+            normalized_match = "prefix" if tag_match == "prefix" else "exact"
+
+            tags = memory.get("tags") or []
+            lowered_tags = [
+                str(tag).strip().lower()
+                for tag in tags
+                if isinstance(tag, str) and str(tag).strip()
+            ]
+
+            if normalized_match == "exact":
+                tag_set = set(lowered_tags)
+                if not tag_set:
+                    return False
+                if normalized_mode == "all":
+                    if not all(filter_tag in tag_set for filter_tag in normalized_filters):
+                        return False
+                else:
+                    if not any(filter_tag in tag_set for filter_tag in normalized_filters):
+                        return False
+            else:
+                prefixes = memory.get("tag_prefixes") or []
+                prefix_set = {
+                    str(prefix).strip().lower()
+                    for prefix in prefixes
+                    if isinstance(prefix, str) and str(prefix).strip()
+                }
+
+                def _tags_start_with() -> bool:
+                    if not lowered_tags:
+                        return False
+                    if normalized_mode == "all":
+                        return all(
+                            any(tag.startswith(filter_tag) for tag in lowered_tags)
+                            for filter_tag in normalized_filters
+                        )
+                    return any(
+                        tag.startswith(filter_tag)
+                        for filter_tag in normalized_filters
+                        for tag in lowered_tags
+                    )
+
+                if prefix_set:
+                    if normalized_mode == "all":
+                        if not all(filter_tag in prefix_set for filter_tag in normalized_filters):
+                            return False
+                    else:
+                        if not any(filter_tag in prefix_set for filter_tag in normalized_filters):
+                            return False
+                else:
+                    if not _tags_start_with():
+                        return False
 
     return True
 
@@ -494,6 +615,8 @@ def _graph_trending_results(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     tag_filters: Optional[List[str]] = None,
+    tag_mode: str = "any",
+    tag_match: str = "prefix",
 ) -> List[Dict[str, Any]]:
     """Return high-importance memories when no specific query is supplied."""
     try:
@@ -506,10 +629,10 @@ def _graph_trending_results(
             where_clauses.append("m.timestamp <= $end_time")
             params["end_time"] = end_time
         if tag_filters:
-            where_clauses.append(
-                "ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tag_filters)"
-            )
-            params["tag_filters"] = [tag.lower() for tag in tag_filters]
+            normalized_filters = _prepare_tag_filters(tag_filters)
+            if normalized_filters:
+                where_clauses.append(_build_graph_tag_predicate(tag_mode, tag_match))
+                params["tag_filters"] = normalized_filters
 
         query = f"""
             MATCH (m:Memory)
@@ -545,11 +668,22 @@ def _graph_keyword_search(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     tag_filters: Optional[List[str]] = None,
+    tag_mode: str = "any",
+    tag_match: str = "prefix",
 ) -> List[Dict[str, Any]]:
     """Perform a keyword-oriented search in the graph store."""
     normalized = query_text.strip().lower()
     if not normalized or normalized == "*":
-        return _graph_trending_results(graph, limit, seen_ids, start_time, end_time, tag_filters)
+        return _graph_trending_results(
+            graph,
+            limit,
+            seen_ids,
+            start_time,
+            end_time,
+            tag_filters,
+            tag_mode,
+            tag_match,
+        )
 
     keywords = _extract_keywords(normalized)
     phrase = normalized if len(normalized) >= 3 else ""
@@ -564,10 +698,10 @@ def _graph_keyword_search(
             base_where.append("m.timestamp <= $end_time")
             params["end_time"] = end_time
         if tag_filters:
-            base_where.append(
-                "ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tag_filters)"
-            )
-            params["tag_filters"] = [tag.lower() for tag in tag_filters]
+            normalized_filters = _prepare_tag_filters(tag_filters)
+            if normalized_filters:
+                base_where.append(_build_graph_tag_predicate(tag_mode, tag_match))
+                params["tag_filters"] = normalized_filters
 
         where_clause = " AND ".join(base_where)
 
@@ -611,7 +745,16 @@ def _graph_keyword_search(
             """
             result = graph.query(query, params)
         else:
-            return _graph_trending_results(graph, limit, seen_ids, start_time, end_time, tag_filters)
+            return _graph_trending_results(
+                graph,
+                limit,
+                seen_ids,
+                start_time,
+                end_time,
+                tag_filters,
+                tag_mode,
+                tag_match,
+            )
     except Exception:
         logger.exception("Graph keyword search failed")
         return []
@@ -627,6 +770,99 @@ def _graph_keyword_search(
 
     return matches
 
+def _build_qdrant_tag_filter(
+    tags: Optional[List[str]],
+    mode: str = "any",
+    match: str = "exact",
+):
+    """Build a Qdrant filter for tag constraints, supporting mode/match semantics."""
+    normalized_tags = _prepare_tag_filters(tags)
+    if not normalized_tags:
+        return None
+
+    target_key = "tag_prefixes" if match == "prefix" else "tags"
+    normalized_mode = "all" if mode == "all" else "any"
+
+    if normalized_mode == "any":
+        return qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key=target_key,
+                    match=qdrant_models.MatchAny(any=normalized_tags),
+                )
+            ]
+        )
+
+    must_conditions = [
+        qdrant_models.FieldCondition(
+            key=target_key,
+            match=qdrant_models.MatchValue(value=tag),
+        )
+        for tag in normalized_tags
+    ]
+
+    return qdrant_models.Filter(must=must_conditions)
+
+
+def _vector_filter_only_tag_search(
+    qdrant_client: Optional[QdrantClient],
+    tag_filters: Optional[List[str]],
+    tag_mode: str,
+    tag_match: str,
+    limit: int,
+    seen_ids: set[str],
+) -> List[Dict[str, Any]]:
+    """Fallback scroll search when only tags are provided."""
+    if qdrant_client is None or not tag_filters or limit <= 0:
+        return []
+
+    query_filter = _build_qdrant_tag_filter(tag_filters, tag_mode, tag_match)
+    if query_filter is None:
+        return []
+
+    try:
+        points, _ = qdrant_client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+    except Exception:
+        logger.exception("Qdrant tag-only scroll failed")
+        return []
+
+    results: List[Dict[str, Any]] = []
+    for point in points or []:
+        memory_id = str(point.id)
+        if memory_id in seen_ids:
+            continue
+        seen_ids.add(memory_id)
+
+        payload = point.payload or {}
+        importance = payload.get("importance")
+        if isinstance(importance, (int, float)):
+            score = float(importance)
+        else:
+            try:
+                score = float(importance) if importance is not None else 0.0
+            except (TypeError, ValueError):
+                score = 0.0
+
+        results.append(
+            {
+                "id": memory_id,
+                "score": score,
+                "match_score": score,
+                "match_type": "tag",
+                "source": "qdrant",
+                "memory": payload,
+                "relations": [],
+            }
+        )
+
+    return results
+
+
 def _vector_search(
     qdrant_client: Optional[QdrantClient],
     graph: Any,
@@ -634,6 +870,9 @@ def _vector_search(
     embedding_param: Optional[str],
     limit: int,
     seen_ids: set[str],
+    tag_filters: Optional[List[str]] = None,
+    tag_mode: str = "any",
+    tag_match: str = "prefix",
 ) -> List[Dict[str, Any]]:
     """Perform vector search against Qdrant when configured."""
     if qdrant_client is None:
@@ -657,12 +896,15 @@ def _vector_search(
     if not embedding:
         return []
 
+    query_filter = _build_qdrant_tag_filter(tag_filters, tag_mode, tag_match)
+
     try:
         vector_results = qdrant_client.search(
             collection_name=COLLECTION_NAME,
             query_vector=embedding,
             limit=limit,
             with_payload=True,
+            query_filter=query_filter,
         )
     except Exception:
         logger.exception("Qdrant search failed")
@@ -1965,6 +2207,8 @@ def store_memory() -> Any:
         abort(400, description="'content' is required")
 
     tags = _normalize_tags(payload.get("tags"))
+    tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
+    tag_prefixes = _compute_tag_prefixes(tags_lower)
     importance = _coerce_importance(payload.get("importance"))
     memory_id = payload.get("id") or str(uuid.uuid4())
 
@@ -2047,6 +2291,7 @@ def store_memory() -> Any:
                 m.timestamp = $timestamp,
                 m.importance = $importance,
                 m.tags = $tags,
+                m.tag_prefixes = $tag_prefixes,
                 m.type = $type,
                 m.confidence = $confidence,
                 m.t_valid = $t_valid,
@@ -2063,6 +2308,7 @@ def store_memory() -> Any:
                 "timestamp": created_at,
                 "importance": importance,
                 "tags": tags,
+                "tag_prefixes": tag_prefixes,
                 "type": memory_type,
                 "confidence": type_confidence,
                 "t_valid": t_valid or created_at,
@@ -2091,6 +2337,7 @@ def store_memory() -> Any:
                         payload={
                             "content": content,
                             "tags": tags,
+                            "tag_prefixes": tag_prefixes,
                             "importance": importance,
                             "timestamp": created_at,
                             "type": memory_type,
@@ -2143,6 +2390,8 @@ def update_memory(memory_id: str) -> Any:
 
     new_content = payload.get("content", current.get("content"))
     tags = _normalize_tag_list(payload.get("tags", current.get("tags")))
+    tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
+    tag_prefixes = _compute_tag_prefixes(tags_lower)
     importance = payload.get("importance", current.get("importance"))
     memory_type = payload.get("type", current.get("type"))
     confidence = payload.get("confidence", current.get("confidence"))
@@ -2181,6 +2430,7 @@ def update_memory(memory_id: str) -> Any:
         MATCH (m:Memory {id: $id})
         SET m.content = $content,
             m.tags = $tags,
+            m.tag_prefixes = $tag_prefixes,
             m.importance = $importance,
             m.type = $type,
             m.confidence = $confidence,
@@ -2197,6 +2447,7 @@ def update_memory(memory_id: str) -> Any:
             "id": memory_id,
             "content": new_content,
             "tags": tags,
+            "tag_prefixes": tag_prefixes,
             "importance": importance,
             "type": memory_type,
             "confidence": confidence,
@@ -2229,6 +2480,7 @@ def update_memory(memory_id: str) -> Any:
             payload = {
                 "content": new_content,
                 "tags": tags,
+                "tag_prefixes": tag_prefixes,
                 "importance": importance,
                 "timestamp": timestamp,
                 "type": memory_type,
@@ -2322,6 +2574,14 @@ def recall_memories() -> Any:
     end_param = request.args.get("end")
     tags_param = request.args.getlist("tags") or request.args.get("tags")
 
+    tag_mode = (request.args.get("tag_mode") or "any").strip().lower()
+    if tag_mode not in {"any", "all"}:
+        tag_mode = "any"
+
+    tag_match = (request.args.get("tag_match") or "prefix").strip().lower()
+    if tag_match not in {"exact", "prefix"}:
+        tag_match = "prefix"
+
     time_start, time_end = _parse_time_expression(time_query)
 
     start_time = time_start
@@ -2348,10 +2608,22 @@ def recall_memories() -> Any:
     results: List[Dict[str, Any]] = []
     vector_matches: List[Dict[str, Any]] = []
     if qdrant_client is not None:
-        vector_matches = _vector_search(qdrant_client, graph, query_text, embedding_param, limit, seen_ids)
+        vector_matches = _vector_search(
+            qdrant_client,
+            graph,
+            query_text,
+            embedding_param,
+            limit,
+            seen_ids,
+            tag_filters,
+            tag_mode,
+            tag_match,
+        )
         if start_time or end_time or tag_filters:
             vector_matches = [
-                res for res in vector_matches if _result_passes_filters(res, start_time, end_time, tag_filters)
+                res
+                for res in vector_matches
+                if _result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
             ]
     results.extend(vector_matches[:limit])
 
@@ -2366,8 +2638,31 @@ def recall_memories() -> Any:
             start_time=start_time,
             end_time=end_time,
             tag_filters=tag_filters,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
         )
         results.extend(graph_matches[:remaining_slots])
+
+    tags_only_request = (
+        not query_text
+        and not (embedding_param and embedding_param.strip())
+        and bool(tag_filters)
+    )
+
+    if (
+        tags_only_request
+        and qdrant_client is not None
+        and len(results) < limit
+    ):
+        tag_only_results = _vector_filter_only_tag_search(
+            qdrant_client,
+            tag_filters,
+            tag_mode,
+            tag_match,
+            limit - len(results),
+            seen_ids,
+        )
+        results.extend(tag_only_results)
 
     query_tokens = _extract_keywords(query_text.lower()) if query_text else []
     for result in results:
@@ -2381,7 +2676,7 @@ def recall_memories() -> Any:
     results = [
         res
         for res in results
-        if _result_passes_filters(res, start_time, end_time, tag_filters)
+        if _result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
     ]
 
     results.sort(
@@ -2410,6 +2705,8 @@ def recall_memories() -> Any:
         response["time_window"] = {"start": start_time, "end": end_time}
     if tag_filters:
         response["tags"] = tag_filters
+    response["tag_mode"] = tag_mode
+    response["tag_match"] = tag_match
 
     return jsonify(response)
 

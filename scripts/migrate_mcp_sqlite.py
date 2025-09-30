@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
-"""SQLite → AutoMem migration utility.
+"""One-step migration from the MCP SQLite memory service to AutoMem.
 
-This script extracts memories from the legacy MCP SQLite-vec database and
-replays them into the AutoMem service so they benefit from the new graph and
-vector infrastructure. It keeps original timestamps, rehydrates tags, and
-stores the legacy metadata for future reference.
+This utility reads the legacy `sqlite_vec.db` produced by the MCP memory
+service and replays every memory into the AutoMem API. It keeps the original
+timestamps, tags, and importance scores whenever possible and stores the
+legacy payload inside `metadata['legacy']` for safekeeping.
+
+Usage (interactive):
+
+    python scripts/migrate_mcp_sqlite.py --db /path/to/sqlite_vec.db \
+        --automem-url https://automem.example.com \
+        --api-token $AUTOMEM_API_TOKEN
+
+Run with `--dry-run` first to preview what will be sent without touching the
+live service.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -20,9 +30,15 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 import requests
 
-DEFAULT_AUTOMEM_URL = "https://automem.up.railway.app"
-DEFAULT_DB_PATH = Path.home() / "Library" / "Application Support" / "mcp-memory" / "sqlite_vec.db"
+# Known install locations for the legacy MCP memory service database.
+DEFAULT_DB_CANDIDATES = [
+    Path.home() / "Library" / "Application Support" / "mcp-memory" / "sqlite_vec.db",
+    Path.home() / ".config" / "mcp-memory" / "sqlite_vec.db",
+    Path.home() / "AppData" / "Roaming" / "mcp-memory" / "sqlite_vec.db",
+]
 
+DEFAULT_AUTOMEM_URL = os.getenv("AUTOMEM_URL", "http://localhost:8001")
+DEFAULT_API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 
 IMPORTANCE_MAP: Dict[str, float] = {
     "critical": 0.95,
@@ -37,7 +53,7 @@ IMPORTANCE_MAP: Dict[str, float] = {
 
 @dataclass
 class LegacyMemory:
-    """Representation of a row stored by the old MCP SQLite backend."""
+    """Representation of a row produced by the MCP SQLite backend."""
 
     row_id: int
     content_hash: str
@@ -61,7 +77,6 @@ class LegacyMemory:
         if isinstance(decoded, dict):
             return decoded
 
-        # Keep non-dict payloads so nothing is lost during migration.
         return {"raw_metadata": decoded}
 
 
@@ -72,6 +87,7 @@ class AutoMemMigrator:
         self,
         db_path: Path,
         automem_url: str,
+        api_token: Optional[str] = None,
         batch_size: int = 25,
         sleep_seconds: float = 0.1,
         dry_run: bool = False,
@@ -80,22 +96,32 @@ class AutoMemMigrator:
     ) -> None:
         self.db_path = db_path
         self.automem_url = automem_url.rstrip("/")
+        self.api_token = api_token
         self.batch_size = max(1, batch_size)
         self.sleep_seconds = max(0.0, sleep_seconds)
         self.dry_run = dry_run
         self.limit = limit
         self.offset = max(0, offset)
         self.session = requests.Session()
+        if api_token:
+            self.session.headers.update({
+                "Authorization": f"Bearer {api_token}",
+                "X-API-Key": api_token,
+            })
 
     def run(self) -> int:
         if not self.db_path.exists():
             print(f"❌ SQLite database not found at {self.db_path}", file=sys.stderr)
             return 1
 
-        print("🚀 Starting migration from SQLite to AutoMem")
+        print("🚀 Starting migration from MCP SQLite → AutoMem")
         print(f"   • Database : {self.db_path}")
         print(f"   • AutoMem  : {self.automem_url}")
         print(f"   • Dry run  : {'yes' if self.dry_run else 'no'}")
+        if self.api_token:
+            print("   • Auth     : API token provided")
+        else:
+            print("   • Auth     : none (AutoMem must allow anonymous writes)")
 
         successes = 0
         failures = 0
@@ -170,7 +196,6 @@ class AutoMemMigrator:
 
         cursor = connection.execute(query)
 
-        # Skip offset rows if requested.
         if self.offset:
             cursor.fetchmany(self.offset)
 
@@ -253,7 +278,6 @@ class AutoMemMigrator:
             },
         }
 
-        # Preserve explicit `t_valid` or `t_invalid` markers if they exist in metadata.
         for key in ("t_valid", "t_invalid"):
             value = metadata.get(key)
             if isinstance(value, str) and value:
@@ -292,7 +316,6 @@ class AutoMemMigrator:
             if not stripped:
                 return []
 
-            # Some entries store JSON inside the string; try to decode first.
             try:
                 decoded = json.loads(stripped)
             except json.JSONDecodeError:
@@ -301,7 +324,6 @@ class AutoMemMigrator:
             if isinstance(decoded, list):
                 return [str(item).strip() for item in decoded if str(item).strip()]
 
-            # Fall back to comma-separated parsing.
             return [part.strip() for part in stripped.split(",") if part.strip()]
 
         return []
@@ -341,36 +363,53 @@ class AutoMemMigrator:
             f"• {memory.row_id}: {memory.content_hash[:12]} | tags={payload['tags']} | "
             f"timestamp={payload['timestamp']}"
         )
-        print(f"    content : {memory.content[:120].replace('\n', ' ')}")
+        snippet = memory.content.replace("\n", " ")
+        if len(snippet) > 120:
+            snippet = snippet[:117].rstrip() + "…"
+        print(f"    content : {snippet}")
         print(
             f"    metadata: {{'origin': {payload['metadata']['origin']}, 'legacy_type': {memory.memory_type}}}"
         )
 
 
+def detect_default_db_path() -> Optional[Path]:
+    for candidate in DEFAULT_DB_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Migrate MCP SQLite memories into AutoMem")
+    parser = argparse.ArgumentParser(
+        description="Migrate MCP SQLite memories into AutoMem",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument(
         "--db",
         type=Path,
-        default=DEFAULT_DB_PATH,
-        help="Path to sqlite_vec.db exported by the MCP memory service",
+        help="Path to the legacy sqlite_vec.db exported by the MCP memory service",
     )
     parser.add_argument(
         "--automem-url",
         default=DEFAULT_AUTOMEM_URL,
-        help="Base URL for the AutoMem service (default: http://localhost:8001)",
+        help="Base URL for the AutoMem service",
+    )
+    parser.add_argument(
+        "--api-token",
+        default=DEFAULT_API_TOKEN,
+        help="API token for AutoMem (falls back to AUTOMEM_API_TOKEN environment variable)",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=25,
-        help="Number of rows to fetch from SQLite for each iteration",
+        help="Number of rows to fetch from SQLite per batch",
     )
     parser.add_argument(
         "--sleep",
         type=float,
         default=0.1,
-        help="Delay (in seconds) between POST requests to avoid overwhelming AutoMem",
+        help="Delay (seconds) between POST requests to avoid overloading AutoMem",
     )
     parser.add_argument(
         "--limit",
@@ -386,7 +425,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the transformed payloads without calling AutoMem",
+        help="Print transformed payloads without calling the AutoMem API",
     )
 
     return parser.parse_args(argv)
@@ -394,9 +433,19 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
+
+    db_path = args.db.expanduser() if args.db else detect_default_db_path()
+    if db_path is None:
+        print(
+            "❌ Unable to find sqlite_vec.db. Provide --db with the path to your MCP SQLite database.",
+            file=sys.stderr,
+        )
+        return 1
+
     migrator = AutoMemMigrator(
-        db_path=args.db.expanduser(),
+        db_path=db_path,
         automem_url=args.automem_url,
+        api_token=args.api_token,
         batch_size=args.batch_size,
         sleep_seconds=args.sleep,
         dry_run=args.dry_run,
@@ -406,5 +455,5 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return migrator.run()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
     sys.exit(main())
