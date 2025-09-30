@@ -70,6 +70,8 @@ MCP_MEMORY_HTTP_ENDPOINT=http://127.0.0.1:8001 \
 Or point `MCP_MEMORY_HTTP_ENDPOINT` at your hosted deployment. The bridge exposes
 synchronised tools for AutoMem (store/recall/update/delete/etc.).
 
+For Claude Code users, the [@verygoodplugins/mcp-automem](https://www.npmjs.com/package/@verygoodplugins/mcp-automem) package provides a ready-to-use MCP server with enhanced memory rules. See the MCP server repository for installation and configuration, including automatic memory storage rules for `~/.claude/CLAUDE.md`.
+
 ## Documentation
 
 - `docs/ONBOARDING.md` – project overview, environment setup, and service access

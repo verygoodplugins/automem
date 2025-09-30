@@ -1741,6 +1741,183 @@ def enrichment_reprocess() -> Any:
     }), 202
 
 
+@app.route("/admin/reembed", methods=["POST"])
+def admin_reembed() -> Any:
+    """Regenerate embeddings for existing memories using OpenAI API.
+
+    Requires admin token and OpenAI API key configured.
+
+    Parameters:
+    - batch_size: Number of memories to process at once (default 32, max 100)
+    - limit: Total number of memories to reembed (default all)
+    - force: Regenerate even if embedding exists (default false)
+    """
+    _require_admin_token()
+
+    # Check if OpenAI is available
+    init_openai()
+    if state.openai_client is None:
+        abort(503, description="OpenAI API key not configured - cannot generate real embeddings")
+
+    # Check Qdrant is available
+    qdrant_client = get_qdrant_client()
+    if qdrant_client is None:
+        abort(503, description="Qdrant is not available - cannot store embeddings")
+
+    # Parse parameters
+    payload = request.get_json(silent=True) or {}
+    batch_size = min(int(payload.get("batch_size", 32)), 100)
+    limit = payload.get("limit")
+    force_reembed = payload.get("force", False)
+
+    # Get graph connection
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    # Query memories to reembed
+    if force_reembed:
+        query = "MATCH (m:Memory) RETURN m.id, m.content ORDER BY m.timestamp DESC"
+    else:
+        # Only reembed memories that don't have real embeddings yet
+        # We'll check by seeing if they have the default placeholder pattern
+        query = """
+            MATCH (m:Memory)
+            WHERE m.content IS NOT NULL
+            RETURN m.id, m.content
+            ORDER BY m.timestamp DESC
+        """
+
+    if limit:
+        query += f" LIMIT {int(limit)}"
+
+    result = graph.query(query)
+    memories_to_process = []
+
+    for row in result.result_set:
+        memory_id = row[0]
+        content = row[1]
+        if content:
+            memories_to_process.append((memory_id, content))
+
+    if not memories_to_process:
+        return jsonify({
+            "status": "complete",
+            "message": "No memories found to reembed",
+            "processed": 0,
+            "total": 0
+        })
+
+    # Process in batches
+    processed = 0
+    failed = 0
+    failed_ids = []
+
+    for i in range(0, len(memories_to_process), batch_size):
+        batch = memories_to_process[i:i + batch_size]
+        points = []
+
+        for memory_id, content in batch:
+            try:
+                # Generate real embedding using OpenAI
+                embedding = _generate_real_embedding(content)
+
+                # Retrieve existing metadata from Qdrant if available
+                try:
+                    existing = qdrant_client.retrieve(
+                        collection_name=COLLECTION_NAME,
+                        ids=[memory_id],
+                        with_payload=True
+                    )
+                    if existing:
+                        payload_data = existing[0].payload
+                    else:
+                        # Fallback: query from graph for metadata
+                        meta_result = graph.query(
+                            "MATCH (m:Memory {id: $id}) RETURN m",
+                            {"id": memory_id}
+                        )
+                        if meta_result.result_set:
+                            node = meta_result.result_set[0][0]
+                            props = _serialize_node(node)
+                            payload_data = {
+                                "content": content,
+                                "tags": props.get("tags", []),
+                                "importance": props.get("importance", 0.5),
+                                "timestamp": props.get("timestamp"),
+                                "type": props.get("type", "Memory"),
+                                "confidence": props.get("confidence", 1.0),
+                                "updated_at": props.get("updated_at"),
+                                "last_accessed": props.get("last_accessed"),
+                                "metadata": props.get("metadata", {}),
+                            }
+                        else:
+                            payload_data = {
+                                "content": content,
+                                "tags": [],
+                                "importance": 0.5,
+                                "timestamp": utc_now(),
+                                "type": "Memory",
+                                "confidence": 1.0,
+                                "metadata": {},
+                            }
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve metadata for {memory_id}: {e}")
+                    # Use minimal payload
+                    payload_data = {
+                        "content": content,
+                        "tags": [],
+                        "importance": 0.5,
+                        "timestamp": utc_now(),
+                        "type": "Memory",
+                        "confidence": 1.0,
+                        "metadata": {},
+                    }
+
+                points.append(
+                    PointStruct(
+                        id=memory_id,
+                        vector=embedding,
+                        payload=payload_data
+                    )
+                )
+                processed += 1
+
+            except Exception as e:
+                logger.error(f"Failed to generate embedding for memory {memory_id}: {e}")
+                failed += 1
+                failed_ids.append(memory_id)
+
+        # Batch upsert to Qdrant
+        if points:
+            try:
+                qdrant_client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=points
+                )
+                logger.info(f"Successfully reembedded batch of {len(points)} memories")
+            except Exception as e:
+                logger.error(f"Failed to upsert batch to Qdrant: {e}")
+                failed += len(points)
+                failed_ids.extend([p.id for p in points])
+                processed -= len(points)
+
+    response = {
+        "status": "complete",
+        "processed": processed,
+        "failed": failed,
+        "total": len(memories_to_process),
+        "batch_size": batch_size,
+    }
+
+    if failed_ids:
+        response["failed_ids"] = failed_ids[:10]  # Limit to first 10 for response size
+        if len(failed_ids) > 10:
+            response["failed_ids_truncated"] = True
+
+    return jsonify(response)
+
+
 @app.errorhandler(Exception)
 def handle_exceptions(exc: Exception):
     """Return JSON responses for both HTTP and unexpected errors."""

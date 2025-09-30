@@ -1,4 +1,6 @@
 .claude/settings.local.json
 *.code-workspace
 .env
-/__pycache__
+**/__pycache__
+automation_hub_dashboard/.env
+automation_hub_dashboard/.venv/

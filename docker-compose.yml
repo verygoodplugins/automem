@@ -1,5 +1,4 @@
 # docker-compose.yml - Local development environment
-version: '3.8'
 
 services:
   falkordb:

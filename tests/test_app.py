@@ -97,6 +97,9 @@ def reset_state(monkeypatch):
     monkeypatch.setattr(app, "state", state)
     monkeypatch.setattr(app, "init_falkordb", lambda: None)
     monkeypatch.setattr(app, "init_qdrant", lambda: None)
+    # Mock API tokens for auth
+    monkeypatch.setattr(app, "API_TOKEN", "test-token")
+    monkeypatch.setattr(app, "ADMIN_TOKEN", "test-admin-token")
     yield graph
 
 
@@ -105,18 +108,25 @@ def client():
     return app.app.test_client()
 
 
-def test_store_memory_without_content_returns_400(client):
-    response = client.post("/memory", data=json.dumps({}), content_type="application/json")
+@pytest.fixture
+def auth_headers():
+    """Provide authorization headers for testing."""
+    return {"Authorization": "Bearer test-token"}
+
+
+def test_store_memory_without_content_returns_400(client, auth_headers):
+    response = client.post("/memory", data=json.dumps({}), content_type="application/json", headers=auth_headers)
     assert response.status_code == 400
     body = response.get_json()
     assert body["status"] == "error"
 
 
-def test_store_memory_success(client, reset_state):
+def test_store_memory_success(client, reset_state, auth_headers):
     response = client.post(
         "/memory",
         data=json.dumps({"content": "Hello", "tags": ["test"], "importance": 0.7}),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
     body = response.get_json()
@@ -124,21 +134,23 @@ def test_store_memory_success(client, reset_state):
     assert body["qdrant"] in {"unconfigured", "stored", "failed"}
 
 
-def test_create_association_validates_payload(client, reset_state):
+def test_create_association_validates_payload(client, reset_state, auth_headers):
     response = client.post(
         "/associate",
         data=json.dumps({"memory1_id": "a", "memory2_id": "a"}),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 400
 
 
-def test_create_association_success(client, reset_state):
+def test_create_association_success(client, reset_state, auth_headers):
     for memory_id in ("a", "b"):
         response = client.post(
             "/memory",
             data=json.dumps({"id": memory_id, "content": f"Memory {memory_id}"}),
             content_type="application/json",
+        headers=auth_headers,
         )
         assert response.status_code == 201
 
@@ -151,19 +163,21 @@ def test_create_association_success(client, reset_state):
             "strength": 0.9,
         }),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
     body = response.get_json()
     assert body["relation_type"] == "RELATES_TO"
 
 
-def test_memory_classification(client, reset_state):
+def test_memory_classification(client, reset_state, auth_headers):
     """Test that memories are automatically classified."""
     # Decision memory
     response = client.post(
         "/memory",
         data=json.dumps({"content": "I decided to use FalkorDB over ArangoDB"}),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
     body = response.get_json()
@@ -175,6 +189,7 @@ def test_memory_classification(client, reset_state):
         "/memory",
         data=json.dumps({"content": "I prefer Railway for deployments"}),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
     body = response.get_json()
@@ -185,13 +200,14 @@ def test_memory_classification(client, reset_state):
         "/memory",
         data=json.dumps({"content": "I usually write tests before implementation"}),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
     body = response.get_json()
     assert body["type"] == "Pattern"
 
 
-def test_temporal_validity_fields(client, reset_state):
+def test_temporal_validity_fields(client, reset_state, auth_headers):
     """Test temporal validity fields t_valid and t_invalid."""
     response = client.post(
         "/memory",
@@ -201,19 +217,21 @@ def test_temporal_validity_fields(client, reset_state):
             "t_invalid": "2024-01-01T00:00:00Z",
         }),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
     body = response.get_json()
     assert body["status"] == "success"
 
 
-def test_new_relationship_types(client, reset_state):
+def test_new_relationship_types(client, reset_state, auth_headers):
     """Test new PKG relationship types with properties."""
     # Create memories for preference relationship
     response = client.post(
         "/memory",
         data=json.dumps({"id": "tool1", "content": "FalkorDB"}),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
 
@@ -221,6 +239,7 @@ def test_new_relationship_types(client, reset_state):
         "/memory",
         data=json.dumps({"id": "tool2", "content": "ArangoDB"}),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
 
@@ -236,6 +255,7 @@ def test_new_relationship_types(client, reset_state):
             "reason": "30x cost difference",
         }),
         content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 201
     body = response.get_json()
@@ -244,7 +264,7 @@ def test_new_relationship_types(client, reset_state):
     assert body["reason"] == "30x cost difference"
 
 
-def test_analytics_endpoint(client, reset_state):
+def test_analytics_endpoint(client, reset_state, auth_headers):
     """Test the analytics endpoint."""
     # Add some test memories first
     memories = [
@@ -258,11 +278,12 @@ def test_analytics_endpoint(client, reset_state):
             "/memory",
             data=json.dumps(memory),
             content_type="application/json",
+        headers=auth_headers,
         )
         assert response.status_code == 201
 
     # Get analytics
-    response = client.get("/analyze")
+    response = client.get("/analyze", headers=auth_headers)
     assert response.status_code == 200
     body = response.get_json()
     assert body["status"] == "success"
