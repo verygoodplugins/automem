@@ -34,6 +34,8 @@ services:
       FALKORDB_HOST: falkordb
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      AUTOMEM_API_TOKEN: ${AUTOMEM_API_TOKEN:-test-token}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-test-admin-token}
     depends_on:
       falkordb:
         condition: service_healthy

@@ -1,7 +1,7 @@
 """Comprehensive test suite for AutoMem Flask API endpoints."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
 
@@ -283,8 +283,8 @@ def test_recall_with_time_query(client, mock_state, auth_headers):
 
 def test_recall_with_explicit_timestamps(client, mock_state, auth_headers):
     """Test memory recall with explicit start and end timestamps."""
-    start = (datetime.utcnow() - timedelta(days=7)).isoformat()
-    end = datetime.utcnow().isoformat()
+    start = (datetime.now(timezone.utc) - timedelta(days=7)).replace(tzinfo=None).isoformat()
+    end = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
     response = client.get(f"/recall?start={start}&end={end}", headers=auth_headers)
     assert response.status_code == 200

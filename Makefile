@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test clean logs deploy
+.PHONY: help install dev test test-integration test-live clean logs deploy
 
 # Default target
 help:
@@ -10,7 +10,9 @@ help:
 	@echo "  make dev        - Start local development environment"
 	@echo ""
 	@echo "Development:"
-	@echo "  make test       - Run tests against local/remote FalkorDB"
+	@echo "  make test       - Run unit tests only"
+	@echo "  make test-integration - Run all tests including integration tests"
+	@echo "  make test-live  - Run integration tests against live Railway server"
 	@echo "  make logs       - Show development logs"
 	@echo "  make clean      - Clean up containers and volumes"
 	@echo ""
@@ -34,8 +36,22 @@ dev:
 
 # Run tests
 test:
+	@echo "🧪 Running unit tests..."
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs
+
+# Run all tests including integration tests
+test-integration:
+	@echo "🧪 Running all tests including integration tests..."
+	@echo "🐳 Starting Docker services..."
+	@AUTOMEM_API_TOKEN=test-token ADMIN_API_TOKEN=test-admin-token docker compose up -d
+	@echo "⏳ Waiting for services to be ready..."
+	@sleep 5
 	@echo "🧪 Running tests..."
-	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest
+	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs
+
+# Run integration tests against live Railway server
+test-live:
+	@./test-live-server.sh
 
 # Show logs
 logs:

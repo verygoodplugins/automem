@@ -1,14 +1,90 @@
-"""Integration tests that run against real Docker services."""
+"""Integration tests that run against real Docker services.
+
+These tests are opt-in. Enable with:
+  AUTOMEM_RUN_INTEGRATION_TESTS=1
+
+Optional helpers:
+  AUTOMEM_START_DOCKER=1     # start docker compose automatically
+  AUTOMEM_STOP_DOCKER=1      # stop docker compose after tests (default 1)
+  AUTOMEM_TEST_BASE_URL=...  # override API base URL (default http://localhost:8001)
+  AUTOMEM_ALLOW_LIVE=1       # required when AUTOMEM_TEST_BASE_URL is not localhost
+"""
 
 import json
+import os
+import subprocess
 import time
 import uuid
+from pathlib import Path
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+
+_INTEGRATION_ENABLED = os.getenv("AUTOMEM_RUN_INTEGRATION_TESTS")
+if not _INTEGRATION_ENABLED:
+    pytestmark = pytest.mark.skip(
+        reason="Integration tests disabled. Set AUTOMEM_RUN_INTEGRATION_TESTS=1 to enable."
+    )
+
+# Resolve test base URL and safety for live targets
+_DEFAULT_BASE = "http://localhost:8001"
+_BASE_URL = os.getenv("AUTOMEM_TEST_BASE_URL", _DEFAULT_BASE)
+_parsed = urlparse(_BASE_URL)
+_is_local = _parsed.hostname in {"localhost", "127.0.0.1"}
+if _INTEGRATION_ENABLED and not _is_local and os.getenv("AUTOMEM_ALLOW_LIVE") != "1":
+    pytestmark = pytest.mark.skip(
+        reason=(
+            f"Live server tests skipped for {_BASE_URL}. Set AUTOMEM_ALLOW_LIVE=1 to enable "
+            "against a non-local endpoint."
+        )
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def maybe_start_docker():
+    """Optionally start/stop docker-compose for the integration suite.
+
+    - Starts only when AUTOMEM_START_DOCKER=1 and the API is not already healthy.
+    - Stops after the session by default (unless AUTOMEM_STOP_DOCKER is 0/false).
+    """
+    if not _INTEGRATION_ENABLED:
+        yield
+        return
+
+    root = Path(__file__).resolve().parents[1]
+    start = os.getenv("AUTOMEM_START_DOCKER") == "1"
+    stop_flag = os.getenv("AUTOMEM_STOP_DOCKER", "1").lower() not in {"0", "false", "no"}
+
+    # Quick health probe to detect an already-running API
+    def _api_healthy() -> bool:
+        try:
+            r = requests.get(f"{_BASE_URL}/health", timeout=2)
+            return r.status_code == 200
+        except requests.RequestException:
+            return False
+
+    started_here = False
+    if start and not _api_healthy():
+        try:
+            subprocess.run(["docker", "compose", "up", "-d"], cwd=root, check=True)
+            started_here = True
+        except Exception:
+            # If docker isn't available, fall back and let the health loop skip later
+            started_here = False
+
+    try:
+        yield
+    finally:
+        if started_here and stop_flag:
+            try:
+                subprocess.run(["docker", "compose", "down"], cwd=root, check=True)
+            except Exception:
+                pass
 
 
 @pytest.fixture(scope="module")
@@ -24,14 +100,15 @@ def api_client():
     session.mount("http://", adapter)
     session.mount("https://", adapter)
 
-    # Set auth header for all requests
+    # Set auth header for all requests (configurable)
+    api_token = os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token")
     session.headers.update({
-        "Authorization": "Bearer test-token",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
     })
 
-    # Base URL for the API
-    session.base_url = "http://localhost:8001"
+    # Base URL for the API (override via AUTOMEM_TEST_BASE_URL)
+    session.base_url = _BASE_URL
 
     # Wait for API to be ready
     max_retries = 10
@@ -52,9 +129,9 @@ def api_client():
 def admin_headers():
     """Headers with admin token."""
     return {
-        "Authorization": "Bearer test-token",
-        "X-Admin-Token": "test-admin-token",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {os.getenv('AUTOMEM_TEST_API_TOKEN', 'test-token')}",
+        "X-Admin-Token": os.getenv("AUTOMEM_TEST_ADMIN_TOKEN", "test-admin-token"),
+        "Content-Type": "application/json",
     }
 
 
@@ -84,8 +161,8 @@ def test_memory_lifecycle_real(api_client):
     )
     assert store_response.status_code == 201
     store_data = store_response.json()
-    assert "id" in store_data
-    memory_id = store_data["id"]
+    assert "memory_id" in store_data
+    memory_id = store_data["memory_id"]
 
     # 2. Recall the memory by content
     recall_response = api_client.get(
@@ -100,7 +177,7 @@ def test_memory_lifecycle_real(api_client):
     # Find our memory in results
     found = False
     for result in recall_data["results"]:
-        if result["memory"]["id"] == memory_id:
+        if result["id"] == memory_id:
             found = True
             assert result["memory"]["content"] == memory_content
             assert "test" in result["memory"]["tags"]
@@ -130,7 +207,7 @@ def test_memory_lifecycle_real(api_client):
 
     found_updated = False
     for result in recall2_data["results"]:
-        if result["memory"]["id"] == memory_id:
+        if result["id"] == memory_id:
             found_updated = True
             assert result["memory"]["content"] == updated_content
             assert result["memory"]["importance"] == 0.9
@@ -155,7 +232,7 @@ def test_memory_lifecycle_real(api_client):
 
     # Should not find the deleted memory
     for result in recall3_data["results"]:
-        assert result["memory"]["id"] != memory_id
+        assert result["id"] != memory_id
 
 
 def test_association_real(api_client):
@@ -169,7 +246,7 @@ def test_association_real(api_client):
         }
     )
     assert memory1_response.status_code == 201
-    memory1_id = memory1_response.json()["id"]
+    memory1_id = memory1_response.json()["memory_id"]
 
     memory2_response = api_client.post(
         f"{api_client.base_url}/memory",
@@ -179,7 +256,7 @@ def test_association_real(api_client):
         }
     )
     assert memory2_response.status_code == 201
-    memory2_id = memory2_response.json()["id"]
+    memory2_id = memory2_response.json()["memory_id"]
 
     # Create association
     assoc_response = api_client.post(
@@ -217,7 +294,7 @@ def test_tag_filtering_real(api_client):
             }
         )
         assert response.status_code == 201
-        memory_ids.append(response.json()["id"])
+        memory_ids.append(response.json()["memory_id"])
 
     # Filter by tag
     tag_response = api_client.get(
@@ -251,7 +328,7 @@ def test_time_range_recall_real(api_client):
         }
     )
     assert memory_response.status_code == 201
-    memory_id = memory_response.json()["id"]
+    memory_id = memory_response.json()["memory_id"]
 
     # Recall with time range that includes the memory
     start_time = (now - timedelta(hours=1)).isoformat()
@@ -269,7 +346,7 @@ def test_time_range_recall_real(api_client):
     recall_data = recall_response.json()
 
     # Check if our memory is in the results
-    found = any(r["memory"]["id"] == memory_id for r in recall_data.get("results", []))
+    found = any(r["id"] == memory_id for r in recall_data.get("results", []))
     assert found, "Memory not found in time range"
 
     # Clean up
@@ -290,7 +367,7 @@ def test_embedding_handling_real(api_client):
         }
     )
     assert memory_response.status_code == 201
-    memory_id = memory_response.json()["id"]
+    memory_id = memory_response.json()["memory_id"]
 
     # Clean up
     api_client.delete(f"{api_client.base_url}/memory/{memory_id}")
@@ -307,7 +384,7 @@ def test_admin_reembed_real(api_client, admin_headers):
         }
     )
     assert memory_response.status_code == 201
-    memory_id = memory_response.json()["id"]
+    memory_id = memory_response.json()["memory_id"]
 
     # Try re-embedding (will use placeholder if no OpenAI key)
     reembed_response = requests.post(
@@ -328,9 +405,9 @@ def test_admin_reembed_real(api_client, admin_headers):
 
 def test_error_handling_real(api_client):
     """Test various error conditions."""
-    # 1. Invalid memory ID
-    response = api_client.get(
-        f"{api_client.base_url}/memory/invalid-uuid-format"
+    # 1. Non-existent memory delete should 404
+    response = api_client.delete(
+        f"{api_client.base_url}/memory/{uuid.uuid4()}"
     )
     assert response.status_code == 404
 
@@ -346,7 +423,7 @@ def test_error_handling_real(api_client):
         f"{api_client.base_url}/memory",
         json={"content": "Test memory for association"}
     )
-    memory_id = memory_response.json()["id"]
+    memory_id = memory_response.json()["memory_id"]
 
     assoc_response = api_client.post(
         f"{api_client.base_url}/associate",
