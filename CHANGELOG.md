@@ -14,11 +14,13 @@
   - `scripts/deduplicate_qdrant.py` - Remove duplicate memories with dry-run mode and batch processing
   - `scripts/reenrich_batch.py` - Re-classify memories with updated classification logic
   
-- **Health Monitoring System**
-  - `scripts/health_monitor.py` - Monitor service health and data consistency
-  - Opt-in auto-recovery with configurable thresholds
+- **Health Monitoring & Backup System**
+  - `scripts/health_monitor.py` - Monitor service health and data consistency with opt-in auto-recovery
+  - `scripts/backup_automem.py` - Automated backup to compressed JSON with optional S3 upload
   - Alert integrations (webhooks, email) for drift detection
-  - Comprehensive monitoring guide (`docs/HEALTH_MONITORING.md`)
+  - Configurable thresholds and retention policies
+  - Railway deployment support via Dockerfiles for monitoring and backup services
+  - Comprehensive guide: `docs/MONITORING_AND_BACKUPS.md`
 
 - **Memory Classification Enhancements**
   - Explicit `type` and `confidence` parameters in `POST /memory` endpoint

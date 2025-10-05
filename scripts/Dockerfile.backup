@@ -1,0 +1,25 @@
+# Dockerfile for AutoMem Backup Service
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt boto3
+
+# Copy backup script
+COPY scripts/backup_automem.py scripts/
+
+# Create backup directory
+RUN mkdir -p /app/backups
+
+# Run backup every 6 hours (21600 seconds)
+# With cleanup keeping last 7 backups
+CMD ["sh", "-c", "while true; do python scripts/backup_automem.py --cleanup --keep 7; sleep 21600; done"]
