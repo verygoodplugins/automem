@@ -1,12 +1,31 @@
 # Changelog
 
+## [0.4.1] - 2025-10-05
+
+### Added
+- **Automated Backup System**
+  - `scripts/backup_automem.py` - Automated backup to compressed JSON with optional S3 upload
+  - Automatic cleanup of old backups with configurable retention
+  - `scripts/Dockerfile.backup` - Railway deployment for scheduled backups (every 6 hours)
+  - `railway-backup.json` - Railway configuration for backup service
+
+- **Enhanced Monitoring Deployment**
+  - `scripts/Dockerfile.health-monitor` - Railway deployment for health monitoring
+  - `railway-health-monitor.json` - Railway configuration for monitoring service
+  - Comprehensive monitoring and backup guide: `docs/MONITORING_AND_BACKUPS.md`
+
+### Changed
+- **Docker Configuration**
+  - Enhanced docker-compose.yml with robust volume configuration
+  - Improved FalkorDB persistence with aggressive save settings
+  - Added health checks and restart policies
+
 ## [0.4.0] - 2025-10-05
 
 ### Added
 - **Railway Deployment Support**
-  - One-click Railway deployment with persistent volumes and automatic backups
+  - One-click Railway deployment with persistent volumes
   - Comprehensive Railway deployment guide (`docs/RAILWAY_DEPLOYMENT.md`) and checklist (`docs/DEPLOYMENT_CHECKLIST.md`)
-  - Custom FalkorDB Dockerfile with backup scripts for Railway
   - Railway template configuration (`railway.json`, `railway-template.json`)
   
 - **Data Recovery & Management Tools**
@@ -14,13 +33,10 @@
   - `scripts/deduplicate_qdrant.py` - Remove duplicate memories with dry-run mode and batch processing
   - `scripts/reenrich_batch.py` - Re-classify memories with updated classification logic
   
-- **Health Monitoring & Backup System**
+- **Health Monitoring System**
   - `scripts/health_monitor.py` - Monitor service health and data consistency with opt-in auto-recovery
-  - `scripts/backup_automem.py` - Automated backup to compressed JSON with optional S3 upload
   - Alert integrations (webhooks, email) for drift detection
-  - Configurable thresholds and retention policies
-  - Railway deployment support via Dockerfiles for monitoring and backup services
-  - Comprehensive guide: `docs/MONITORING_AND_BACKUPS.md`
+  - Configurable thresholds for drift detection
 
 - **Memory Classification Enhancements**
   - Explicit `type` and `confidence` parameters in `POST /memory` endpoint
