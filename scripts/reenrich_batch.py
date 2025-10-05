@@ -18,6 +18,7 @@ FALKORDB_HOST = os.getenv("FALKORDB_HOST", "localhost")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 FALKORDB_PASSWORD = os.getenv("FALKORDB_PASSWORD")
 AUTOMEM_API_URL = os.getenv("AUTOMEM_API_URL", "http://localhost:8001")
+API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
 
 
@@ -41,23 +42,32 @@ def get_memory_ids(limit: int = 10) -> List[str]:
 
 
 def trigger_reprocess(ids: List[str]) -> None:
-    """Trigger re-enrichment for a batch of memory IDs."""
+    """Trigger re-enrichment for a batch of memory IDs.
+    
+    Note: Admin endpoints require BOTH tokens:
+    - Authorization: Bearer <AUTOMEM_API_TOKEN> (for general auth)
+    - X-Admin-Token: <ADMIN_API_TOKEN> (for admin access)
+    """
+    if not API_TOKEN:
+        print("❌ ERROR: AUTOMEM_API_TOKEN not set")
+        sys.exit(1)
+    
     if not ADMIN_TOKEN:
         print("❌ ERROR: ADMIN_API_TOKEN not set")
         sys.exit(1)
     
     print(f"🔄 Triggering re-enrichment for {len(ids)} memories...")
-    print(f"   Using ADMIN_TOKEN: {ADMIN_TOKEN[:10]}...")
     
     headers = {
         "Content-Type": "application/json",
-        "X-Admin-Token": ADMIN_TOKEN,
+        "Authorization": f"Bearer {API_TOKEN}",  # Required for all API calls
+        "X-Admin-Token": ADMIN_TOKEN,  # Required for admin endpoints
     }
     
     payload = {"ids": ids}
     
     response = requests.post(
-        f"{AUTOMEM_API_URL}/enrichment/reprocess?admin_token={ADMIN_TOKEN}",
+        f"{AUTOMEM_API_URL}/enrichment/reprocess",
         json=payload,
         headers=headers,
         timeout=30,

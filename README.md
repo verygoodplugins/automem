@@ -219,15 +219,22 @@ curl -X POST http://localhost:8001/memory \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "content": "Chose PostgreSQL over MongoDB for team expertise",
-    "tags": ["decision", "database"],
+    "content": "Chose PostgreSQL over MongoDB for ACID compliance",
+    "type": "Decision",
+    "confidence": 0.95,
+    "tags": ["database", "architecture"],
     "importance": 0.9,
     "metadata": {
       "source": "architecture-meeting",
-      "entities": {"tools": ["PostgreSQL", "MongoDB"]}
+      "alternatives": ["MongoDB", "MySQL"],
+      "deciding_factors": ["ACID", "team_expertise"]
     }
   }'
 ```
+
+**Available memory types**: `Decision`, `Pattern`, `Preference`, `Style`, `Habit`, `Insight`, `Context` (default)
+- **Explicit `type` recommended** when you know the classification
+- **Omit `type`** to let enrichment auto-classify from content
 
 ### Recall Memories
 ```bash
@@ -343,16 +350,16 @@ response = requests.post(
 
 AutoMem's architecture is validated by peer-reviewed research:
 
-**HippoRAG 2** (Ohio State, June 2025)  
+[HippoRAG 2](https://arxiv.org/abs/2502.14802) (Ohio State, June 2025)  
 Proves graph-vector hybrid achieves 7% better associative memory than pure vector RAG, approaching human long-term memory performance.
 
-**A-MEM** (July 2025)  
+[A-MEM](https://arxiv.org/abs/2502.12110) (July 2025)  
 Validates dynamic memory organization with Zettelkasten-inspired principles - exactly what AutoMem's pattern detection and clustering implement.
 
-**MELODI** (DeepMind, 2025)  
+[MELODI](https://arxiv.org/html/2410.03156v1) (DeepMind, 2024)  
 Shows 8x memory compression without quality loss through gist representations - AutoMem's summary generation follows these principles.
 
-**ReadAgent** (DeepMind, 2024)  
+[ReadAgent](https://arxiv.org/abs/2402.09727) (DeepMind, 2024)  
 Demonstrates 20x context extension via episodic memory - AutoMem's consolidation engine implements similar temporal organization.
 
 We didn't just read the papers - we built the system they describe.

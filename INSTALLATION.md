@@ -414,18 +414,47 @@ Check service health.
 
 Store a new memory.
 
-**Request:**
+**Request Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content` | string | ✅ Yes | Memory content (min 1 char) |
+| `tags` | array | No | Tags for categorization (e.g., `["decision", "database"]`) |
+| `importance` | float | No | Importance score 0.0-1.0 (default: `0.5`) |
+| `type` | string | No | Memory classification (default: auto-classified) |
+| `confidence` | float | No | Confidence in type 0.0-1.0 (default: `0.9` if type provided, auto-computed otherwise) |
+| `metadata` | object | No | Custom metadata (any JSON object) |
+| `timestamp` | string | No | ISO 8601 timestamp (default: current time) |
+| `embedding` | array | No | 768-dimensional vector (auto-generated if omitted) |
+| `id` | string | No | Custom memory ID (default: auto-generated UUID) |
+| `t_valid` | string | No | ISO timestamp when memory becomes valid |
+| `t_invalid` | string | No | ISO timestamp when memory expires |
+| `updated_at` | string | No | ISO timestamp of last update (default: `timestamp`) |
+| `last_accessed` | string | No | ISO timestamp of last access (default: `updated_at`) |
+
+**Valid Memory Types:**
+- `Decision` - Strategic or technical decisions
+- `Pattern` - Recurring approaches or best practices
+- `Preference` - User/team preferences
+- `Style` - Code style or formatting preferences
+- `Habit` - Regular behaviors or workflows
+- `Insight` - Key learnings or realizations
+- `Context` - General contextual information (default)
+
+**Request Example:**
 ```json
 {
-  "content": "Finished integrating FalkorDB",
-  "tags": ["deployment", "success"],
+  "content": "Chose PostgreSQL over MongoDB for ACID compliance",
+  "type": "Decision",
+  "confidence": 0.95,
+  "tags": ["database", "architecture"],
   "importance": 0.9,
   "metadata": {
-    "source": "slack",
-    "entities": {"people": ["vikas singhal"]}
+    "source": "architecture-meeting",
+    "alternatives": ["MongoDB", "MySQL"],
+    "deciding_factors": ["ACID", "team_expertise"]
   },
-  "timestamp": "2025-09-16T12:37:21Z",
-  "embedding": [0.12, 0.56, ...]  // optional, 768-d vector
+  "timestamp": "2025-09-16T12:37:21Z"
 }
 ```
 
@@ -434,14 +463,26 @@ Store a new memory.
 {
   "status": "success",
   "memory_id": "uuid-generated-id",
-  "message": "Memory stored successfully"
+  "stored_at": "2025-09-16T12:37:21Z",
+  "type": "Decision",
+  "confidence": 0.95,
+  "qdrant": "stored",
+  "embedding_status": "generated",
+  "enrichment": "queued",
+  "metadata": {...},
+  "timestamp": "2025-09-16T12:37:21Z",
+  "updated_at": "2025-09-16T12:37:21Z",
+  "last_accessed": "2025-09-16T12:37:21Z"
 }
 ```
 
 **Notes:**
-- Embedding is optional; service generates placeholder if omitted
-- Timestamp defaults to current time if not provided
-- Automatic enrichment queued in background
+- **Explicit `type` preferred**: Send `type` when you know the classification for immediate, accurate categorization
+- **Auto-classification fallback**: Omit `type` to let enrichment pipeline classify based on content
+- **Embedding auto-generation**: Service generates real embeddings (OpenAI) or placeholder vectors if omitted
+- **Timestamp defaults**: All time fields default to current UTC time if not provided
+- **Background enrichment**: Entity extraction and relationship building queued automatically
+- **Type validation**: Invalid types return `400 Bad Request` with list of valid options
 
 ---
 

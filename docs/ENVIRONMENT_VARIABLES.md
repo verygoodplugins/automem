@@ -30,6 +30,23 @@ nano .env
 | `AUTOMEM_API_TOKEN` | API authentication token | ✅ Yes | Generate: `openssl rand -hex 32` |
 | `ADMIN_API_TOKEN` | Admin endpoint token | ✅ Yes | Generate: `openssl rand -hex 32` |
 
+**⚠️ Important: Admin Endpoints Require BOTH Tokens**
+
+Admin endpoints (like `/enrichment/reprocess`, `/admin/reembed`) require **two-level authentication**:
+
+1. **`Authorization: Bearer <AUTOMEM_API_TOKEN>`** - For general API access
+2. **`X-Admin-Token: <ADMIN_API_TOKEN>`** - For admin-level operations
+
+Example:
+```bash
+curl -X POST \
+  -H "Authorization: Bearer ${AUTOMEM_API_TOKEN}" \
+  -H "X-Admin-Token: ${ADMIN_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"ids": ["memory-id"]}' \
+  https://automem.up.railway.app/enrichment/reprocess
+```
+
 ### OpenAI Integration
 
 | Variable | Description | Required | Example |

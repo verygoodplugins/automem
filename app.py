@@ -2229,8 +2229,22 @@ def store_memory() -> Any:
         abort(400, description="'metadata' must be an object")
     metadata_json = json.dumps(metadata, default=str)
 
-    # Classify the memory type
-    memory_type, type_confidence = memory_classifier.classify(content)
+    # Accept explicit type/confidence or classify automatically
+    memory_type = payload.get("type")
+    type_confidence = payload.get("confidence")
+    
+    if memory_type:
+        # Validate explicit type
+        if memory_type not in MEMORY_TYPES:
+            abort(400, description=f"Invalid memory type '{memory_type}'. Must be one of: {', '.join(sorted(MEMORY_TYPES))}")
+        # Use provided confidence or default
+        if type_confidence is None:
+            type_confidence = 0.9  # High confidence for explicit types
+        else:
+            type_confidence = _coerce_importance(type_confidence)
+    else:
+        # Auto-classify if no type provided
+        memory_type, type_confidence = memory_classifier.classify(content)
 
     # Handle temporal validity fields
     t_valid = payload.get("t_valid")
