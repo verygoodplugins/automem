@@ -90,6 +90,8 @@ python -m spacy download en_core_web_sm
 - **Prefer zero cost** - No cloud bills, just local compute
 - **Developing/testing** - Local is faster for iteration
 
+- ![Very Good Plugins  Brave Browser+automem  Railway  2025-10-06 at 00 27 17@2x](https://github.com/user-attachments/assets/02e36c5b-515c-4675-993f-ead2fc022842)
+
 ---
 
 #### Option A: One-Click Deploy ⭐ (Fastest)
