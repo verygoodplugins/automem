@@ -94,8 +94,10 @@ RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 # Memory types for classification
 MEMORY_TYPES = {
     "Decision", "Pattern", "Preference", "Style",
-    "Habit", "Insight", "Context", "Memory"  # Memory is the default base type
+    "Habit", "Insight", "Context"
 }
+
+# Note: "Memory" used as internal fallback only, not a valid classification
 
 # Enhanced relationship types with their properties
 RELATIONSHIP_TYPES = {
@@ -1274,10 +1276,16 @@ def init_falkordb() -> None:
         or os.getenv("RAILWAY_PUBLIC_DOMAIN")
         or "localhost"
     )
+    password = os.getenv("FALKORDB_PASSWORD")
 
     try:
         logger.info("Connecting to FalkorDB at %s:%s", host, FALKORDB_PORT)
-        state.falkordb = FalkorDB(host=host, port=FALKORDB_PORT)
+        state.falkordb = FalkorDB(
+            host=host,
+            port=FALKORDB_PORT,
+            password=password,
+            username="default" if password else None
+        )
         state.memory_graph = state.falkordb.select_graph(GRAPH_NAME)
         logger.info("FalkorDB connection established")
     except Exception:  # pragma: no cover - log full stack trace in production
@@ -2087,8 +2095,8 @@ def admin_reembed() -> Any:
                                 "tags": props.get("tags", []),
                                 "importance": props.get("importance", 0.5),
                                 "timestamp": props.get("timestamp"),
-                                "type": props.get("type", "Memory"),
-                                "confidence": props.get("confidence", 1.0),
+                            "type": props.get("type", "Context"),  # Default to Context instead of Memory
+                            "confidence": props.get("confidence", 0.6),
                                 "updated_at": props.get("updated_at"),
                                 "last_accessed": props.get("last_accessed"),
                                 "metadata": props.get("metadata", {}),
@@ -2099,8 +2107,8 @@ def admin_reembed() -> Any:
                                 "tags": [],
                                 "importance": 0.5,
                                 "timestamp": utc_now(),
-                                "type": "Memory",
-                                "confidence": 1.0,
+                                "type": "Context",
+                                "confidence": 0.6,
                                 "metadata": {},
                             }
                 except Exception as e:
@@ -2111,8 +2119,8 @@ def admin_reembed() -> Any:
                         "tags": [],
                         "importance": 0.5,
                         "timestamp": utc_now(),
-                        "type": "Memory",
-                        "confidence": 1.0,
+                        "type": "Context",
+                        "confidence": 0.6,
                         "metadata": {},
                     }
 
@@ -2880,7 +2888,7 @@ def startup_recall() -> Any:
                     'content': row[1],
                     'tags': row[2] if row[2] else [],
                     'importance': row[3] if row[3] else 0.5,
-                    'type': row[4] if row[4] else 'Memory',
+                    'type': row[4] if row[4] else 'Context',
                     'metadata': json.loads(row[5]) if row[5] else {}
                 })
 

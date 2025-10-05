@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 import requests
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
+from falkordb import FalkorDB
 
 # Load environment
 load_dotenv()
@@ -22,8 +23,9 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "memories")
-AUTOMEM_API_URL = os.getenv("AUTOMEM_API_URL") or os.getenv("MCP_MEMORY_HTTP_ENDPOINT", "http://localhost:8001")
-API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
+FALKORDB_HOST = os.getenv("FALKORDB_HOST", "localhost")
+FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
+FALKORDB_PASSWORD = os.getenv("FALKORDB_PASSWORD")
 BATCH_SIZE = 50
 
 
@@ -70,42 +72,49 @@ def get_all_memories() -> List[Dict[str, Any]]:
     return memories
 
 
-def restore_memory(memory: Dict[str, Any]) -> bool:
-    """Restore a single memory to FalkorDB via API."""
+def restore_memory_to_graph_only(memory: Dict[str, Any], client) -> bool:
+    """Restore a single memory directly to FalkorDB (skip Qdrant to avoid duplicates)."""
     payload = memory["payload"]
-    
-    # Build request payload for /store endpoint
-    store_request = {
-        "content": payload.get("content", ""),
-        "tags": payload.get("tags", []),
-        "importance": payload.get("importance"),
-        "metadata": payload.get("metadata", {}),
-        "timestamp": payload.get("timestamp"),
-        "embedding": memory.get("vector"),  # Use existing embedding
-    }
-    
-    # Remove None values
-    store_request = {k: v for k, v in store_request.items() if v is not None}
-    
-    headers = {
-        "Authorization": f"Bearer {API_TOKEN}",
-        "Content-Type": "application/json",
-    }
+    memory_id = memory["id"]
     
     try:
-        response = requests.post(
-            f"{AUTOMEM_API_URL}/memory",
-            json=store_request,
-            headers=headers,
-            timeout=30,
-        )
+        # Store directly to FalkorDB graph
+        g = client.select_graph("memories")
         
-        if response.status_code in (200, 201):
-            return True
-        else:
-            print(f"   ⚠️  Failed: {response.status_code} - {response.text[:100]}")
-            return False
-            
+        # Build metadata string
+        metadata_items = []
+        metadata_dict = payload.get("metadata", {})
+        if metadata_dict:
+            for key, value in metadata_dict.items():
+                if isinstance(value, (list, dict)):
+                    value_str = str(value).replace("'", "\\'")
+                else:
+                    value_str = str(value).replace("'", "\\'")
+                metadata_items.append(f"{key}: '{value_str}'")
+        
+        metadata_str = ", ".join(metadata_items) if metadata_items else ""
+        
+        # Build tags string
+        tags = payload.get("tags", [])
+        tags_str = ", ".join([f"'{tag}'" for tag in tags]) if tags else ""
+        
+        # Create memory node
+        query = f"""
+        CREATE (m:Memory {{
+            id: '{memory_id}',
+            content: $content,
+            timestamp: '{payload.get("timestamp", "")}',
+            importance: {payload.get("importance", 0.5)},
+            type: '{payload.get("type", "Context")}',
+            confidence: {payload.get("confidence", 0.6)},
+            tags: [{tags_str}]
+            {', ' + metadata_str if metadata_str else ''}
+        }})
+        """
+        
+        g.query(query, {"content": payload.get("content", "")})
+        return True
+        
     except Exception as e:
         print(f"   ❌ Error: {e}")
         return False
@@ -118,9 +127,28 @@ def main():
     print("=" * 60)
     print()
     
-    if not API_TOKEN:
-        print("❌ ERROR: AUTOMEM_API_TOKEN not set")
+    # Initialize FalkorDB client
+    print(f"🔌 Connecting to FalkorDB at {FALKORDB_HOST}:{FALKORDB_PORT}")
+    try:
+        client = FalkorDB(
+            host=FALKORDB_HOST,
+            port=FALKORDB_PORT,
+            password=FALKORDB_PASSWORD,
+            username="default" if FALKORDB_PASSWORD else None
+        )
+        print("✅ Connected to FalkorDB\n")
+    except Exception as e:
+        print(f"❌ Failed to connect to FalkorDB: {e}")
         sys.exit(1)
+    
+    # Clear existing graph
+    print("🗑️  Clearing existing graph data...")
+    try:
+        g = client.select_graph("memories")
+        g.query("MATCH (n) DETACH DELETE n")
+        print("✅ Graph cleared\n")
+    except Exception as e:
+        print(f"⚠️  Could not clear graph: {e}\n")
     
     # Fetch all memories from Qdrant
     memories = get_all_memories()
@@ -129,8 +157,8 @@ def main():
         print("❌ No memories found in Qdrant!")
         sys.exit(1)
     
-    # Restore to FalkorDB
-    print(f"🔄 Restoring {len(memories)} memories to FalkorDB...")
+    # Restore to FalkorDB (skip Qdrant to avoid duplicates)
+    print(f"🔄 Restoring {len(memories)} memories to FalkorDB (without duplicating in Qdrant)...")
     print()
     
     success_count = 0
@@ -140,16 +168,15 @@ def main():
         content_preview = memory["payload"].get("content", "")[:60]
         print(f"[{i}/{len(memories)}] {content_preview}...")
         
-        if restore_memory(memory):
+        if restore_memory_to_graph_only(memory, client):
             success_count += 1
             print(f"   ✅ Restored")
         else:
             failed_count += 1
         
-        # Rate limiting
+        # Progress update
         if i % 10 == 0:
             print(f"\n💤 Progress: {success_count} ✅ / {failed_count} ❌\n")
-            time.sleep(1)
     
     print()
     print("=" * 60)
