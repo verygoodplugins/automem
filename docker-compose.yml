@@ -4,17 +4,21 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "6379:6379"  # Redis/FalkorDB
-      - "3000:3000"  # Browser UI
+      - "6379:6379" # Redis/FalkorDB
+      - "3000:3000" # Browser UI
     volumes:
-      - falkordb_data:/var/lib/falkordb/data
+      - falkordb_data:/data # Persistent data
+      - ./backups/falkordb:/backups # Local backups
     environment:
-      - REDIS_ARGS=--save 60 1000
+      # Aggressive persistence: save every 60s if 1 key changed, enable AOF
+      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --dir /data
+      - REDIS_PASSWORD=${FALKORDB_PASSWORD:-}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   qdrant:
     image: qdrant/qdrant:v1.11.3
@@ -22,20 +26,25 @@ services:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+      - ./backups/qdrant:/backups
+    restart: unless-stopped
 
   flask-api:
     build: .
     ports:
-      - "8001:8001"  # Flask API
+      - "8001:8001" # Flask API
     environment:
       FLASK_ENV: development
       FLASK_DEBUG: "1"
       PORT: 8001
       FALKORDB_HOST: falkordb
+      FALKORDB_PORT: 6379
+      FALKORDB_PASSWORD: ${FALKORDB_PASSWORD:-}
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       AUTOMEM_API_TOKEN: ${AUTOMEM_API_TOKEN:-test-token}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-test-admin-token}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
       falkordb:
         condition: service_healthy
@@ -43,6 +52,19 @@ services:
         condition: service_started
     volumes:
       - .:/app
+    restart: unless-stopped
+
+  # Optional: FalkorDB Browser for visualization
+  falkordb-browser:
+    image: falkordb/falkordb-browser:latest
+    ports:
+      - "3001:3000" # Browser UI on different port
+    environment:
+      - FALKORDB_URL=redis://${FALKORDB_PASSWORD:+:${FALKORDB_PASSWORD}@}falkordb:6379
+    depends_on:
+      - falkordb
+    restart: unless-stopped
+    profiles: ["browser"] # Only start with: docker-compose --profile browser up
 
 volumes:
   falkordb_data:

@@ -9,7 +9,7 @@ railway up
 make dev
 ```
 
-Your AI gets persistent memory backed by cutting-edge research. **7% better associative recall** than state-of-the-art RAG systems.
+Persistent memory for your AI.
 
 ---
 
@@ -30,9 +30,6 @@ AutoMem is a **graph-vector memory service** that gives AI assistants durable, r
 - ⚡ **Sub-second recall** - even with millions of memories
 
 ### Research-Validated Architecture
-
-> "AutoMem achieves 7% improvement in associative memory tasks compared to HippoRAG... pushing RAG systems closer to the effectiveness of human long-term memory"  
-> — **HippoRAG 2** (Ohio State University, June 2025) • [arXiv:2502.14802](https://arxiv.org/abs/2502.14802)
 
 AutoMem implements principles from:
 - **HippoRAG 2** (2025): Graph-vector hybrid for human-like associative memory

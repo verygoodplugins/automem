@@ -6,3 +6,4 @@ automation_hub_dashboard/.env
 automation_hub_dashboard/.venv/
 reports/
 venv/
+/.cursor

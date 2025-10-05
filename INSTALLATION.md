@@ -65,7 +65,59 @@ python -m spacy download en_core_web_sm
 
 ### Railway (Recommended)
 
-AutoMem runs as two Railway services: the Flask API and a FalkorDB instance with persistent storage. Qdrant can use Qdrant Cloud or be omitted for graph-only mode.
+**What is Railway?** Cloud hosting platform (like Heroku, but modern) where your AutoMem service runs 24/7 in containers.
+
+**Cost breakdown:**
+- ✅ **$5 free credits** for 30-day trial (no credit card required)
+- ✅ **~$0.50/month** typical AutoMem usage after trial
+- ✅ **$1/month minimum** if you use less than that
+
+---
+
+#### Should You Deploy to Railway?
+
+**✅ Deploy to Railway if you:**
+- **Use multiple devices** - Access same memories from laptop, desktop, mobile
+- **Collaborate with a team** - Share memories across team members
+- **Want always-on availability** - Don't want to start Docker containers daily
+- **Need remote access** - Use AI tools on tablet/phone without local services
+- **Value simplicity** - Set it once, forget about it
+
+**🏠 Stick with local if you:**
+- **Work on one machine** - Don't need cross-device sync
+- **Privacy first** - Keep all memories on your hardware
+- **Have Docker skills** - Comfortable managing local services
+- **Prefer zero cost** - No cloud bills, just local compute
+- **Developing/testing** - Local is faster for iteration
+
+---
+
+#### Option A: One-Click Deploy ⭐ (Fastest)
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/yD_u9d?referralCode=VuFE6g&utm_medium=integration&utm_source=template&utm_campaign=generic)
+
+**What this does:**
+- Creates AutoMem API + FalkorDB services automatically
+- Sets up persistent storage and volumes
+- Generates secure API tokens (`AUTOMEM_API_TOKEN`, `ADMIN_API_TOKEN`)
+- Configures internal networking (`FALKORDB_HOST`, `FALKORDB_PORT`)
+- Generates public domain automatically
+
+**After clicking:**
+1. Sign in with GitHub (if not logged in)
+2. Review environment variables
+3. (Optional) Add `OPENAI_API_KEY` for real embeddings instead of mock embeddings
+4. Click **"Deploy"**
+5. Wait ~60 seconds for deployment to complete ✅
+
+**Next:** Skip to [Get Your AutoMem URL](#get-your-automem-url) below to get your endpoint.
+
+---
+
+#### Option B: Manual Setup (Advanced)
+
+<details>
+<summary><b>Need more control? Click to expand manual deployment steps</b></summary>
 
 #### Step 1: Prerequisites
 
@@ -126,9 +178,65 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
    Expected: `{"status": "healthy"}`  
    `503` = FalkorDB connection issue (check host/port/password)
 
-#### Step 4: Seed and Test
+#### Get Your AutoMem URL
 
-Store first memory:
+1. Click on your **automem-api** service (the API, not FalkorDB)
+2. Go to **"Settings"** tab
+3. Scroll to **"Networking"** → **"Public Networking"**
+4. Click **"Generate Domain"** (if not already generated)
+5. **Copy the URL** - looks like: `automem-production-abc123.up.railway.app`
+
+**✅ Save this URL!** You'll need it for connecting your AI tools.
+
+</details>
+
+---
+
+#### What You Just Built
+
+```
+┌─────────────────────────────────────┐
+│  Railway Cloud (Your Free Tier)    │
+│                                     │
+│  ┌────────────────┐  ┌───────────┐ │
+│  │  AutoMem API   │  │ FalkorDB  │ │
+│  │  (Flask)       │──│ (Graph DB)│ │
+│  │  Port: 443     │  │ +Volume   │ │
+│  └────────────────┘  └───────────┘ │
+│         ▲                           │
+│         │ HTTPS                     │
+│         │ (your-url.railway.app)    │
+└─────────┼───────────────────────────┘
+          │
+          ▼
+   Your AI Tools
+   (any device, anywhere)
+```
+
+#### Verify Deployment
+
+Test that everything works:
+
+```bash
+# Replace with YOUR Railway URL
+curl https://automem-production-abc123.up.railway.app/health
+```
+
+**Expected response:**
+```json
+{"status": "healthy", "falkordb": "connected"}
+```
+
+**Got an error?**
+- `503 Service Unavailable` = FalkorDB can't connect. Check:
+  - `FALKORDB_HOST` is set to `falkordb.railway.internal` or `${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}`
+  - FalkorDB service is running (green dot in Railway dashboard)
+  - Persistent volume is mounted at `/data`
+- `401 Unauthorized` = You're trying a protected endpoint. `/health` should work without auth.
+
+#### Next Steps
+
+1. **Store first memory**:
 ```bash
 curl -X POST https://your-automem.railway.app/memory \
   -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \
@@ -136,20 +244,14 @@ curl -X POST https://your-automem.railway.app/memory \
   -d '{"content":"First memory from Railway","importance":0.7}'
 ```
 
-Trigger enrichment (if spaCy available):
-```bash
-curl -X POST https://your-automem.railway.app/enrichment/reprocess \
-  -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"ids":["memory-id"]}'
-```
+2. **Connect your AI tools** - Use your Railway URL in:
+   - [AutoMem MCP Client](https://github.com/verygoodplugins/mcp-automem)
+   - Claude Desktop, Cursor, Claude Code, etc.
 
-Check enrichment status:
-```bash
-curl https://your-automem.railway.app/enrichment/status \
-  -H "Authorization: Bearer $AUTOMEM_API_TOKEN"
-```
+3. **Set up monitoring** (optional): See [Health Monitoring Guide](docs/HEALTH_MONITORING.md)
+
+👉 **[Full Railway Guide](docs/RAILWAY_DEPLOYMENT.md)** - Advanced configuration, monitoring, troubleshooting  
+👉 **[Deployment Checklist](docs/DEPLOYMENT_CHECKLIST.md)** - Step-by-step verification
 
 ---
 
