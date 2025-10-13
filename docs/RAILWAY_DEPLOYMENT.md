@@ -135,16 +135,14 @@ Railway volumes ensure data survives:
 
 ### Automated Backups
 
-1. **Enable Railway Scheduled Tasks** (Pro plan):
-   ```bash
-   # In FalkorDB service, add cron job
-   0 */6 * * * /usr/local/bin/backup-falkordb.sh
-   ```
+Railway provides built-in volume backups for FalkorDB (automatic, one-click restore).
 
-2. **Or use external backup service**:
-   - Deploy separate backup worker
-   - Use provided `scripts/backup_to_s3.py`
-   - Schedule via cron or Railway
+For comprehensive backups covering both FalkorDB and Qdrant with S3 upload:
+
+👉 **See [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md)** for complete backup setup including:
+- Railway volume backups (built-in)
+- GitHub Actions automated backups (recommended, free)
+- Manual backup scripts
 
 ### Disaster Recovery
 
@@ -291,8 +289,8 @@ REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru
 
 ## Next Steps
 
-- [ ] Set up monitoring alerts
-- [ ] Configure automated backups
+- [ ] Set up monitoring alerts (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
+- [ ] Configure automated backups (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
 - [ ] Add MCP server integration
 - [ ] Deploy FalkorDB Browser
 - [ ] Set up staging environment
