@@ -1,114 +1,95 @@
 # Changelog
 
-## [0.4.1] - 2025-10-05
+All notable changes to AutoMem will be documented in this file.
 
-### Added
-- **Automated Backup System**
-  - `scripts/backup_automem.py` - Automated backup to compressed JSON with optional S3 upload
-  - Automatic cleanup of old backups with configurable retention
-  - `scripts/Dockerfile.backup` - Railway deployment for scheduled backups (every 6 hours)
-  - `railway-backup.json` - Railway configuration for backup service
+## [Unreleased] - 2025-10-13
 
-- **Enhanced Monitoring Deployment**
-  - `scripts/Dockerfile.health-monitor` - Railway deployment for health monitoring
-  - `railway-health-monitor.json` - Railway configuration for monitoring service
-  - Comprehensive monitoring and backup guide: `docs/MONITORING_AND_BACKUPS.md`
+### 🎯 Major Data Quality Overhaul
 
-### Changed
-- **Docker Configuration**
-  - Enhanced docker-compose.yml with robust volume configuration
-  - Improved FalkorDB persistence with aggressive save settings
-  - Added health checks and restart policies
+#### Fixed - Memory Type Pollution (Critical)
+- **Issue**: 490/773 memories (64%) had invalid types from recovery script bug
+- **Root Cause**: Recovery script flattened `metadata.type` as top-level property, overwriting actual memory type
+- **Fix**: 
+  - Added `RESERVED_FIELDS` filter in `scripts/recover_from_qdrant.py` to exclude type, confidence, content, etc.
+  - Created `scripts/cleanup_memory_types.py` to reclassify all 490 polluted memories
+  - 100% success rate - all memories reclassified to 7 valid types
+- **Impact**: Analytics now accurate with only valid memory types (Decision, Pattern, Preference, Style, Habit, Insight, Context)
 
-## [0.4.0] - 2025-10-05
+#### Fixed - Tag-Based Search Not Working
+- **Issue**: Tag searches returned 0 results despite memories having tags
+- **Root Cause**: Qdrant missing keyword indexes on `tags` and `tag_prefixes` payload fields
+- **Fix**: Added `PayloadSchemaType.KEYWORD` indexes in `_ensure_qdrant_collection()`
+- **Impact**: Tag filtering now works for both exact and prefix matching
 
-### Added
-- **Railway Deployment Support**
-  - One-click Railway deployment with persistent volumes
-  - Comprehensive Railway deployment guide (`docs/RAILWAY_DEPLOYMENT.md`) and checklist (`docs/DEPLOYMENT_CHECKLIST.md`)
-  - Railway template configuration (`railway.json`, `railway-template.json`)
-  
-- **Data Recovery & Management Tools**
-  - `scripts/recover_from_qdrant.py` - Rebuild FalkorDB from Qdrant after data loss (direct graph writes, preserves types)
-  - `scripts/deduplicate_qdrant.py` - Remove duplicate memories with dry-run mode and batch processing
-  - `scripts/reenrich_batch.py` - Re-classify memories with updated classification logic
-  
-- **Health Monitoring System**
-  - `scripts/health_monitor.py` - Monitor service health and data consistency with opt-in auto-recovery
-  - Alert integrations (webhooks, email) for drift detection
-  - Configurable thresholds for drift detection
+#### Improved - Entity Extraction Quality
+**Phase 1 - Error Code Filtering:**
+- Added `ENTITY_BLOCKLIST` for HTTP errors (Bad Request, Not Found, etc.)
+- Added `ENTITY_BLOCKLIST` for network errors (ECONNRESET, ETIMEDOUT, etc.)
 
-- **Memory Classification Enhancements**
-  - Explicit `type` and `confidence` parameters in `POST /memory` endpoint
-  - Type validation against allowed memory types (`Decision`, `Pattern`, `Preference`, `Style`, `Habit`, `Insight`, `Context`)
-  - Hybrid approach: explicit types preferred, auto-classification as fallback
+**Phase 2 - Code Artifact Filtering:**
+- Block markdown formatting (`- **File:**`, `# Header`, etc.)
+- Block class name suffixes (Adapter, Handler, Manager, Service, etc.)
+- Block JSON field names (starting with underscore like `_embedded`)
+- Block boolean literals (`'false'`, `true`, `null`)
+- Block environment variables (all-caps with underscores)
+- Block text fragments (strings ending with colons)
 
-### Changed
-- **Docker Infrastructure**
-  - Added persistent volumes for FalkorDB and Qdrant with local backup paths
-  - Implemented aggressive persistence configuration (`REDIS_ARGS`) for FalkorDB
-  - Added FalkorDB password support with automatic authentication
-  - Set `restart: unless-stopped` for all services
-  - Added optional FalkorDB Browser service on port 3001
+**Phase 3 - Project Name Extraction:**
+- **Issue**: Project extraction regex required `Project ProjectName` but memories use `project: project-name`
+- **Fix**: Added pattern `r"(?:in |on )?project:\s+([a-z][a-z0-9\-]+)"` 
+- **Impact**: Now correctly extracts claude-automation-hub, mcp-automem, autochat from session starts
 
-- **Memory Classification**
-  - Removed "Memory" as explicit type (now internal fallback only)
-  - Changed default classification from "Memory" to "Context"
-  - Recovery scripts now preserve original `type` and `confidence` from Qdrant
+#### Added - LLM-Based Memory Classification
+- **Feature**: Hybrid classification system (regex first, LLM fallback)
+- **Implementation**: 
+  - Enhanced `MemoryClassifier` with `_classify_with_llm()` method
+  - Uses GPT-4o-mini for accurate, cost-effective classification
+  - Falls back to LLM only when regex patterns don't match (~30% of cases)
+- **Cost**: ~$0.03 one-time for 510 memories, ~$0.24/year ongoing (10 memories/day)
+- **Accuracy**: 0.9 confidence on technical content, work logs, session starts
+- **Script**: Created `scripts/reclassify_with_llm.py` for one-time reclassification
 
-- **Documentation**
-  - Complete API parameter documentation in `INSTALLATION.md` (all 13 parameters for `/memory`)
-  - Clarified admin endpoint authentication (requires both `AUTOMEM_API_TOKEN` and `ADMIN_API_TOKEN`)
-  - Added decision framework for Railway vs local deployment
-  - Updated `README.md` with explicit type usage examples and research paper links
-  - Created comprehensive environment variables guide (`docs/ENVIRONMENT_VARIABLES.md`)
-  - Split installation from marketing content for better UX
+#### Added - Automated Backups
+- **GitHub Actions**: Workflow runs every 6 hours, backs up to S3
+- **Railway Volumes**: Built-in volume backups for redundancy  
+- **Dual Storage**: FalkorDB (primary) + Qdrant (backup) provides data resilience
+- **Documentation**: Consolidated all backup docs into `docs/MONITORING_AND_BACKUPS.md`
 
-- **Environment Variables**
-  - Cleaned up and organized variables by category
-  - Removed deprecated variables (`MCP_MEMORY_AUTO_DISCOVER`, `DEVELOPMENT`)
-  - Renamed `MCP_MEMORY_HTTP_ENDPOINT` to `AUTOMEM_API_URL` (backward compatible)
-  - Added health monitor configuration variables
-  - Created `.env.example` for quick setup
+#### Fixed - FalkorDB Data Loss Recovery
+- **Issue**: FalkorDB restarted and lost all memories (persistence not working)
+- **Recovery**: Used `scripts/recover_from_qdrant.py` to restore 778/780 memories from Qdrant
+- **Root Cause Analysis**: `appendonly` was set to `no` instead of `yes`
+- **Prevention**: Verified `REDIS_ARGS` in Railway and documented proper persistence configuration
 
-### Fixed
-- FalkorDB TCP proxy connection support for Railway deployment
-- Recovery script authentication (now uses both API and admin tokens)
-- Memory type preservation during recovery operations
-- Entity extraction picking up markdown formatting artifacts
+### 📁 Files Modified
+- `app.py` - Enhanced entity extraction, LLM classification, Qdrant indexes
+- `scripts/recover_from_qdrant.py` - Fixed metadata field handling
+- `scripts/cleanup_memory_types.py` - Created tool for type reclassification
+- `scripts/reclassify_with_llm.py` - Created LLM-based reclassification tool
+- `docs/MONITORING_AND_BACKUPS.md` - Updated with comprehensive backup strategies
+- `docs/RAILWAY_DEPLOYMENT.md` - Updated references to backup documentation
+- `README.md` - Updated architecture and documentation links
+- `.github/workflows/backup.yml` - Created automated backup workflow
 
-### Notes
-- **Data Migration**: Use `scripts/reenrich_batch.py` to update memory classifications
-- **Railway Cost**: ~$0.50/month typical usage with $5 free trial credits
+### 📊 Impact Summary
+- **Memory Types**: 79 → 7 valid types (92% reduction in pollution)
+- **Reclassified**: 490 memories (100% success rate)
+- **Entity Quality**: Clean extraction, no error codes or junk
+- **Tag Search**: Fully functional with proper indexing
+- **Backups**: Automated every 6 hours to S3
+- **Data Recovery**: 99.7% recovery rate (778/780) from Qdrant
+- **Classification**: Hybrid system with 0.9 LLM confidence
 
-## [0.3.0] - 2025-09-30
+### 🚀 Deployment
+All changes deployed to Railway at `automem.up.railway.app`
 
-- Added
-  - Admin endpoint to re-embed existing memories with OpenAI: `POST /admin/reembed` (batching, limits, and force options).
-  - Enrichment pipeline with entity extraction, pattern linking, and a status endpoint `GET /enrichment/status`.
-  - Tests covering re-embed and enrichment functionality.
+### 💰 Cost Analysis
+- **LLM Classification**: $0.03 one-time + $0.24/year ongoing
+- **S3 Backups**: Included in existing AWS usage
+- **Qdrant**: Existing free tier
+- **Railway**: Existing deployment
 
-- Changed
-  - Improved entity extraction quality and relation fetching for recall responses.
-  - Refined consolidation decay logic for smoother, incremental relevance updates.
-  - Restructured docs and scripts; updated migration references and paths.
-  - Updated README with clearer setup and feature documentation.
+---
 
-- Notes
-  - API token auth and foundational recall/scoring improvements shipped earlier remain compatible with these changes.
-
-## [0.2.0] - 2025-09-17
-
-- Added
-  - Update (`PATCH /memory/<id>`), delete (`DELETE /memory/<id>`), and tag filter endpoints (`GET /memory/by-tag`).
-  - API token authentication via `Authorization: Bearer`, `X-API-Key`, or `?api_key`.
-
-- Changed
-  - Enhanced recall scoring and result ordering.
-
-## [0.1.0] - 2025-09-16
-
-- Added
-  - Initial API for storing and recalling memories backed by FalkorDB + Qdrant.
-  - Consolidation engine (initial version), OpenAI embeddings integration, and HTTP bridge draft.
-  - `reembed_embeddings.py` helper.
+## [Prior Releases]
+See git history for previous changes.

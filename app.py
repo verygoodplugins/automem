@@ -983,13 +983,30 @@ class MemoryClassifier:
         ],
     }
 
-    def classify(self, content: str) -> tuple[str, float]:
+    SYSTEM_PROMPT = """You are a memory classification system. Classify each memory into exactly ONE of these types:
+
+- **Decision**: Choices made, selected options, what was decided
+- **Pattern**: Recurring behaviors, typical approaches, consistent tendencies  
+- **Preference**: Likes/dislikes, favorites, personal tastes
+- **Style**: Communication approach, formatting, tone used
+- **Habit**: Regular routines, repeated actions, schedules
+- **Insight**: Discoveries, learnings, realizations, key findings
+- **Context**: Situational background, what was happening, circumstances
+
+Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
+
+    def classify(self, content: str, *, use_llm: bool = True) -> tuple[str, float]:
         """
         Classify memory type and return confidence score.
         Returns: (type, confidence)
+        
+        Args:
+            content: Memory content to classify
+            use_llm: If True, falls back to LLM when regex patterns don't match
         """
         content_lower = content.lower()
 
+        # Try regex patterns first (fast, free)
         for memory_type, patterns in self.PATTERNS.items():
             for pattern in patterns:
                 if re.search(pattern, content_lower):
@@ -1003,8 +1020,53 @@ class MemoryClassifier:
 
                     return memory_type, confidence
 
+        # If no regex match and LLM enabled, use LLM classification
+        if use_llm:
+            try:
+                result = self._classify_with_llm(content)
+                if result:
+                    return result
+            except Exception:
+                logger.exception("LLM classification failed, using fallback")
+
         # Default to base Memory type with lower confidence
         return "Memory", 0.3
+
+    def _classify_with_llm(self, content: str) -> Optional[tuple[str, float]]:
+        """Use OpenAI to classify memory type (fallback for complex content)."""
+        import openai
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        
+        try:
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": content[:1000]}  # Limit to 1000 chars
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+                max_tokens=50
+            )
+            
+            result = json.loads(response.choices[0].message.content)
+            memory_type = result.get("type", "Memory")
+            confidence = float(result.get("confidence", 0.7))
+            
+            # Validate type
+            if memory_type not in MEMORY_TYPES:
+                return None
+            
+            logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
+            return memory_type, confidence
+            
+        except Exception as exc:
+            logger.warning("LLM classification failed: %s", exc)
+            return None
 
 
 memory_classifier = MemoryClassifier()
