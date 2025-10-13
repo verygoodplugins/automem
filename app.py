@@ -1338,6 +1338,11 @@ def _ensure_qdrant_collection() -> None:
             field_name="tags",
             field_schema=PayloadSchemaType.KEYWORD,
         )
+        state.qdrant.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name="tag_prefixes",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to ensure Qdrant collection; disabling client")
         state.qdrant = None
