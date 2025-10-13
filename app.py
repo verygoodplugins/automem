@@ -1077,6 +1077,10 @@ def _is_valid_entity(value: str, *, allow_lower: bool = False, max_words: Option
     # Reject boolean/null literals and common JSON noise
     if lowered in {'true', 'false', 'null', 'none', 'undefined'}:
         return False
+    
+    # Reject environment variables (all caps with underscores) and text fragments ending with colons
+    if ('_' in cleaned and cleaned.isupper()) or cleaned.endswith(':'):
+        return False
 
     return True
 
