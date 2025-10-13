@@ -7,3 +7,10 @@ automation_hub_dashboard/.venv/
 reports/
 venv/
 /.cursor
+
+# Local backups (use S3 for persistent backups)
+backups/
+
+# Log files
+*.log
+
