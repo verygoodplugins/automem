@@ -56,7 +56,7 @@ FALKORDB_PORT=6379
 FALKORDB_PASSWORD=<your-password>
 QDRANT_URL=<your-qdrant-url>
 QDRANT_API_KEY=<your-qdrant-key>
-AUTOMEM_API_URL=https://automem.up.railway.app
+AUTOMEM_API_URL=https://your-automem-deployment.up.railway.app
 
 # Optional monitoring settings
 HEALTH_MONITOR_DRIFT_THRESHOLD=5          # Warning at 5% drift
@@ -156,8 +156,8 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
    - Go to: GitHub repo → Settings → Secrets and variables → Actions
    - Add these secrets:
      ```
-     FALKORDB_HOST         = hopper.proxy.rlwy.net (your Railway TCP proxy)
-     FALKORDB_PORT         = 45404 (your Railway TCP proxy port)
+     FALKORDB_HOST         = your-host.proxy.rlwy.net (your Railway TCP proxy)
+     FALKORDB_PORT         = 12345 (your Railway TCP proxy port)
      FALKORDB_PASSWORD     = (from Railway)
      QDRANT_URL            = (from Railway)
      QDRANT_API_KEY        = (from Railway)
@@ -240,7 +240,7 @@ python scripts/recover_from_qdrant.py
 Check system health via API:
 
 ```bash
-curl https://automem.up.railway.app/health | jq
+curl https://your-automem-deployment.up.railway.app/health | jq
 ```
 
 Response:
@@ -267,7 +267,7 @@ Monitor your services:
 Set up external monitoring with:
 
 1. **UptimeRobot** - Free HTTP monitoring
-   - Monitor: `https://automem.up.railway.app/health`
+   - Monitor: `https://your-automem-deployment.up.railway.app/health`
    - Alert when status != "healthy"
 
 2. **Better Uptime** - Advanced monitoring
@@ -395,7 +395,7 @@ python scripts/recover_from_qdrant.py
 **Solution**:
 ```bash
 # Test connections
-curl https://automem.up.railway.app/health
+curl https://your-automem-deployment.up.railway.app/health
 
 # Check credentials
 echo $FALKORDB_PASSWORD
