@@ -1064,14 +1064,18 @@ def _is_valid_entity(value: str, *, allow_lower: bool = False, max_words: Option
     if not allow_lower and cleaned[0].islower() and not cleaned.isupper():
         return False
     
-    # Reject strings starting with markdown/formatting characters
-    if cleaned[0] in {'-', '*', '#', '>', '|', '[', ']', '{', '}', '(', ')'}:
+    # Reject strings starting with markdown/formatting or code characters
+    if cleaned[0] in {'-', '*', '#', '>', '|', '[', ']', '{', '}', '(', ')', '_', "'", '"'}:
         return False
     
     # Reject common code artifacts (suffixes that indicate class names)
     code_suffixes = ('Adapter', 'Handler', 'Manager', 'Service', 'Controller', 
                      'Provider', 'Factory', 'Builder', 'Helper', 'Util')
     if any(cleaned.endswith(suffix) for suffix in code_suffixes):
+        return False
+    
+    # Reject boolean/null literals and common JSON noise
+    if lowered in {'true', 'false', 'null', 'none', 'undefined'}:
         return False
 
     return True
