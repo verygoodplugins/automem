@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient, models as qdrant_models
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import Distance, PointStruct, VectorParams, PayloadSchemaType
 from werkzeug.exceptions import HTTPException
 from openai import OpenAI
 from consolidation import MemoryConsolidator, ConsolidationScheduler
@@ -1330,6 +1330,14 @@ def _ensure_qdrant_collection() -> None:
                 collection_name=COLLECTION_NAME,
                 vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
             )
+        
+        # Ensure payload indexes exist for tag filtering
+        logger.info("Ensuring Qdrant payload indexes for collection '%s'", COLLECTION_NAME)
+        state.qdrant.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name="tags",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to ensure Qdrant collection; disabling client")
         state.qdrant = None
