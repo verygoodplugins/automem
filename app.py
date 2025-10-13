@@ -161,6 +161,18 @@ ENTITY_STOPWORDS = {
     "meeting",
 }
 
+# Common error codes and technical strings to exclude from entity extraction
+ENTITY_BLOCKLIST = {
+    # HTTP errors
+    "bad request", "not found", "unauthorized", "forbidden", "internal server error",
+    "service unavailable", "gateway timeout",
+    # Network errors
+    "econnreset", "econnrefused", "etimedout", "enotfound", "enetunreach",
+    "ehostunreach", "epipe", "eaddrinuse",
+    # Common error patterns
+    "error", "warning", "exception", "failed", "failure",
+}
+
 # Search weighting parameters (can be overridden via environment variables)
 SEARCH_WEIGHT_VECTOR = float(os.getenv("SEARCH_WEIGHT_VECTOR", "0.35"))
 SEARCH_WEIGHT_KEYWORD = float(os.getenv("SEARCH_WEIGHT_KEYWORD", "0.35"))
@@ -1040,6 +1052,10 @@ def _is_valid_entity(value: str, *, allow_lower: bool = False, max_words: Option
 
     lowered = cleaned.lower()
     if lowered in SEARCH_STOPWORDS or lowered in ENTITY_STOPWORDS:
+        return False
+    
+    # Reject error codes and technical noise
+    if lowered in ENTITY_BLOCKLIST:
         return False
 
     if not any(ch.isalpha() for ch in cleaned):

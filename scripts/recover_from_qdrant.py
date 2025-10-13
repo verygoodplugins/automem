@@ -81,11 +81,15 @@ def restore_memory_to_graph_only(memory: Dict[str, Any], client) -> bool:
         # Store directly to FalkorDB graph
         g = client.select_graph("memories")
         
-        # Build metadata string
+        # Build metadata string (exclude reserved fields to prevent overwriting)
+        RESERVED_FIELDS = {"type", "confidence", "content", "timestamp", "importance", "tags", "id"}
         metadata_items = []
         metadata_dict = payload.get("metadata", {})
         if metadata_dict:
             for key, value in metadata_dict.items():
+                # Skip reserved fields that would overwrite actual memory properties
+                if key in RESERVED_FIELDS:
+                    continue
                 if isinstance(value, (list, dict)):
                     value_str = str(value).replace("'", "\\'")
                 else:
