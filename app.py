@@ -1222,7 +1222,8 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
         if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
             result["projects"].add(cleaned)
 
-    for match in re.findall(r'"([^"]+)"', text):
+    # Extract project names from "project called/named 'X'" pattern
+    for match in re.findall(r'(?:project|repo|repository)\s+(?:called|named)\s+"([^"]+)"', text, re.IGNORECASE):
         cleaned = match.strip()
         if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
             result["projects"].add(cleaned)
