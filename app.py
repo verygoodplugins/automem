@@ -1034,15 +1034,15 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
 
     def _classify_with_llm(self, content: str) -> Optional[tuple[str, float]]:
         """Use OpenAI to classify memory type (fallback for complex content)."""
-        import openai
+        # Reuse existing client if available
+        if state.openai_client is None:
+            init_openai()
         
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
+        if state.openai_client is None:
             return None
         
         try:
-            client = openai.OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
+            response = state.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
@@ -1059,7 +1059,8 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             
             # Validate type
             if memory_type not in MEMORY_TYPES:
-                return None
+                logger.warning("LLM returned invalid type '%s', using Context", memory_type)
+                return "Context", 0.5
             
             logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
             return memory_type, confidence

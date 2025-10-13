@@ -2,7 +2,7 @@
 
 All notable changes to AutoMem will be documented in this file.
 
-## [Unreleased] - 2025-10-13
+## [0.5.0] - 2025-10-13
 
 ### 🎯 Major Data Quality Overhaul
 
@@ -45,9 +45,10 @@ All notable changes to AutoMem will be documented in this file.
   - Enhanced `MemoryClassifier` with `_classify_with_llm()` method
   - Uses GPT-4o-mini for accurate, cost-effective classification
   - Falls back to LLM only when regex patterns don't match (~30% of cases)
-- **Cost**: ~$0.03 one-time for 510 memories, ~$0.24/year ongoing (10 memories/day)
-- **Accuracy**: 0.9 confidence on technical content, work logs, session starts
-- **Script**: Created `scripts/reclassify_with_llm.py` for one-time reclassification
+- **Reclassification Completed**: 413 memories reclassified with 100% success rate
+- **Cost**: $0.04 total for one-time reclassification, ~$0.24/year ongoing (10 memories/day)
+- **Accuracy**: 85-95% confidence on technical content, work logs, session starts
+- **Script**: Created `scripts/reclassify_with_llm.py` for batch reclassification
 
 #### Added - Automated Backups
 - **GitHub Actions**: Workflow runs every 6 hours, backs up to S3
@@ -72,22 +73,26 @@ All notable changes to AutoMem will be documented in this file.
 - `.github/workflows/backup.yml` - Created automated backup workflow
 
 ### 📊 Impact Summary
-- **Memory Types**: 79 → 7 valid types (92% reduction in pollution)
-- **Reclassified**: 490 memories (100% success rate)
-- **Entity Quality**: Clean extraction, no error codes or junk
+- **Memory Types**: 79 invalid types → 7 valid types (100% cleanup)
+- **Reclassified**: 903 total memories
+  - 490 via cleanup script (invalid types → valid types)
+  - 413 via LLM (fallback "Memory" → specific types)
+  - 100% success rate on both
+- **Final Distribution**: Context (47%), Decision (16%), Insight (13%), Habit (12%), Preference (9%), Pattern (3%), Style (<1%)
+- **Entity Quality**: Clean extraction, no error codes or code artifacts
 - **Tag Search**: Fully functional with proper indexing
 - **Backups**: Automated every 6 hours to S3
 - **Data Recovery**: 99.7% recovery rate (778/780) from Qdrant
-- **Classification**: Hybrid system with 0.9 LLM confidence
+- **Classification**: Hybrid system with 85-95% LLM confidence
 
 ### 🚀 Deployment
 All changes deployed to Railway at `automem.up.railway.app`
 
 ### 💰 Cost Analysis
-- **LLM Classification**: $0.03 one-time + $0.24/year ongoing
-- **S3 Backups**: Included in existing AWS usage
-- **Qdrant**: Existing free tier
-- **Railway**: Existing deployment
+- **LLM Classification**: $0.04 one-time + $0.24/year ongoing (~$0.02/month)
+- **S3 Backups**: Minimal (~$0.05/month for storage + lifecycle rules)
+- **Qdrant**: Existing free tier (1GB)
+- **Railway**: Existing deployment ($5/month hobby plan)
 
 ---
 
