@@ -1168,6 +1168,12 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
         cleaned = match.strip()
         if _is_valid_entity(cleaned):
             result["projects"].add(cleaned)
+    
+    # Extract project names from "project: project-name" pattern (common in session starts)
+    for match in re.findall(r"(?:in |on )?project:\s+([a-z][a-z0-9\-]+)", text, re.IGNORECASE):
+        cleaned = match.strip()
+        if _is_valid_entity(cleaned, allow_lower=True):
+            result["projects"].add(cleaned)
 
     result["tools"].difference_update(result["people"])
 
