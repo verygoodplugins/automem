@@ -81,7 +81,34 @@ python scripts/health_monitor.py \
 
 ## Automated Backups
 
-### Local Backups (Development)
+### Railway Volume Backups (Built-in) ✅
+
+**Already configured!** If you're using Railway, your FalkorDB service has automatic volume backups enabled.
+
+**Features:**
+- ✅ Automatic snapshots (default: every 24 hours)
+- ✅ One-click restore from Railway dashboard
+- ✅ Included with Railway Pro (no extra cost)
+- ✅ Instant volume snapshots
+
+**Access backups:**
+1. Railway Dashboard → `falkordb` service
+2. Click "Backups" tab
+3. View backup history and schedule
+4. Click "Restore" to recover from any snapshot
+
+**Limitations:**
+- Only backs up FalkorDB (not Qdrant)
+- Platform-locked (can't export/download)
+- Use for quick recovery; combine with script backups for full protection
+
+---
+
+### Script-Based Backups
+
+For portable backups that cover both databases, use the `backup_automem.py` script:
+
+#### Local Backups (Development)
 
 The `backup_automem.py` script exports both FalkorDB and Qdrant to compressed JSON files:
 
@@ -115,82 +142,60 @@ python scripts/backup_automem.py \
   --cleanup --keep 7
 ```
 
-### Railway Cron Job Setup
+### Automated Script Backups
 
-**Method 1: Separate Backup Service**
+**Recommended: GitHub Actions (Free)**
 
-Create a new Railway service that runs backups on a schedule:
+GitHub Actions is the simplest way to automate backups - free and doesn't consume Railway resources.
 
-1. **Create `scripts/Dockerfile.backup`**:
-   ```dockerfile
-   FROM python:3.11-slim
-   
-   WORKDIR /app
-   COPY requirements.txt .
-   RUN pip install --no-cache-dir -r requirements.txt boto3
-   
-   COPY scripts/backup_automem.py scripts/
-   COPY consolidation.py .
-   
-   # Run backup every 6 hours (21600 seconds)
-   CMD ["sh", "-c", "while true; do python scripts/backup_automem.py --cleanup --keep 7; sleep 21600; done"]
+**Setup (5 minutes):**
+
+1. **Workflow file already exists:** `.github/workflows/backup.yml`
+
+2. **Add GitHub secrets:**
+   - Go to: GitHub repo → Settings → Secrets and variables → Actions
+   - Add these secrets:
+     ```
+     FALKORDB_HOST         = hopper.proxy.rlwy.net (your Railway TCP proxy)
+     FALKORDB_PORT         = 45404 (your Railway TCP proxy port)
+     FALKORDB_PASSWORD     = (from Railway)
+     QDRANT_URL            = (from Railway)
+     QDRANT_API_KEY        = (from Railway)
+     ```
+   - Optional for S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
+
+3. **Push and test:**
+   ```bash
+   git push origin main
    ```
+   - Go to Actions tab → "AutoMem Backup" → Run workflow
 
-2. **Deploy to Railway**:
-   - Create new service
-   - Point to `scripts/Dockerfile.backup`
-   - Set environment variables (same as main service + AWS creds)
-   - Deploy
+**Runs every 6 hours automatically.** Free tier: 2000 minutes/month.
 
-**Method 2: Railway Cron (Pro Plan)**
+---
 
-Use Railway's native cron feature:
+**Advanced: Railway Backup Service**
+
+For Railway Pro users who want backups running on Railway:
+
+⚠️ **Note:** Railway's UI makes Dockerfile configuration complex. This method is for advanced users.
+
+The `scripts/Dockerfile.backup` exists and runs backups every 6 hours in a loop. However, deploying it requires CLI:
 
 ```bash
-# In railway.toml
-[[services]]
-name = "backup-cron"
-cron = "0 */6 * * *"  # Every 6 hours
-command = "python scripts/backup_automem.py --s3-bucket my-automem-backups --cleanup"
+cd /path/to/automem
+railway link
+railway up --service backup-service
 ```
 
-**Method 3: External Cron (GitHub Actions)**
+Then configure in Railway dashboard:
+- Set Builder to Dockerfile
+- Dockerfile Path: `scripts/Dockerfile.backup`
+- Add environment variables (same as memory-service)
 
-Run backups from GitHub Actions:
+**Cost:** ~$1-2/month
 
-```yaml
-# .github/workflows/backup.yml
-name: AutoMem Backup
-on:
-  schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours
-  workflow_dispatch:  # Manual trigger
-
-jobs:
-  backup:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
-        run: pip install -r requirements.txt boto3
-      
-      - name: Run backup
-        env:
-          FALKORDB_HOST: ${{ secrets.FALKORDB_HOST }}
-          FALKORDB_PASSWORD: ${{ secrets.FALKORDB_PASSWORD }}
-          QDRANT_URL: ${{ secrets.QDRANT_URL }}
-          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: |
-          python scripts/backup_automem.py \
-            --s3-bucket my-automem-backups \
-            --cleanup --keep 7
-```
+**Recommendation:** Use GitHub Actions instead unless you have specific requirements for Railway-hosted backups.
 
 ---
 

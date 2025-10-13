@@ -45,6 +45,7 @@ AutoMem implements principles from:
 │   • REST API for memory lifecycle           │
 │   • Background enrichment pipeline          │
 │   • Consolidation engine                    │
+│   • Automated backups (optional)            │
 └──────────────┬──────────────┬───────────────┘
                │              │
         ┌──────▼──────┐  ┌───▼────────┐
@@ -59,7 +60,8 @@ AutoMem implements principles from:
 ```
 
 **FalkorDB** (graph) = canonical record, relationships, consolidation  
-**Qdrant** (vectors) = semantic recall, similarity search
+**Qdrant** (vectors) = semantic recall, similarity search  
+**Dual storage** = Built-in redundancy and disaster recovery
 
 ## Why Graph + Vector?
 
@@ -308,13 +310,15 @@ response = requests.post(
 - ✅ **Battle-tested** - Enrichment pipeline, consolidation, retry logic
 - ✅ **Open source** - MIT license, deploy anywhere
 
-## Performance
+## Performance & Reliability
 
 - **Sub-second recall** - Even with 100k+ memories
 - **Concurrent writes** - Background enrichment doesn't block API
 - **Graceful degradation** - Works without Qdrant (graph-only mode)
 - **Automatic retries** - Failed enrichments queue for reprocessing
 - **Health monitoring** - `/health` and `/enrichment/status` endpoints
+- **Automated backups** - Optional backup service for disaster recovery
+- **Dual storage** - Data in both FalkorDB and Qdrant provides redundancy
 
 ## Configuration
 
@@ -334,6 +338,7 @@ response = requests.post(
 ## Documentation
 
 - 📦 **[Installation Guide](INSTALLATION.md)** - Railway, Docker, development setup
+- 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** - Health monitoring and automated backups
 - 🔧 **[API Reference](INSTALLATION.md#api-reference)** - All endpoints with examples
 - 🧪 **[Testing Guide](TESTING.md)** - Unit, integration, and live server tests
 - 🔄 **[Migration Guide](INSTALLATION.md#migration)** - Move from MCP SQLite

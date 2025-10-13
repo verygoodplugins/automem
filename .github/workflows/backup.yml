@@ -1,0 +1,46 @@
+name: AutoMem Backup
+
+on:
+    schedule:
+        # Every 6 hours at :00
+        - cron: "0 */6 * * *"
+    workflow_dispatch: # Allow manual trigger
+
+jobs:
+    backup:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v4
+              with:
+                  python-version: "3.11"
+
+            - name: Install dependencies
+              run: |
+                  pip install --no-cache-dir -r requirements.txt boto3
+
+            - name: Run backup
+              env:
+                  FALKORDB_HOST: ${{ secrets.FALKORDB_HOST }}
+                  FALKORDB_PORT: ${{ secrets.FALKORDB_PORT }}
+                  FALKORDB_PASSWORD: ${{ secrets.FALKORDB_PASSWORD }}
+                  QDRANT_URL: ${{ secrets.QDRANT_URL }}
+                  QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+                  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+              run: |
+                  python scripts/backup_automem.py \
+                    --s3-bucket automem-backups \
+                    --cleanup --keep 14
+
+            - name: Backup summary
+              if: always()
+              run: |
+                  echo "✅ Backup completed at $(date)"
+                  ls -lh backups/ || echo "Local backup directory not found"
