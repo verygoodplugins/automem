@@ -100,6 +100,10 @@ ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").l
 ENRICHMENT_SPACY_MODEL = os.getenv("ENRICHMENT_SPACY_MODEL", "en_core_web_sm")
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 
+# Embedding batching configuration
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "20"))
+EMBEDDING_BATCH_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_BATCH_TIMEOUT_SECONDS", "2.0"))
+
 # Memory types for classification
 MEMORY_TYPES = {
     "Decision", "Pattern", "Preference", "Style",
@@ -1795,38 +1799,90 @@ def enqueue_embedding(memory_id: str, content: str) -> None:
 
 
 def embedding_worker() -> None:
-    """Background worker that generates embeddings and stores them in Qdrant."""
+    """Background worker that generates embeddings and stores them in Qdrant with batching."""
+    batch: List[Tuple[str, str]] = []  # List of (memory_id, content) tuples
+    batch_deadline = time.time() + EMBEDDING_BATCH_TIMEOUT_SECONDS
+    
     while True:
         try:
             if state.embedding_queue is None:
                 time.sleep(1)
                 continue
 
+            # Calculate remaining time until batch deadline
+            timeout = max(0.1, batch_deadline - time.time())
+            
             try:
-                memory_id, content = state.embedding_queue.get(timeout=1)
+                memory_id, content = state.embedding_queue.get(timeout=timeout)
+                batch.append((memory_id, content))
+                
+                # Process batch if full
+                if len(batch) >= EMBEDDING_BATCH_SIZE:
+                    _process_embedding_batch(batch)
+                    batch = []
+                    batch_deadline = time.time() + EMBEDDING_BATCH_TIMEOUT_SECONDS
+                    
             except Empty:
+                # Timeout reached - process whatever we have
+                if batch:
+                    _process_embedding_batch(batch)
+                    batch = []
+                batch_deadline = time.time() + EMBEDDING_BATCH_TIMEOUT_SECONDS
                 continue
-
-            with state.embedding_lock:
-                state.embedding_pending.discard(memory_id)
-                state.embedding_inflight.add(memory_id)
-
-            try:
-                generate_and_store_embedding(memory_id, content)
-                logger.debug("Generated and stored embedding for %s", memory_id)
-            except Exception:  # pragma: no cover - background thread
-                logger.exception("Failed to generate embedding for %s", memory_id)
-            finally:
-                with state.embedding_lock:
-                    state.embedding_inflight.discard(memory_id)
-                state.embedding_queue.task_done()
+                
         except Exception:  # pragma: no cover - defensive catch-all
             logger.exception("Error in embedding worker loop")
+            # Process any pending batch before sleeping
+            if batch:
+                try:
+                    _process_embedding_batch(batch)
+                except Exception:
+                    logger.exception("Failed to process batch during error recovery")
+                batch = []
             time.sleep(1)
+            batch_deadline = time.time() + EMBEDDING_BATCH_TIMEOUT_SECONDS
 
 
-def generate_and_store_embedding(memory_id: str, content: str) -> None:
-    """Generate embedding for content and store in Qdrant."""
+def _process_embedding_batch(batch: List[Tuple[str, str]]) -> None:
+    """Process a batch of embeddings efficiently."""
+    if not batch:
+        return
+    
+    memory_ids = [item[0] for item in batch]
+    contents = [item[1] for item in batch]
+    
+    # Mark all as inflight
+    with state.embedding_lock:
+        for memory_id in memory_ids:
+            state.embedding_pending.discard(memory_id)
+            state.embedding_inflight.add(memory_id)
+    
+    try:
+        # Generate embeddings in batch
+        embeddings = _generate_real_embeddings_batch(contents)
+        
+        # Store each embedding individually (Qdrant operations are fast)
+        for memory_id, content, embedding in zip(memory_ids, contents, embeddings):
+            try:
+                _store_embedding_in_qdrant(memory_id, content, embedding)
+                logger.debug("Generated and stored embedding for %s", memory_id)
+            except Exception:  # pragma: no cover
+                logger.exception("Failed to store embedding for %s", memory_id)
+    except Exception:  # pragma: no cover
+        logger.exception("Failed to generate batch embeddings")
+    finally:
+        # Mark all as complete
+        with state.embedding_lock:
+            for memory_id in memory_ids:
+                state.embedding_inflight.discard(memory_id)
+        
+        # Mark all queue items as done
+        for _ in batch:
+            state.embedding_queue.task_done()
+
+
+def _store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[float]) -> None:
+    """Store a pre-generated embedding in Qdrant with memory metadata."""
     qdrant_client = get_qdrant_client()
     if qdrant_client is None:
         return
@@ -1834,9 +1890,6 @@ def generate_and_store_embedding(memory_id: str, content: str) -> None:
     graph = get_memory_graph()
     if graph is None:
         return
-
-    # Generate embedding
-    embedding = _generate_real_embedding(content)
     
     # Fetch latest memory data from FalkorDB for payload
     result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
@@ -1873,6 +1926,12 @@ def generate_and_store_embedding(memory_id: str, content: str) -> None:
         logger.info("Stored embedding for %s in Qdrant", memory_id)
     except Exception:  # pragma: no cover - log full stack trace
         logger.exception("Qdrant upsert failed for %s", memory_id)
+
+
+def generate_and_store_embedding(memory_id: str, content: str) -> None:
+    """Generate embedding for content and store in Qdrant (legacy single-item API)."""
+    embedding = _generate_real_embedding(content)
+    _store_embedding_in_qdrant(memory_id, content, embedding)
 
 
 def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
@@ -2451,10 +2510,25 @@ def health() -> Any:
     qdrant_available = get_qdrant_client() is not None
 
     status = "healthy" if graph_available and qdrant_available else "degraded"
+    
+    # Get enrichment queue stats (non-authenticated for monitoring)
+    enrichment_thread_alive = bool(state.enrichment_thread and state.enrichment_thread.is_alive())
+    with state.enrichment_lock:
+        enrichment_pending = len(state.enrichment_pending)
+        enrichment_inflight = len(state.enrichment_inflight)
+    
     health_data = {
         "status": status,
         "falkordb": "connected" if graph_available else "disconnected",
         "qdrant": "connected" if qdrant_available else "disconnected",
+        "enrichment": {
+            "status": "running" if enrichment_thread_alive else "stopped",
+            "queue_depth": state.enrichment_queue.qsize() if state.enrichment_queue else 0,
+            "pending": enrichment_pending,
+            "inflight": enrichment_inflight,
+            "processed": state.enrichment_stats.success_count,
+            "failed": state.enrichment_stats.failure_count,
+        },
         "timestamp": utc_now(),
         "graph": GRAPH_NAME,
     }
@@ -2654,6 +2728,23 @@ def store_memory() -> Any:
         "last_accessed": last_accessed,
         "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
     }
+    
+    # Structured logging for performance analysis
+    logger.info(
+        "memory_stored",
+        extra={
+            "memory_id": memory_id,
+            "type": memory_type,
+            "importance": importance,
+            "tags_count": len(tags),
+            "content_length": len(content),
+            "latency_ms": response["query_time_ms"],
+            "embedding_status": embedding_status,
+            "qdrant_status": qdrant_result,
+            "enrichment_queued": bool(state.enrichment_queue),
+        }
+    )
+    
     return jsonify(response), 201
 
 
@@ -2995,6 +3086,21 @@ def recall_memories() -> Any:
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
+
+    # Structured logging for performance analysis
+    logger.info(
+        "recall_complete",
+        extra={
+            "query": query_text[:100] if query_text else "",  # Truncate for logs
+            "results": len(results),
+            "latency_ms": response["query_time_ms"],
+            "vector_enabled": qdrant_client is not None,
+            "vector_matches": len(vector_matches),
+            "has_time_filter": bool(start_time or end_time),
+            "has_tag_filter": bool(tag_filters),
+            "limit": limit,
+        }
+    )
 
     return jsonify(response)
 
@@ -3451,6 +3557,35 @@ def _generate_real_embedding(content: str) -> List[float]:
     except Exception as e:
         logger.warning("Failed to generate OpenAI embedding: %s", str(e))
         return _generate_placeholder_embedding(content)
+
+
+def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
+    """Generate multiple embeddings in a single API call for efficiency."""
+    init_openai()
+    
+    if not contents:
+        return []
+    
+    if state.openai_client is None:
+        logger.debug("OpenAI client not available, falling back to placeholder embeddings")
+        return [_generate_placeholder_embedding(c) for c in contents]
+    
+    try:
+        response = state.openai_client.embeddings.create(
+            input=contents,  # OpenAI supports batching up to 2048 inputs
+            model="text-embedding-3-small",
+            dimensions=VECTOR_SIZE,
+        )
+        embeddings = [item.embedding for item in response.data]
+        logger.info(
+            "Generated %d OpenAI embeddings in batch (avg length: %d)",
+            len(embeddings),
+            sum(len(c) for c in contents) // len(contents) if contents else 0
+        )
+        return embeddings
+    except Exception as e:
+        logger.warning("Failed to generate batch OpenAI embeddings: %s", str(e))
+        return [_generate_placeholder_embedding(c) for c in contents]
 
 
 def _serialize_node(node: Any) -> Dict[str, Any]:
