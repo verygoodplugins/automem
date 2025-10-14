@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py consolidation.py ./
+# Copy application code including the internal package
+COPY app.py consolidation.py automem ./
 
 EXPOSE 8001
 

@@ -20,7 +20,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-import sys
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from threading import Thread, Event, Lock
 from queue import Empty, Queue
@@ -49,14 +48,6 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("automem.api")
-
-# Ensure local package imports work when only app.py is copied
-try:
-    import automem  # type: ignore
-except Exception:
-    root = Path(__file__).resolve().parent
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
 
 app = Flask(__name__)
 
