@@ -2160,32 +2160,32 @@ def store_memory() -> Any:
         embedding_status = "provided"
         qdrant_result = None
         if qdrant_client is not None:
-        try:
-            qdrant_client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=[
-                    PointStruct(
-                        id=memory_id,
-                        vector=embedding,
-                        payload={
-                            "content": content,
-                            "tags": tags,
-                            "tag_prefixes": tag_prefixes,
-                            "importance": importance,
-                            "timestamp": created_at,
-                            "type": memory_type,
-                            "confidence": type_confidence,
-                            "updated_at": updated_at,
-                            "last_accessed": last_accessed,
-                            "metadata": metadata,
-                        },
-                    )
-                ],
-            )
-            qdrant_result = "stored"
-        except Exception:  # pragma: no cover - log full stack trace in production
-            logger.exception("Qdrant upsert failed")
-            qdrant_result = "failed"
+            try:
+                qdrant_client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=[
+                        PointStruct(
+                            id=memory_id,
+                            vector=embedding,
+                            payload={
+                                "content": content,
+                                "tags": tags,
+                                "tag_prefixes": tag_prefixes,
+                                "importance": importance,
+                                "timestamp": created_at,
+                                "type": memory_type,
+                                "confidence": type_confidence,
+                                "updated_at": updated_at,
+                                "last_accessed": last_accessed,
+                                "metadata": metadata,
+                            },
+                        )
+                    ],
+                )
+                qdrant_result = "stored"
+            except Exception:  # pragma: no cover - log full stack trace in production
+                logger.exception("Qdrant upsert failed")
+                qdrant_result = "failed"
     elif qdrant_client is not None:
         # Async path: Queue embedding generation
         enqueue_embedding(memory_id, content)
