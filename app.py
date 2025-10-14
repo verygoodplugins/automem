@@ -2323,6 +2323,7 @@ def health() -> Any:
 
 @app.route("/memory", methods=["POST"])
 def store_memory() -> Any:
+    query_start = time.perf_counter()
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         abort(400, description="JSON body is required")
@@ -2506,6 +2507,7 @@ def store_memory() -> Any:
         "timestamp": created_at,
         "updated_at": updated_at,
         "last_accessed": last_accessed,
+        "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
     }
     return jsonify(response), 201
 
@@ -2705,6 +2707,7 @@ def memories_by_tag() -> Any:
 
 @app.route("/recall", methods=["GET"])
 def recall_memories() -> Any:
+    query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
     limit = max(1, min(int(request.args.get("limit", 5)), 50))
     embedding_param = request.args.get("embedding")
@@ -2846,6 +2849,7 @@ def recall_memories() -> Any:
         response["tags"] = tag_filters
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
+    response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
 
     return jsonify(response)
 
@@ -3064,6 +3068,7 @@ def startup_recall() -> Any:
 @app.route("/analyze", methods=["GET"])
 def analyze_memories() -> Any:
     """Analyze memory patterns, preferences, and insights."""
+    query_start = time.perf_counter()
     graph = get_memory_graph()
     if graph is None:
         abort(503, description="FalkorDB is unavailable")
@@ -3222,6 +3227,7 @@ def analyze_memories() -> Any:
         "status": "success",
         "analytics": analytics,
         "generated_at": utc_now(),
+        "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
     })
 
 
