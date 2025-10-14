@@ -228,39 +228,314 @@ def _compute_tag_prefixes(tags: List[str]) -> List[str]:
     """Compute unique, lowercased tag prefixes for fast prefix filtering."""
     seen: Set[str] = set()
 
-from automem.utils.text import (
-    SEARCH_STOPWORDS,
-    ENTITY_STOPWORDS,
-    ENTITY_BLOCKLIST,
-    _extract_keywords,
-)
+try:
+    from automem.utils.text import (
+        SEARCH_STOPWORDS as _AM_SEARCH_STOPWORDS,
+        ENTITY_STOPWORDS as _AM_ENTITY_STOPWORDS,
+        ENTITY_BLOCKLIST as _AM_ENTITY_BLOCKLIST,
+        _extract_keywords as _AM_extract_keywords,
+    )
+    # Override local constants if package is available
+    SEARCH_STOPWORDS = _AM_SEARCH_STOPWORDS
+    ENTITY_STOPWORDS = _AM_ENTITY_STOPWORDS
+    ENTITY_BLOCKLIST = _AM_ENTITY_BLOCKLIST
+    _extract_keywords = _AM_extract_keywords
+except Exception:
+    # Define local fallback for keyword extraction
+    def _extract_keywords(text: str) -> List[str]:
+        if not text:
+            return []
+        words = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
+        keywords: List[str] = []
+        seen: set[str] = set()
+        for word in words:
+            cleaned = word.strip("-_")
+            if len(cleaned) < 3:
+                continue
+            if cleaned in SEARCH_STOPWORDS:
+                continue
+            if cleaned in seen:
+                continue
+            seen.add(cleaned)
+            keywords.append(cleaned)
+        return keywords
 
 
-# Imported helper utilities (extracted non-destructively)
-from automem.utils.tags import (
-    _normalize_tag_list,
-    _expand_tag_prefixes,
-    _compute_tag_prefixes,
-    _prepare_tag_filters,
-)
-from automem.utils.time import (
-    utc_now,
-    _parse_iso_datetime,
-    _normalize_timestamp,
-    _parse_time_expression,
-)
-from automem.utils.scoring import (
-    _parse_metadata_field,
-    _collect_metadata_terms,
-    _compute_recency_score,
-    _compute_metadata_score,
-)
+# Local tag helpers (keep in-app for compatibility)
+def _normalize_tag_list(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        if not raw.strip():
+            return []
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    if isinstance(raw, (list, tuple, set)):
+        tags: List[str] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                tags.append(item.strip())
+        return tags
+    return []
 
 
-# tag helpers moved to automem.utils.tags
+def _expand_tag_prefixes(tag: str) -> List[str]:
+    parts = re.split(r"[:/]", tag)
+    prefixes: List[str] = []
+    accumulator: List[str] = []
+    for part in parts:
+        if not part:
+            continue
+        accumulator.append(part)
+        prefixes.append(":".join(accumulator))
+    return prefixes
 
 
-from automem.stores.graph_store import _build_graph_tag_predicate
+def _compute_tag_prefixes(tags: List[str]) -> List[str]:
+    """Compute unique, lowercased tag prefixes for fast prefix filtering."""
+    seen: Set[str] = set()
+    prefixes: List[str] = []
+    for tag in tags or []:
+        normalized = (tag or "").strip().lower()
+        if not normalized:
+            continue
+        for prefix in _expand_tag_prefixes(normalized):
+            if prefix not in seen:
+                seen.add(prefix)
+                prefixes.append(prefix)
+    return prefixes
+
+
+def _prepare_tag_filters(tag_filters: Optional[List[str]]) -> List[str]:
+    return [
+        tag.strip().lower()
+        for tag in (tag_filters or [])
+        if isinstance(tag, str) and tag.strip()
+    ]
+
+
+# Local time helpers (fallback if package not available)
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+
+
+def _normalize_timestamp(raw: Any) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("Timestamp must be a non-empty ISO formatted string")
+    candidate = raw.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise ValueError("Invalid ISO timestamp") from exc
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _parse_time_expression(expression: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    if not expression:
+        return None, None
+    expr = expression.strip().lower()
+    if not expr:
+        return None, None
+    now = datetime.now(timezone.utc)
+    def start_of_day(dt: datetime) -> datetime:
+        return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    def end_of_day(dt: datetime) -> datetime:
+        return start_of_day(dt) + timedelta(days=1)
+    if expr in {"today", "this day"}:
+        start = start_of_day(now)
+        end = end_of_day(now)
+    elif expr in {"yesterday"}:
+        start = start_of_day(now - timedelta(days=1))
+        end = start + timedelta(days=1)
+    elif expr in {"last 24 hours", "past 24 hours"}:
+        end = now
+        start = now - timedelta(hours=24)
+    elif expr in {"last 48 hours", "past 48 hours"}:
+        end = now
+        start = now - timedelta(hours=48)
+    elif expr in {"this week"}:
+        start = start_of_day(now - timedelta(days=now.weekday()))
+        end = start + timedelta(days=7)
+    elif expr in {"last week", "past week"}:
+        end = start_of_day(now - timedelta(days=now.weekday()))
+        start = end - timedelta(days=7)
+    elif expr in {"this month"}:
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1)
+        else:
+            end = start.replace(month=start.month + 1)
+    elif expr in {"last month", "past month"}:
+        current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if current_month_start.month == 1:
+            previous_month_start = current_month_start.replace(year=current_month_start.year - 1, month=12)
+        else:
+            previous_month_start = current_month_start.replace(month=current_month_start.month - 1)
+        start = previous_month_start
+        end = current_month_start
+    elif expr.startswith("last ") and expr.endswith(" days"):
+        try:
+            days = int(expr.split()[1])
+            end = now
+            start = now - timedelta(days=days)
+        except ValueError:
+            return None, None
+    elif expr in {"last year", "past year", "this year"}:
+        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        if expr.startswith("last") or expr.startswith("past"):
+            end = start
+            start = start.replace(year=start.year - 1)
+        else:
+            if start.year == 9999:
+                end = now
+            else:
+                end = start.replace(year=start.year + 1)
+    else:
+        return None, None
+    return start.isoformat(), end.isoformat()
+
+
+# Local scoring/metadata helpers (fallback if package not available)
+def _parse_metadata_field(value: Any) -> Any:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            decoded = json.loads(value)
+            if isinstance(decoded, dict):
+                return decoded
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _collect_metadata_terms(metadata: Dict[str, Any]) -> Set[str]:
+    terms: Set[str] = set()
+    def visit(item: Any) -> None:
+        if isinstance(item, str):
+            trimmed = item.strip()
+            if not trimmed:
+                return
+            if len(trimmed) <= 256:
+                lower = trimmed.lower()
+                terms.add(lower)
+                for token in re.findall(r"[a-z0-9_\-]+", lower):
+                    terms.add(token)
+        elif isinstance(item, (list, tuple, set)):
+            for sub in item:
+                visit(sub)
+        elif isinstance(item, dict):
+            for sub in item.values():
+                visit(sub)
+    visit(metadata)
+    return terms
+
+
+def _compute_recency_score(timestamp: Optional[str]) -> float:
+    if not timestamp:
+        return 0.0
+    parsed = _parse_iso_datetime(timestamp)
+    if not parsed:
+        return 0.0
+    age_days = max((datetime.now(timezone.utc) - parsed).total_seconds() / 86400.0, 0.0)
+    if age_days <= 0:
+        return 1.0
+    return max(0.0, 1.0 - (age_days / 180.0))
+
+
+def _compute_metadata_score(
+    result: Dict[str, Any],
+    query: str,
+    tokens: List[str],
+) -> Tuple[float, Dict[str, float]]:
+    memory = result.get("memory", {})
+    metadata = _parse_metadata_field(memory.get("metadata")) if memory else {}
+    metadata_terms = _collect_metadata_terms(metadata) if isinstance(metadata, dict) else set()
+    tags = memory.get("tags") or []
+    tag_terms = {str(tag).lower() for tag in tags if isinstance(tag, str)}
+    token_hits = 0
+    for token in tokens:
+        if token in tag_terms or token in metadata_terms:
+            token_hits += 1
+    exact_match = 0.0
+    normalized_query = query.lower().strip()
+    if normalized_query and normalized_query in metadata_terms:
+        exact_match = 1.0
+    importance = memory.get("importance")
+    importance_score = float(importance) if isinstance(importance, (int, float)) else 0.0
+    confidence = memory.get("confidence")
+    confidence_score = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+    recency_score = _compute_recency_score(memory.get("timestamp"))
+    tag_score = token_hits / max(len(tokens), 1) if tokens else 0.0
+    vector_component = result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
+    keyword_component = result.get("match_score", 0.0) if result.get("match_type") in {"keyword", "trending"} else 0.0
+    final = (
+        SEARCH_WEIGHT_VECTOR * vector_component
+        + SEARCH_WEIGHT_KEYWORD * keyword_component
+        + SEARCH_WEIGHT_TAG * tag_score
+        + SEARCH_WEIGHT_IMPORTANCE * importance_score
+        + SEARCH_WEIGHT_CONFIDENCE * confidence_score
+        + SEARCH_WEIGHT_RECENCY * recency_score
+        + SEARCH_WEIGHT_EXACT * exact_match
+    )
+    components = {
+        "vector": vector_component,
+        "keyword": keyword_component,
+        "tag": tag_score,
+        "importance": importance_score,
+        "confidence": confidence_score,
+        "recency": recency_score,
+        "exact": exact_match,
+    }
+    return final, components
+
+
+def _build_graph_tag_predicate(tag_mode: str, tag_match: str) -> str:
+    """Construct a Cypher predicate for tag filtering with mode/match semantics."""
+    normalized_mode = "all" if tag_mode == "all" else "any"
+    normalized_match = "prefix" if tag_match == "prefix" else "exact"
+    tags_expr = "[tag IN coalesce(m.tags, []) | toLower(tag)]"
+
+    if normalized_match == "exact":
+        if normalized_mode == "all":
+            return f"ALL(req IN $tag_filters WHERE req IN {tags_expr})"
+        return f"ANY(tag IN {tags_expr} WHERE tag IN $tag_filters)"
+
+    prefixes_expr = "coalesce(m.tag_prefixes, [])"
+    prefix_any = f"ANY(req IN $tag_filters WHERE req IN {prefixes_expr})"
+    prefix_all = f"ALL(req IN $tag_filters WHERE req IN {prefixes_expr})"
+    fallback_any = (
+        f"ANY(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
+    )
+    fallback_all = (
+        f"ALL(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
+    )
+
+    if normalized_mode == "all":
+        return (
+            f"((size({prefixes_expr}) > 0 AND {prefix_all}) "
+            f"OR (size({prefixes_expr}) = 0 AND {fallback_all}))"
+        )
+
+    return (
+        f"((size({prefixes_expr}) > 0 AND {prefix_any}) "
+        f"OR (size({prefixes_expr}) = 0 AND {fallback_any}))"
+    )
 
 
 
@@ -538,7 +813,38 @@ def _graph_keyword_search(
 
     return matches
 
-from automem.stores.vector_store import _build_qdrant_tag_filter
+def _build_qdrant_tag_filter(
+    tags: Optional[List[str]],
+    mode: str = "any",
+    match: str = "exact",
+):
+    """Build a Qdrant filter for tag constraints, supporting mode/match semantics."""
+    normalized_tags = _prepare_tag_filters(tags)
+    if not normalized_tags:
+        return None
+
+    target_key = "tag_prefixes" if match == "prefix" else "tags"
+    normalized_mode = "all" if mode == "all" else "any"
+
+    if normalized_mode == "any":
+        return qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key=target_key,
+                    match=qdrant_models.MatchAny(any=normalized_tags),
+                )
+            ]
+        )
+
+    must_conditions = [
+        qdrant_models.FieldCondition(
+            key=target_key,
+            match=qdrant_models.MatchValue(value=tag),
+        )
+        for tag in normalized_tags
+    ]
+
+    return qdrant_models.Filter(must=must_conditions)
 
 
 def _vector_filter_only_tag_search(
@@ -3147,7 +3453,40 @@ def _generate_real_embedding(content: str) -> List[float]:
         return _generate_placeholder_embedding(content)
 
 
-from automem.utils.graph import _serialize_node, _summarize_relation_node
+def _serialize_node(node: Any) -> Dict[str, Any]:
+    properties = getattr(node, "properties", None)
+    if isinstance(properties, dict):
+        data = dict(properties)
+    elif isinstance(node, dict):
+        data = dict(node)
+    else:
+        return {"value": node}
+
+    if "metadata" in data:
+        data["metadata"] = _parse_metadata_field(data["metadata"])
+
+    return data
+
+
+def _summarize_relation_node(data: Dict[str, Any]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {}
+
+    for key in ("id", "type", "timestamp", "summary", "importance", "confidence"):
+        if key in data:
+            summary[key] = data[key]
+
+    content = data.get("content")
+    if "summary" not in summary and isinstance(content, str):
+        snippet = content.strip()
+        if len(snippet) > 160:
+            snippet = snippet[:157].rsplit(" ", 1)[0] + "…"
+        summary["content"] = snippet
+
+    tags = data.get("tags")
+    if isinstance(tags, list) and tags:
+        summary["tags"] = tags[:5]
+
+    return summary
 
 
 def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
