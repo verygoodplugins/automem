@@ -133,6 +133,17 @@ Final score: 0.82 (weighted combination)
 - **Associate** - Create typed relationships between memories
 - **Filter** - Tag-based queries with prefix/exact matching
 
+## Memory Consolidation
+
+AutoMem uses [dream-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC4648295/) consolidation cycles to keep memories fresh and useful:
+
+- **Decay (Hourly)**: Exponential relevance scoring based on age, access, relationships, and importance
+- **Creative (Hourly)**: Discovers non-obvious connections between memories (REM-like processing)
+- **Cluster (6hrs)**: Groups similar memories and creates meta-patterns
+- **Forget (Daily)**: Archives low-relevance memories, deletes very old unused ones
+
+Memories aren't deleted immediately - they're archived first (relevance 0.05-0.2), only removed if they drop below 0.05. Wrong rabbit holes fade naturally (~30-45 days without use). Important connected memories stay indefinitely.
+
 ### Background Intelligence
 
 #### Enrichment Pipeline

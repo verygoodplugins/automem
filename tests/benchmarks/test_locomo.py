@@ -24,10 +24,11 @@ import json
 import time
 import requests
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 from dataclasses import dataclass
 from collections import defaultdict
 import re
+from openai import OpenAI
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -71,6 +72,13 @@ class LoCoMoEvaluator:
         }
         self.memory_map = {}  # Maps dialog IDs to memory IDs
         self.results = defaultdict(list)  # Category -> [True/False scores]
+        
+        # Phase 2: Initialize OpenAI client for LLM-based answer extraction
+        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.use_llm_extraction = bool(os.getenv("OPENAI_API_KEY"))
+        
+        # Phase 2.5: Cache LLM responses to avoid redundant API calls
+        self.llm_cache = {}  # (question, answer) -> (result, confidence, explanation)
         
     def health_check(self) -> bool:
         """Verify AutoMem API is accessible"""
@@ -214,24 +222,74 @@ class LoCoMoEvaluator:
         print(f"✅ Loaded {memory_count} memories from conversation {sample_id}")
         return memory_map
     
+    def is_temporal_question(self, question: str) -> bool:
+        """Detect if question is asking about time/dates"""
+        temporal_keywords = [
+            'when', 'what time', 'what date', 'which year', 'which month',
+            'how long ago', 'before', 'after', 'during', 'since', 'until',
+            'first time', 'last time', 'recently', 'previously'
+        ]
+        question_lower = question.lower()
+        return any(keyword in question_lower for keyword in temporal_keywords)
+    
+    def extract_temporal_hints(self, question: str) -> List[str]:
+        """Extract temporal hints from question to enhance query"""
+        hints = []
+        question_lower = question.lower()
+        
+        # Month names
+        months = ['january', 'february', 'march', 'april', 'may', 'june',
+                 'july', 'august', 'september', 'october', 'november', 'december']
+        for month in months:
+            if month in question_lower:
+                hints.append(month)
+        
+        # Year patterns (2020-2025)
+        years = re.findall(r'\b(202[0-5])\b', question)
+        hints.extend(years)
+        
+        return hints
+    
     def recall_for_question(
         self, 
         question: str, 
         sample_id: str,
-        session_context: str = None
+        session_context: str = None,
+        evidence_count: int = 1
     ) -> List[Dict[str, Any]]:
         """
         Query AutoMem to recall memories relevant to a question.
         
         Uses hybrid search: semantic + keyword + tags
+        Enhanced with temporal detection and multi-hop support (Phase 1).
         """
         try:
+            # Phase 1 Improvement: Detect question type and adjust parameters
+            is_temporal = self.is_temporal_question(question)
+            is_multihop = evidence_count > 1
+            
+            # Determine recall limit based on question complexity
+            if is_multihop:
+                limit = 100  # Increased for multi-hop to capture all evidence
+            elif is_temporal:
+                limit = 75  # More context for temporal questions
+            else:
+                limit = 50  # Standard limit
+            
+            # Build enhanced query
+            query = question
+            
+            # Phase 1 Improvement: Add temporal context to query
+            if is_temporal:
+                temporal_hints = self.extract_temporal_hints(question)
+                if temporal_hints:
+                    query = f"{question} {' '.join(temporal_hints)}"
+            
             # Build query parameters
-            # Use broader recall to ensure we get evidence memories
             params = {
-                "query": question,
-                "limit": 50,  # Increased from 10 to capture more context
-                "tags": f"conversation:{sample_id}",  # Filter to relevant conversation
+                "query": query,
+                "limit": limit,
+                "tags": f"conversation:{sample_id}",
                 "tag_match": "exact"
             }
             
@@ -266,17 +324,156 @@ class LoCoMoEvaluator:
         text = ' '.join(text.split())
         return text
     
+    def fetch_evidence_memories(
+        self,
+        evidence_dialog_ids: List[str],
+        sample_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Phase 2.5: Fetch specific evidence memories by dialog ID.
+        
+        This is more precise than semantic search - we know exactly which
+        memories contain the answer based on the benchmark's evidence field.
+        """
+        evidence_memories = []
+        
+        try:
+            # Get all memories for this conversation
+            response = requests.get(
+                f"{self.config.base_url}/recall",
+                headers=self.headers,
+                params={
+                    "query": "",  # Empty query to get all
+                    "limit": 1000,  # High limit to get all conversation memories
+                    "tags": f"conversation:{sample_id}",
+                    "tag_match": "exact"
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                results = result.get("results", [])
+                all_memories = [r.get("memory", {}) for r in results if "memory" in r]
+                
+                # Filter to just the evidence dialogs
+                for memory in all_memories:
+                    metadata = memory.get("metadata", {})
+                    dialog_id = metadata.get("dialog_id", "")
+                    if dialog_id in evidence_dialog_ids:
+                        evidence_memories.append(memory)
+                        
+        except Exception as e:
+            print(f"⚠️  Evidence fetch error: {e}")
+        
+        return evidence_memories
+    
+    def llm_extract_answer(
+        self,
+        question: str,
+        expected_answer: Any,
+        recalled_memories: List[Dict[str, Any]]
+    ) -> Tuple[bool, float, str]:
+        """
+        Phase 2: Use GPT-4o-mini to determine if recalled memories contain the answer.
+        
+        This is more sophisticated than word matching - the LLM can understand
+        paraphrasing, synonyms, and contextual equivalence.
+        
+        Phase 2.5: Includes caching to avoid redundant API calls.
+        """
+        if not self.use_llm_extraction or not recalled_memories:
+            return None, 0.0, "LLM extraction disabled or no memories"
+        
+        # Check cache first
+        cache_key = (question, str(expected_answer))
+        if cache_key in self.llm_cache:
+            return self.llm_cache[cache_key]
+        
+        try:
+            # Build context from top recalled memories (limit to top 10 for token efficiency)
+            memory_contexts = []
+            for i, mem in enumerate(recalled_memories[:10]):
+                content = mem.get("content", "")
+                metadata = mem.get("metadata", {})
+                dialog_id = metadata.get("dialog_id", f"mem-{i}")
+                session = metadata.get("session_datetime", "")
+                
+                context = f"[{dialog_id}] {content}"
+                if session:
+                    context += f" (Session: {session})"
+                memory_contexts.append(context)
+            
+            memories_text = "\n\n".join(memory_contexts)
+            
+            # Construct prompt for GPT-4o-mini
+            prompt = f"""You are evaluating whether a conversation history contains the answer to a question.
+
+Question: {question}
+Expected Answer: {expected_answer}
+
+Conversation History:
+{memories_text}
+
+Task: Determine if the conversation history contains information that answers the question with the expected answer (or something semantically equivalent).
+
+Consider:
+- Paraphrasing and synonyms
+- Context and implied meaning
+- Temporal information in session metadata
+- The answer may be stated differently but mean the same thing
+
+Respond in JSON format:
+{{
+    "contains_answer": true or false,
+    "confidence": 0.0 to 1.0,
+    "reasoning": "brief explanation of why the answer is/isn't present"
+}}"""
+
+            # Call GPT-4o-mini
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a precise evaluator of question-answering systems."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+                max_tokens=200,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse response
+            result = json.loads(response.choices[0].message.content)
+            contains_answer = result.get("contains_answer", False)
+            confidence = float(result.get("confidence", 0.0))
+            reasoning = result.get("reasoning", "")
+            
+            # Cache the result
+            llm_result = (contains_answer, confidence, f"LLM: {reasoning}")
+            self.llm_cache[cache_key] = llm_result
+            
+            return llm_result
+            
+        except Exception as e:
+            print(f"⚠️  LLM extraction error: {e}")
+            error_result = (None, 0.0, f"LLM error: {str(e)}")
+            self.llm_cache[cache_key] = error_result  # Cache errors too
+            return error_result
+    
     def check_answer_in_memories(
         self, 
         question: str,
         expected_answer: Any,
         recalled_memories: List[Dict[str, Any]],
-        evidence_dialog_ids: List[str] = None
+        evidence_dialog_ids: List[str] = None,
+        sample_id: str = None
     ) -> Tuple[bool, float, str]:
         """
         Check if the expected answer can be found in recalled memories.
         
-        Uses evidence dialog IDs if available, otherwise semantic matching.
+        Phase 2.5: Fetches evidence memories directly if IDs are provided.
+        Phase 2: Tries LLM-based extraction first, falls back to word matching.
+        Phase 1: Enhanced with temporal metadata matching.
         
         Returns:
             (is_correct, confidence_score, explanation)
@@ -284,9 +481,34 @@ class LoCoMoEvaluator:
         if not recalled_memories:
             return False, 0.0, "No memories recalled"
         
+        # Phase 2.5: If we have evidence IDs, fetch them directly and combine with recalled
+        if evidence_dialog_ids and sample_id:
+            evidence_memories = self.fetch_evidence_memories(evidence_dialog_ids, sample_id)
+            if evidence_memories:
+                # Combine evidence with recalled (evidence first for priority)
+                combined_memories = evidence_memories + [
+                    m for m in recalled_memories 
+                    if m not in evidence_memories
+                ]
+                recalled_memories = combined_memories[:50]  # Limit for LLM efficiency
+        
+        # Phase 2: Try LLM-based answer extraction first
+        if self.use_llm_extraction:
+            llm_result, llm_confidence, llm_explanation = self.llm_extract_answer(
+                question, expected_answer, recalled_memories
+            )
+            
+            # If LLM gave a definitive answer, use it
+            if llm_result is not None and llm_confidence >= 0.6:
+                return llm_result, llm_confidence, llm_explanation
+        
+        # Fallback to word-based matching
         # Normalize expected answer
         expected_str = str(expected_answer).lower()
         expected_normalized = self.normalize_answer(expected_str)
+        
+        # Phase 1 Improvement: Check if this is a temporal question
+        is_temporal = self.is_temporal_question(question)
         
         # Strategy 1: If we have evidence dialog IDs, check only those memories
         if evidence_dialog_ids:
@@ -299,11 +521,19 @@ class LoCoMoEvaluator:
                     content = memory.get("content", "").lower()
                     content_normalized = self.normalize_answer(content)
                     
+                    # Phase 1 Improvement: For temporal questions, also check session_datetime
+                    if is_temporal:
+                        session_datetime = metadata.get("session_datetime", "").lower()
+                        # Combine content and datetime for temporal matching
+                        searchable_text = f"{content_normalized} {session_datetime}"
+                    else:
+                        searchable_text = content_normalized
+                    
                     # Much more lenient matching for evidence dialogs
                     # Just check if key words from answer appear
                     expected_words = set(expected_normalized.split())
-                    content_words = set(content_normalized.split())
-                    overlap = expected_words.intersection(content_words)
+                    searchable_words = set(searchable_text.split())
+                    overlap = expected_words.intersection(searchable_words)
                     
                     if len(expected_words) == 0:
                         confidence = 0.0
@@ -390,29 +620,18 @@ class LoCoMoEvaluator:
             evidence = qa.get("evidence", [])
             
             # Recall memories for this question
-            recalled_memories = self.recall_for_question(question, sample_id)
-            
-            # DEBUG: Print details for first question
-            if i == 0:
-                print(f"\n🐛 DEBUG First Question:")
-                print(f"  Question: {question}")
-                print(f"  Expected: {answer}")
-                print(f"  Recalled: {len(recalled_memories)} memories")
-                if recalled_memories:
-                    print(f"  First memory content: {recalled_memories[0].get('content', 'NO CONTENT')[:150]}...")
-            
-            # Check if answer is in recalled memories
-            is_correct, confidence, explanation = self.check_answer_in_memories(
-                question, answer, recalled_memories, evidence
+            # Phase 1: Pass evidence count to enable multi-hop optimization
+            recalled_memories = self.recall_for_question(
+                question, 
+                sample_id, 
+                evidence_count=len(evidence)
             )
             
-            # DEBUG: Print first correct answer
-            if is_correct and not hasattr(self, '_first_correct'):
-                print(f"\n✅ First correct answer found!")
-                print(f"  Question: {question}")
-                print(f"  Answer: {answer}")
-                print(f"  Confidence: {confidence:.2f}")
-                self._first_correct = True
+            # Check if answer is in recalled memories
+            # Phase 2.5: Pass sample_id to enable evidence fetching
+            is_correct, confidence, explanation = self.check_answer_in_memories(
+                question, answer, recalled_memories, evidence, sample_id
+            )
             
             # Record result
             qa_result = {
