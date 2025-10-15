@@ -31,7 +31,8 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    stream=sys.stdout  # Write to stdout so Railway correctly parses log levels
 )
 logger = logging.getLogger("automem.health_monitor")
 

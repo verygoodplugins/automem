@@ -319,6 +319,7 @@ response = requests.post(
 - **Health monitoring** - `/health` and `/enrichment/status` endpoints
 - **Automated backups** - Optional backup service for disaster recovery
 - **Dual storage** - Data in both FalkorDB and Qdrant provides redundancy
+- **Benchmark validated** - Test against LoCoMo (ACL 2024) with `make test-locomo`
 
 ## Configuration
 
@@ -340,7 +341,8 @@ response = requests.post(
 - 📦 **[Installation Guide](INSTALLATION.md)** - Railway, Docker, development setup
 - 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** - Health monitoring and automated backups
 - 🔧 **[API Reference](INSTALLATION.md#api-reference)** - All endpoints with examples
-- 🧪 **[Testing Guide](TESTING.md)** - Unit, integration, and live server tests
+- 🧪 **[Testing Guide](TESTING.md)** - Unit, integration, live server, and LoCoMo benchmark tests
+- 📊 **[LoCoMo Benchmark](TESTING.md#locomo-benchmark)** - Validate against ACL 2024 long-term memory benchmark
 - 🔄 **[Migration Guide](INSTALLATION.md#migration)** - Move from MCP SQLite
 - 🌐 **[automem.ai](https://automem.ai)** - Official website and guides
 

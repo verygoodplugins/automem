@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test test-integration test-live clean logs deploy
+.PHONY: help install dev test test-integration test-live test-locomo test-locomo-live clean logs deploy
 
 # Default target
 help:
@@ -15,6 +15,10 @@ help:
 	@echo "  make test-live  - Run integration tests against live Railway server"
 	@echo "  make logs       - Show development logs"
 	@echo "  make clean      - Clean up containers and volumes"
+	@echo ""
+	@echo "Benchmarks:"
+	@echo "  make test-locomo      - Run LoCoMo benchmark (local)"
+	@echo "  make test-locomo-live - Run LoCoMo benchmark (Railway)"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make deploy     - Deploy to Railway"
@@ -71,3 +75,11 @@ deploy:
 status:
 	@echo "📊 Checking deployment status..."
 	railway status || railway logs
+
+# Run LoCoMo benchmark (local)
+test-locomo:
+	@./test-locomo-benchmark.sh
+
+# Run LoCoMo benchmark (Railway)
+test-locomo-live:
+	@./test-locomo-benchmark.sh --live

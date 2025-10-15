@@ -47,8 +47,19 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    stream=sys.stdout,  # Write to stdout so Railway correctly parses log levels
 )
 logger = logging.getLogger("automem.api")
+
+# Configure Flask and Werkzeug loggers to use stdout instead of stderr
+# This ensures Railway correctly parses log levels instead of treating everything as "error"
+for logger_name in ["werkzeug", "flask.app"]:
+    framework_logger = logging.getLogger(logger_name)
+    framework_logger.handlers.clear()
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    framework_logger.addHandler(stdout_handler)
+    framework_logger.setLevel(logging.INFO)
 
 # Ensure local package imports work when only app.py is copied
 try:

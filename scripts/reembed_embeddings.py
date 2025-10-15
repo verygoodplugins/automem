@@ -20,7 +20,11 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 
 logger = logging.getLogger("reembed")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    stream=sys.stdout  # Write to stdout so Railway correctly parses log levels
+)
 
 
 def load_environment() -> None:
@@ -170,4 +174,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    main()
+= "__main__":
     main()

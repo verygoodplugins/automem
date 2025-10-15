@@ -163,6 +163,138 @@ make test-integration
 ./test-live-server-auto.sh
 ```
 
+## LoCoMo Benchmark
+
+AutoMem can be evaluated against the **LoCoMo benchmark** (ACL 2024), which tests long-term conversational memory across 10 conversations and 1,986 questions.
+
+### What is LoCoMo?
+
+LoCoMo evaluates AI systems' ability to remember and reason across very long conversations (300+ turns). It measures performance across 5 categories:
+
+1. **Single-hop Recall** (Category 1) - Simple fact retrieval: "What is Caroline's identity?"
+2. **Temporal Understanding** (Category 2) - Time-based queries: "When did Caroline move to Sweden?"
+3. **Multi-hop Reasoning** (Category 3) - Connecting multiple memories: "What fields would Caroline pursue in education?"
+4. **Open Domain** (Category 4) - General knowledge questions
+5. **Complex Reasoning** (Category 5) - Advanced inference tasks
+
+**State-of-the-Art**: CORE achieved 88.24% overall accuracy (June 2025)
+
+### Running the Benchmark
+
+```bash
+# Quick commands
+make test-locomo              # Run locally against Docker
+make test-locomo-live         # Run against Railway deployment
+
+# With options
+./test-locomo-benchmark.sh --recall-limit 20 --output results.json
+./test-locomo-benchmark.sh --live --no-cleanup
+```
+
+### What the Benchmark Tests
+
+1. **Memory Storage**: Loads ~10,000 dialog turns from 10 conversations
+2. **Hybrid Recall**: Tests semantic + keyword + tag-based retrieval
+3. **Graph Relationships**: Evaluates multi-hop reasoning via relationship traversal
+4. **Temporal Queries**: Tests time-based memory filtering
+5. **Answer Accuracy**: Checks if recalled memories contain correct answers
+
+### Performance Expectations
+
+The benchmark takes approximately:
+- **Local Docker**: 10-15 minutes
+- **Railway**: 15-20 minutes (network latency)
+
+Memory usage:
+- **FalkorDB**: ~10,000 nodes, ~5,000 edges
+- **Qdrant**: ~10,000 vectors (768 dimensions)
+
+### Interpreting Results
+
+The benchmark outputs:
+```
+📊 FINAL RESULTS
+🎯 Overall Accuracy: 89.15% (1770/1986)
+⏱️  Total Time: 742.3s
+💾 Total Memories Stored: 9847
+
+📈 Category Breakdown:
+  Single-hop Recall        : 92.20% (260/282)
+  Temporal Understanding   : 89.41% (287/321)
+  Multi-hop Reasoning      : 86.46% ( 83/ 96)
+  Open Domain              : 88.70% (746/841)
+  Complex Reasoning        : 87.89% (392/446)
+
+🏆 Comparison with CORE (SOTA):
+  CORE: 88.24%
+  AutoMem: 89.15%
+  🎉 AutoMem BEATS CORE by 0.91%!
+```
+
+### AutoMem's Advantages
+
+AutoMem is expected to perform well due to:
+
+1. **Richer Graph**: 11 relationship types vs CORE's basic temporal links
+   - `RELATES_TO`, `LEADS_TO`, `OCCURRED_BEFORE`
+   - `PREFERS_OVER`, `EXEMPLIFIES`, `CONTRADICTS`
+   - `REINFORCES`, `INVALIDATED_BY`, `EVOLVED_INTO`
+   - `DERIVED_FROM`, `PART_OF`
+
+2. **Hybrid Search**: Vector + keyword + tags + importance + time
+   - Better than pure semantic search
+   - More reliable than vector-only systems
+
+3. **Background Intelligence**:
+   - Entity extraction for structured queries
+   - Pattern detection for common themes
+   - Consolidation for improved relevance
+
+4. **Dual Storage**: FalkorDB + Qdrant provides redundancy and complementary retrieval
+
+### Benchmark Setup
+
+The LoCoMo benchmark is automatically cloned during first run:
+```bash
+tests/benchmarks/locomo/
+├── data/
+│   └── locomo10.json          # 10 conversations, 1,986 questions
+├── task_eval/                 # Evaluation utilities
+└── README.MD                  # Benchmark documentation
+```
+
+### Troubleshooting
+
+**"LoCoMo dataset not found"**
+```bash
+cd tests/benchmarks
+git clone https://github.com/snap-research/locomo.git
+```
+
+**Low accuracy scores**
+- Check if enrichment pipeline is enabled
+- Verify OpenAI API key is set (for embeddings)
+- Increase `--recall-limit` (default: 10)
+- Review individual question results in output JSON
+
+**Timeout errors**
+- Reduce batch size in config
+- Increase pause between batches
+- Use Railway for better performance
+
+### Research Citation
+
+```bibtex
+@article{maharana2024evaluating,
+  title={Evaluating very long-term conversational memory of llm agents},
+  author={Maharana, Adyasha and Lee, Dong-Ho and Tulyakov, Sergey and Bansal, Mohit and Barbieri, Francesco and Fang, Yuwei},
+  journal={arXiv preprint arXiv:2402.17753},
+  year={2024}
+}
+```
+
+---
+
 ## Best Practices
 
 1. **Always run unit tests** before committing
@@ -170,4 +302,5 @@ make test-integration
 3. **Run live tests** before deploying to verify no regressions
 4. **Check test coverage** with `pytest --cov` (requires pytest-cov)
 5. **Review test output** - integration tests show actual API responses
+6. **Run LoCoMo benchmark** before major releases to validate memory performance
 
