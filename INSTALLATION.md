@@ -248,6 +248,7 @@ curl -X POST https://your-automem.railway.app/memory \
 
 2. **Connect your AI tools** - Use your Railway URL in:
    - [AutoMem MCP Client](https://github.com/verygoodplugins/mcp-automem)
+   - Hosted MCP over SSE sidecar for ChatGPT/ElevenLabs: see docs/MCP_SSE.md
    - Claude Desktop, Cursor, Claude Code, etc.
 
 3. **Set up monitoring** (optional): See [Health Monitoring Guide](docs/HEALTH_MONITORING.md)
@@ -893,4 +894,3 @@ curl -X POST https://your-automem.railway.app/memory \
 ## License
 
 MIT License - See [LICENSE](LICENSE) file for details.
-

@@ -31,6 +31,24 @@
       }
     },
     {
+      "name": "automem-mcp-sse",
+      "source": {
+        "repo": "https://github.com/verygoodplugins/automem",
+        "branch": "main"
+      },
+      "builder": "NIXPACKS",
+      "buildCommand": "cd mcp-sse-server && npm i",
+      "startCommand": "node mcp-sse-server/server.js",
+      "healthcheck": {
+        "path": "/health",
+        "timeout": 100
+      },
+      "env": {
+        "PORT": "8080",
+        "AUTOMEM_ENDPOINT": "http://${{automem-api.RAILWAY_PRIVATE_DOMAIN}}:8001"
+      }
+    },
+    {
       "name": "FalkorDB",
       "image": "falkordb/falkordb:latest",
       "volumes": [

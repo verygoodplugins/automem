@@ -3,6 +3,7 @@ flask==3.0.3
 falkordb==1.0.9
 qdrant-client==1.11.3
 python-dotenv==1.0.1
+python-dateutil==2.9.0
 openai==1.55.3
 spacy==3.8.7
 requests==2.31.0
