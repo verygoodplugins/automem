@@ -246,38 +246,47 @@ app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', time
 // In-memory session store: sessionId -> { transport, server, res, heartbeat }
 const sessions = new Map();
 
-// Helper: validate and extract Bearer token
-function getBearerToken(req) {
+// Helper: validate and extract token from multiple sources
+function getAuthToken(req) {
   const auth = req.headers['authorization'] || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : undefined;
+  return (
+    (m ? m[1] : undefined) ||
+    req.headers['x-api-key'] ||
+    req.query.api_key ||
+    process.env.AUTOMEM_API_TOKEN
+  );
 }
 
 // SSE endpoint
 app.get('/mcp/sse', async (req, res) => {
   try {
     const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
-    const token = getBearerToken(req);
+    const token = getAuthToken(req);
     if (!endpoint) return res.status(500).json({ error: 'AUTOMEM_ENDPOINT not configured' });
-    if (!token) return res.status(401).json({ error: 'Missing Authorization Bearer token' });
+    if (!token) return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
 
     const client = new AutoMemClient({ endpoint, apiKey: token });
     const server = buildMcpServer(client);
+    // Help with proxy buffering before SSE headers are written
+    res.set('X-Accel-Buffering', 'no');
+    res.set('Cache-Control', 'no-cache, no-transform');
     const transport = new SSEServerTransport('/mcp/messages', res);
     await server.connect(transport);
-    await transport.start();
 
-    // Heartbeat to keep proxies from closing idle streams
+    // Prepare session and lifecycle BEFORE sending the endpoint event to avoid race
     const heartbeat = setInterval(() => {
       try { res.write(': ping\n\n'); } catch (_) { /* ignore */ }
     }, 20000);
-
     res.on('close', () => {
       clearInterval(heartbeat);
       sessions.delete(transport.sessionId);
     });
-
     sessions.set(transport.sessionId, { transport, server, res, heartbeat });
+    console.log(`[MCP] New SSE session established: ${transport.sessionId}`);
+
+    // Now start SSE (writes event: endpoint)
+    await transport.start();
   } catch (e) {
     try { res.status(500).json({ error: String(e) }); } catch (_) { /* ignore */ }
   }
@@ -288,10 +297,14 @@ app.post('/mcp/messages', async (req, res) => {
   const sessionId = req.query.sessionId;
   if (!sessionId || typeof sessionId !== 'string') return res.status(400).send('Missing sessionId');
   const s = sessions.get(sessionId);
-  if (!s) return res.status(404).send('Session not found');
+  if (!s) {
+    console.warn(`[MCP] POST for unknown session: ${sessionId}`);
+    return res.status(404).send('Session not found');
+  }
   try {
     await s.transport.handlePostMessage(req, res, req.body);
   } catch (e) {
+    console.error(`[MCP] Error handling message for session ${sessionId}:`, e);
     try { res.status(400).send(String(e)); } catch (_) { /* ignore */ }
   }
 });
@@ -300,4 +313,3 @@ const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`AutoMem MCP SSE server listening on :${port}`);
 });
-
