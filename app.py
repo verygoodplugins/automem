@@ -30,10 +30,24 @@ from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient, models as qdrant_models
-from qdrant_client.models import Distance, PointStruct, VectorParams, PayloadSchemaType
+from qdrant_client.models import Distance, PointStruct, VectorParams
+
+try:
+    from qdrant_client.models import PayloadSchemaType
+except ImportError:
+    # Fallback for test environments where PayloadSchemaType might not be available
+    PayloadSchemaType = None
 from werkzeug.exceptions import HTTPException
 from openai import OpenAI
 from consolidation import MemoryConsolidator, ConsolidationScheduler
+
+# Import embedding providers
+from automem.embedding import (
+    EmbeddingProvider,
+    OpenAIEmbeddingProvider,
+    FastEmbedProvider,
+    PlaceholderEmbeddingProvider,
+)
 
 try:
     import spacy  # type: ignore
@@ -1272,6 +1286,12 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
         if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
             result["projects"].add(cleaned)
 
+    # Extract project names from 'project "X"' pattern
+    for match in re.findall(r'(?:project|repo|repository)\s+"([^"]+)"', text, re.IGNORECASE):
+        cleaned = match.strip()
+        if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
+            result["projects"].add(cleaned)
+
     for match in re.findall(r"Project\s+([A-Z][\w\-]+)", text):
         cleaned = match.strip()
         if _is_valid_entity(cleaned):
@@ -1335,7 +1355,8 @@ class ServiceState:
     falkordb: Optional[FalkorDB] = None
     memory_graph: Any = None
     qdrant: Optional[QdrantClient] = None
-    openai_client: Optional[OpenAI] = None
+    openai_client: Optional[OpenAI] = None  # Keep for backward compatibility (e.g., memory type classification)
+    embedding_provider: Optional[EmbeddingProvider] = None  # New provider pattern for embeddings
     enrichment_queue: Optional[Queue] = None
     enrichment_thread: Optional[Thread] = None
     enrichment_stats: EnrichmentStats = field(default_factory=EnrichmentStats)
@@ -1402,21 +1423,110 @@ def require_api_token() -> None:
 
 
 def init_openai() -> None:
-    """Initialize OpenAI client for embedding generation."""
+    """Initialize OpenAI client for memory type classification (not embeddings)."""
     if state.openai_client is not None:
         return
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        logger.warning("OpenAI API key not provided; embeddings will be placeholders")
+        logger.info("OpenAI API key not provided (used for memory type classification)")
         return
 
     try:
         state.openai_client = OpenAI(api_key=api_key)
-        logger.info("OpenAI client initialized for embedding generation")
+        logger.info("OpenAI client initialized for memory type classification")
     except Exception:
         logger.exception("Failed to initialize OpenAI client")
         state.openai_client = None
+
+
+def init_embedding_provider() -> None:
+    """Initialize embedding provider with auto-selection fallback.
+
+    Priority order:
+    1. OpenAI API (if OPENAI_API_KEY is set)
+    2. Local fastembed model (no API key needed)
+    3. Placeholder hash-based embeddings (fallback)
+
+    Can be controlled via EMBEDDING_PROVIDER env var:
+    - "auto" (default): Try OpenAI, then fastembed, then placeholder
+    - "openai": Use OpenAI only, fail if unavailable
+    - "local": Use fastembed only, fail if unavailable
+    - "placeholder": Use placeholder embeddings
+    """
+    if state.embedding_provider is not None:
+        return
+
+    provider_config = os.getenv("EMBEDDING_PROVIDER", "auto").lower()
+    vector_size = VECTOR_SIZE
+
+    # Explicit provider selection
+    if provider_config == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
+        try:
+            state.embedding_provider = OpenAIEmbeddingProvider(
+                api_key=api_key,
+                model="text-embedding-3-small",
+                dimension=vector_size
+            )
+            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
+            return
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize OpenAI provider: {e}") from e
+
+    elif provider_config == "local":
+        try:
+            state.embedding_provider = FastEmbedProvider(dimension=vector_size)
+            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
+            return
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize local fastembed provider: {e}") from e
+
+    elif provider_config == "placeholder":
+        state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
+        logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
+        return
+
+    # Auto-selection: Try OpenAI → fastembed → placeholder
+    if provider_config == "auto":
+        # Try OpenAI first
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            try:
+                state.embedding_provider = OpenAIEmbeddingProvider(
+                    api_key=api_key,
+                    model="text-embedding-3-small",
+                    dimension=vector_size
+                )
+                logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
+                return
+            except Exception as e:
+                logger.warning("Failed to initialize OpenAI provider, trying local model: %s", str(e))
+
+        # Try local fastembed
+        try:
+            state.embedding_provider = FastEmbedProvider(dimension=vector_size)
+            logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
+            return
+        except Exception as e:
+            logger.warning("Failed to initialize fastembed provider, using placeholder: %s", str(e))
+
+        # Fallback to placeholder
+        state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
+        logger.warning(
+            "Using placeholder embeddings (no semantic search). "
+            "Install fastembed or set OPENAI_API_KEY for semantic embeddings."
+        )
+        logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
+        return
+
+    # Invalid config
+    raise ValueError(
+        f"Invalid EMBEDDING_PROVIDER={provider_config}. "
+        f"Valid options: auto, openai, local, placeholder"
+    )
 
 
 def init_falkordb() -> None:
@@ -1487,15 +1597,29 @@ def _ensure_qdrant_collection() -> None:
         
         # Ensure payload indexes exist for tag filtering
         logger.info("Ensuring Qdrant payload indexes for collection '%s'", COLLECTION_NAME)
-        state.qdrant.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="tags",
-            field_schema=PayloadSchemaType.KEYWORD,
-        )
-        state.qdrant.create_payload_index(
-            collection_name=COLLECTION_NAME,
-            field_name="tag_prefixes",
-            field_schema=PayloadSchemaType.KEYWORD,
+        if PayloadSchemaType:
+            # Use enum if available
+            state.qdrant.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="tags",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+            state.qdrant.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="tag_prefixes",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+        else:
+            # Fallback to string values when enum not available
+            state.qdrant.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="tags",
+                field_schema="keyword",
+            )
+            state.qdrant.create_payload_index(
+                collection_name=COLLECTION_NAME,
+                field_name="tag_prefixes",
+                field_schema="keyword",
             )
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to ensure Qdrant collection; disabling client")
@@ -2331,10 +2455,10 @@ def admin_reembed() -> Any:
     """
     _require_admin_token()
 
-    # Check if OpenAI is available
-    init_openai()
-    if state.openai_client is None:
-        abort(503, description="OpenAI API key not configured - cannot generate real embeddings")
+    # Check if embedding provider is available
+    init_embedding_provider()
+    if state.embedding_provider is None:
+        abort(503, description="Embedding provider not available")
 
     # Check Qdrant is available
     qdrant_client = get_qdrant_client()
@@ -3546,56 +3670,37 @@ def _generate_placeholder_embedding(content: str) -> List[float]:
 
 
 def _generate_real_embedding(content: str) -> List[float]:
-    """Generate a real semantic embedding using OpenAI's API."""
-    init_openai()
+    """Generate an embedding using the configured provider."""
+    init_embedding_provider()
 
-    if state.openai_client is None:
-        logger.debug("OpenAI client not available, falling back to placeholder")
+    if state.embedding_provider is None:
+        logger.warning("No embedding provider available, using placeholder")
         return _generate_placeholder_embedding(content)
 
     try:
-        # Use the smaller, cheaper model for embeddings
-        response = state.openai_client.embeddings.create(
-            input=content,
-            model="text-embedding-3-small",
-            dimensions=VECTOR_SIZE,  # OpenAI allows specifying dimensions
-        )
-        embedding = response.data[0].embedding
-        logger.debug(
-            "Generated OpenAI embedding for content (length: %d)", len(content)
-        )
+        embedding = state.embedding_provider.generate_embedding(content)
         return embedding
     except Exception as e:
-        logger.warning("Failed to generate OpenAI embedding: %s", str(e))
+        logger.warning("Failed to generate embedding: %s", str(e))
         return _generate_placeholder_embedding(content)
 
 
 def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
-    """Generate multiple embeddings in a single API call for efficiency."""
-    init_openai()
-    
+    """Generate multiple embeddings in a single batch for efficiency."""
+    init_embedding_provider()
+
     if not contents:
         return []
-    
-    if state.openai_client is None:
-        logger.debug("OpenAI client not available, falling back to placeholder embeddings")
+
+    if state.embedding_provider is None:
+        logger.debug("No embedding provider available, falling back to placeholder embeddings")
         return [_generate_placeholder_embedding(c) for c in contents]
-    
+
     try:
-        response = state.openai_client.embeddings.create(
-            input=contents,  # OpenAI supports batching up to 2048 inputs
-            model="text-embedding-3-small",
-            dimensions=VECTOR_SIZE,
-        )
-        embeddings = [item.embedding for item in response.data]
-        logger.info(
-            "Generated %d OpenAI embeddings in batch (avg length: %d)",
-            len(embeddings),
-            sum(len(c) for c in contents) // len(contents) if contents else 0
-        )
+        embeddings = state.embedding_provider.generate_embeddings_batch(contents)
         return embeddings
     except Exception as e:
-        logger.warning("Failed to generate batch OpenAI embeddings: %s", str(e))
+        logger.warning("Failed to generate batch embeddings: %s", str(e))
         return [_generate_placeholder_embedding(c) for c in contents]
 
 
@@ -3667,7 +3772,8 @@ if __name__ == "__main__":
     logger.info("Starting Flask API on port %s", port)
     init_falkordb()
     init_qdrant()
-    init_openai()
+    init_openai()  # Still needed for memory type classification
+    init_embedding_provider()  # New provider pattern for embeddings
     init_enrichment_pipeline()
     init_embedding_pipeline()
     init_consolidation_scheduler()
