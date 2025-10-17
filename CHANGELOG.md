@@ -2,6 +2,63 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.7.0] - 2025-10-17
+
+### 🌉 MCP over SSE Sidecar
+
+#### Added - Hosted MCP Server via SSE
+- Exposes AutoMem as an MCP server over SSE for cloud clients (ChatGPT, ElevenLabs Agents)
+- Endpoints:
+  - `GET /mcp/sse` — SSE stream (server → client); auth via `Authorization: Bearer`, `X-API-Key`, or `?api_key=`
+  - `POST /mcp/messages?sessionId=<id>` — Client → server JSON-RPC messages
+  - `GET /health` — Sidecar health probe
+- Implementation: Node 18 + `@modelcontextprotocol/sdk` with JSON-RPC tool handlers mapping to AutoMem API
+- Keepalive: Heartbeats every 20s to avoid idle proxy timeouts
+
+#### Security & Auth
+- Preferred auth: `Authorization: Bearer <AUTOMEM_API_TOKEN>`
+- Also supports: `X-API-Key` and `?api_key=` (URL tokens may appear in logs; prefer headers)
+
+#### Documentation
+- New: `docs/MCP_SSE.md` with deployment, auth, and troubleshooting
+- README updated to link SSE sidecar alongside the NPM MCP bridge
+
+### 🚀 Deployment
+
+#### Railway Template Enhancements
+- Template now provisions 3 services: `automem-api`, `automem-mcp-sse`, and `FalkorDB`
+- `automem-mcp-sse` preconfigured with `AUTOMEM_ENDPOINT` → `http://${{automem-api.RAILWAY_PRIVATE_DOMAIN}}`
+- Health checks added for the sidecar service
+- Fixed: Corrected Dockerfile path in `mcp-sse-server/railway.json`
+- Added: `package-lock.json` for reproducible SSE builds
+
+### 📊 Benchmarks
+
+#### Added - LoCoMo Benchmark Integration
+- End-to-end evaluation flow, docs (`docs/LOCOMO_BENCHMARK.md`), and test harness
+- Make targets for local and live (Railway) runs
+- Initial optimization phases (1–2.5) implemented and documented
+
+### 📝 Documentation
+- INSTALLATION: One‑click Railway section updated to reflect new SSE service
+- README: Added SSE sidecar docs link under MCP and Documentation sections
+
+### 📁 Files Modified
+- `mcp-sse-server/`: `server.js`, `Dockerfile`, `package.json`, `package-lock.json`, `railway.json`
+- `docs/`: `MCP_SSE.md`, `LOCOMO_BENCHMARK.md`
+- `railway-template.json`
+- `INSTALLATION.md`, `README.md`
+
+### Commits Since 0.6.0
+- Add MCP SSE sidecar and LoCoMo quick wins
+- Add MCP SSE server deployment config for Railway
+- Add multi-auth support to SSE server (Bearer, X-API-Key, query param)
+- Add package-lock.json for mcp-sse-server
+- Fix Dockerfile path in mcp-sse-server railway.json
+- Implement LoCoMo benchmark optimizations (Phases 1–2.5)
+- Add LoCoMo benchmark integration and documentation
+- Update INSTALLATION.md
+
 ## [0.6.0] - 2025-10-14
 
 ### 🚀 Performance Optimizations

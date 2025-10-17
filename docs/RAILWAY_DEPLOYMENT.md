@@ -291,7 +291,7 @@ REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru
 
 - [ ] Set up monitoring alerts (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
 - [ ] Configure automated backups (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
-- [ ] Add MCP server integration
+- [x] Add MCP server integration (SSE sidecar) — see docs/MCP_SSE.md
 - [ ] Deploy FalkorDB Browser
 - [ ] Set up staging environment
 

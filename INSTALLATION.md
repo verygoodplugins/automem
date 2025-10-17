@@ -99,7 +99,7 @@ python -m spacy download en_core_web_sm
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 **What this does:**
-- Creates AutoMem API + FalkorDB services automatically
+- Creates AutoMem API + MCP SSE sidecar + FalkorDB services automatically
 - Sets up persistent storage and volumes
 - Generates secure API tokens (`AUTOMEM_API_TOKEN`, `ADMIN_API_TOKEN`)
 - Configures internal networking (`FALKORDB_HOST`, `FALKORDB_PORT`)

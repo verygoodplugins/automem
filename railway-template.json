@@ -45,7 +45,7 @@
       },
       "env": {
         "PORT": "8080",
-        "AUTOMEM_ENDPOINT": "http://${{automem-api.RAILWAY_PRIVATE_DOMAIN}}:8001"
+        "AUTOMEM_ENDPOINT": "http://${{automem-api.RAILWAY_PRIVATE_DOMAIN}}"
       }
     },
     {

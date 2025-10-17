@@ -14,3 +14,5 @@ backups/
 # Log files
 *.log
 
+/mcp-sse-server/node_modules
+tests/benchmarks/locomo/

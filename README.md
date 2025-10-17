@@ -280,14 +280,16 @@ AutoMem works with any AI platform via:
 
 ### MCP (Model Context Protocol)
 ```bash
-# Install official MCP bridge
+# Install official MCP bridge (local MCP client)
 npm install -g @verygoodplugins/mcp-automem
 
 # Configure for Claude Desktop, Cursor, or Claude Code
 npx @verygoodplugins/mcp-automem setup
 ```
 
-👉 **[MCP Integration Guide](https://www.npmjs.com/package/@verygoodplugins/mcp-automem)**
+👉 MCP Options:
+- NPM bridge (local): https://www.npmjs.com/package/@verygoodplugins/mcp-automem
+- SSE sidecar (hosted): docs/MCP_SSE.md
 
 ### Direct API
 Any language, any framework:
@@ -350,6 +352,7 @@ response = requests.post(
 ## Documentation
 
 - 📦 **[Installation Guide](INSTALLATION.md)** - Railway, Docker, development setup
+- 🌉 **[MCP over SSE Sidecar](docs/MCP_SSE.md)** - Expose AutoMem as an MCP server over SSE for ChatGPT/ElevenLabs
 - 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** - Health monitoring and automated backups
 - 🔧 **[API Reference](INSTALLATION.md#api-reference)** - All endpoints with examples
 - 🧪 **[Testing Guide](TESTING.md)** - Unit, integration, live server, and LoCoMo benchmark tests
@@ -408,4 +411,3 @@ railway up
 *Built with obsession. Validated by neuroscience. Powered by graph theory.*
 
 **Transform AI from a tool into a thinking partner. Deploy AutoMem now.**
-
