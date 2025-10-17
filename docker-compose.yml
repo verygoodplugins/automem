@@ -52,6 +52,7 @@ services:
         condition: service_started
     volumes:
       - .:/app
+      - fastembed_models:/root/.config/automem/models  # Persist embedding models
     restart: unless-stopped
 
   # Optional: FalkorDB Browser for visualization
@@ -69,3 +70,4 @@ services:
 volumes:
   falkordb_data:
   qdrant_data:
+  fastembed_models:  # Persistent cache for local embedding models

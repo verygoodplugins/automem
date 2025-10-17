@@ -47,11 +47,26 @@ curl -X POST \
   https://automem.up.railway.app/enrichment/reprocess
 ```
 
-### OpenAI Integration
+### Embedding Providers
 
-| Variable | Description | Required | Example |
-|----------|-------------|----------|---------|
-| `OPENAI_API_KEY` | OpenAI API key for embeddings | ✅ Recommended | `sk-proj-...` |
+AutoMem supports three embedding backends with automatic fallback.
+
+| Variable | Description | Default | Options |
+|----------|-------------|---------|---------|
+| `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `openai`, `local`, `placeholder` |
+| `OPENAI_API_KEY` | OpenAI API key (for OpenAI provider) | - | `sk-proj-...` |
+
+**Provider Options:**
+- `auto` (default): Try OpenAI → FastEmbed local model → Placeholder
+- `openai`: Use OpenAI API only (requires `OPENAI_API_KEY`)
+- `local`: Use FastEmbed local model only (~210MB download on first use)
+- `placeholder`: Use hash-based embeddings (no semantic search)
+
+**Local Model Details:**
+- Model: `BAAI/bge-base-en-v1.5` (768 dimensions)
+- Size: ~210MB (cached to `~/.config/automem/models/`)
+- No API key or internet required after first download
+- Good semantic quality, faster than API calls
 
 ---
 
