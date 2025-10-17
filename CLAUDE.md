@@ -142,6 +142,7 @@ AutoMem uses a provider pattern with three embedding backends:
    - No API key or internet required (after first download)
    - Downloads ~210MB model to `~/.config/automem/models/` on first use
    - 768 dimensions (default), also supports 384 and 1024 dim models
+   - Note: Pin `onnxruntime<1.20` to avoid compatibility issues with fastembed 0.4.x
 
 3. **Placeholder** (`placeholder`) - Hash-based fallback
    - Deterministic vectors from content hash

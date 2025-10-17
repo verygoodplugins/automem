@@ -35,7 +35,7 @@ class PlaceholderEmbeddingProvider(EmbeddingProvider):
         """
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         seed = int.from_bytes(digest[:8], "little", signed=False)
-        rng = random.Random(seed)
+        rng = random.Random(seed)  # nosec: B311 - Deterministic RNG is intentional for placeholder embeddings
         return [rng.random() for _ in range(self._dimension)]
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:

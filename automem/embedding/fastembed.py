@@ -1,6 +1,7 @@
 """FastEmbed local embedding provider using ONNX models."""
 
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -52,9 +53,10 @@ class FastEmbedProvider(EmbeddingProvider):
                 model_name,
             )
 
-        # Set cache directory
+        # Set cache directory; allow env override for portability across users/containers
         if cache_dir is None:
-            cache_dir = Path.home() / ".config" / "automem" / "models"
+            env_dir = os.getenv("AUTOMEM_MODELS_DIR")
+            cache_dir = Path(env_dir) if env_dir else (Path.home() / ".config" / "automem" / "models")
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Check if model is cached
@@ -88,9 +90,23 @@ class FastEmbedProvider(EmbeddingProvider):
             self.model = TextEmbedding(model_name=model_name, cache_dir=str(cache_dir))
 
         self.model_name = model_name
-        self._dimension = dimension
+        # Derive actual embedding dimension to avoid mismatches
+        try:
+            _probe = next(self.model.embed([" "]))
+            actual_dim = len(_probe)
+        except Exception:
+            # Fallback: assume requested dimension if probe fails (keeps behavior unchanged)
+            actual_dim = dimension
 
-        logger.info("✓ %s ready (dimension=%d)", model_name, dimension)
+        if actual_dim != dimension:
+            logger.warning(
+                "fastembed actual dimension %d != configured %d for model %s. "
+                "Using actual dimension; ensure your VECTOR_SIZE/Qdrant collection matches.",
+                actual_dim, dimension, model_name
+            )
+        self._dimension = actual_dim
+
+        logger.info("✓ %s ready (dimension=%d)", model_name, self._dimension)
 
     @staticmethod
     def _get_model_size_description(dimension: int) -> str:
@@ -112,6 +128,11 @@ class FastEmbedProvider(EmbeddingProvider):
         """
         embeddings = list(self.model.embed([text]))
         embedding = embeddings[0].tolist()
+        if len(embedding) != self._dimension:
+            raise ValueError(
+                f"fastembed embedding length {len(embedding)} != configured dimension {self._dimension} "
+                f"(model={self.model_name})"
+            )
         logger.debug("Generated fastembed embedding for text (length: %d)", len(text))
         return embedding
 
@@ -131,6 +152,12 @@ class FastEmbedProvider(EmbeddingProvider):
             return []
 
         embeddings = [emb.tolist() for emb in self.model.embed(texts)]
+        bad = next((i for i, e in enumerate(embeddings) if len(e) != self._dimension), None)
+        if bad is not None:
+            raise ValueError(
+                f"fastembed batch embedding length {len(embeddings[bad])} != configured dimension {self._dimension} "
+                f"at index {bad} (model={self.model_name})"
+            )
         logger.info(
             "Generated %d fastembed embeddings in batch (avg length: %d)",
             len(embeddings),

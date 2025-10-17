@@ -67,6 +67,14 @@ AutoMem supports three embedding backends with automatic fallback.
 - Size: ~210MB (cached to `~/.config/automem/models/`)
 - No API key or internet required after first download
 - Good semantic quality, faster than API calls
+- Recommended: pin `onnxruntime<1.20` with `fastembed` 0.4.x to avoid runtime issues
+- Docker: persist model cache with a volume (see docker-compose.yml)
+- Ensure `VECTOR_SIZE` equals the selected model's dimension (default 768)
+
+**Additional Configuration:**
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `AUTOMEM_MODELS_DIR` | Override model cache directory | `~/.config/automem/models/` | Useful in containers |
 
 ---
 
