@@ -38,16 +38,16 @@ except ImportError:
     # Fallback for test environments where PayloadSchemaType might not be available
     PayloadSchemaType = None
 from werkzeug.exceptions import HTTPException
-from openai import OpenAI
 from consolidation import MemoryConsolidator, ConsolidationScheduler
 
-# Import embedding providers
-from automem.embedding import (
-    EmbeddingProvider,
-    OpenAIEmbeddingProvider,
-    FastEmbedProvider,
-    PlaceholderEmbeddingProvider,
-)
+# Make OpenAI import optional to allow running without it
+try:
+    from openai import OpenAI  # type: ignore
+except ImportError:
+    OpenAI = None  # type: ignore
+
+# Import only the interface; import backends lazily in init_embedding_provider()
+from automem.embedding.provider import EmbeddingProvider
 
 try:
     import spacy  # type: ignore
@@ -1427,6 +1427,11 @@ def init_openai() -> None:
     if state.openai_client is not None:
         return
 
+    # Check if OpenAI is available at all
+    if OpenAI is None:
+        logger.info("OpenAI package not installed (used for memory type classification)")
+        return
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         logger.info("OpenAI API key not provided (used for memory type classification)")
@@ -1457,7 +1462,7 @@ def init_embedding_provider() -> None:
     if state.embedding_provider is not None:
         return
 
-    provider_config = os.getenv("EMBEDDING_PROVIDER", "auto").lower()
+    provider_config = (os.getenv("EMBEDDING_PROVIDER", "auto") or "auto").strip().lower()
     vector_size = VECTOR_SIZE
 
     # Explicit provider selection
@@ -1466,6 +1471,7 @@ def init_embedding_provider() -> None:
         if not api_key:
             raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
         try:
+            from automem.embedding.openai import OpenAIEmbeddingProvider
             state.embedding_provider = OpenAIEmbeddingProvider(
                 api_key=api_key,
                 model="text-embedding-3-small",
@@ -1478,6 +1484,7 @@ def init_embedding_provider() -> None:
 
     elif provider_config == "local":
         try:
+            from automem.embedding.fastembed import FastEmbedProvider
             state.embedding_provider = FastEmbedProvider(dimension=vector_size)
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
             return
@@ -1485,6 +1492,7 @@ def init_embedding_provider() -> None:
             raise RuntimeError(f"Failed to initialize local fastembed provider: {e}") from e
 
     elif provider_config == "placeholder":
+        from automem.embedding.placeholder import PlaceholderEmbeddingProvider
         state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
         logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
         return
@@ -1495,6 +1503,7 @@ def init_embedding_provider() -> None:
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
             try:
+                from automem.embedding.openai import OpenAIEmbeddingProvider
                 state.embedding_provider = OpenAIEmbeddingProvider(
                     api_key=api_key,
                     model="text-embedding-3-small",
@@ -1507,6 +1516,7 @@ def init_embedding_provider() -> None:
 
         # Try local fastembed
         try:
+            from automem.embedding.fastembed import FastEmbedProvider
             state.embedding_provider = FastEmbedProvider(dimension=vector_size)
             logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
             return
@@ -1514,6 +1524,7 @@ def init_embedding_provider() -> None:
             logger.warning("Failed to initialize fastembed provider, using placeholder: %s", str(e))
 
         # Fallback to placeholder
+        from automem.embedding.placeholder import PlaceholderEmbeddingProvider
         state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
         logger.warning(
             "Using placeholder embeddings (no semantic search). "
@@ -3679,6 +3690,14 @@ def _generate_real_embedding(content: str) -> List[float]:
 
     try:
         embedding = state.embedding_provider.generate_embedding(content)
+        if not isinstance(embedding, list) or len(embedding) != VECTOR_SIZE:
+            logger.warning(
+                "Provider %s returned %s dims (expected %d); falling back to placeholder",
+                state.embedding_provider.provider_name(),
+                len(embedding) if isinstance(embedding, list) else "invalid",
+                VECTOR_SIZE,
+            )
+            return _generate_placeholder_embedding(content)
         return embedding
     except Exception as e:
         logger.warning("Failed to generate embedding: %s", str(e))
@@ -3698,6 +3717,12 @@ def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
 
     try:
         embeddings = state.embedding_provider.generate_embeddings_batch(contents)
+        if not embeddings or any(len(e) != VECTOR_SIZE for e in embeddings):
+            logger.warning(
+                "Provider %s returned invalid dims in batch; using placeholders",
+                state.embedding_provider.provider_name() if state.embedding_provider else "unknown",
+            )
+            return [_generate_placeholder_embedding(c) for c in contents]
         return embeddings
     except Exception as e:
         logger.warning("Failed to generate batch embeddings: %s", str(e))
