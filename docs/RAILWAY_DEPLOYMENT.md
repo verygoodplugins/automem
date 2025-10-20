@@ -26,17 +26,23 @@ This template automatically sets up:
 2. **Add persistent volume** (CRITICAL!)
    - Go to service → Settings → Volumes
    - Click "Add Volume"
-   - Mount path: `/data`
+   - Mount path: `/var/lib/falkordb/data`
    - This ensures data survives restarts
 
 3. **Configure environment variables**:
    ```bash
-   REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --dir /data --requirepass ${{shared.REDIS_PASSWORD}}
-   REDIS_PASSWORD=${{shared.REDIS_PASSWORD}}  # Auto-generated secret
+   PORT=6379
+   FALKOR_PASSWORD=${{shared.FALKOR_PASSWORD}}  # Auto-generated secret
+   FALKOR_USERNAME=default
+   FALKOR_HOST=${{RAILWAY_PRIVATE_DOMAIN}}
+   FALKOR_PORT=${{PORT}}
+   FALKOR_PUBLIC_HOST=${{RAILWAY_TCP_PROXY_DOMAIN}}
+   FALKOR_PUBLIC_PORT=${{RAILWAY_TCP_PROXY_PORT}}
+   REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --requirepass ${{FALKOR_PASSWORD}}
    ```
 
 4. **Set health check**:
-   - Command: `redis-cli -a $REDIS_PASSWORD ping`
+   - Command: `redis-cli -a $FALKOR_PASSWORD ping`
    - Interval: 30s
    - Timeout: 3s
 
@@ -49,11 +55,13 @@ This template automatically sets up:
    - If using Docker: Use existing Dockerfile
 
 2. **Configure environment variables**:
+   
+   **Option A: Variable References (template style)**
    ```bash
    # Database connections
    FALKORDB_HOST=${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}
    FALKORDB_PORT=6379
-   FALKORDB_PASSWORD=${{shared.REDIS_PASSWORD}}
+   FALKORDB_PASSWORD=${{FalkorDB.FALKOR_PASSWORD}}
    FALKORDB_GRAPH=memories
    
    # API authentication (Railway auto-generates secrets)
@@ -68,9 +76,37 @@ This template automatically sets up:
    QDRANT_API_KEY=<your-qdrant-api-key>
    QDRANT_COLLECTION=memories
    
-   # Port
+   # Port (REQUIRED - Flask needs explicit port)
    PORT=8001
    ```
+   
+   **Option B: Hardcoded Values (recommended for stability)**
+   ```bash
+   # Database connections - use actual values from FalkorDB service
+   FALKORDB_HOST=falkordb.railway.internal
+   FALKORDB_PORT=6379
+   FALKORDB_PASSWORD=<copy-from-falkordb-service>
+   FALKORDB_GRAPH=memories
+   
+   # API authentication - generate or copy from shared variables
+   AUTOMEM_API_TOKEN=<your-generated-token>
+   ADMIN_API_TOKEN=<your-generated-token>
+   
+   # OpenAI for embeddings
+   OPENAI_API_KEY=<your-openai-key>
+   
+   # Qdrant Cloud
+   QDRANT_URL=<your-qdrant-cloud-url>
+   QDRANT_API_KEY=<your-qdrant-api-key>
+   QDRANT_COLLECTION=memories
+   
+   # Port (REQUIRED - Flask needs explicit port)
+   PORT=8001
+   ```
+   
+   **Note**: Hardcoded values (Option B) are more stable and easier to debug, while variable references (Option A) update automatically but can be harder to troubleshoot.
+   
+   **⚠️ Important**: `PORT=8001` is **required** for the memory-service. Without it, Flask defaults to port 5000, causing connection failures from other services.
 
 3. **Set health check**:
    - Path: `/health`
@@ -91,15 +127,38 @@ curl https://your-automem.up.railway.app/health
   "status": "healthy",
   "falkordb": "connected",
   "qdrant": "connected",
+  "memory_count": 1234,  # Added in recent versions
+  "enrichment": {
+    "status": "running",
+    "queue_depth": 0,
+    "pending": 0,
+    "inflight": 0,
+    "processed": 0,
+    "failed": 0
+  },
   "graph": "memories",
-  "timestamp": "2025-10-05T12:00:00Z"
+  "timestamp": "2025-10-20T03:47:39+00:00"
 }
+```
+
+**Note**: `memory_count` field requires AutoMem commit from Oct 20, 2025 or later. For detailed analytics, use `/analyze` endpoint.
+
+```bash
+# Check detailed memory analytics
+curl "https://your-automem.up.railway.app/analyze?api_key=YOUR_API_TOKEN"
+
+# Shows:
+# - Total memories by type (Context, Decision, Insight, etc.)
+# - Entity frequency (projects, tools)
+# - Confidence distribution
+# - Temporal insights (activity by hour)
 ```
 
 If you get `503`:
 - Check FalkorDB is running and healthy
-- Verify `FALKORDB_HOST` is set to private domain
+- Verify `FALKORDB_HOST` is set to private domain (use `falkordb.railway.internal`, not `${{...}}` syntax)
 - Confirm `FALKORDB_PASSWORD` matches between services
+- Test connection: `railway logs --service memory-service | grep -i falkordb`
 
 ### Step 4: Store First Memory
 
@@ -129,7 +188,7 @@ Railway volumes ensure data survives:
 - Platform maintenance
 
 **Volume Configuration**:
-- Mount path: `/data`
+- Mount path: `/var/lib/falkordb/data`
 - Minimum size: 1GB (adjust based on needs)
 - Backed up automatically by Railway
 
@@ -173,7 +232,7 @@ For visual graph exploration:
 
 2. **Configure connection**:
    ```bash
-   FALKORDB_URL=redis://default:${{shared.REDIS_PASSWORD}}@${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}:6379
+   FALKORDB_URL=redis://default:${{FalkorDB.FALKOR_PASSWORD}}@${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}:6379
    ```
 
 3. **Access**:
@@ -244,15 +303,59 @@ This will:
 **Solution**:
 ```bash
 # Check internal networking
-railway logs --service automem-api | grep FalkorDB
+railway logs --service memory-service | grep FalkorDB
 
 # Verify private domain
 echo $FALKORDB_HOST  # Should be: falkordb.railway.internal
 
 # Test connection
-railway run --service automem-api
+railway run --service memory-service
 > redis-cli -h $FALKORDB_HOST -p 6379 -a $FALKORDB_PASSWORD ping
 ```
+
+### Service Connection Refused (ECONNREFUSED)
+
+**Problem**: SSE or other services get "fetch failed" or "ECONNREFUSED" when connecting to memory-service
+
+**Symptoms**:
+```
+Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
+```
+
+**Causes & Solutions**:
+
+1. **Missing PORT variable** (most common):
+   - Check memory-service variables: `PORT` must be set to `8001`
+   - Without it, Flask defaults to port 5000
+   - **Fix**: Add `PORT=8001` to memory-service environment variables and redeploy
+
+2. **IPv6 binding issue** (fixed in latest code):
+   - Railway internal networking uses IPv6
+   - Older AutoMem versions bound to IPv4 only (`0.0.0.0`)
+   - **Fix**: Update to latest code (Flask now binds to `::` for IPv6 dual-stack)
+   - Check startup logs should show: `* Running on http://[::1]:8001`
+
+3. **Wrong internal hostname**:
+   - Verify `AUTOMEM_ENDPOINT` in SSE service matches memory-service's `RAILWAY_PRIVATE_DOMAIN`
+   - Should be: `http://memory-service.railway.internal:8001`
+
+### Variable Reference Issues
+
+**Problem**: Variables using `${{...}}` syntax not resolving (showing literal `${{...}}` in logs)
+
+**Cause**: Railway variable references only work in templates, not manual service configuration
+
+**Solution**: Use hardcoded values instead
+```bash
+# ❌ Don't use in manual setup:
+FALKORDB_HOST=${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}
+
+# ✅ Do use in manual setup:
+FALKORDB_HOST=falkordb.railway.internal
+FALKORDB_PASSWORD=<copy-exact-value-from-falkordb-service>
+```
+
+**Benefit**: Hardcoded values are more stable, easier to debug, and work consistently across redeployments.
 
 ### Data Loss
 
@@ -279,11 +382,13 @@ REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru
 
 ## Security Best Practices
 
-1. **Always set REDIS_PASSWORD** (Railway auto-generates)
+1. **Always set FALKOR_PASSWORD** (Railway auto-generates)
 2. **Use Railway's private networking** for service-to-service
 3. **Don't expose FalkorDB publicly** (use private domain only)
 4. **Rotate API tokens** periodically via Railway dashboard
 5. **Enable Railway's Audit Logs** (Enterprise plan)
+
+**Note on Service Naming**: Railway's internal DNS is based on the service name (e.g., `memory-service.railway.internal`). If you rename a service, its `RAILWAY_PRIVATE_DOMAIN` updates automatically, but you'll need to update any hardcoded hostnames in other services' environment variables.
 
 ---
 

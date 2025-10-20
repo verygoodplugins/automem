@@ -70,9 +70,11 @@ curl -X POST \
 
 ### API Server
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Flask server port | `8001` |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `PORT` | Flask server port | `8001` | ✅ **Yes** (Railway) |
+
+**⚠️ Railway Deployment**: `PORT` **must** be explicitly set to `8001` in Railway. Without it, Flask defaults to port 5000, causing service connection failures. This is **required** for Railway deployments, even though it has a default in local development.
 
 ### Scripts Only
 
@@ -165,6 +167,11 @@ Railway automatically injects these variables in production. **Do not set manual
 | `RAILWAY_SERVICE_ID` | Service UUID | `def456...` |
 
 **Usage in AutoMem**: `app.py` falls back to `RAILWAY_PRIVATE_DOMAIN` if `FALKORDB_HOST` not set.
+
+**Railway Networking Notes**:
+- Railway's internal networking uses **IPv6**. AutoMem binds to `::` (IPv6 dual-stack) to accept connections from other services.
+- `RAILWAY_PRIVATE_DOMAIN` resolves to IPv6 addresses (e.g., `fd12:ca03:42be:0:1000:50:1079:5b6c`).
+- This is handled automatically - no configuration needed.
 
 ---
 
