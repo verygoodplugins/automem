@@ -2,6 +2,100 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.7.1] - 2025-10-20
+
+### 🐛 Railway Deployment Fixes
+
+#### Fixed - IPv6 Networking Support
+- **Critical**: Flask now binds to `::` (IPv6 dual-stack) instead of `0.0.0.0` (IPv4 only)
+- Railway's internal networking uses IPv6 addresses (e.g., `fd12:ca03:42be:...`)
+- Resolves `ECONNREFUSED` errors when services try to connect via internal DNS
+- Memory-service now accepts connections from SSE sidecar and other services
+
+#### Fixed - Port Configuration
+- **Critical**: Added `PORT=8001` to Railway template for memory-service
+- Without explicit PORT, Flask defaults to 5000, causing connection failures
+- Template now includes PORT for all services that require it
+- Documentation emphasizes PORT is **required** for Railway deployments
+
+#### Fixed - FalkorDB Data Persistence
+- Corrected volume mount path: `/var/lib/falkordb/data` (was `/data`)
+- FalkorDB now properly persists data across restarts
+- Updated `REDIS_ARGS` in template to match official FalkorDB Railway template
+- Removed health check configuration (Railway uses container monitoring for databases)
+
+#### Fixed - Service Naming Consistency
+- Standardized service name to `memory-service` across all configs and docs
+- Updated `AUTOMEM_ENDPOINT` in SSE service to use correct internal DNS
+- Eliminated confusion from mixed naming (`flask`, `automem-api`, `memory-service`)
+- `RAILWAY_PRIVATE_DOMAIN` now consistently resolves to `memory-service.railway.internal`
+
+### 📝 Documentation Improvements
+
+#### Enhanced - Railway Deployment Guide
+- New troubleshooting section: "Service Connection Refused (ECONNREFUSED)"
+- Added detailed explanation of Railway's IPv6 networking
+- Documented PORT requirement and common pitfalls
+- Clarified when to use hardcoded values vs `${{...}}` variable references
+- Updated FalkorDB setup instructions with correct volume paths
+- Added memory_count to health check examples for easier debugging
+
+#### Enhanced - Environment Variables Reference
+- Marked `PORT` as **required** for Railway deployments
+- Added Railway networking notes explaining IPv6 dual-stack binding
+- Clarified auto-populated Railway variables and their usage
+- Updated FalkorDB connection variable documentation
+
+#### Enhanced - MCP SSE Documentation
+- Added comprehensive troubleshooting steps for `fetch failed` errors
+- Updated service references to use `memory-service` consistently
+- Added note about internal DNS matching and verification commands
+
+### 🔧 Improvements
+
+#### Added - Debug Logging in SSE Server
+- SSE server now logs actual URLs being requested (`[AutoMem] GET http://...`)
+- Detailed error messages for fetch failures with endpoint information
+- Helps diagnose connection issues between services
+- Logged errors include cause and network details
+
+#### Updated - Railway Template
+- All critical fixes incorporated into `railway-template.json`
+- Template now follows official FalkorDB patterns for environment variables
+- Removed incorrect health check configuration for FalkorDB service
+- Added `PORT` environment variables for all services
+- Uses `FALKOR_PASSWORD` consistently (matches official template)
+
+### 🧹 Cleanup
+
+#### Removed
+- Backup files: `app.py.original`, `app.py.withchanges`
+- Empty/unused files: `claude-desktop-mcp.js`
+- Test/benchmark logs: `*.log`, `locomo_results.json`
+- Empty directories: `backups/`
+- Unused Railway configs: `railway-backup.json`, `railway-health-monitor.json`
+
+### 📁 Files Modified
+- `app.py` (Flask IPv6 binding)
+- `mcp-sse-server/server.js` (debug logging)
+- `railway-template.json` (PORT, volume paths, variable names)
+- `docs/RAILWAY_DEPLOYMENT.md` (comprehensive troubleshooting)
+- `docs/ENVIRONMENT_VARIABLES.md` (PORT requirements, IPv6 notes)
+- `docs/MCP_SSE.md` (troubleshooting guide)
+
+### 🎯 Migration Notes
+
+**For existing Railway deployments:**
+1. **Update memory-service variables**: Add `PORT=8001` (required)
+2. **Redeploy memory-service**: Pull latest code for IPv6 binding fix
+3. **Verify FalkorDB volume**: Should be mounted at `/var/lib/falkordb/data`
+4. **Check SSE endpoint**: Should use `http://memory-service.railway.internal:8001`
+5. **Test health**: `/health` should show `memory_count` field
+
+**For new deployments:**
+- Use the updated Railway template (all fixes included)
+- Follow updated `docs/RAILWAY_DEPLOYMENT.md` for manual setup
+
 ## [0.7.0] - 2025-10-17
 
 ### 🌉 MCP over SSE Sidecar
