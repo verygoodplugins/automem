@@ -18,11 +18,18 @@ class AutoMemClient {
     const url = `${this.config.endpoint.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
     const headers = { 'Content-Type': 'application/json' };
     if (this.config.apiKey) headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: method === 'GET' ? undefined : (body ? JSON.stringify(body) : undefined)
-    });
+    console.log(`[AutoMem] ${method} ${url}`);
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        body: method === 'GET' ? undefined : (body ? JSON.stringify(body) : undefined)
+      });
+    } catch (fetchErr) {
+      console.error(`[AutoMem] Fetch failed for ${url}:`, fetchErr.message, fetchErr.cause);
+      throw new Error(`fetch failed: ${fetchErr.message} (endpoint: ${this.config.endpoint})`);
+    }
     let data;
     try {
       data = await res.json();
