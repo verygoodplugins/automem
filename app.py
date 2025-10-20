@@ -2528,10 +2528,23 @@ def health() -> Any:
         enrichment_pending = len(state.enrichment_pending)
         enrichment_inflight = len(state.enrichment_inflight)
     
+    # Get memory count from FalkorDB (gracefully fail if unavailable)
+    memory_count = None
+    if graph_available:
+        try:
+            graph = get_memory_graph()
+            if graph:
+                result = graph.query("MATCH (m:Memory) RETURN COUNT(m) as count")
+                if result.result_set:
+                    memory_count = result.result_set[0][0]
+        except Exception:
+            pass  # Silently fail - don't break health check
+    
     health_data = {
         "status": status,
         "falkordb": "connected" if graph_available else "disconnected",
         "qdrant": "connected" if qdrant_available else "disconnected",
+        "memory_count": memory_count,
         "enrichment": {
             "status": "running" if enrichment_thread_alive else "stopped",
             "queue_depth": state.enrichment_queue.qsize() if state.enrichment_queue else 0,
@@ -3671,4 +3684,5 @@ if __name__ == "__main__":
     init_enrichment_pipeline()
     init_embedding_pipeline()
     init_consolidation_scheduler()
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Use :: for IPv6 dual-stack (Railway internal networking uses IPv6)
+    app.run(host="::", port=port, debug=False)
