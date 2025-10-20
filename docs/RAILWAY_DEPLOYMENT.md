@@ -41,10 +41,7 @@ This template automatically sets up:
    REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --requirepass ${{FALKOR_PASSWORD}}
    ```
 
-4. **Set health check**:
-   - Command: `redis-cli -a $FALKOR_PASSWORD ping`
-   - Interval: 30s
-   - Timeout: 3s
+4. **Health check**: Leave blank/disabled (FalkorDB doesn't have HTTP endpoints). Railway monitors container status automatically.
 
 5. **Note the internal URL**: `${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}`
 

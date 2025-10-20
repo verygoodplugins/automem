@@ -4,7 +4,7 @@
   "repository": "https://github.com/verygoodplugins/automem",
   "services": [
     {
-      "name": "automem-api",
+      "name": "memory-service",
       "source": {
         "repo": "https://github.com/verygoodplugins/automem",
         "branch": "main"
@@ -18,7 +18,7 @@
         "PORT": "8001",
         "FALKORDB_HOST": "${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}",
         "FALKORDB_PORT": "6379",
-        "FALKORDB_PASSWORD": "${{FalkorDB.REDIS_PASSWORD}}",
+        "FALKORDB_PASSWORD": "${{FalkorDB.FALKOR_PASSWORD}}",
         "AUTOMEM_API_TOKEN": {
           "generator": "secret"
         },
@@ -45,7 +45,7 @@
       },
       "env": {
         "PORT": "8080",
-        "AUTOMEM_ENDPOINT": "http://${{automem-api.RAILWAY_PRIVATE_DOMAIN}}"
+        "AUTOMEM_ENDPOINT": "http://${{memory-service.RAILWAY_PRIVATE_DOMAIN}}:8001"
       }
     },
     {
@@ -53,21 +53,21 @@
       "image": "falkordb/falkordb:latest",
       "volumes": [
         {
-          "mountPath": "/data",
+          "mountPath": "/var/lib/falkordb/data",
           "name": "falkordb_data"
         }
       ],
       "env": {
-        "REDIS_ARGS": "--save 900 1 --save 300 10 --save 60 10000 --appendonly yes --dir /data",
-        "REDIS_PASSWORD": {
+        "PORT": "6379",
+        "FALKOR_PASSWORD": {
           "generator": "secret"
-        }
-      },
-      "healthcheck": {
-        "command": "redis-cli -a $REDIS_PASSWORD ping",
-        "interval": 30,
-        "timeout": 3,
-        "retries": 3
+        },
+        "FALKOR_USERNAME": "default",
+        "FALKOR_HOST": "${{RAILWAY_PRIVATE_DOMAIN}}",
+        "FALKOR_PORT": "${{PORT}}",
+        "FALKOR_PUBLIC_HOST": "${{RAILWAY_TCP_PROXY_DOMAIN}}",
+        "FALKOR_PUBLIC_PORT": "${{RAILWAY_TCP_PROXY_PORT}}",
+        "REDIS_ARGS": "--save 60 1 --appendonly yes --appendfsync everysec --requirepass ${{FALKOR_PASSWORD}}"
       }
     }
   ],
