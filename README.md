@@ -279,17 +279,29 @@ curl -X POST http://localhost:8001/associate \
 AutoMem works with any AI platform via:
 
 ### MCP (Model Context Protocol)
+
+**Local MCP Bridge** (Claude Desktop, Cursor, Claude Code):
 ```bash
-# Install official MCP bridge (local MCP client)
+# Install official MCP bridge
 npm install -g @verygoodplugins/mcp-automem
 
-# Configure for Claude Desktop, Cursor, or Claude Code
+# Configure for local AI tools
 npx @verygoodplugins/mcp-automem setup
 ```
 
-👉 MCP Options:
+**SSE Sidecar** (Cloud AI Platforms):
+
+Connect AutoMem to cloud AI platforms via HTTPS. Works with:
+- **ChatGPT** (requires developer mode)
+- **Claude.ai** web interface
+- **Claude mobile app**
+- **ElevenLabs Agents**
+
+See [MCP over SSE documentation](docs/MCP_SSE.md) for setup instructions.
+
+👉 **Resources**:
 - NPM bridge (local): https://www.npmjs.com/package/@verygoodplugins/mcp-automem
-- SSE sidecar (hosted): docs/MCP_SSE.md
+- SSE setup guide: [docs/MCP_SSE.md](docs/MCP_SSE.md)
 
 ### Direct API
 Any language, any framework:

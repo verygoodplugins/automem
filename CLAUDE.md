@@ -15,9 +15,15 @@ source venv/bin/activate
 
 # Development
 make dev             # Start full stack (FalkorDB + Qdrant + API) via Docker
-make test            # Run pytest test suite
+make test            # Run pytest test suite (unit tests only)
+make test-integration # Run all tests including integration tests (starts Docker)
+make test-live       # Run integration tests against live Railway server
 make logs            # Follow Flask API logs
 make clean           # Clean up Docker containers/volumes
+
+# Benchmarking
+make test-locomo      # Run LoCoMo benchmark against local server
+make test-locomo-live # Run LoCoMo benchmark against Railway server
 
 # Code quality
 black .              # Format Python code
@@ -68,6 +74,7 @@ The API (`app.py`) provides 13 endpoints:
 2. **FalkorDB** (port 6379) - Graph storage for Memory nodes and relationship edges
 3. **Qdrant** (optional, port 6333) - 768-dimensional vector search for semantic similarity
 4. **Consolidation Engine** - Background processing for memory maintenance
+5. **FalkorDB Browser** (optional, port 3001) - Web UI for graph visualization (start with `docker compose --profile browser up`)
 
 ### Memory Consolidation Engine
 
@@ -136,11 +143,27 @@ Tests use pytest with a `DummyGraph` fixture to mock FalkorDB operations:
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 
 # Run tests
-pytest                                      # All tests
+pytest                                      # All unit tests
 pytest tests/test_app.py::test_recall -v   # Single test with verbose
 pytest -k "consolidat"                     # Tests matching pattern
 pytest --tb=short                          # Shorter traceback format
+
+# Integration tests (requires Docker services)
+make test-integration                       # Starts services and runs integration tests
+AUTOMEM_RUN_INTEGRATION_TESTS=1 pytest tests/test_integration.py -v
+
+# Live server testing (requires Railway deployment)
+./test-live-server.sh                       # Tests against deployed Railway instance
+make test-live                              # Same as above via Makefile
 ```
+
+Test files:
+- `tests/test_app.py` - Core API endpoint tests
+- `tests/test_consolidation_engine.py` - Memory consolidation logic tests
+- `tests/test_enrichment.py` - Entity extraction and enrichment tests
+- `tests/test_integration.py` - Full stack integration tests (requires Docker)
+- `tests/test_api_endpoints.py` - Comprehensive API endpoint tests
+- `tests/benchmarks/locomo/` - LoCoMo benchmark suite for long-term memory evaluation
 
 ## Environment Configuration
 
@@ -206,6 +229,64 @@ python scripts/migrate_mcp_sqlite.py \
 python scripts/reembed_embeddings.py --limit 200
 ```
 
+## Utility Scripts
+
+The `scripts/` directory contains maintenance and recovery tools:
+
+### Backup & Recovery
+- **backup_automem.py** - Creates backups of FalkorDB and Qdrant data
+- **recover_from_qdrant.py** - Recovers graph data from Qdrant vector store
+
+### Data Management
+- **cleanup_memory_types.py** - Cleans up memory type classifications
+- **reclassify_with_llm.py** - Uses LLM to reclassify memory types
+- **deduplicate_qdrant.py** - Removes duplicate vectors from Qdrant
+- **reembed_embeddings.py** - Regenerates embeddings for existing memories
+- **reenrich_batch.py** - Batch re-enrichment of memories
+
+### Monitoring
+- **health_monitor.py** - Health monitoring service for production deployments
+
+All scripts support `--help` for detailed usage information.
+
+## Local vs Railway Workflow
+
+### Typical Development Flow
+1. **Local Development** - Make changes and test with `make dev`
+2. **Unit Tests** - Verify with `make test`
+3. **Integration Tests** - Validate with `make test-integration`
+4. **Deploy to Railway** - Push changes with `make deploy`
+5. **Live Validation** - Test deployed instance with `make test-live`
+6. **Benchmarking** - Validate performance with `make test-locomo-live`
+
+### When to Use Each Environment
+
+**Local (Docker Compose)**:
+- Feature development and debugging
+- Rapid iteration without deployment delays
+- Testing consolidation/enrichment behavior
+- Privacy-focused work (data stays local)
+- Cost-free development
+
+**Railway (Cloud)**:
+- Production deployment for 24/7 availability
+- Multi-device access (laptop, desktop, mobile)
+- Team collaboration with shared memory
+- Testing real-world latency and performance
+- Integration with remote AI tools
+
+### Testing Against Railway
+Before deploying breaking changes, test against your Railway instance:
+```bash
+# Set Railway environment variables
+export AUTOMEM_TEST_URL=https://your-app.railway.app
+export AUTOMEM_TEST_API_TOKEN=your_token
+export AUTOMEM_TEST_ADMIN_TOKEN=your_admin_token
+
+# Run integration tests against Railway
+./test-live-server.sh
+```
+
 ## Key Implementation Patterns
 
 - Memory IDs are UUIDs stored in both databases for cross-referencing
@@ -215,3 +296,4 @@ python scripts/reembed_embeddings.py --limit 200
 - Graph operations are atomic with automatic rollback on errors
 - Vector store errors are logged but don't block graph writes
 - Consolidation runs in background threads without blocking API requests
+- Enrichment pipeline processes memories asynchronously with automatic retries
