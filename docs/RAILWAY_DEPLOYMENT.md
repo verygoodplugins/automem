@@ -4,7 +4,7 @@ Complete guide to deploying AutoMem on Railway with persistent storage, backups,
 
 ## Quick Start (One-Click Deploy)
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/automem)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.com/deploy/automem-ai-memory-service)
 
 This template automatically sets up:
 - ✅ AutoMem Flask API with health checks
