@@ -467,16 +467,25 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
 
 
 def test_admin_reembed_no_openai(client, mock_state, admin_headers):
-    """Test reembed fails gracefully when OpenAI not configured."""
+    """Test reembed works with fallback providers when OpenAI not configured."""
     mock_state.openai_client = None
+    mock_state.embedding_provider = None  # Force re-initialization
+
+    # Add memories to reembed
+    mock_state.memory_graph.memories["mem1"] = {
+        "id": "mem1",
+        "content": "Memory to reembed with fallback",
+        "tags": ["test"]
+    }
 
     response = client.post("/admin/reembed",
-                          json={"batch_size": 10},
+                          json={"batch_size": 10, "limit": 1},
                           headers=admin_headers)
 
-    assert response.status_code == 503
+    # Should succeed with fallback provider (fastembed or placeholder)
+    assert response.status_code == 200
     data = response.get_json()
-    assert "OpenAI API key not configured" in data["message"]
+    assert data["status"] == "complete"
 
 
 def test_admin_reembed_no_qdrant(client, mock_state, admin_headers):
