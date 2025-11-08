@@ -198,13 +198,17 @@ ENTITY_BLOCKLIST = {
 }
 
 # Search weighting parameters (can be overridden via environment variables)
+# Tuned defaults to improve LoCoMo performance out-of-the-box.
 SEARCH_WEIGHT_VECTOR = float(os.getenv("SEARCH_WEIGHT_VECTOR", "0.35"))
-SEARCH_WEIGHT_KEYWORD = float(os.getenv("SEARCH_WEIGHT_KEYWORD", "0.35"))
+SEARCH_WEIGHT_KEYWORD = float(os.getenv("SEARCH_WEIGHT_KEYWORD", "0.45"))
 SEARCH_WEIGHT_TAG = float(os.getenv("SEARCH_WEIGHT_TAG", "0.15"))
 SEARCH_WEIGHT_IMPORTANCE = float(os.getenv("SEARCH_WEIGHT_IMPORTANCE", "0.1"))
 SEARCH_WEIGHT_CONFIDENCE = float(os.getenv("SEARCH_WEIGHT_CONFIDENCE", "0.05"))
-SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.1"))
-SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.15"))
+SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.0"))
+SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.2"))
+
+# Maximum number of results returned by /recall
+RECALL_MAX_LIMIT = int(os.getenv("RECALL_MAX_LIMIT", "100"))
 
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
@@ -2969,7 +2973,11 @@ def memories_by_tag() -> Any:
 def recall_memories() -> Any:
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
-    limit = max(1, min(int(request.args.get("limit", 5)), 50))
+    try:
+        requested_limit = int(request.args.get("limit", 5))
+    except (TypeError, ValueError):
+        requested_limit = 5
+    limit = max(1, min(requested_limit, RECALL_MAX_LIMIT))
     embedding_param = request.args.get("embedding")
     time_query = request.args.get("time_query") or request.args.get("time")
     start_param = request.args.get("start")
@@ -3673,6 +3681,105 @@ def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
             }
         )
     return connections
+
+
+@app.route("/memories/<memory_id>/related", methods=["GET"])
+def get_related_memories(memory_id: str) -> Any:
+    """Return related memories by traversing relationship edges.
+
+    Query params:
+      - relationship_types: comma-separated list of relationship types to traverse
+      - max_depth: traversal depth (default 1, max 3)
+      - limit: max number of related memories to return (default RECALL_RELATION_LIMIT)
+    """
+    graph = get_memory_graph()
+    if graph is None:
+        abort(503, description="FalkorDB is unavailable")
+
+    # Parse and sanitize relationship types
+    rel_types_param = (request.args.get("relationship_types") or "").strip()
+    if rel_types_param:
+        requested = [part.strip().upper() for part in rel_types_param.split(",") if part.strip()]
+        rel_types = [t for t in requested if t in ALLOWED_RELATIONS]
+        if not rel_types:
+            rel_types = sorted(ALLOWED_RELATIONS)
+    else:
+        rel_types = sorted(ALLOWED_RELATIONS)
+
+    # Depth and limit
+    try:
+        max_depth = int(request.args.get("max_depth", 1))
+    except (TypeError, ValueError):
+        max_depth = 1
+    max_depth = max(1, min(max_depth, 3))
+
+    try:
+        limit = int(request.args.get("limit", RECALL_RELATION_LIMIT))
+    except (TypeError, ValueError):
+        limit = RECALL_RELATION_LIMIT
+    limit = max(1, min(limit, 200))
+
+    # Build relationship type pattern like :A|B|C
+    if rel_types:
+        rel_pattern = ":" + "|".join(rel_types)
+    else:
+        rel_pattern = ""
+
+    # Build Cypher query
+    # We prefer full memory nodes (not summaries) for downstream consumers
+    query = f"""
+        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f']-' if rel_pattern else '-[r]-'}(related:Memory)
+        WHERE m.id <> related.id
+        CALL apoc.path.expandConfig(related, {{
+            relationshipFilter: '{'|'.join(rel_types)}',
+            minLevel: 0,
+            maxLevel: $max_depth,
+            bfs: true,
+            filterStartNode: true
+        }}) YIELD path
+        WITH DISTINCT related
+        RETURN related
+        ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
+        LIMIT $limit
+    """
+
+    # If APOC is unavailable, fall back to simple 1..depth traversal without apoc
+    fallback_query = f"""
+        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
+        WHERE m.id <> related.id
+        RETURN DISTINCT related
+        ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
+        LIMIT $limit
+    """
+
+    params = {"id": memory_id, "max_depth": max_depth, "limit": limit}
+
+    try:
+        result = graph.query(query, params)
+    except Exception:
+        # Try fallback if APOC or features not available
+        try:
+            result = graph.query(fallback_query, params)
+        except Exception:
+            logger.exception("Failed to traverse related memories for %s", memory_id)
+            abort(500, description="Failed to fetch related memories")
+
+    related: List[Dict[str, Any]] = []
+    for row in getattr(result, "result_set", []) or []:
+        node = row[0]
+        data = _serialize_node(node)
+        if data.get("id") != memory_id:
+            related.append(data)
+
+    return jsonify({
+        "status": "success",
+        "memory_id": memory_id,
+        "count": len(related),
+        "related_memories": related,
+        "relationship_types": rel_types,
+        "max_depth": max_depth,
+        "limit": limit,
+    })
 
 
 if __name__ == "__main__":
