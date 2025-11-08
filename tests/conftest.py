@@ -107,9 +107,28 @@ def _install_openai_stub() -> None:
         def create(self, *args, **kwargs):  # pragma: no cover - deterministic stub
             raise RuntimeError("OpenAI client not configured")
 
+    class _Completions:
+        def create(self, *args, **kwargs):  # pragma: no cover - deterministic stub
+            # Return a mock response for chat completions
+            from types import SimpleNamespace
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content='{"type": "Context", "confidence": 0.7}'
+                        )
+                    )
+                ]
+            )
+
+    class _Chat:
+        def __init__(self):
+            self.completions = _Completions()
+
     class OpenAI:  # pragma: no cover - simple stub
         def __init__(self, *args, **kwargs):
             self.embeddings = _Embeddings()
+            self.chat = _Chat()
 
     module.OpenAI = OpenAI
     sys.modules.setdefault("openai", module)

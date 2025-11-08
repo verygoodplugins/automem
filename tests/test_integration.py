@@ -164,25 +164,34 @@ def test_memory_lifecycle_real(api_client):
     assert "memory_id" in store_data
     memory_id = store_data["memory_id"]
 
-    # 2. Recall the memory by content
-    recall_response = api_client.get(
-        f"{api_client.base_url}/recall",
-        params={"query": memory_content, "limit": 5}
-    )
-    assert recall_response.status_code == 200
-    recall_data = recall_response.json()
-    assert recall_data["status"] == "success"
-    assert len(recall_data["results"]) > 0
-
-    # Find our memory in results
+    # 2. Recall the memory by content (with retry for async embedding)
+    import time
     found = False
-    for result in recall_data["results"]:
-        if result["id"] == memory_id:
-            found = True
-            assert result["memory"]["content"] == memory_content
-            assert "test" in result["memory"]["tags"]
+    for attempt in range(5):  # Retry up to 5 times
+        recall_response = api_client.get(
+            f"{api_client.base_url}/recall",
+            params={"query": memory_content, "limit": 5}
+        )
+        assert recall_response.status_code == 200
+        recall_data = recall_response.json()
+        assert recall_data["status"] == "success"
+
+        # Find our memory in results
+        for result in recall_data["results"]:
+            if result["id"] == memory_id:
+                found = True
+                assert result["memory"]["content"] == memory_content
+                assert "test" in result["memory"]["tags"]
+                break
+        
+        if found:
             break
-    assert found, f"Memory {memory_id} not found in recall results"
+            
+        # Wait before retrying (embeddings are async)
+        if attempt < 4:
+            time.sleep(0.5)
+    
+    assert found, f"Memory {memory_id} not found in recall results after {attempt + 1} attempts"
 
     # 3. Update the memory
     updated_content = f"Updated: {memory_content}"

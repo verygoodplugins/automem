@@ -7,6 +7,7 @@ Complete guide to deploying AutoMem on Railway with persistent storage, backups,
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.com/deploy/automem-ai-memory-service)
 
 This template automatically sets up:
+
 - ✅ AutoMem Flask API with health checks
 - ✅ FalkorDB with **persistent volumes** and password protection
 - ✅ Automatic secret generation
@@ -19,17 +20,20 @@ This template automatically sets up:
 ### Step 1: Create FalkorDB Service with Persistence
 
 1. **Create new service in Railway**
+
    - Click "+ New Service"
    - Select "Docker Image"
    - Image: `falkordb/falkordb:latest`
 
 2. **Add persistent volume** (CRITICAL!)
+
    - Go to service → Settings → Volumes
    - Click "Add Volume"
    - Mount path: `/var/lib/falkordb/data`
    - This ensures data survives restarts
 
 3. **Configure environment variables**:
+
    ```bash
    PORT=6379
    FALKOR_PASSWORD=${{shared.FALKOR_PASSWORD}}  # Auto-generated secret
@@ -38,8 +42,10 @@ This template automatically sets up:
    FALKOR_PORT=${{PORT}}
    FALKOR_PUBLIC_HOST=${{RAILWAY_TCP_PROXY_DOMAIN}}
    FALKOR_PUBLIC_PORT=${{RAILWAY_TCP_PROXY_PORT}}
-   REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --requirepass ${{FALKOR_PASSWORD}}
+   REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec
    ```
+
+   **Note**: FalkorDB handles authentication via `FALKOR_PASSWORD` - don't add `--requirepass` to `REDIS_ARGS`.
 
 4. **Health check**: Leave blank/disabled (FalkorDB doesn't have HTTP endpoints). Railway monitors container status automatically.
 
@@ -48,64 +54,68 @@ This template automatically sets up:
 ### Step 2: Deploy AutoMem API
 
 1. **Connect GitHub repo** or **Deploy from Docker**
+
    - If using GitHub: Connect repository and set root directory
    - If using Docker: Use existing Dockerfile
 
 2. **Configure environment variables**:
-   
+
    **Option A: Variable References (template style)**
+
    ```bash
    # Database connections
    FALKORDB_HOST=${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}
    FALKORDB_PORT=6379
    FALKORDB_PASSWORD=${{FalkorDB.FALKOR_PASSWORD}}
    FALKORDB_GRAPH=memories
-   
+
    # API authentication (Railway auto-generates secrets)
    AUTOMEM_API_TOKEN=${{shared.AUTOMEM_API_TOKEN}}
    ADMIN_API_TOKEN=${{shared.ADMIN_API_TOKEN}}
-   
+
    # OpenAI for embeddings (required for semantic search)
    OPENAI_API_KEY=<your-openai-key>
-   
+
    # Optional: Qdrant Cloud for vector search
    QDRANT_URL=<your-qdrant-cloud-url>
    QDRANT_API_KEY=<your-qdrant-api-key>
    QDRANT_COLLECTION=memories
-   
+
    # Port (REQUIRED - Flask needs explicit port)
    PORT=8001
    ```
-   
+
    **Option B: Hardcoded Values (recommended for stability)**
+
    ```bash
    # Database connections - use actual values from FalkorDB service
    FALKORDB_HOST=falkordb.railway.internal
    FALKORDB_PORT=6379
    FALKORDB_PASSWORD=<copy-from-falkordb-service>
    FALKORDB_GRAPH=memories
-   
+
    # API authentication - generate or copy from shared variables
    AUTOMEM_API_TOKEN=<your-generated-token>
    ADMIN_API_TOKEN=<your-generated-token>
-   
+
    # OpenAI for embeddings
    OPENAI_API_KEY=<your-openai-key>
-   
+
    # Qdrant Cloud
    QDRANT_URL=<your-qdrant-cloud-url>
    QDRANT_API_KEY=<your-qdrant-api-key>
    QDRANT_COLLECTION=memories
-   
+
    # Port (REQUIRED - Flask needs explicit port)
    PORT=8001
    ```
-   
+
    **Note**: Hardcoded values (Option B) are more stable and easier to debug, while variable references (Option A) update automatically but can be harder to troubleshoot.
-   
+
    **⚠️ Important**: `PORT=8001` is **required** for the memory-service. Without it, Flask defaults to port 5000, causing connection failures from other services.
 
 3. **Set health check**:
+
    - Path: `/health`
    - Timeout: 100s
 
@@ -152,6 +162,7 @@ curl "https://your-automem.up.railway.app/analyze?api_key=YOUR_API_TOKEN"
 ```
 
 If you get `503`:
+
 - Check FalkorDB is running and healthy
 - Verify `FALKORDB_HOST` is set to private domain (use `falkordb.railway.internal`, not `${{...}}` syntax)
 - Confirm `FALKORDB_PASSWORD` matches between services
@@ -180,11 +191,13 @@ curl -X POST "$AUTOMEM_URL/memory" \
 ### Persistent Volumes (Required)
 
 Railway volumes ensure data survives:
+
 - Service restarts
 - Deployments
 - Platform maintenance
 
 **Volume Configuration**:
+
 - Mount path: `/var/lib/falkordb/data`
 - Minimum size: 1GB (adjust based on needs)
 - Backed up automatically by Railway
@@ -196,6 +209,7 @@ Railway provides built-in volume backups for FalkorDB (automatic, one-click rest
 For comprehensive backups covering both FalkorDB and Qdrant with S3 upload:
 
 👉 **See [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md)** for complete backup setup including:
+
 - Railway volume backups (built-in)
 - GitHub Actions automated backups (recommended, free)
 - Manual backup scripts
@@ -224,10 +238,12 @@ python scripts/recover_from_qdrant.py
 For visual graph exploration:
 
 1. **Create new service**:
+
    - Image: `falkordb/falkordb-browser:latest`
    - Port: 3000
 
 2. **Configure connection**:
+
    ```bash
    FALKORDB_URL=redis://default:${{FalkorDB.FALKOR_PASSWORD}}@${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}:6379
    ```
@@ -249,7 +265,7 @@ curl https://your-automem.up.railway.app/health
 
 # Response includes:
 # - FalkorDB connection status
-# - Qdrant connection status  
+# - Qdrant connection status
 # - Memory count
 # - Timestamp
 ```
@@ -266,6 +282,7 @@ docker run automem/health-monitor \
 ```
 
 This will:
+
 - Monitor FalkorDB/Qdrant health every 5min
 - Check memory count consistency
 - Auto-trigger recovery if >5% drift detected
@@ -278,6 +295,7 @@ This will:
 **Recommended Railway Plan**: Pro ($20/mo)
 
 **Service Sizing**:
+
 - **AutoMem API**: 512MB RAM, 0.5 vCPU (~$5/mo)
 - **FalkorDB**: 1GB RAM, 1 vCPU + 2GB volume (~$10/mo)
 - **Qdrant Cloud**: Free tier (1GB) or $25/mo (10GB)
@@ -285,6 +303,7 @@ This will:
 **Total**: ~$15-35/month depending on usage
 
 **Cost Saving Tips**:
+
 - Use Qdrant Cloud free tier initially
 - Start with smaller FalkorDB volume (1GB)
 - Use Railway's usage-based pricing (scales down when idle)
@@ -298,6 +317,7 @@ This will:
 **Problem**: API can't connect to FalkorDB
 
 **Solution**:
+
 ```bash
 # Check internal networking
 railway logs --service memory-service | grep FalkorDB
@@ -315,6 +335,7 @@ railway run --service memory-service
 **Problem**: SSE or other services get "fetch failed" or "ECONNREFUSED" when connecting to memory-service
 
 **Symptoms**:
+
 ```
 Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
 ```
@@ -322,11 +343,13 @@ Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
 **Causes & Solutions**:
 
 1. **Missing PORT variable** (most common):
+
    - Check memory-service variables: `PORT` must be set to `8001`
    - Without it, Flask defaults to port 5000
    - **Fix**: Add `PORT=8001` to memory-service environment variables and redeploy
 
 2. **IPv6 binding issue** (fixed in latest code):
+
    - Railway internal networking uses IPv6
    - Older AutoMem versions bound to IPv4 only (`0.0.0.0`)
    - **Fix**: Update to latest code (Flask now binds to `::` for IPv6 dual-stack)
@@ -343,6 +366,7 @@ Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
 **Cause**: Railway variable references only work in templates, not manual service configuration
 
 **Solution**: Use hardcoded values instead
+
 ```bash
 # ❌ Don't use in manual setup:
 FALKORDB_HOST=${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}
@@ -361,6 +385,7 @@ FALKORDB_PASSWORD=<copy-exact-value-from-falkordb-service>
 **Cause**: No persistent volume configured
 
 **Solution**:
+
 1. Add volume to FalkorDB service (Settings → Volumes)
 2. Run recovery: `python scripts/recover_from_qdrant.py`
 3. Redeploy FalkorDB service
@@ -370,6 +395,7 @@ FALKORDB_PASSWORD=<copy-exact-value-from-falkordb-service>
 **Problem**: FalkorDB using too much RAM
 
 **Solution**:
+
 ```bash
 # Optimize Redis memory
 REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru

@@ -110,6 +110,10 @@ def test_calculate_relevance_score_accounts_for_relationships() -> None:
     }
 
     baseline = consolidator.calculate_relevance_score(common_memory.copy())
+    
+    # Clear the cache to ensure the new relationship count is fetched
+    consolidator._get_relationship_count_cached_impl.cache_clear()
+    
     graph.relationship_counts["m1"] = 6
     boosted = consolidator.calculate_relevance_score(common_memory.copy())
 

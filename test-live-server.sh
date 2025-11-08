@@ -3,11 +3,27 @@
 
 set -e
 
+NON_INTERACTIVE=0
+PYTEST_ARGS=()
+
+for arg in "$@"; do
+  case "$arg" in
+    --non-interactive)
+      NON_INTERACTIVE=1
+      ;;
+    *)
+      PYTEST_ARGS+=("$arg")
+      ;;
+  esac
+done
+
 # Ensure we're in the project directory
 cd "$(dirname "$0")"
 
-# Activate virtual environment
-source venv/bin/activate
+# Activate virtual environment if present
+if [ -f "venv/bin/activate" ]; then
+  source venv/bin/activate
+fi
 
 # Get Railway environment variables
 echo "🔍 Fetching Railway configuration..."
@@ -24,16 +40,17 @@ fi
 echo "🌐 Live server URL: $LIVE_URL"
 echo ""
 
-# Confirm before running against live
-echo "⚠️  WARNING: This will run integration tests against the LIVE production server!"
-echo "   The tests will create and delete test memories tagged with 'test' and 'integration'."
-echo ""
-read -p "Are you sure you want to continue? (y/N) " -n 1 -r
-echo ""
-
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ Aborted"
-    exit 1
+if [ "$NON_INTERACTIVE" -eq 0 ]; then
+  # Confirm before running against live
+  echo "⚠️  WARNING: This will run integration tests against the LIVE production server!"
+  echo "   The tests will create and delete test memories tagged with 'test' and 'integration'."
+  echo ""
+  read -p "Are you sure you want to continue? (y/N) " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "❌ Aborted"
+      exit 1
+  fi
 fi
 
 # Set required environment variables
@@ -46,8 +63,7 @@ export AUTOMEM_ALLOW_LIVE=1
 # Run the tests
 echo ""
 echo "🧪 Running integration tests against live server..."
-python -m pytest tests/test_integration.py -v "$@"
+python -m pytest tests/test_integration.py -v "${PYTEST_ARGS[@]}"
 
 echo ""
 echo "✅ Live server tests completed!"
-

@@ -74,9 +74,9 @@ Prompts for confirmation before running against production.
 
 ### Automated Live Testing
 ```bash
-./test-live-server-auto.sh
+./test-live-server.sh --non-interactive
 ```
-Non-interactive version for CI/automation.
+Non-interactive flag for CI/automation. The legacy `test-live-server-auto.sh` wraps this flag for backward compatibility.
 
 ### Manual Integration Testing
 ```bash
@@ -160,7 +160,7 @@ make test
 make test-integration
 
 # Live tests (if Railway credentials available)
-./test-live-server-auto.sh
+./test-live-server.sh --non-interactive
 ```
 
 ## LoCoMo Benchmark
@@ -212,7 +212,7 @@ Memory usage:
 ### Interpreting Results
 
 The benchmark outputs:
-```
+```json
 📊 FINAL RESULTS
 🎯 Overall Accuracy: 89.15% (1770/1986)
 ⏱️  Total Time: 742.3s
@@ -303,4 +303,3 @@ git clone https://github.com/snap-research/locomo.git
 4. **Check test coverage** with `pytest --cov` (requires pytest-cov)
 5. **Review test output** - integration tests show actual API responses
 6. **Run LoCoMo benchmark** before major releases to validate memory performance
-
