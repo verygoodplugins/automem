@@ -19,12 +19,8 @@
         "FALKORDB_HOST": "${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}",
         "FALKORDB_PORT": "6379",
         "FALKORDB_PASSWORD": "${{FalkorDB.FALKOR_PASSWORD}}",
-        "AUTOMEM_API_TOKEN": {
-          "generator": "secret"
-        },
-        "ADMIN_API_TOKEN": {
-          "generator": "secret"
-        },
+        "AUTOMEM_API_TOKEN": "${{secret()}}",
+        "ADMIN_API_TOKEN": "${{secret()}}",
         "OPENAI_API_KEY": "",
         "QDRANT_URL": "",
         "QDRANT_API_KEY": ""
@@ -59,15 +55,13 @@
       ],
       "env": {
         "PORT": "6379",
-        "FALKOR_PASSWORD": {
-          "generator": "secret"
-        },
+        "FALKOR_PASSWORD": "${{secret()}}",
         "FALKOR_USERNAME": "default",
         "FALKOR_HOST": "${{RAILWAY_PRIVATE_DOMAIN}}",
         "FALKOR_PORT": "${{PORT}}",
         "FALKOR_PUBLIC_HOST": "${{RAILWAY_TCP_PROXY_DOMAIN}}",
         "FALKOR_PUBLIC_PORT": "${{RAILWAY_TCP_PROXY_PORT}}",
-        "REDIS_ARGS": "--save 60 1 --appendonly yes --appendfsync everysec --requirepass ${{FALKOR_PASSWORD}}"
+        "REDIS_ARGS": "--save 60 1 --appendonly yes --appendfsync everysec"
       }
     }
   ],
