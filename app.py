@@ -26,11 +26,29 @@ from threading import Thread, Event, Lock
 from queue import Empty, Queue
 import time
 
-from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient, models as qdrant_models
-from qdrant_client.models import Distance, PointStruct, VectorParams, PayloadSchemaType
+try:  # Allow tests to import without full qdrant client installed
+    from qdrant_client.models import Distance, PointStruct, VectorParams, PayloadSchemaType
+except Exception:  # pragma: no cover - degraded import path
+    try:
+        from qdrant_client.http import models as _qmodels
+        Distance = getattr(_qmodels, "Distance", None)
+        PointStruct = getattr(_qmodels, "PointStruct", None)
+        VectorParams = getattr(_qmodels, "VectorParams", None)
+        PayloadSchemaType = getattr(_qmodels, "PayloadSchemaType", None)
+    except Exception:
+        Distance = PointStruct = VectorParams = None
+        PayloadSchemaType = None
+
+# Provide a simple PointStruct shim for tests/environments lacking qdrant models
+if PointStruct is None:  # pragma: no cover - test shim
+    class PointStruct:  # type: ignore[no-redef]
+        def __init__(self, id: str, vector: List[float], payload: Dict[str, Any]):
+            self.id = id
+            self.vector = vector
+            self.payload = payload
 from werkzeug.exceptions import HTTPException
 from openai import OpenAI
 from consolidation import MemoryConsolidator, ConsolidationScheduler
@@ -40,9 +58,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     spacy = None
 
-# Load environment variables before configuring the application.
-load_dotenv()
-load_dotenv(Path.home() / ".config" / "automem" / ".env")
+# Environment is loaded by automem.config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,181 +87,88 @@ except Exception:
 
 app = Flask(__name__)
 
-# Configuration constants
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "memories")
-VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "768"))
-GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "memories")
-FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
-
-# Consolidation scheduling defaults (seconds unless noted)
-CONSOLIDATION_TICK_SECONDS = int(os.getenv("CONSOLIDATION_TICK_SECONDS", "60"))
-CONSOLIDATION_DECAY_INTERVAL_SECONDS = int(
-    os.getenv("CONSOLIDATION_DECAY_INTERVAL_SECONDS", str(3600))
+# Import canonical configuration constants
+from automem.config import (
+    COLLECTION_NAME,
+    VECTOR_SIZE,
+    GRAPH_NAME,
+    FALKORDB_PORT,
+    CONSOLIDATION_TICK_SECONDS,
+    CONSOLIDATION_DECAY_INTERVAL_SECONDS,
+    CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
+    CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
+    CONSOLIDATION_FORGET_INTERVAL_SECONDS,
+    CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
+    CONSOLIDATION_HISTORY_LIMIT,
+    CONSOLIDATION_CONTROL_LABEL,
+    CONSOLIDATION_RUN_LABEL,
+    CONSOLIDATION_CONTROL_NODE_ID,
+    CONSOLIDATION_TASK_FIELDS,
+    ENRICHMENT_MAX_ATTEMPTS,
+    ENRICHMENT_SIMILARITY_LIMIT,
+    ENRICHMENT_SIMILARITY_THRESHOLD,
+    ENRICHMENT_IDLE_SLEEP_SECONDS,
+    ENRICHMENT_FAILURE_BACKOFF_SECONDS,
+    ENRICHMENT_ENABLE_SUMMARIES,
+    ENRICHMENT_SPACY_MODEL,
+    RECALL_RELATION_LIMIT,
+    MEMORY_TYPES,
+    RELATIONSHIP_TYPES,
+    ALLOWED_RELATIONS,
+    SEARCH_WEIGHT_VECTOR,
+    SEARCH_WEIGHT_KEYWORD,
+    SEARCH_WEIGHT_TAG,
+    SEARCH_WEIGHT_IMPORTANCE,
+    SEARCH_WEIGHT_CONFIDENCE,
+    SEARCH_WEIGHT_RECENCY,
+    SEARCH_WEIGHT_EXACT,
+    API_TOKEN,
+    ADMIN_TOKEN,
 )
-CONSOLIDATION_CREATIVE_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_CREATIVE_INTERVAL_SECONDS", str(3600)))
-CONSOLIDATION_CLUSTER_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(21600)))
-CONSOLIDATION_FORGET_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(86400)))
-_DECAY_THRESHOLD_RAW = os.getenv("CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD", "0.3").strip()
-CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD = (
-    float(_DECAY_THRESHOLD_RAW) if _DECAY_THRESHOLD_RAW else None
-)
-CONSOLIDATION_HISTORY_LIMIT = int(os.getenv("CONSOLIDATION_HISTORY_LIMIT", "20"))
-CONSOLIDATION_CONTROL_LABEL = "ConsolidationControl"
-CONSOLIDATION_RUN_LABEL = "ConsolidationRun"
-CONSOLIDATION_CONTROL_NODE_ID = os.getenv("CONSOLIDATION_CONTROL_NODE_ID", "global")
-CONSOLIDATION_TASK_FIELDS = {
-    "decay": "decay_last_run",
-    "creative": "creative_last_run",
-    "cluster": "cluster_last_run",
-    "forget": "forget_last_run",
-    "full": "full_last_run",
-}
 
-# Enrichment configuration
-ENRICHMENT_MAX_ATTEMPTS = int(os.getenv("ENRICHMENT_MAX_ATTEMPTS", "3"))
-ENRICHMENT_SIMILARITY_LIMIT = int(os.getenv("ENRICHMENT_SIMILARITY_LIMIT", "5"))
-ENRICHMENT_SIMILARITY_THRESHOLD = float(os.getenv("ENRICHMENT_SIMILARITY_THRESHOLD", "0.8"))
-ENRICHMENT_IDLE_SLEEP_SECONDS = float(os.getenv("ENRICHMENT_IDLE_SLEEP_SECONDS", "2"))
-ENRICHMENT_FAILURE_BACKOFF_SECONDS = float(os.getenv("ENRICHMENT_FAILURE_BACKOFF_SECONDS", "5"))
-ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").lower() not in {"0", "false", "no"}
-ENRICHMENT_SPACY_MODEL = os.getenv("ENRICHMENT_SPACY_MODEL", "en_core_web_sm")
-RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
+# Shared utils and helpers
+from automem.utils.time import (
+    utc_now,
+    _parse_iso_datetime,
+    _normalize_timestamp,
+    _parse_time_expression,
+)
+from automem.utils.tags import (
+    _normalize_tag_list,
+    _expand_tag_prefixes,
+    _compute_tag_prefixes,
+    _prepare_tag_filters,
+)
+from automem.utils.scoring import (
+    _compute_metadata_score,
+    _parse_metadata_field,
+)
+from automem.utils.graph import (
+    _serialize_node,
+    _summarize_relation_node,
+)
+from automem.stores.graph_store import _build_graph_tag_predicate
+from automem.stores.vector_store import _build_qdrant_tag_filter
 
 # Embedding batching configuration
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "20"))
 EMBEDDING_BATCH_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_BATCH_TIMEOUT_SECONDS", "2.0"))
 
-# Memory types for classification
-MEMORY_TYPES = {
-    "Decision", "Pattern", "Preference", "Style",
-    "Habit", "Insight", "Context"
-}
+"""Note: default types/relations/weights are imported from automem.config"""
 
-# Note: "Memory" used as internal fallback only, not a valid classification
+# Keyword/NER constants come from automem.utils.text if available
+SEARCH_STOPWORDS: Set[str] = set()
+ENTITY_STOPWORDS: Set[str] = set()
+ENTITY_BLOCKLIST: Set[str] = set()
 
-# Enhanced relationship types with their properties
-RELATIONSHIP_TYPES = {
-    # Original relationships
-    "RELATES_TO": {"description": "General relationship"},
-    "LEADS_TO": {"description": "Causal relationship"},
-    "OCCURRED_BEFORE": {"description": "Temporal relationship"},
-
-    # New PKG relationships
-    "PREFERS_OVER": {"description": "Preference relationship", "properties": ["context", "strength", "reason"]},
-    "EXEMPLIFIES": {"description": "Pattern example", "properties": ["pattern_type", "confidence"]},
-    "CONTRADICTS": {"description": "Conflicting information", "properties": ["resolution", "reason"]},
-    "REINFORCES": {"description": "Strengthens pattern", "properties": ["strength", "observations"]},
-    "INVALIDATED_BY": {"description": "Superseded information", "properties": ["reason", "timestamp"]},
-    "EVOLVED_INTO": {"description": "Evolution of knowledge", "properties": ["confidence", "reason"]},
-    "DERIVED_FROM": {"description": "Derived knowledge", "properties": ["transformation", "confidence"]},
-    "PART_OF": {"description": "Hierarchical relationship", "properties": ["role", "context"]},
-}
-
-ALLOWED_RELATIONS = set(RELATIONSHIP_TYPES.keys())
-
-SEARCH_STOPWORDS = {
-    "the",
-    "and",
-    "for",
-    "with",
-    "that",
-    "this",
-    "from",
-    "into",
-    "using",
-    "have",
-    "will",
-    "your",
-    "about",
-    "after",
-    "before",
-    "when",
-    "then",
-    "than",
-    "also",
-    "just",
-    "very",
-    "more",
-    "less",
-    "over",
-    "under",
-}
-
-ENTITY_STOPWORDS = {
-    "you",
-    "your",
-    "yours",
-    "whatever",
-    "today",
-    "tomorrow",
-    "project",
-    "projects",
-    "office",
-    "session",
-    "meeting",
-}
-
-# Common error codes and technical strings to exclude from entity extraction
-ENTITY_BLOCKLIST = {
-    # HTTP errors
-    "bad request", "not found", "unauthorized", "forbidden", "internal server error",
-    "service unavailable", "gateway timeout",
-    # Network errors
-    "econnreset", "econnrefused", "etimedout", "enotfound", "enetunreach",
-    "ehostunreach", "epipe", "eaddrinuse",
-    # Common error patterns
-    "error", "warning", "exception", "failed", "failure",
-}
-
-# Search weighting parameters (can be overridden via environment variables)
-# Tuned defaults to improve LoCoMo performance out-of-the-box.
-SEARCH_WEIGHT_VECTOR = float(os.getenv("SEARCH_WEIGHT_VECTOR", "0.35"))
-SEARCH_WEIGHT_KEYWORD = float(os.getenv("SEARCH_WEIGHT_KEYWORD", "0.45"))
-SEARCH_WEIGHT_TAG = float(os.getenv("SEARCH_WEIGHT_TAG", "0.15"))
-SEARCH_WEIGHT_IMPORTANCE = float(os.getenv("SEARCH_WEIGHT_IMPORTANCE", "0.1"))
-SEARCH_WEIGHT_CONFIDENCE = float(os.getenv("SEARCH_WEIGHT_CONFIDENCE", "0.05"))
-SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.0"))
-SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.2"))
+# Search weights are imported from automem.config
 
 # Maximum number of results returned by /recall
 RECALL_MAX_LIMIT = int(os.getenv("RECALL_MAX_LIMIT", "100"))
 
-API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
-ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
+# API tokens are imported from automem.config
 
-
-def _normalize_tag_list(raw: Any) -> List[str]:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        if not raw.strip():
-            return []
-        return [part.strip() for part in raw.split(",") if part.strip()]
-    if isinstance(raw, (list, tuple, set)):
-        tags: List[str] = []
-        for item in raw:
-            if isinstance(item, str) and item.strip():
-                tags.append(item.strip())
-        return tags
-    return []
-
-
-def _expand_tag_prefixes(tag: str) -> List[str]:
-    """Expand a tag into all prefixes using ':' as the canonical delimiter."""
-    parts = re.split(r"[:/]", tag)
-    prefixes: List[str] = []
-    accumulator: List[str] = []
-    for part in parts:
-        if not part:
-            continue
-        accumulator.append(part)
-        prefixes.append(":".join(accumulator))
-    return prefixes
-
-
-def _compute_tag_prefixes(tags: List[str]) -> List[str]:
-    """Compute unique, lowercased tag prefixes for fast prefix filtering."""
-    seen: Set[str] = set()
+ 
 
 try:
     from automem.utils.text import (
@@ -280,281 +203,17 @@ except Exception:
         return keywords
 
 
-# Local tag helpers (keep in-app for compatibility)
-def _normalize_tag_list(raw: Any) -> List[str]:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        if not raw.strip():
-            return []
-        return [part.strip() for part in raw.split(",") if part.strip()]
-    if isinstance(raw, (list, tuple, set)):
-        tags: List[str] = []
-        for item in raw:
-            if isinstance(item, str) and item.strip():
-                tags.append(item.strip())
-        return tags
-    return []
+ 
 
 
-def _expand_tag_prefixes(tag: str) -> List[str]:
-    parts = re.split(r"[:/]", tag)
-    prefixes: List[str] = []
-    accumulator: List[str] = []
-    for part in parts:
-        if not part:
-            continue
-        accumulator.append(part)
-        prefixes.append(":".join(accumulator))
-    return prefixes
-
-
-def _compute_tag_prefixes(tags: List[str]) -> List[str]:
-    """Compute unique, lowercased tag prefixes for fast prefix filtering."""
-    seen: Set[str] = set()
-    prefixes: List[str] = []
-    for tag in tags or []:
-        normalized = (tag or "").strip().lower()
-        if not normalized:
-            continue
-        for prefix in _expand_tag_prefixes(normalized):
-            if prefix not in seen:
-                seen.add(prefix)
-                prefixes.append(prefix)
-    return prefixes
-
-
-def _prepare_tag_filters(tag_filters: Optional[List[str]]) -> List[str]:
-    return [
-        tag.strip().lower()
-        for tag in (tag_filters or [])
-        if isinstance(tag, str) and tag.strip()
-    ]
-
-
-# Local time helpers (fallback if package not available)
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    candidate = value.strip()
-    if not candidate:
-        return None
-    if candidate.endswith("Z"):
-        candidate = candidate[:-1] + "+00:00"
-    try:
-        return datetime.fromisoformat(candidate)
-    except ValueError:
-        return None
-
-
-def _normalize_timestamp(raw: Any) -> str:
-    if not isinstance(raw, str) or not raw.strip():
-        raise ValueError("Timestamp must be a non-empty ISO formatted string")
-    candidate = raw.strip()
-    if candidate.endswith("Z"):
-        candidate = candidate[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(candidate)
-    except ValueError as exc:
-        raise ValueError("Invalid ISO timestamp") from exc
-    return parsed.astimezone(timezone.utc).isoformat()
-
-
-def _parse_time_expression(expression: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    if not expression:
-        return None, None
-    expr = expression.strip().lower()
-    if not expr:
-        return None, None
-    now = datetime.now(timezone.utc)
-    def start_of_day(dt: datetime) -> datetime:
-        return dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    def end_of_day(dt: datetime) -> datetime:
-        return start_of_day(dt) + timedelta(days=1)
-    if expr in {"today", "this day"}:
-        start = start_of_day(now)
-        end = end_of_day(now)
-    elif expr in {"yesterday"}:
-        start = start_of_day(now - timedelta(days=1))
-        end = start + timedelta(days=1)
-    elif expr in {"last 24 hours", "past 24 hours"}:
-        end = now
-        start = now - timedelta(hours=24)
-    elif expr in {"last 48 hours", "past 48 hours"}:
-        end = now
-        start = now - timedelta(hours=48)
-    elif expr in {"this week"}:
-        start = start_of_day(now - timedelta(days=now.weekday()))
-        end = start + timedelta(days=7)
-    elif expr in {"last week", "past week"}:
-        end = start_of_day(now - timedelta(days=now.weekday()))
-        start = end - timedelta(days=7)
-    elif expr in {"this month"}:
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        if start.month == 12:
-            end = start.replace(year=start.year + 1, month=1)
-        else:
-            end = start.replace(month=start.month + 1)
-    elif expr in {"last month", "past month"}:
-        current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        if current_month_start.month == 1:
-            previous_month_start = current_month_start.replace(year=current_month_start.year - 1, month=12)
-        else:
-            previous_month_start = current_month_start.replace(month=current_month_start.month - 1)
-        start = previous_month_start
-        end = current_month_start
-    elif expr.startswith("last ") and expr.endswith(" days"):
-        try:
-            days = int(expr.split()[1])
-            end = now
-            start = now - timedelta(days=days)
-        except ValueError:
-            return None, None
-    elif expr in {"last year", "past year", "this year"}:
-        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-        if expr.startswith("last") or expr.startswith("past"):
-            end = start
-            start = start.replace(year=start.year - 1)
-        else:
-            if start.year == 9999:
-                end = now
-            else:
-                end = start.replace(year=start.year + 1)
-    else:
-        return None, None
-    return start.isoformat(), end.isoformat()
+ 
 
 
 # Local scoring/metadata helpers (fallback if package not available)
-def _parse_metadata_field(value: Any) -> Any:
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value:
-        try:
-            decoded = json.loads(value)
-            if isinstance(decoded, dict):
-                return decoded
-        except json.JSONDecodeError:
-            return value
-    return value
+ 
 
 
-def _collect_metadata_terms(metadata: Dict[str, Any]) -> Set[str]:
-    terms: Set[str] = set()
-    def visit(item: Any) -> None:
-        if isinstance(item, str):
-            trimmed = item.strip()
-            if not trimmed:
-                return
-            if len(trimmed) <= 256:
-                lower = trimmed.lower()
-                terms.add(lower)
-                for token in re.findall(r"[a-z0-9_\-]+", lower):
-                    terms.add(token)
-        elif isinstance(item, (list, tuple, set)):
-            for sub in item:
-                visit(sub)
-        elif isinstance(item, dict):
-            for sub in item.values():
-                visit(sub)
-    visit(metadata)
-    return terms
-
-
-def _compute_recency_score(timestamp: Optional[str]) -> float:
-    if not timestamp:
-        return 0.0
-    parsed = _parse_iso_datetime(timestamp)
-    if not parsed:
-        return 0.0
-    age_days = max((datetime.now(timezone.utc) - parsed).total_seconds() / 86400.0, 0.0)
-    if age_days <= 0:
-        return 1.0
-    return max(0.0, 1.0 - (age_days / 180.0))
-
-
-def _compute_metadata_score(
-    result: Dict[str, Any],
-    query: str,
-    tokens: List[str],
-) -> Tuple[float, Dict[str, float]]:
-    memory = result.get("memory", {})
-    metadata = _parse_metadata_field(memory.get("metadata")) if memory else {}
-    metadata_terms = _collect_metadata_terms(metadata) if isinstance(metadata, dict) else set()
-    tags = memory.get("tags") or []
-    tag_terms = {str(tag).lower() for tag in tags if isinstance(tag, str)}
-    token_hits = 0
-    for token in tokens:
-        if token in tag_terms or token in metadata_terms:
-            token_hits += 1
-    exact_match = 0.0
-    normalized_query = query.lower().strip()
-    if normalized_query and normalized_query in metadata_terms:
-        exact_match = 1.0
-    importance = memory.get("importance")
-    importance_score = float(importance) if isinstance(importance, (int, float)) else 0.0
-    confidence = memory.get("confidence")
-    confidence_score = float(confidence) if isinstance(confidence, (int, float)) else 0.0
-    recency_score = _compute_recency_score(memory.get("timestamp"))
-    tag_score = token_hits / max(len(tokens), 1) if tokens else 0.0
-    vector_component = result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
-    keyword_component = result.get("match_score", 0.0) if result.get("match_type") in {"keyword", "trending"} else 0.0
-    final = (
-        SEARCH_WEIGHT_VECTOR * vector_component
-        + SEARCH_WEIGHT_KEYWORD * keyword_component
-        + SEARCH_WEIGHT_TAG * tag_score
-        + SEARCH_WEIGHT_IMPORTANCE * importance_score
-        + SEARCH_WEIGHT_CONFIDENCE * confidence_score
-        + SEARCH_WEIGHT_RECENCY * recency_score
-        + SEARCH_WEIGHT_EXACT * exact_match
-    )
-    components = {
-        "vector": vector_component,
-        "keyword": keyword_component,
-        "tag": tag_score,
-        "importance": importance_score,
-        "confidence": confidence_score,
-        "recency": recency_score,
-        "exact": exact_match,
-    }
-    return final, components
-
-
-def _build_graph_tag_predicate(tag_mode: str, tag_match: str) -> str:
-    """Construct a Cypher predicate for tag filtering with mode/match semantics."""
-    normalized_mode = "all" if tag_mode == "all" else "any"
-    normalized_match = "prefix" if tag_match == "prefix" else "exact"
-    tags_expr = "[tag IN coalesce(m.tags, []) | toLower(tag)]"
-
-    if normalized_match == "exact":
-        if normalized_mode == "all":
-            return f"ALL(req IN $tag_filters WHERE req IN {tags_expr})"
-        return f"ANY(tag IN {tags_expr} WHERE tag IN $tag_filters)"
-
-    prefixes_expr = "coalesce(m.tag_prefixes, [])"
-    prefix_any = f"ANY(req IN $tag_filters WHERE req IN {prefixes_expr})"
-    prefix_all = f"ALL(req IN $tag_filters WHERE req IN {prefixes_expr})"
-    fallback_any = (
-        f"ANY(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
-    )
-    fallback_all = (
-        f"ALL(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
-    )
-
-    if normalized_mode == "all":
-        return (
-            f"((size({prefixes_expr}) > 0 AND {prefix_all}) "
-            f"OR (size({prefixes_expr}) = 0 AND {fallback_all}))"
-        )
-
-    return (
-        f"((size({prefixes_expr}) > 0 AND {prefix_any}) "
-        f"OR (size({prefixes_expr}) = 0 AND {fallback_any}))"
-    )
+ 
 
 
 
@@ -832,38 +491,7 @@ def _graph_keyword_search(
 
     return matches
 
-def _build_qdrant_tag_filter(
-    tags: Optional[List[str]],
-    mode: str = "any",
-    match: str = "exact",
-):
-    """Build a Qdrant filter for tag constraints, supporting mode/match semantics."""
-    normalized_tags = _prepare_tag_filters(tags)
-    if not normalized_tags:
-        return None
-
-    target_key = "tag_prefixes" if match == "prefix" else "tags"
-    normalized_mode = "all" if mode == "all" else "any"
-
-    if normalized_mode == "any":
-        return qdrant_models.Filter(
-            must=[
-                qdrant_models.FieldCondition(
-                    key=target_key,
-                    match=qdrant_models.MatchAny(any=normalized_tags),
-                )
-            ]
-        )
-
-    must_conditions = [
-        qdrant_models.FieldCondition(
-            key=target_key,
-            match=qdrant_models.MatchValue(value=tag),
-        )
-        for tag in normalized_tags
-    ]
-
-    return qdrant_models.Filter(must=must_conditions)
+ 
 
 
 def _vector_filter_only_tag_search(
@@ -3620,40 +3248,7 @@ def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
         return [_generate_placeholder_embedding(c) for c in contents]
 
 
-def _serialize_node(node: Any) -> Dict[str, Any]:
-    properties = getattr(node, "properties", None)
-    if isinstance(properties, dict):
-        data = dict(properties)
-    elif isinstance(node, dict):
-        data = dict(node)
-    else:
-        return {"value": node}
-
-    if "metadata" in data:
-        data["metadata"] = _parse_metadata_field(data["metadata"])
-
-    return data
-
-
-def _summarize_relation_node(data: Dict[str, Any]) -> Dict[str, Any]:
-    summary: Dict[str, Any] = {}
-
-    for key in ("id", "type", "timestamp", "summary", "importance", "confidence"):
-        if key in data:
-            summary[key] = data[key]
-
-    content = data.get("content")
-    if "summary" not in summary and isinstance(content, str):
-        snippet = content.strip()
-        if len(snippet) > 160:
-            snippet = snippet[:157].rsplit(" ", 1)[0] + "…"
-        summary["content"] = snippet
-
-    tags = data.get("tags")
-    if isinstance(tags, list) and tags:
-        summary["tags"] = tags[:5]
-
-    return summary
+ 
 
 
 def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:

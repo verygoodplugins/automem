@@ -24,6 +24,8 @@ try:  # pragma: no cover - optional dependency in tests
 except ImportError:  # pragma: no cover - degraded mode when qdrant is absent
     qdrant_models = None
 
+from automem.utils.time import _parse_iso_datetime
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,19 +56,7 @@ class MemoryRow:
     confidence: Optional[float] = None
     last_accessed: Optional[str] = None
 
-
-def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse timestamp strings that may use the `Z` suffix."""
-
-    if not value or not isinstance(value, str):
-        return None
-
-    normalized = value.replace('Z', '+00:00')
-    try:
-        return datetime.fromisoformat(normalized)
-    except ValueError:
-        logger.debug("Failed to parse timestamp %s", value)
-        return None
+ 
 
 
 def _load_embedding(raw: Any) -> Optional[List[float]]:
