@@ -56,8 +56,6 @@ class MemoryRow:
     confidence: Optional[float] = None
     last_accessed: Optional[str] = None
 
- 
-
 
 def _load_embedding(raw: Any) -> Optional[List[float]]:
     """Convert stored embedding payloads into a list of floats."""

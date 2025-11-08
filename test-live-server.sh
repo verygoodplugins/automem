@@ -4,12 +4,15 @@
 set -e
 
 NON_INTERACTIVE=0
+PYTEST_ARGS=()
 
 for arg in "$@"; do
   case "$arg" in
     --non-interactive)
       NON_INTERACTIVE=1
-      shift
+      ;;
+    *)
+      PYTEST_ARGS+=("$arg")
       ;;
   esac
 done
@@ -60,7 +63,7 @@ export AUTOMEM_ALLOW_LIVE=1
 # Run the tests
 echo ""
 echo "🧪 Running integration tests against live server..."
-python -m pytest tests/test_integration.py -v "$@"
+python -m pytest tests/test_integration.py -v "${PYTEST_ARGS[@]}"
 
 echo ""
 echo "✅ Live server tests completed!"

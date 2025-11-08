@@ -212,7 +212,7 @@ Memory usage:
 ### Interpreting Results
 
 The benchmark outputs:
-```
+```json
 📊 FINAL RESULTS
 🎯 Overall Accuracy: 89.15% (1770/1986)
 ⏱️  Total Time: 742.3s

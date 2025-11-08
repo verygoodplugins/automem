@@ -100,21 +100,24 @@ def create_admin_blueprint_full(
                         "metadata": {},
                     }
                     points.append(point_struct(id=memory_id, vector=embedding, payload=payload_data))
-                    processed += 1
                 except Exception as e:
                     logger.error(f"Failed to generate embedding for memory {memory_id}: {e}")
                     failed += 1
                     failed_ids.append(memory_id)
 
             if points:
+                upserted = 0
                 try:
                     qdrant_client.upsert(collection_name=collection_name, points=points)
-                    logger.info(f"Successfully reembedded batch of {len(points)} memories")
+                    upserted = len(points)
+                    logger.info(f"Successfully reembedded batch of {upserted} memories")
                 except Exception as e:
                     logger.error(f"Failed to upsert batch to Qdrant: {e}")
                     failed += len(points)
                     failed_ids.extend([p.id for p in points if hasattr(p, 'id')])
-                    processed -= len(points)
+                
+                # Adjust counters: processed tracks only successfully stored items
+                processed += upserted
 
         response = {
             "status": "complete",

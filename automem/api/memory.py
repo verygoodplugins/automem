@@ -80,7 +80,8 @@ def create_memory_blueprint_full(
         tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
         tag_prefixes = compute_tag_prefixes(tags_lower)
         importance = coerce_importance(payload.get("importance"))
-        memory_id = payload.get("id") or str(uuid.uuid4())
+        # Always generate server-side UUID to prevent collision/overwrite attacks
+        memory_id = str(uuid.uuid4())
 
         metadata_raw = payload.get("metadata")
         if metadata_raw is None:
@@ -421,13 +422,13 @@ def create_memory_blueprint_full(
         if qdrant_client is not None:
             try:
                 selector = {"points": [memory_id]}
-                if hasattr(qdrant_client, "http") or True:
+                if hasattr(qdrant_client, "http"):
                     # Try to use HTTP models selector if available
                     try:
                         from qdrant_client.http import models as http_models  # type: ignore
                         selector = http_models.PointIdsList(points=[memory_id])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Failed to import qdrant_client.http.models: {e}")
                 qdrant_client.delete(collection_name=collection_name, points_selector=selector)
             except Exception:
                 logger.exception("Failed to delete vector for memory %s", memory_id)
