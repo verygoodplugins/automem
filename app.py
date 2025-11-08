@@ -26,7 +26,7 @@ from threading import Thread, Event, Lock
 from queue import Empty, Queue
 import time
 
-from flask import Flask, abort, jsonify, request
+from flask import Flask, abort, jsonify, request, Blueprint
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient, models as qdrant_models
 try:  # Allow tests to import without full qdrant client installed
@@ -86,6 +86,14 @@ except Exception:
         sys.path.insert(0, str(root))
 
 app = Flask(__name__)
+
+# Blueprints (phase 1: defined in this module; handlers will migrate over time)
+enrichment_bp = Blueprint("enrichment", __name__)
+admin_bp = Blueprint("admin", __name__)
+health_bp = Blueprint("health", __name__)
+memory_bp = Blueprint("memory", __name__)
+recall_bp = Blueprint("recall", __name__)
+consolidation_bp = Blueprint("consolidation", __name__)
 
 # Import canonical configuration constants
 from automem.config import (
@@ -1031,7 +1039,9 @@ def require_api_token() -> None:
     if not API_TOKEN:
         return
 
-    if request.endpoint in {None, 'health'}:
+    # Allow unauthenticated health checks (supports blueprint endpoint names)
+    endpoint = request.endpoint or ''
+    if endpoint.endswith('health') or request.path == '/health':
         return
 
     token = _extract_api_token()
@@ -1907,7 +1917,7 @@ def link_semantic_neighbors(graph: Any, memory_id: str) -> List[Tuple[str, float
     return created
 
 
-@app.route("/enrichment/status", methods=["GET"])
+@enrichment_bp.route("/enrichment/status", methods=["GET"])
 def enrichment_status() -> Any:
     queue_size = state.enrichment_queue.qsize() if state.enrichment_queue else 0
     thread_alive = bool(state.enrichment_thread and state.enrichment_thread.is_alive())
@@ -1928,7 +1938,7 @@ def enrichment_status() -> Any:
     return jsonify(response)
 
 
-@app.route("/enrichment/reprocess", methods=["POST"])
+@enrichment_bp.route("/enrichment/reprocess", methods=["POST"])
 def enrichment_reprocess() -> Any:
     _require_admin_token()
 
@@ -1956,7 +1966,7 @@ def enrichment_reprocess() -> Any:
     }), 202
 
 
-@app.route("/admin/reembed", methods=["POST"])
+@admin_bp.route("/admin/reembed", methods=["POST"])
 def admin_reembed() -> Any:
     """Regenerate embeddings for existing memories using OpenAI API.
 
@@ -2152,8 +2162,10 @@ def handle_exceptions(exc: Exception):
     }
     return jsonify(response), 500
 
+ 
 
-@app.route("/health", methods=["GET"])
+
+@health_bp.route("/health", methods=["GET"])
 def health() -> Any:
     graph_available = get_memory_graph() is not None
     qdrant_available = get_qdrant_client() is not None
@@ -2197,7 +2209,7 @@ def health() -> Any:
     return jsonify(health_data)
 
 
-@app.route("/memory", methods=["POST"])
+@memory_bp.route("/memory", methods=["POST"])
 def store_memory() -> Any:
     query_start = time.perf_counter()
     payload = request.get_json(silent=True)
@@ -2410,7 +2422,7 @@ def store_memory() -> Any:
     return jsonify(response), 201
 
 
-@app.route("/memory/<memory_id>", methods=["PATCH"])
+@memory_bp.route("/memory/<memory_id>", methods=["PATCH"])
 def update_memory(memory_id: str) -> Any:
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -2536,7 +2548,7 @@ def update_memory(memory_id: str) -> Any:
     return jsonify({"status": "success", "memory_id": memory_id})
 
 
-@app.route("/memory/<memory_id>", methods=["DELETE"])
+@memory_bp.route("/memory/<memory_id>", methods=["DELETE"])
 def delete_memory(memory_id: str) -> Any:
     graph = get_memory_graph()
     if graph is None:
@@ -2562,7 +2574,7 @@ def delete_memory(memory_id: str) -> Any:
     return jsonify({"status": "success", "memory_id": memory_id})
 
 
-@app.route("/memory/by-tag", methods=["GET"])
+@memory_bp.route("/memory/by-tag", methods=["GET"])
 def memories_by_tag() -> Any:
     raw_tags = request.args.getlist("tags") or request.args.get("tags")
     tags = _normalize_tag_list(raw_tags)
@@ -2603,7 +2615,7 @@ def memories_by_tag() -> Any:
     return jsonify({"status": "success", "tags": tags, "count": len(memories), "memories": memories})
 
 
-@app.route("/recall", methods=["GET"])
+@recall_bp.route("/recall", methods=["GET"])
 def recall_memories() -> Any:
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -2771,7 +2783,7 @@ def recall_memories() -> Any:
     return jsonify(response)
 
 
-@app.route("/associate", methods=["POST"])
+@memory_bp.route("/associate", methods=["POST"])
 def create_association() -> Any:
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -2851,7 +2863,7 @@ def create_association() -> Any:
     return jsonify(response), 201
 
 
-@app.route("/consolidate", methods=["POST"])
+@consolidation_bp.route("/consolidate", methods=["POST"])
 def consolidate_memories() -> Any:
     """Run memory consolidation."""
     data = request.get_json() or {}
@@ -2884,7 +2896,7 @@ def consolidate_memories() -> Any:
         }), 500
 
 
-@app.route("/consolidate/status", methods=["GET"])
+@consolidation_bp.route("/consolidate/status", methods=["GET"])
 def consolidation_status() -> Any:
     """Get consolidation scheduler status."""
     graph = get_memory_graph()
@@ -2912,7 +2924,7 @@ def consolidation_status() -> Any:
         }), 500
 
 
-@app.route("/startup-recall", methods=["GET"])
+@recall_bp.route("/startup-recall", methods=["GET"])
 def startup_recall() -> Any:
     """Recall critical lessons at session startup."""
     graph = get_memory_graph()
@@ -2982,7 +2994,7 @@ def startup_recall() -> Any:
         }), 500
 
 
-@app.route("/analyze", methods=["GET"])
+@recall_bp.route("/analyze", methods=["GET"])
 def analyze_memories() -> Any:
     """Analyze memory patterns, preferences, and insights."""
     query_start = time.perf_counter()
@@ -3284,7 +3296,7 @@ def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
     return connections
 
 
-@app.route("/memories/<memory_id>/related", methods=["GET"])
+@recall_bp.route("/memories/<memory_id>/related", methods=["GET"])
 def get_related_memories(memory_id: str) -> Any:
     """Return related memories by traversing relationship edges.
 
@@ -3381,6 +3393,14 @@ def get_related_memories(memory_id: str) -> Any:
         "max_depth": max_depth,
         "limit": limit,
     })
+
+# Register blueprints after all routes are defined
+app.register_blueprint(enrichment_bp)
+app.register_blueprint(admin_bp)
+app.register_blueprint(health_bp)
+app.register_blueprint(memory_bp)
+app.register_blueprint(recall_bp)
+app.register_blueprint(consolidation_bp)
 
 
 if __name__ == "__main__":
