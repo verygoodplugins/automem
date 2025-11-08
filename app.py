@@ -87,13 +87,12 @@ except Exception:
 
 app = Flask(__name__)
 
-# Blueprints (phase 1: defined in this module; handlers will migrate over time)
-enrichment_bp = Blueprint("enrichment", __name__)
-admin_bp = Blueprint("admin", __name__)
-health_bp = Blueprint("health", __name__)
-memory_bp = Blueprint("memory", __name__)
-recall_bp = Blueprint("recall", __name__)
-consolidation_bp = Blueprint("consolidation", __name__)
+# Legacy blueprint placeholders for deprecated route definitions below.
+# These are not registered with the app and are safe to keep until full removal.
+admin_bp = Blueprint("admin_legacy", __name__)
+memory_bp = Blueprint("memory_legacy", __name__)
+recall_bp = Blueprint("recall_legacy", __name__)
+consolidation_bp = Blueprint("consolidation_legacy", __name__)
 
 # Import canonical configuration constants
 from automem.config import (
@@ -1020,6 +1019,10 @@ def _extract_api_token() -> Optional[str]:
     return None
 
 
+def get_openai_client() -> Optional[OpenAI]:
+    return state.openai_client
+
+
 def _require_admin_token() -> None:
     if not ADMIN_TOKEN:
         abort(403, description="Admin token not configured")
@@ -1917,230 +1920,14 @@ def link_semantic_neighbors(graph: Any, memory_id: str) -> List[Tuple[str, float
     return created
 
 
-@enrichment_bp.route("/enrichment/status", methods=["GET"])
-def enrichment_status() -> Any:
-    queue_size = state.enrichment_queue.qsize() if state.enrichment_queue else 0
-    thread_alive = bool(state.enrichment_thread and state.enrichment_thread.is_alive())
-
-    with state.enrichment_lock:
-        pending = len(state.enrichment_pending)
-        inflight = len(state.enrichment_inflight)
-
-    response = {
-        "status": "running" if thread_alive else "stopped",
-        "queue_size": queue_size,
-        "pending": pending,
-        "inflight": inflight,
-        "max_attempts": ENRICHMENT_MAX_ATTEMPTS,
-        "stats": state.enrichment_stats.to_dict(),
-    }
-
-    return jsonify(response)
-
-
-@enrichment_bp.route("/enrichment/reprocess", methods=["POST"])
-def enrichment_reprocess() -> Any:
-    _require_admin_token()
-
-    payload = request.get_json(silent=True) or {}
-    ids: Set[str] = set()
-
-    raw_ids = payload.get("ids") or request.args.get("ids")
-    if isinstance(raw_ids, str):
-        ids.update(part.strip() for part in raw_ids.split(",") if part.strip())
-    elif isinstance(raw_ids, list):
-        for item in raw_ids:
-            if isinstance(item, str) and item.strip():
-                ids.add(item.strip())
-
-    if not ids:
-        abort(400, description="No memory ids provided for reprocessing")
-
-    for memory_id in ids:
-        enqueue_enrichment(memory_id, forced=True)
-
-    return jsonify({
-        "status": "queued",
-        "count": len(ids),
-        "ids": sorted(ids),
-    }), 202
-
+# Legacy route implementations retained for reference only.
+# NOTE: These are bound to unregistered "*_legacy" blueprints and are not active.
+# Active endpoints live in automem/api/* blueprints registered above.
 
 @admin_bp.route("/admin/reembed", methods=["POST"])
 def admin_reembed() -> Any:
-    """Regenerate embeddings for existing memories using OpenAI API.
-
-    Requires admin token and OpenAI API key configured.
-
-    Parameters:
-    - batch_size: Number of memories to process at once (default 32, max 100)
-    - limit: Total number of memories to reembed (default all)
-    - force: Regenerate even if embedding exists (default false)
-    """
-    _require_admin_token()
-
-    # Check if OpenAI is available
-    init_openai()
-    if state.openai_client is None:
-        abort(503, description="OpenAI API key not configured - cannot generate real embeddings")
-
-    # Check Qdrant is available
-    qdrant_client = get_qdrant_client()
-    if qdrant_client is None:
-        abort(503, description="Qdrant is not available - cannot store embeddings")
-
-    # Parse parameters
-    payload = request.get_json(silent=True) or {}
-    batch_size = min(int(payload.get("batch_size", 32)), 100)
-    limit = payload.get("limit")
-    force_reembed = payload.get("force", False)
-
-    # Get graph connection
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    # Query memories to reembed
-    if force_reembed:
-        query = "MATCH (m:Memory) RETURN m.id, m.content ORDER BY m.timestamp DESC"
-    else:
-        # Only reembed memories that don't have real embeddings yet
-        # We'll check by seeing if they have the default placeholder pattern
-        query = """
-            MATCH (m:Memory)
-            WHERE m.content IS NOT NULL
-            RETURN m.id, m.content
-            ORDER BY m.timestamp DESC
-        """
-
-    if limit:
-        query += f" LIMIT {int(limit)}"
-
-    result = graph.query(query)
-    memories_to_process = []
-
-    for row in result.result_set:
-        memory_id = row[0]
-        content = row[1]
-        if content:
-            memories_to_process.append((memory_id, content))
-
-    if not memories_to_process:
-        return jsonify({
-            "status": "complete",
-            "message": "No memories found to reembed",
-            "processed": 0,
-            "total": 0
-        })
-
-    # Process in batches
-    processed = 0
-    failed = 0
-    failed_ids = []
-
-    for i in range(0, len(memories_to_process), batch_size):
-        batch = memories_to_process[i:i + batch_size]
-        points = []
-
-        for memory_id, content in batch:
-            try:
-                # Generate real embedding using OpenAI
-                embedding = _generate_real_embedding(content)
-
-                # Retrieve existing metadata from Qdrant if available
-                try:
-                    existing = qdrant_client.retrieve(
-                        collection_name=COLLECTION_NAME,
-                        ids=[memory_id],
-                        with_payload=True
-                    )
-                    if existing:
-                        payload_data = existing[0].payload
-                    else:
-                        # Fallback: query from graph for metadata
-                        meta_result = graph.query(
-                            "MATCH (m:Memory {id: $id}) RETURN m",
-                            {"id": memory_id}
-                        )
-                        if meta_result.result_set:
-                            node = meta_result.result_set[0][0]
-                            props = _serialize_node(node)
-                            payload_data = {
-                                "content": content,
-                                "tags": props.get("tags", []),
-                                "importance": props.get("importance", 0.5),
-                                "timestamp": props.get("timestamp"),
-                            "type": props.get("type", "Context"),  # Default to Context instead of Memory
-                            "confidence": props.get("confidence", 0.6),
-                                "updated_at": props.get("updated_at"),
-                                "last_accessed": props.get("last_accessed"),
-                                "metadata": props.get("metadata", {}),
-                            }
-                        else:
-                            payload_data = {
-                                "content": content,
-                                "tags": [],
-                                "importance": 0.5,
-                                "timestamp": utc_now(),
-                                "type": "Context",
-                                "confidence": 0.6,
-                                "metadata": {},
-                            }
-                except Exception as e:
-                    logger.warning(f"Failed to retrieve metadata for {memory_id}: {e}")
-                    # Use minimal payload
-                    payload_data = {
-                        "content": content,
-                        "tags": [],
-                        "importance": 0.5,
-                        "timestamp": utc_now(),
-                        "type": "Context",
-                        "confidence": 0.6,
-                        "metadata": {},
-                    }
-
-                points.append(
-                    PointStruct(
-                        id=memory_id,
-                        vector=embedding,
-                        payload=payload_data
-                    )
-                )
-                processed += 1
-
-            except Exception as e:
-                logger.error(f"Failed to generate embedding for memory {memory_id}: {e}")
-                failed += 1
-                failed_ids.append(memory_id)
-
-        # Batch upsert to Qdrant
-        if points:
-            try:
-                qdrant_client.upsert(
-                    collection_name=COLLECTION_NAME,
-                    points=points
-                )
-                logger.info(f"Successfully reembedded batch of {len(points)} memories")
-            except Exception as e:
-                logger.error(f"Failed to upsert batch to Qdrant: {e}")
-                failed += len(points)
-                failed_ids.extend([p.id for p in points])
-                processed -= len(points)
-
-    response = {
-        "status": "complete",
-        "processed": processed,
-        "failed": failed,
-        "total": len(memories_to_process),
-        "batch_size": batch_size,
-    }
-
-    if failed_ids:
-        response["failed_ids"] = failed_ids[:10]  # Limit to first 10 for response size
-        if len(failed_ids) > 10:
-            response["failed_ids_truncated"] = True
-
-    return jsonify(response)
+    """Legacy admin handler; route now provided by automem.api.admin blueprint."""
+    abort(410, description="/admin/reembed moved to blueprint")
 
 
 @app.errorhandler(Exception)
@@ -2165,48 +1952,7 @@ def handle_exceptions(exc: Exception):
  
 
 
-@health_bp.route("/health", methods=["GET"])
-def health() -> Any:
-    graph_available = get_memory_graph() is not None
-    qdrant_available = get_qdrant_client() is not None
-
-    status = "healthy" if graph_available and qdrant_available else "degraded"
-    
-    # Get enrichment queue stats (non-authenticated for monitoring)
-    enrichment_thread_alive = bool(state.enrichment_thread and state.enrichment_thread.is_alive())
-    with state.enrichment_lock:
-        enrichment_pending = len(state.enrichment_pending)
-        enrichment_inflight = len(state.enrichment_inflight)
-    
-    # Get memory count from FalkorDB (gracefully fail if unavailable)
-    memory_count = None
-    if graph_available:
-        try:
-            graph = get_memory_graph()
-            if graph:
-                result = graph.query("MATCH (m:Memory) RETURN COUNT(m) as count")
-                if result.result_set:
-                    memory_count = result.result_set[0][0]
-        except Exception:
-            pass  # Silently fail - don't break health check
-    
-    health_data = {
-        "status": status,
-        "falkordb": "connected" if graph_available else "disconnected",
-        "qdrant": "connected" if qdrant_available else "disconnected",
-        "memory_count": memory_count,
-        "enrichment": {
-            "status": "running" if enrichment_thread_alive else "stopped",
-            "queue_depth": state.enrichment_queue.qsize() if state.enrichment_queue else 0,
-            "pending": enrichment_pending,
-            "inflight": enrichment_inflight,
-            "processed": state.enrichment_stats.successes,
-            "failed": state.enrichment_stats.failures,
-        },
-        "timestamp": utc_now(),
-        "graph": GRAPH_NAME,
-    }
-    return jsonify(health_data)
+ 
 
 
 @memory_bp.route("/memory", methods=["POST"])
@@ -2663,124 +2409,23 @@ def recall_memories() -> Any:
 
     results: List[Dict[str, Any]] = []
     vector_matches: List[Dict[str, Any]] = []
-    if qdrant_client is not None:
-        vector_matches = _vector_search(
-            qdrant_client,
-            graph,
-            query_text,
-            embedding_param,
-            limit,
-            seen_ids,
-            tag_filters,
-            tag_mode,
-            tag_match,
-        )
-        if start_time or end_time or tag_filters:
-            vector_matches = [
-                res
-                for res in vector_matches
-                if _result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
-            ]
-    results.extend(vector_matches[:limit])
-
-    remaining_slots = max(0, limit - len(results))
-
-    if remaining_slots and graph is not None:
-        graph_matches = _graph_keyword_search(
-            graph,
-            query_text,
-            remaining_slots,
-            seen_ids,
-            start_time=start_time,
-            end_time=end_time,
-            tag_filters=tag_filters,
-            tag_mode=tag_mode,
-            tag_match=tag_match,
-        )
-        results.extend(graph_matches[:remaining_slots])
-
-    tags_only_request = (
-        not query_text
-        and not (embedding_param and embedding_param.strip())
-        and bool(tag_filters)
+    # Delegate implementation to recall blueprint module (kept for backward-compatibility)
+    from automem.api.recall import handle_recall  # local import to avoid cycles
+    return handle_recall(
+        get_memory_graph,
+        get_qdrant_client,
+        _normalize_tag_list,
+        _normalize_timestamp,
+        _parse_time_expression,
+        _extract_keywords,
+        _compute_metadata_score,
+        _result_passes_filters,
+        _graph_keyword_search,
+        _vector_search,
+        _vector_filter_only_tag_search,
+        RECALL_MAX_LIMIT,
+        logger,
     )
-
-    if (
-        tags_only_request
-        and qdrant_client is not None
-        and len(results) < limit
-    ):
-        tag_only_results = _vector_filter_only_tag_search(
-            qdrant_client,
-            tag_filters,
-            tag_mode,
-            tag_match,
-            limit - len(results),
-            seen_ids,
-        )
-        results.extend(tag_only_results)
-
-    query_tokens = _extract_keywords(query_text.lower()) if query_text else []
-    for result in results:
-        final_score, components = _compute_metadata_score(result, query_text or "", query_tokens)
-        result.setdefault("score_components", components)
-        result["score_components"].update(components)
-        result["final_score"] = final_score
-        result["original_score"] = result.get("score", 0.0)
-        result["score"] = final_score
-
-    results = [
-        res
-        for res in results
-        if _result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
-    ]
-
-    results.sort(
-        key=lambda r: (
-            -float(r.get("final_score", 0.0)),
-            r.get("source") != "qdrant",
-            -float(r.get("original_score", 0.0)),
-            -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
-        )
-    )
-
-    response = {
-        "status": "success",
-        "query": query_text,
-        "results": results,
-        "count": len(results),
-        "vector_search": {
-            "enabled": qdrant_client is not None,
-            "matched": bool(vector_matches),
-        },
-    }
-
-    if query_text:
-        response["keywords"] = query_tokens
-    if start_time or end_time:
-        response["time_window"] = {"start": start_time, "end": end_time}
-    if tag_filters:
-        response["tags"] = tag_filters
-    response["tag_mode"] = tag_mode
-    response["tag_match"] = tag_match
-    response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
-
-    # Structured logging for performance analysis
-    logger.info(
-        "recall_complete",
-        extra={
-            "query": query_text[:100] if query_text else "",  # Truncate for logs
-            "results": len(results),
-            "latency_ms": response["query_time_ms"],
-            "vector_enabled": qdrant_client is not None,
-            "vector_matches": len(vector_matches),
-            "has_time_filter": bool(start_time or end_time),
-            "has_tag_filter": bool(tag_filters),
-            "limit": limit,
-        }
-    )
-
-    return jsonify(response)
 
 
 @memory_bp.route("/associate", methods=["POST"])
@@ -3395,10 +3040,102 @@ def get_related_memories(memory_id: str) -> Any:
     })
 
 # Register blueprints after all routes are defined
-app.register_blueprint(enrichment_bp)
-app.register_blueprint(admin_bp)
+from automem.api.health import create_health_blueprint
+from automem.api.enrichment import create_enrichment_blueprint
+from automem.api.recall import create_recall_blueprint
+from automem.api.memory import create_memory_blueprint_full
+from automem.api.admin import create_admin_blueprint_full
+from automem.api.consolidation import create_consolidation_blueprint_full
+
+health_bp = create_health_blueprint(
+    get_memory_graph,
+    get_qdrant_client,
+    state,
+    GRAPH_NAME,
+    utc_now,
+)
+
+enrichment_bp = create_enrichment_blueprint(
+    _require_admin_token,
+    state,
+    enqueue_enrichment,
+    ENRICHMENT_MAX_ATTEMPTS,
+)
+
+recall_bp = create_recall_blueprint(
+    get_memory_graph,
+    get_qdrant_client,
+    _normalize_tag_list,
+    _normalize_timestamp,
+    _parse_time_expression,
+    _extract_keywords,
+    _compute_metadata_score,
+    _result_passes_filters,
+    _graph_keyword_search,
+    _vector_search,
+    _vector_filter_only_tag_search,
+    RECALL_MAX_LIMIT,
+    logger,
+    ALLOWED_RELATIONS,
+    RECALL_RELATION_LIMIT,
+    _serialize_node,
+    _summarize_relation_node,
+)
+
+memory_bp = create_memory_blueprint_full(
+    get_memory_graph,
+    get_qdrant_client,
+    _normalize_tags,
+    _normalize_tag_list,
+    _compute_tag_prefixes,
+    _coerce_importance,
+    _coerce_embedding,
+    _normalize_timestamp,
+    utc_now,
+    _serialize_node,
+    _parse_metadata_field,
+    _generate_real_embedding,
+    enqueue_enrichment,
+    enqueue_embedding,
+    lambda content: memory_classifier.classify(content),
+    PointStruct,
+    COLLECTION_NAME,
+    ALLOWED_RELATIONS,
+    RELATIONSHIP_TYPES,
+    state,
+    logger,
+)
+
+admin_bp = create_admin_blueprint_full(
+    _require_admin_token,
+    init_openai,
+    get_openai_client,
+    get_qdrant_client,
+    get_memory_graph,
+    PointStruct,
+    COLLECTION_NAME,
+    VECTOR_SIZE,
+    utc_now,
+    logger,
+)
+
+consolidation_bp = create_consolidation_blueprint_full(
+    get_memory_graph,
+    get_qdrant_client,
+    MemoryConsolidator,
+    _persist_consolidation_run,
+    _build_scheduler_from_graph,
+    _load_recent_runs,
+    state,
+    CONSOLIDATION_TICK_SECONDS,
+    CONSOLIDATION_HISTORY_LIMIT,
+    logger,
+)
+
 app.register_blueprint(health_bp)
+app.register_blueprint(enrichment_bp)
 app.register_blueprint(memory_bp)
+app.register_blueprint(admin_bp)
 app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
 

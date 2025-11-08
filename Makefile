@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test test-integration test-live test-locomo test-locomo-live clean logs deploy
+.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live clean logs deploy
 
 # Default target
 help:
@@ -11,6 +11,8 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  make test       - Run unit tests only"
+	@echo "  make fmt        - Format code (black + isort)"
+	@echo "  make lint       - Lint code (flake8)"
 	@echo "  make test-integration - Run all tests including integration tests"
 	@echo "  make test-live  - Run integration tests against live Railway server"
 	@echo "  make logs       - Show development logs"
@@ -42,6 +44,17 @@ dev:
 test:
 	@echo "🧪 Running unit tests..."
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs
+
+# Format code
+fmt:
+	@echo "✨ Formatting code (black + isort) ..."
+	./venv/bin/black .
+	./venv/bin/isort .
+
+# Lint code
+lint:
+	@echo "🔍 Linting (flake8) ..."
+	./venv/bin/flake8 .
 
 # Run all tests including integration tests
 test-integration:

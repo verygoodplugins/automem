@@ -16,3 +16,4 @@ backups/
 
 /mcp-sse-server/node_modules
 tests/benchmarks/locomo/
+.DS_Store
