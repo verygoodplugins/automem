@@ -1,9 +1,275 @@
 from __future__ import annotations
 
-from typing import Any, Callable, List, Dict, Optional, Tuple
+from typing import Any, Callable, List, Dict, Optional, Tuple, Set
 from flask import Blueprint, request, abort, jsonify
+from pathlib import Path
 import json
 import time
+import re
+
+DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
+    "coding-style",
+    "style",
+    "style-guide",
+    "preferences",
+    "preference:coding",
+}
+
+CONTEXT_STYLE_KEYWORDS: Set[str] = {
+    "style",
+    "styles",
+    "guideline",
+    "guidelines",
+    "pep8",
+    "formatting",
+    "lint",
+    "preference",
+    "preferences",
+}
+
+LANGUAGE_ALIASES: Dict[str, Set[str]] = {
+    "python": {"python", "py"},
+    "typescript": {"typescript", "ts", "tsx"},
+    "javascript": {"javascript", "js", "jsx"},
+    "go": {"go", "golang"},
+    "rust": {"rust"},
+    "java": {"java"},
+    "csharp": {"csharp", "c#", "cs"},
+    "cpp": {"c++", "cpp", "cc", "cxx"},
+    "swift": {"swift"},
+}
+
+EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".cs": "csharp",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".swift": "swift",
+}
+
+
+def _split_multi_value(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        values = [str(item) for item in raw if item is not None]
+    else:
+        return []
+    normalized: List[str] = []
+    for entry in values:
+        text = str(entry).strip()
+        if not text:
+            continue
+        parts = [part.strip() for part in text.split(",") if part.strip()]
+        if parts:
+            normalized.extend(parts)
+        else:
+            normalized.append(text)
+    return normalized
+
+
+def _tokenize_lower(text: str) -> Set[str]:
+    if not text:
+        return set()
+    return {token for token in re.findall(r"[a-z0-9_\-\+#\.]+", text.lower()) if token}
+
+
+def _detect_language_hint(
+    explicit_language: Optional[str],
+    context_label: str,
+    query_text: str,
+    active_path: str,
+) -> Optional[str]:
+    def _normalize_candidate(candidate: Optional[str]) -> Optional[str]:
+        if not candidate:
+            return None
+        lowered = candidate.strip().lower()
+        return lowered or None
+
+    normalized_explicit = _normalize_candidate(explicit_language)
+    if normalized_explicit:
+        for lang, aliases in LANGUAGE_ALIASES.items():
+            if normalized_explicit == lang or normalized_explicit in aliases:
+                return lang
+
+    normalized_context = _normalize_candidate(context_label)
+    if normalized_context:
+        for lang, aliases in LANGUAGE_ALIASES.items():
+            if normalized_context == lang or normalized_context in aliases:
+                return lang
+
+    tokens = _tokenize_lower(query_text)
+    suffix = ""
+    if active_path:
+        try:
+            suffix = Path(active_path).suffix.lower()
+        except Exception:
+            suffix = ""
+    if suffix and suffix in EXTENSION_LANGUAGE_MAP:
+        return EXTENSION_LANGUAGE_MAP[suffix]
+
+    for lang, aliases in LANGUAGE_ALIASES.items():
+        if tokens & aliases:
+            return lang
+    return None
+
+
+def _build_context_profile(
+    manual_tags: List[str],
+    manual_types: List[str],
+    manual_ids: List[str],
+    language_hint: Optional[str],
+    context_label: str,
+    query_text: str,
+) -> Optional[Dict[str, Any]]:
+    priority_tags: Set[str] = {tag.strip().lower() for tag in manual_tags if tag and tag.strip()}
+    priority_types: Set[str] = {typ.strip().title() for typ in manual_types if typ and typ.strip()}
+    priority_ids: Set[str] = {value.strip() for value in manual_ids if value and value.strip()}
+    priority_keywords: Set[str] = set()
+
+    style_focus = False
+    if language_hint:
+        priority_tags.update(
+            {
+                language_hint,
+                f"{language_hint}-style",
+                f"{language_hint}:style",
+            }
+        )
+        priority_keywords.add(language_hint)
+        style_focus = True
+
+    context_tokens = _tokenize_lower(context_label)
+    if context_tokens & CONTEXT_STYLE_KEYWORDS:
+        style_focus = True
+
+    query_tokens = _tokenize_lower(query_text)
+    if query_tokens & CONTEXT_STYLE_KEYWORDS:
+        style_focus = True
+
+    if style_focus:
+        priority_tags.update(DEFAULT_STYLE_PRIORITY_TAGS)
+        priority_types.update({"Style", "Preference"})
+    elif context_label:
+        priority_tags.add(context_label.strip().lower())
+
+    if not (priority_tags or priority_types or priority_ids or priority_keywords):
+        return None
+
+    return {
+        "priority_tags": priority_tags,
+        "priority_types": priority_types,
+        "priority_ids": priority_ids,
+        "priority_keywords": priority_keywords,
+        "weights": {
+            "tag": 0.45,
+            "type": 0.25,
+            "keyword": 0.2,
+            "anchor": 0.9,
+        },
+        "language": language_hint,
+        "context_label": context_label,
+        "require_injection": style_focus or bool(manual_tags),
+    }
+
+
+def _result_matches_context_priority(result: Dict[str, Any], profile: Dict[str, Any]) -> bool:
+    memory = result.get("memory", {}) or {}
+    priority_ids: Set[str] = profile.get("priority_ids", set())
+    priority_tags: Set[str] = profile.get("priority_tags", set())
+    priority_types: Set[str] = profile.get("priority_types", set())
+
+    memory_id = str(result.get("id") or memory.get("id") or "")
+    if priority_ids and memory_id and memory_id in priority_ids:
+        return True
+
+    if priority_tags:
+        tags = {
+            str(tag).strip().lower()
+            for tag in (memory.get("tags") or [])
+            if isinstance(tag, str) and tag.strip()
+        }
+        for tag in tags:
+            for priority_tag in priority_tags:
+                if tag == priority_tag or tag.startswith(priority_tag) or priority_tag in tag:
+                    return True
+
+    if priority_types:
+        mem_type = memory.get("type")
+        if isinstance(mem_type, str) and mem_type.strip().title() in priority_types:
+            return True
+
+    return False
+
+
+def _inject_priority_memories(
+    results: List[Dict[str, Any]],
+    graph: Any,
+    qdrant_client: Any,
+    graph_keyword_search: Callable[..., List[Dict[str, Any]]],
+    vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
+    context_profile: Dict[str, Any],
+    seen_ids: Set[str],
+    start_time: Optional[str],
+    end_time: Optional[str],
+    tag_mode: str,
+    tag_match: str,
+    limit: int,
+) -> bool:
+    priority_tags: Set[str] = context_profile.get("priority_tags") or set()
+    if not priority_tags:
+        return False
+
+    fetch_limit = max(1, min(limit, 3))
+    tag_list = list(priority_tags)
+
+    if graph is not None:
+        priority_matches = graph_keyword_search(
+            graph,
+            "",
+            fetch_limit,
+            seen_ids,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_list,
+            tag_mode="any",
+            tag_match="prefix",
+        )
+        if priority_matches:
+            results.extend(priority_matches)
+            return True
+
+    if qdrant_client is not None:
+        tag_results = vector_filter_only_tag_search(
+            qdrant_client,
+            tag_list,
+            "any",
+            "prefix",
+            fetch_limit,
+            seen_ids,
+        )
+        if tag_results:
+            results.extend(tag_results)
+            return True
+
+    return False
+
+
+def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
+    for result in results:
+        if _result_matches_context_priority(result, profile):
+            return True
+    return False
 
 
 def handle_recall(
@@ -13,7 +279,7 @@ def handle_recall(
     normalize_timestamp: Callable[[str], str],
     parse_time_expression: Callable[[Optional[str]], Tuple[Optional[str], Optional[str]]],
     extract_keywords: Callable[[str], List[str]],
-    compute_metadata_score: Callable[[Dict[str, Any], str, List[str]], tuple[float, Dict[str, float]]],
+    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
     result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],
@@ -59,6 +325,36 @@ def handle_recall(
             abort(400, description=f"Invalid end time: {exc}")
 
     tag_filters = normalize_tag_list(tags_param)
+
+    context_label = (request.args.get("context") or "").strip().lower()
+    active_path = (
+        request.args.get("active_path")
+        or request.args.get("file_path")
+        or request.args.get("focus_path")
+        or ""
+    )
+    language_hint_param = (request.args.get("language") or request.args.get("lang") or "").strip()
+
+    context_tags_input = _split_multi_value(
+        request.args.getlist("context_tags") or request.args.get("context_tags")
+    )
+    context_types_input = _split_multi_value(
+        request.args.getlist("context_types") or request.args.get("context_types")
+    )
+    priority_ids_input = _split_multi_value(
+        request.args.getlist("priority_ids") or request.args.get("priority_ids")
+    )
+
+    context_tags = normalize_tag_list(context_tags_input)
+    language_hint = _detect_language_hint(language_hint_param, context_label, query_text, active_path)
+    context_profile = _build_context_profile(
+        manual_tags=context_tags,
+        manual_types=context_types_input,
+        manual_ids=priority_ids_input,
+        language_hint=language_hint,
+        context_label=context_label,
+        query_text=query_text or "",
+    )
 
     seen_ids: set[str] = set()
     graph = get_memory_graph()
@@ -113,9 +409,32 @@ def handle_recall(
         )
         results.extend(tag_only_results)
 
+    context_injected = False
+    if context_profile:
+        if not _results_have_priority(results, context_profile):
+            context_injected = _inject_priority_memories(
+                results,
+                graph,
+                qdrant_client,
+                graph_keyword_search,
+                vector_filter_only_tag_search,
+                context_profile,
+                seen_ids,
+                start_time,
+                end_time,
+                tag_mode,
+                tag_match,
+                limit,
+            )
+
     query_tokens = extract_keywords(query_text.lower()) if query_text else []
     for result in results:
-        final_score, components = compute_metadata_score(result, query_text or "", query_tokens)
+        final_score, components = compute_metadata_score(
+            result,
+            query_text or "",
+            query_tokens,
+            context_profile,
+        )
         result.setdefault("score_components", components)
         result["score_components"].update(components)
         result["final_score"] = final_score
@@ -136,6 +455,8 @@ def handle_recall(
             -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
         )
     )
+    if len(results) > limit:
+        results = results[:limit]
 
     response = {
         "status": "success",
@@ -156,6 +477,14 @@ def handle_recall(
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
+    if context_profile:
+        response["context_priority"] = {
+            "language": context_profile.get("language"),
+            "context": context_profile.get("context_label"),
+            "priority_tags": sorted(context_profile.get("priority_tags") or [])[:10],
+            "priority_types": sorted(context_profile.get("priority_types") or []),
+            "injected": context_injected,
+        }
 
     logger.info(
         "recall_complete",
@@ -168,6 +497,7 @@ def handle_recall(
             "has_time_filter": bool(start_time or end_time),
             "has_tag_filter": bool(tag_filters),
             "limit": limit,
+            "context_language": (context_profile or {}).get("language") if context_profile else None,
         },
     )
     return jsonify(response)
@@ -180,7 +510,7 @@ def create_recall_blueprint(
     normalize_timestamp: Callable[[str], str],
     parse_time_expression: Callable[[Optional[str]], Tuple[Optional[str], Optional[str]]],
     extract_keywords: Callable[[str], List[str]],
-    compute_metadata_score: Callable[[Dict[str, Any], str, List[str]], tuple[float, Dict[str, float]]],
+    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
     result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],

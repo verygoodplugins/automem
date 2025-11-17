@@ -366,9 +366,9 @@ response = requests.post(
 - 📦 **[Installation Guide](INSTALLATION.md)** - Railway, Docker, development setup
 - 🌉 **[MCP over SSE Sidecar](docs/MCP_SSE.md)** - Expose AutoMem as an MCP server over SSE for ChatGPT/ElevenLabs
 - 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** - Health monitoring and automated backups
-- 🔧 **[API Reference](INSTALLATION.md#api-reference)** - All endpoints with examples
-- 🧪 **[Testing Guide](TESTING.md)** - Unit, integration, live server, and LoCoMo benchmark tests
-- 📊 **[LoCoMo Benchmark](TESTING.md#locomo-benchmark)** - Validate against ACL 2024 long-term memory benchmark
+- 🔧 **[API Reference](docs/API.md)** - All endpoints with examples
+- 🧪 **[Testing Guide](docs/TESTING.md)** - Unit, integration, live server, and LoCoMo benchmark tests
+- 📊 **[LoCoMo Benchmark](docs/TESTING.md#locomo-benchmark)** - Validate against ACL 2024 long-term memory benchmark
 - 🔄 **[Migration Guide](INSTALLATION.md#migration)** - Move from MCP SQLite
 - 🌐 **[automem.ai](https://automem.ai)** - Official website and guides
 

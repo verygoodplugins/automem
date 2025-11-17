@@ -144,13 +144,13 @@ Controls how different factors are weighted in memory recall.
 | `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Time-based boost |
 | `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.15` | Full text match |
 
-**Total must sum to 1.0** or results will be normalized.
+These act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
 
 ### Recall Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `RECALL_RELATION_LIMIT` | Max graph hops per query | `5` |
+| `RECALL_RELATION_LIMIT` | Max related memories returned by `/memories/{id}/related` | `5` |
 
 ---
 

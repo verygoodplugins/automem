@@ -2,6 +2,113 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.8.0] - 2025-11-08
+
+### 🏗️ Major Refactoring
+
+#### API Modularization
+- **Breaking**: Refactored monolithic `app.py` into modular API blueprints
+- New structure: `automem/api/` with separate modules:
+  - `memory.py` - Core memory CRUD operations
+  - `recall.py` - Memory search and retrieval
+  - `admin.py` - Administrative endpoints (reembedding, analysis)
+  - `health.py` - Health checks and monitoring
+  - `enrichment.py` - Enrichment pipeline management
+  - `consolidation.py` - Memory consolidation
+- Improved code organization and maintainability
+- Reduced `app.py` from 1,251 lines to ~200 lines
+
+### 🔒 Security Fixes
+
+#### Memory ID Security
+- **Critical**: Removed support for client-supplied memory IDs
+- Now always generates server-side UUIDs to prevent collision/overwrite attacks
+- Eliminates potential for malicious clients to overwrite existing memories
+
+#### Batch Processing Reliability
+- Fixed batch failure counter in reembedding endpoint
+- Now correctly tracks only successfully upserted items
+- Prevents incorrect success counts when Qdrant upserts fail
+
+### 🚀 Railway Deployment Improvements
+
+#### Template Fixes
+- **Critical**: Fixed secret generation syntax in `railway-template.json`
+- Changed from `{"generator": "secret"}` to `${{secret()}}` (Railway's correct syntax)
+- Fixes blank `FALKOR_PASSWORD`, `ADMIN_API_TOKEN`, and `AUTOMEM_API_TOKEN` on deploy
+- Removed `--requirepass` from `REDIS_ARGS` to prevent Redis config parse errors
+- FalkorDB now handles authentication via `FALKOR_PASSWORD` env var only
+
+#### Documentation Enhancements
+- Expanded `docs/RAILWAY_DEPLOYMENT.md` with detailed troubleshooting
+- Added step-by-step deployment instructions
+- Included cost optimization tips and backup strategies
+- Documented persistent storage configuration
+- Added environment variable reference and best practices
+
+### 🧪 Testing Improvements
+
+#### Live Integration Tests
+- Added safety confirmation prompt to `test-live-server.sh`
+- Prevents accidental test runs against production
+- New `--non-interactive` flag for CI/CD pipelines
+- Fixed argument parsing bug (shift mutation in for-loop)
+- `test-live-server-auto.sh` now wrapper for backward compatibility
+
+#### LoCoMo Benchmark Support
+- Added LoCoMo benchmark integration for memory system evaluation
+- Documents AutoMem's 76.08% accuracy on LoCoMo-10 (vs CORE at 88.24%) as of November 8, 2025
+- Comprehensive benchmark results in `tests/benchmarks/BENCHMARK_2025-11-08.md` and summarized in `docs/TESTING.md`
+- Test coverage for multi-hop reasoning, temporal understanding, complex reasoning
+
+#### Test Infrastructure
+- Added OpenAI chat completions mock in `conftest.py`
+- Improved test reliability with proper cache invalidation
+- Removed unused test dependencies (`requests`)
+
+### 🛠️ Code Quality Improvements
+
+#### Utility Consolidation
+- Removed duplicate `_parse_iso_datetime` from `consolidation.py`
+- Now imports from shared `automem.utils.time` module
+- Improved code reusability and consistency
+
+#### Code Cleanup
+- Removed erroneous `or True` from hasattr checks
+- Added proper error logging for import failures
+- Removed trailing whitespace across codebase
+- Added syntax highlighting to documentation code blocks
+- Cleaned up unused dependencies in `requirements-dev.txt`
+
+### 📝 Documentation Updates
+
+#### New Documentation
+- Added `docs/API.md` - Comprehensive API reference
+- Added `docs/TESTING.md` - Testing guide with benchmark instructions
+- Enhanced `README.md` with clearer setup instructions
+
+#### Removed Obsolete Documentation
+- Archived outdated optimization notes
+- Removed deprecated benchmark files
+- Consolidated deployment documentation
+
+### 🔧 Configuration Changes
+
+#### Pre-commit Hooks
+- Added `.pre-commit-config.yaml` for automated code quality checks
+- Includes trailing whitespace removal, end-of-file fixing
+
+#### Build System
+- Updated `Makefile` with new testing targets
+- Improved development workflow commands
+
+### 🐛 Bug Fixes
+
+- Fixed Qdrant delete selector to properly check for HTTP models
+- Added null-safety guard for enrichment queue in health endpoint
+- Fixed test consolidation engine cache invalidation
+- Corrected JSON syntax highlighting in documentation
+
 ## [0.7.1] - 2025-10-20
 
 ### 🐛 Railway Deployment Fixes
