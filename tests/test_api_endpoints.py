@@ -23,7 +23,32 @@ class MockGraph:
         self.relationships = []
 
     def query(self, query: str, params: dict = None):
-        """Track queries and return appropriate mock results."""
+        """
+        Dispatch a mock FalkorDB query and return a result-shaped object appropriate for test scenarios.
+        
+        This method records the raw query and parameters and returns a SimpleNamespace with a `result_set`
+        that mimics FalkorDB responses for a range of supported mock operations used in tests:
+        - Create/MERGE and CREATE of Memory nodes (returns a node with `properties` for the stored memory).
+        - Update of a Memory's content/tags/importance (returns updated node or empty result if not found).
+        - Retrieve a Memory by id (returns node or empty result).
+        - Delete a Memory by id (returns an acknowledgment or empty result).
+        - Search memories by a single tag (returns matching nodes).
+        - Retrieve all memory id/content pairs for reembedding (returns list of [id, content]).
+        - Create associations between two memories (returns confirmation when both memories exist).
+        - Tag-filtered recall queries with ordering by importance (desc) and timestamp (desc) and optional limiting;
+          tag filters match when any memory tag starts with a filter prefix (case-insensitive).
+        
+        Parameters:
+            query (str): The Cypher-like query string being executed (mocked).
+            params (dict, optional): Parameters for the query (ids, tags, importance, tag_filters, limit, etc.).
+        
+        Returns:
+            SimpleNamespace: An object with a `result_set` attribute containing rows that mirror FalkorDB query results:
+                - For node returns: rows are lists containing a SimpleNamespace with a `properties` dict.
+                - For id/content retrieval: rows are lists like [id, content].
+                - For delete/association acknowledgments: rows contain simple markers (e.g., ["deleted"], ["created"]).
+                - Empty `result_set` indicates no matching result.
+        """
         params = params or {}
         self.queries.append((query, params))
 
@@ -183,7 +208,13 @@ class MockQdrantClient:
         return results
 
     def delete(self, collection_name, points_selector):
-        """Mock delete operation."""
+        """
+        Remove the specified point IDs from the mock client's stored points and record the delete call.
+        
+        Parameters:
+            collection_name (str): Name of the collection targeted by the delete operation.
+            points_selector: An object with a `points` attribute (iterable of point IDs) specifying which points to delete.
+        """
         self.delete_calls.append((collection_name, points_selector))
         if hasattr(points_selector, "points"):
             for point_id in points_selector.points:
@@ -191,7 +222,20 @@ class MockQdrantClient:
                     del self.points[point_id]
 
     def scroll(self, collection_name, scroll_filter=None, limit=10, with_payload=True):
-        """Mock scroll to support tag-only queries."""
+        """
+        Return up to `limit` stored points whose payload matches `scroll_filter`.
+        
+        Parameters:
+            collection_name (str): Name of the collection to search (unused in mock but kept for API compatibility).
+            scroll_filter (object|None): Filter object describing match conditions; evaluated against each point's payload using `_filter_matches`.
+            limit (int): Maximum number of points to return.
+            with_payload (bool): If True include payloads on returned points (mock always includes payload).
+        
+        Returns:
+            tuple:
+                matches (list): List of match objects (SimpleNamespace) each with `id` and `payload` attributes.
+                next_cursor (None): Cursor for continued scrolling; always `None` in this mock implementation.
+        """
         matches = []
         for point_id, point in self.points.items():
             payload = point["payload"]
@@ -203,6 +247,18 @@ class MockQdrantClient:
         return matches, None
 
     def _filter_matches(self, payload, scroll_filter):
+        """
+        Determine whether a point payload satisfies all "must" conditions of a Qdrant scroll filter.
+        
+        This performs case-insensitive string matching for each condition in `scroll_filter.must`. Supports `MatchAny` (succeeds if any of the provided target strings appear in the payload field) and `MatchValue` (succeeds if the exact target string appears in the payload field). Non-string or empty payload values are ignored. If `scroll_filter` is None or has no `must` conditions, the payload is considered a match.
+        
+        Parameters:
+            payload (dict): The point payload mapping field names to lists of values (as stored in Qdrant).
+            scroll_filter: A Qdrant scroll filter object with an optional `must` attribute containing match conditions.
+        
+        Returns:
+            bool: `True` if the payload meets all `must` conditions, `False` otherwise.
+        """
         if scroll_filter is None:
             return True
         must_conditions = getattr(scroll_filter, "must", []) or []
@@ -231,7 +287,23 @@ class MockQdrantClient:
 
 @pytest.fixture
 def mock_state(monkeypatch):
-    """Create mock service state with graph and Qdrant."""
+    """
+    Create and install a mocked ServiceState for tests, including in-memory graph, Qdrant client, OpenAI client, embeddings, and auth tokens.
+    
+    Parameters:
+        monkeypatch: pytest monkeypatch fixture used to patch app-level attributes and initialization functions.
+    
+    Returns:
+        state (app.ServiceState): The populated ServiceState with mocked components:
+            - memory_graph: MockGraph instance simulating FalkorDB behavior.
+            - qdrant: MockQdrantClient instance simulating Qdrant.
+            - openai_client: Mock object for OpenAI interactions.
+    
+    Notes:
+        This function patches app.state, app.init_falkordb, app.init_qdrant, app.init_openai,
+        embedding generation helpers (_generate_real_embedding, _generate_placeholder_embedding),
+        and API_TOKEN/ADMIN_TOKEN values for test isolation.
+    """
     state = app.ServiceState()
     state.memory_graph = MockGraph()
     state.qdrant = MockQdrantClient()  # Changed from qdrant_client to qdrant
@@ -377,6 +449,18 @@ def test_recall_with_high_limit(client, mock_state, auth_headers):
 
 
 def _store_memory(mock_state, memory_id, content, tags, importance, mem_type="Context", timestamp=None):
+    """
+    Insert a memory into the test mock state's in-memory FalkorDB graph.
+    
+    Parameters:
+        mock_state: ServiceState test fixture containing the mock memory_graph.
+        memory_id (str): Unique identifier to store for the memory node.
+        content (str): Text content of the memory.
+        tags (list[str]): List of tags associated with the memory.
+        importance (int | float): Importance score used for prioritization in recalls.
+        mem_type (str): Memory type label (e.g., "Context", "Style"); defaults to "Context".
+        timestamp (datetime | None): Explicit timestamp for the memory; if omitted, the current UTC time is used.
+    """
     mock_state.memory_graph.memories[memory_id] = {
         "id": memory_id,
         "content": content,
