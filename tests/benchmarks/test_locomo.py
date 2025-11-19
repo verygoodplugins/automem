@@ -208,7 +208,8 @@ class LoCoMoEvaluator:
                     
                     if response.status_code in [200, 201]:  # Accept both OK and Created
                         result = response.json()
-                        memory_id = result.get("id")
+                        # API returns memory_id; be robust to historical 'id'
+                        memory_id = result.get("memory_id") or result.get("id")
                         memory_map[dia_id] = memory_id
                         memory_count += 1
                         
@@ -466,9 +467,10 @@ class LoCoMoEvaluator:
                         f"{self.config.base_url}/memories/{mem_id}/related",
                         headers=self.headers,
                         params={
-                            "relationship_types": "RELATES_TO,LEADS_TO,PART_OF,DERIVED_FROM",
-                            "max_depth": 2,  # Two hops
-                            "limit": 5  # Top 5 per initial memory
+                            # Include enrichment + temporal + creative relations
+                            "relationship_types": "RELATES_TO,LEADS_TO,PART_OF,DERIVED_FROM,SIMILAR_TO,PRECEDED_BY,EXPLAINS,SHARES_THEME,PARALLEL_CONTEXT",
+                            "max_depth": 2,  # Two hops tends to be enough for LoCoMo
+                            "limit": 8  # Slightly higher cap per seed
                         },
                         timeout=5
                     )
@@ -791,13 +793,20 @@ Respond in JSON format:
             evidence = qa.get("evidence", [])
             
             # Recall memories for this question
-            # DISABLED: Graph traversal not helping, using standard recall
-            # Phase 1: Pass evidence count to enable multi-hop optimization
-            recalled_memories = self.recall_for_question(
-                question, 
-                sample_id, 
-                evidence_count=len(evidence)
-            )
+            # Use graph expansion for multi-hop questions (evidence > 1)
+            if evidence and len(evidence) > 1:
+                recalled_memories = self.multi_hop_recall_with_graph(
+                    question,
+                    sample_id,
+                    initial_limit=20,
+                    max_connected=60,
+                )
+            else:
+                recalled_memories = self.recall_for_question(
+                    question,
+                    sample_id,
+                    evidence_count=len(evidence),
+                )
             
             # Check if answer is in recalled memories
             # Phase 2.5: Pass sample_id to enable evidence fetching
@@ -1003,4 +1012,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

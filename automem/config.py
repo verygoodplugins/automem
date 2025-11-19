@@ -60,6 +60,9 @@ RELATIONSHIP_TYPES = {
     "RELATES_TO": {"description": "General relationship"},
     "LEADS_TO": {"description": "Causal relationship"},
     "OCCURRED_BEFORE": {"description": "Temporal relationship"},
+    # Frequently created by enrichment/temporal linking
+    "SIMILAR_TO": {"description": "Semantic similarity", "properties": ["score", "updated_at"]},
+    "PRECEDED_BY": {"description": "Prior in time", "properties": ["count", "updated_at"]},
 
     # New PKG relationships
     "PREFERS_OVER": {"description": "Preference relationship", "properties": ["context", "strength", "reason"]},
@@ -70,6 +73,11 @@ RELATIONSHIP_TYPES = {
     "EVOLVED_INTO": {"description": "Evolution of knowledge", "properties": ["confidence", "reason"]},
     "DERIVED_FROM": {"description": "Derived knowledge", "properties": ["transformation", "confidence"]},
     "PART_OF": {"description": "Hierarchical relationship", "properties": ["role", "context"]},
+
+    # Discovered/creative connections used by consolidator/analysis
+    "EXPLAINS": {"description": "Provides explanation for another memory", "properties": ["confidence", "updated_at"]},
+    "SHARES_THEME": {"description": "Shares a common theme", "properties": ["similarity", "updated_at"]},
+    "PARALLEL_CONTEXT": {"description": "Parallel events or contexts", "properties": ["confidence", "updated_at"]},
 }
 
 ALLOWED_RELATIONS = set(RELATIONSHIP_TYPES.keys())
@@ -77,13 +85,12 @@ ALLOWED_RELATIONS = set(RELATIONSHIP_TYPES.keys())
 # Search weighting parameters (can be overridden via environment variables)
 SEARCH_WEIGHT_VECTOR = float(os.getenv("SEARCH_WEIGHT_VECTOR", "0.35"))
 SEARCH_WEIGHT_KEYWORD = float(os.getenv("SEARCH_WEIGHT_KEYWORD", "0.35"))
-SEARCH_WEIGHT_TAG = float(os.getenv("SEARCH_WEIGHT_TAG", "0.15"))
+SEARCH_WEIGHT_TAG = float(os.getenv("SEARCH_WEIGHT_TAG", "0.2"))
 SEARCH_WEIGHT_IMPORTANCE = float(os.getenv("SEARCH_WEIGHT_IMPORTANCE", "0.1"))
 SEARCH_WEIGHT_CONFIDENCE = float(os.getenv("SEARCH_WEIGHT_CONFIDENCE", "0.05"))
 SEARCH_WEIGHT_RECENCY = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.1"))
-SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.15"))
+SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.2"))
 
 # API tokens
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
-
