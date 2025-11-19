@@ -32,7 +32,8 @@ Memory
 Recall
 - GET `/recall`
   - Query: `query`, `limit`, `tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
-  - Response: `{ "status": "success", "results": [...], "count": M, ... }`
+  - Optional context hints: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`
+  - Response: `{ "status": "success", "results": [...], "count": M, "context_priority": {...} }`
 
 - GET `/memories/{id}/related`
   - Query: `relationship_types`, `max_depth` (1..3), `limit` (<=200)
@@ -69,4 +70,5 @@ Consolidation
 Notes
 - Tag matching supports exact and prefix semantics; vector searches are filtered by tag conditions when provided.
 - Time filtering accepts ISO timestamps (`start`, `end`) or a natural expression via `time_query`.
+- Context hints boost matching preferences (e.g., Python coding style) and guarantee at least one anchor memory when applicable; responses echo what was applied via `context_priority`.
 

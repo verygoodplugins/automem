@@ -57,8 +57,8 @@ All notable changes to AutoMem will be documented in this file.
 
 #### LoCoMo Benchmark Support
 - Added LoCoMo benchmark integration for memory system evaluation
-- Documents AutoMem's 89.15% accuracy (beats SOTA CORE at 88.24%)
-- Comprehensive benchmark results in `docs/TESTING.md`
+- Documents AutoMem's 76.08% accuracy on LoCoMo-10 (vs CORE at 88.24%) as of November 8, 2025
+- Comprehensive benchmark results in `tests/benchmarks/BENCHMARK_2025-11-08.md` and summarized in `docs/TESTING.md`
 - Test coverage for multi-hop reasoning, temporal understanding, complex reasoning
 
 #### Test Infrastructure

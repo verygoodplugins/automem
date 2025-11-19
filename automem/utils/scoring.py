@@ -69,10 +69,58 @@ def _compute_recency_score(timestamp: Optional[str]) -> float:
     return max(0.0, 1.0 - (age_days / 180.0))
 
 
+def _context_tag_hit(tags: Set[str], priority_tags: Set[str]) -> bool:
+    if not tags or not priority_tags:
+        return False
+    for tag in tags:
+        for priority in priority_tags:
+            if tag == priority or tag.startswith(priority) or priority in tag:
+                return True
+    return False
+
+
+def _compute_context_bonus(
+    result: Dict[str, Any],
+    memory: Dict[str, Any],
+    tag_terms: Set[str],
+    metadata_terms: Set[str],
+    context_profile: Optional[Dict[str, Any]],
+) -> float:
+    if not context_profile:
+        return 0.0
+
+    weights = context_profile.get("weights") or {}
+    priority_tags: Set[str] = context_profile.get("priority_tags") or set()
+    priority_types: Set[str] = context_profile.get("priority_types") or set()
+    priority_ids: Set[str] = context_profile.get("priority_ids") or set()
+    priority_keywords: Set[str] = context_profile.get("priority_keywords") or set()
+
+    bonus = 0.0
+    if priority_tags and _context_tag_hit(tag_terms, priority_tags):
+        bonus += float(weights.get("tag", 0.45))
+
+    if priority_types:
+        mem_type = memory.get("type")
+        if isinstance(mem_type, str) and mem_type.strip().title() in priority_types:
+            bonus += float(weights.get("type", 0.25))
+
+    if priority_keywords and metadata_terms:
+        if any(keyword in metadata_terms for keyword in priority_keywords):
+            bonus += float(weights.get("keyword", 0.2))
+
+    if priority_ids:
+        memory_id = str(result.get("id") or memory.get("id") or "")
+        if memory_id and memory_id in priority_ids:
+            bonus += float(weights.get("anchor", 0.9))
+
+    return bonus
+
+
 def _compute_metadata_score(
     result: Dict[str, Any],
     query: str,
     tokens: List[str],
+    context_profile: Optional[Dict[str, Any]] = None,
 ) -> Tuple[float, Dict[str, float]]:
     memory = result.get("memory", {})
     metadata = _parse_metadata_field(memory.get("metadata")) if memory else {}
@@ -104,6 +152,8 @@ def _compute_metadata_score(
     vector_component = result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
     keyword_component = result.get("match_score", 0.0) if result.get("match_type") in {"keyword", "trending"} else 0.0
 
+    context_bonus = _compute_context_bonus(result, memory, tag_terms, metadata_terms, context_profile)
+
     final = (
         SEARCH_WEIGHT_VECTOR * vector_component
         + SEARCH_WEIGHT_KEYWORD * keyword_component
@@ -112,6 +162,7 @@ def _compute_metadata_score(
         + SEARCH_WEIGHT_CONFIDENCE * confidence_score
         + SEARCH_WEIGHT_RECENCY * recency_score
         + SEARCH_WEIGHT_EXACT * exact_match
+        + context_bonus
     )
 
     components = {
@@ -122,6 +173,7 @@ def _compute_metadata_score(
         "confidence": confidence_score,
         "recency": recency_score,
         "exact": exact_match,
+        "context": context_bonus,
     }
 
     return final, components

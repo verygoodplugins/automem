@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch, MagicMock
 import pytest
 from flask import Flask
 from flask.testing import FlaskClient
+from qdrant_client import models as qdrant_models
 
 import app
 from app import utc_now, _normalize_timestamp
@@ -101,6 +102,43 @@ class MockGraph:
             # Return empty if memories don't exist
             return SimpleNamespace(result_set=[])
 
+        return_m_line = "RETURN m\n" in query or "RETURN m\r" in query
+        if (
+            "MATCH (m:Memory)" in query
+            and return_m_line
+            and "ORDER BY m.importance DESC" in query
+        ):
+            results = list(self.memories.values())
+            tag_filters = [tag.lower() for tag in params.get("tag_filters", [])]
+            if tag_filters:
+                filtered = []
+                for mem in results:
+                    mem_tags = [
+                        str(tag).strip().lower()
+                        for tag in (mem.get("tags") or [])
+                        if isinstance(tag, str)
+                    ]
+                    if any(
+                        any(tag.startswith(filter_tag) for tag in mem_tags)
+                        for filter_tag in tag_filters
+                    ):
+                        filtered.append(mem)
+                results = filtered
+            results.sort(
+                key=lambda mem: (
+                    float(mem.get("importance") or 0.0),
+                    str(mem.get("timestamp") or ""),
+                ),
+                reverse=True,
+            )
+            limit = params.get("limit", len(results))
+            limited = results[:limit]
+            return SimpleNamespace(
+                result_set=[
+                    [SimpleNamespace(properties=mem)] for mem in limited
+                ]
+            )
+
         # Default empty result
         return SimpleNamespace(result_set=[])
 
@@ -151,6 +189,44 @@ class MockQdrantClient:
             for point_id in points_selector.points:
                 if point_id in self.points:
                     del self.points[point_id]
+
+    def scroll(self, collection_name, scroll_filter=None, limit=10, with_payload=True):
+        """Mock scroll to support tag-only queries."""
+        matches = []
+        for point_id, point in self.points.items():
+            payload = point["payload"]
+            if self._filter_matches(payload, scroll_filter):
+                mock_point = SimpleNamespace(id=point_id, payload=payload)
+                matches.append(mock_point)
+            if len(matches) >= limit:
+                break
+        return matches, None
+
+    def _filter_matches(self, payload, scroll_filter):
+        if scroll_filter is None:
+            return True
+        must_conditions = getattr(scroll_filter, "must", []) or []
+        for condition in must_conditions:
+            field_values = payload.get(condition.key) or []
+            normalized = [
+                str(value).strip().lower()
+                for value in field_values
+                if isinstance(value, str) and value.strip()
+            ]
+            match = condition.match
+            if isinstance(match, qdrant_models.MatchAny):
+                targets = {
+                    str(value).strip().lower()
+                    for value in (match.any or [])
+                    if isinstance(value, str)
+                }
+                if not targets or not any(val in targets for val in normalized):
+                    return False
+            elif isinstance(match, qdrant_models.MatchValue):
+                target = str(match.value).strip().lower()
+                if target not in normalized:
+                    return False
+        return True
 
 
 @pytest.fixture
@@ -298,6 +374,78 @@ def test_recall_with_high_limit(client, mock_state, auth_headers):
     response = client.get("/recall?limit=100", headers=auth_headers)
     assert response.status_code == 200
     # API clamps limit to 50 instead of returning error
+
+
+def _store_memory(mock_state, memory_id, content, tags, importance, mem_type="Context", timestamp=None):
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": content,
+        "tags": tags,
+        "importance": importance,
+        "type": mem_type,
+        "timestamp": timestamp or utc_now(),
+    }
+
+
+def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
+    """Ensure coding-style memories rise to the top when editing Python."""
+    mock_state.memory_graph.memories.clear()
+    style_id = "style-mem"
+    other_id = "general-mem"
+    _store_memory(
+        mock_state,
+        other_id,
+        "Recent brainstorming about product metrics",
+        ["planning"],
+        0.98,
+        mem_type="Context",
+    )
+    _store_memory(
+        mock_state,
+        style_id,
+        "Python coding style: prefer dataclasses, avoid mutable defaults.",
+        ["coding-style", "python", "style-guide"],
+        0.82,
+        mem_type="Style",
+    )
+
+    response = client.get("/recall?limit=2&active_path=/tmp/sample.py", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["results"][0]["id"] == style_id
+    context_info = data.get("context_priority") or {}
+    assert context_info.get("language") == "python"
+    assert context_info.get("injected") is False
+
+
+def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers):
+    """Ensure style memory appears even when limit would normally omit it."""
+    mock_state.memory_graph.memories.clear()
+    style_id = "style-mem-limit"
+    other_id = "general-mem-limit"
+    _store_memory(
+        mock_state,
+        other_id,
+        "High importance launch checklist",
+        ["launch"],
+        0.99,
+        mem_type="Insight",
+    )
+    _store_memory(
+        mock_state,
+        style_id,
+        "Python naming rules: prefer snake_case and explicit imports.",
+        ["coding-style", "python"],
+        0.7,
+        mem_type="Style",
+    )
+
+    response = client.get("/recall?limit=1&active_path=/workspace/tool.py", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["results"][0]["id"] == style_id
+    context_info = data.get("context_priority") or {}
+    assert context_info.get("injected") is True
 
 
 # ==================== Test Memory Update ====================

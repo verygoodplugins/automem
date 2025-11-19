@@ -452,7 +452,6 @@ Store a new memory.
 | `metadata`      | object | No       | Custom metadata (any JSON object)                                                     |
 | `timestamp`     | string | No       | ISO 8601 timestamp (default: current time)                                            |
 | `embedding`     | array  | No       | 768-dimensional vector (auto-generated if omitted)                                    |
-| `id`            | string | No       | Custom memory ID (default: auto-generated UUID)                                       |
 | `t_valid`       | string | No       | ISO timestamp when memory becomes valid                                               |
 | `t_invalid`     | string | No       | ISO timestamp when memory expires                                                     |
 | `updated_at`    | string | No       | ISO timestamp of last update (default: `timestamp`)                                   |
@@ -513,6 +512,7 @@ Store a new memory.
 - **Timestamp defaults**: All time fields default to current UTC time if not provided
 - **Background enrichment**: Entity extraction and relationship building queued automatically
 - **Type validation**: Invalid types return `400 Bad Request` with list of valid options
+- **IDs are server-generated**: Clients cannot set `id`; AutoMem always assigns a UUID to prevent collisions/overwrites.
 
 ---
 
@@ -522,17 +522,23 @@ Retrieve memories using hybrid search.
 
 **Query Parameters:**
 
-| Parameter    | Description                    | Example                             |
-| ------------ | ------------------------------ | ----------------------------------- |
-| `query`      | Full-text search string        | `database migration`                |
-| `embedding`  | 768-d vector (comma-separated) | `0.12,0.56,...`                     |
-| `limit`      | Max results (1-50)             | `10`                                |
-| `time_query` | Natural time phrases           | `today`, `last week`, `last 7 days` |
-| `start`      | ISO timestamp (lower bound)    | `2025-09-01T00:00:00Z`              |
-| `end`        | ISO timestamp (upper bound)    | `2025-09-30T23:59:59Z`              |
-| `tags`       | Tag filters (multiple allowed) | `slack`, `decision`                 |
-| `tag_mode`   | `any` or `all`                 | `any` (default)                     |
-| `tag_match`  | `prefix` or `exact`            | `prefix` (default)                  |
+| Parameter      | Description                                       | Example                             |
+| -------------- | ------------------------------------------------- | ----------------------------------- |
+| `query`        | Full-text search string                           | `database migration`                |
+| `embedding`    | 768-d vector (comma-separated)                    | `0.12,0.56,...`                     |
+| `limit`        | Max results (1-50)                                | `10`                                |
+| `time_query`   | Natural time phrases                              | `today`, `last week`, `last 7 days` |
+| `start`        | ISO timestamp (lower bound)                       | `2025-09-01T00:00:00Z`              |
+| `end`          | ISO timestamp (upper bound)                       | `2025-09-30T23:59:59Z`              |
+| `tags`         | Tag filters (multiple allowed)                    | `slack`, `decision`                 |
+| `tag_mode`     | `any` or `all`                                    | `any` (default)                     |
+| `tag_match`    | `prefix` or `exact`                               | `prefix` (default)                  |
+| `context`      | High-level context label                          | `coding-style`, `preference`        |
+| `language`     | Explicit language hint                            | `python`, `typescript`              |
+| `active_path`  | Active file path (used to infer language/context) | `/Users/jack/project/app.py`        |
+| `context_tags` | Comma or list of tags to prioritize               | `coding-style,python`               |
+| `context_types`| Memory types to prioritize                        | `Style,Preference`                  |
+| `priority_ids` | Specific memory IDs to treat as anchors           | `uuid-1,uuid-2`                     |
 
 **Examples:**
 
@@ -582,9 +588,18 @@ GET /recall?tags=deployment&tags=success&tag_mode=all
     "end": "2025-09-30T23:59:59+00:00"
   },
   "tags": ["slack"],
-  "count": 5
+  "count": 5,
+  "context_priority": {
+    "language": "python",
+    "context": "coding-style",
+    "priority_tags": ["coding-style","python"],
+    "priority_types": ["Style","Preference"],
+    "injected": false
+  }
 }
 ```
+
+When no context hints are provided, recall behaves exactly as before (hybrid vector/keyword/tags/time). Context hints simply boost and, if needed, inject style/preference memories relevant to the active file; see `docs/API.md` for full details.
 
 ---
 

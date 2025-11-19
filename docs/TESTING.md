@@ -4,12 +4,12 @@ This document describes the testing setup for AutoMem and how to run tests again
 
 ## Test Suite Overview
 
-AutoMem has a comprehensive test suite with 62 tests covering:
-- API endpoints (36 tests)
-- Core functionality (8 tests)
-- Consolidation engine (6 tests)
-- Enrichment pipeline (2 tests)
-- Integration tests (8 tests)
+AutoMem has a comprehensive test suite covering:
+- API endpoints
+- Core functionality
+- Consolidation engine
+- Enrichment pipeline
+- Integration tests
 
 ## Quick Commands
 
@@ -99,10 +99,7 @@ Runs integration tests with proper environment setup.
 
 ## Test Results
 
-All tests pass cleanly with no warnings (filtered via `pytest.ini`):
-- ✅ 61 passed
-- ⏭️ 1 skipped (rate limiting not implemented)
-- ⚠️ 0 warnings
+All tests are designed to pass cleanly with no unexpected warnings (filtered via `pytest.ini`). Use `make test`, `make test-integration`, or `make test-live` and rely on the `pytest` summary for the current counts.
 
 ## Comparing Local vs Live
 
@@ -202,33 +199,33 @@ make test-locomo-live         # Run against Railway deployment
 ### Performance Expectations
 
 The benchmark takes approximately:
-- **Local Docker**: 10-15 minutes
-- **Railway**: 15-20 minutes (network latency)
+- **Local Docker**: 10–20 minutes
+- **Railway**: 15–25 minutes (network latency)
 
 Memory usage:
-- **FalkorDB**: ~10,000 nodes, ~5,000 edges
-- **Qdrant**: ~10,000 vectors (768 dimensions)
+- **FalkorDB**: ~6,000–10,000 nodes
+- **Qdrant**: ~6,000–10,000 vectors (768 dimensions)
 
 ### Interpreting Results
 
-The benchmark outputs:
-```json
+The benchmark outputs (example from November 8, 2025 run):
+```text
 📊 FINAL RESULTS
-🎯 Overall Accuracy: 89.15% (1770/1986)
-⏱️  Total Time: 742.3s
-💾 Total Memories Stored: 9847
+🎯 Overall Accuracy: 76.08% (1511/1986)
+⏱️  Total Time: 1500.0s
+💾 Total Memories Stored: 5882
 
 📈 Category Breakdown:
-  Single-hop Recall        : 92.20% (260/282)
-  Temporal Understanding   : 89.41% (287/321)
-  Multi-hop Reasoning      : 86.46% ( 83/ 96)
-  Open Domain              : 88.70% (746/841)
-  Complex Reasoning        : 87.89% (392/446)
+  Single-hop Recall        : 59.22% (167/282)
+  Temporal Understanding   : 70.40% (226/321)
+  Multi-hop Reasoning      : 22.92% ( 22/ 96)
+  Open Domain              : 77.41% (651/841)
+  Complex Reasoning        : 99.78% (445/446)
 
 🏆 Comparison with CORE (SOTA):
   CORE: 88.24%
-  AutoMem: 89.15%
-  🎉 AutoMem BEATS CORE by 0.91%!
+  AutoMem: 76.08%
+  📉 AutoMem is 12.16% behind CORE (baseline before planned multi-hop/temporal upgrades).
 ```
 
 ### AutoMem's Advantages
