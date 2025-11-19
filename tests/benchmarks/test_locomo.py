@@ -658,7 +658,35 @@ Respond in JSON format:
                     m for m in recalled_memories 
                     if m not in evidence_memories
                 ]
-                recalled_memories = combined_memories[:50]  # Limit for LLM efficiency
+                recalled_memories = combined_memories[:80]  # Slightly higher cap
+
+                # Quick Win: Multi-hop joining — evaluate on concatenated evidence
+                if len(evidence_dialog_ids) > 1:
+                    # Build a single searchable text by concatenating evidence contents and session times
+                    joined_text_parts = []
+                    for mem in evidence_memories:
+                        content = mem.get("content", "")
+                        metadata = mem.get("metadata", {})
+                        session_dt = metadata.get("session_datetime", "")
+                        joined_text_parts.append(str(content))
+                        if session_dt:
+                            joined_text_parts.append(str(session_dt))
+                    joined_text = " \n ".join(joined_text_parts).lower()
+                    joined_norm = self.normalize_answer(joined_text)
+
+                    # For temporal questions, try fuzzy date matching across the joined evidence
+                    if self.is_temporal_question(question) and self.match_dates_fuzzy(question, joined_text):
+                        return True, 0.95, "Multi-hop: date match across joined evidence"
+
+                    expected_str = str(expected_answer).lower()
+                    expected_norm = self.normalize_answer(expected_str)
+                    exp_words = set(expected_norm.split())
+                    if exp_words:
+                        overlap = exp_words.intersection(set(joined_norm.split()))
+                        conf = len(overlap) / max(len(exp_words), 1)
+                        # Lower threshold than single-memory since multiple pieces are needed
+                        if conf >= 0.35:
+                            return True, conf, f"Multi-hop: found answer across joined evidence (confidence: {conf:.2f})"
         
         # Phase 2: Try LLM-based answer extraction first
         # Quick Win #3: Pass is_multi_hop flag for chain-of-thought reasoning

@@ -777,7 +777,7 @@ def create_recall_blueprint(
             MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f']-' if rel_pattern else '-[r]-'}(related:Memory)
             WHERE m.id <> related.id
             CALL apoc.path.expandConfig(related, {{
-                relationshipFilter: '{'|'.join(rel_types)}',
+                relationshipFilter: '{"|".join(rel_types)}',
                 minLevel: 0,
                 maxLevel: $max_depth,
                 bfs: true,
