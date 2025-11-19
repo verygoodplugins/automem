@@ -57,6 +57,19 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
 
 
 def _split_multi_value(raw: Any) -> List[str]:
+    """
+    Normalize various input forms into a flat list of non-empty, trimmed string values.
+    
+    Parameters:
+        raw (Any): A value containing zero or more string entries. Accepted forms:
+            - None -> treated as empty.
+            - str -> single entry (may contain commas to denote multiple values).
+            - list/tuple/set -> each item is converted to string; None items are ignored.
+            Other types are treated as empty.
+    
+    Returns:
+        List[str]: A flattened list of trimmed, non-empty string parts. Comma-separated items within strings are split into individual entries.
+    """
     if raw is None:
         return []
     if isinstance(raw, str):
@@ -79,6 +92,15 @@ def _split_multi_value(raw: Any) -> List[str]:
 
 
 def _tokenize_lower(text: str) -> Set[str]:
+    """
+    Split the input text into a set of unique, lowercase tokens composed of letters, digits, underscores, hyphens, plus signs, hash signs, and periods.
+    
+    Parameters:
+        text (str): Input string to tokenize. Empty or falsy values produce an empty set.
+    
+    Returns:
+        Set[str]: Unique lowercase tokens extracted from the input.
+    """
     if not text:
         return set()
     return {token for token in re.findall(r"[a-z0-9_\-\+#\.]+", text.lower()) if token}
@@ -90,6 +112,20 @@ def _detect_language_hint(
     query_text: str,
     active_path: str,
 ) -> Optional[str]:
+    """
+    Infer a canonical language key from an explicit hint, context label, query text, or file path.
+    
+    Checks provided inputs (in precedence: explicit language, context label, file extension, then tokens from the query text) against known language aliases and extension mappings to determine a canonical language key.
+    
+    Parameters:
+        explicit_language (Optional[str]): User-supplied language hint (e.g., "py", "python").
+        context_label (str): A contextual label or tag that may indicate language (e.g., editor or file context).
+        query_text (str): Freeform query or code snippet used to derive language tokens.
+        active_path (str): File path or name from which a file extension may be extracted.
+    
+    Returns:
+        Optional[str]: The canonical language key when a match is found (for example, "python"); `None` if no language could be inferred.
+    """
     def _normalize_candidate(candidate: Optional[str]) -> Optional[str]:
         if not candidate:
             return None
@@ -132,6 +168,28 @@ def _build_context_profile(
     context_label: str,
     query_text: str,
 ) -> Optional[Dict[str, Any]]:
+    """
+    Builds a context profile containing priority tags, types, ids, and keywords used to bias recall results.
+    
+    Parameters:
+    	manual_tags (List[str]): User-supplied tags to prioritize; normalized to lowercase.
+    	manual_types (List[str]): User-supplied memory types to prioritize; normalized to title case.
+    	manual_ids (List[str]): Specific memory IDs to prioritize; trimmed of whitespace.
+    	language_hint (Optional[str]): Canonical language hint (e.g., "python") that will add language-related tags/keywords and enable style focus when present.
+    	context_label (str): Contextual label or filename/path hint used to derive additional priority tags.
+    	query_text (str): User query text used to detect style-related keywords.
+    
+    Returns:
+    	dict | None: A context profile dictionary when any priority values were derived, otherwise `None`. The dictionary contains:
+    	- "priority_tags" (Set[str]): Normalized tags to prioritize.
+    	- "priority_types" (Set[str]): Normalized types to prioritize.
+    	- "priority_ids" (Set[str]): Specific memory IDs to prioritize.
+    	- "priority_keywords" (Set[str]): Keywords extracted for prioritization (may include language hint).
+    	- "weights" (Dict[str, float]): Per-dimension weights used when scoring (keys: "tag", "type", "keyword", "anchor").
+    	- "language" (Optional[str]): The provided language_hint.
+    	- "context_label" (str): The original context_label.
+    	- "require_injection" (bool): `True` when style-focused or manual tags are present, indicating priority memories should be injected.
+    """
     priority_tags: Set[str] = {tag.strip().lower() for tag in manual_tags if tag and tag.strip()}
     priority_types: Set[str] = {typ.strip().title() for typ in manual_types if typ and typ.strip()}
     priority_ids: Set[str] = {value.strip() for value in manual_ids if value and value.strip()}
@@ -184,6 +242,19 @@ def _build_context_profile(
 
 
 def _result_matches_context_priority(result: Dict[str, Any], profile: Dict[str, Any]) -> bool:
+    """
+    Determine whether a recall result satisfies any priority criteria from a context profile.
+    
+    Parameters:
+        result (dict): A recall result object; expected to include an "id" field and/or a "memory" mapping that may contain "id", "tags" (iterable of strings), and "type".
+        profile (dict): Context profile containing priority sets:
+            - "priority_ids" (set[str]): memory IDs that should match exactly.
+            - "priority_tags" (set[str]): tag tokens to match against memory tags (matching is case-insensitive after trimming).
+            - "priority_types" (set[str]): canonical memory types to match (compared after title-casing the memory's type).
+    
+    Returns:
+        bool: `true` if the result matches by ID, tag (equal, prefix, or substring), or type; `false` otherwise.
+    """
     memory = result.get("memory", {}) or {}
     priority_ids: Set[str] = profile.get("priority_ids", set())
     priority_tags: Set[str] = profile.get("priority_tags", set())
@@ -226,6 +297,26 @@ def _inject_priority_memories(
     tag_match: str,
     limit: int,
 ) -> bool:
+    """
+    Attempt to augment `results` with high-priority memories from the graph or vector store based on `context_profile`.
+    
+    Parameters:
+        results (List[Dict[str, Any]]): Mutable list of result dicts; matching priority memories will be appended in-place.
+        graph (Any): Graph database connection or client used by `graph_keyword_search`; may be None.
+        qdrant_client (Any): Vector store client used by `vector_filter_only_tag_search`; may be None.
+        graph_keyword_search (Callable[..., List[Dict[str, Any]]]): Function to search the graph for memories by tag filters.
+        vector_filter_only_tag_search (Callable[..., List[Dict[str, Any]]]): Function to search the vector store using tag filters only.
+        context_profile (Dict[str, Any]): Context profile containing `priority_tags` (set of tags to prioritize) and other context metadata.
+        seen_ids (Set[str]): Set of memory IDs to exclude from injected results.
+        start_time (Optional[str]): Optional start time filter for temporal queries; passed through to search functions.
+        end_time (Optional[str]): Optional end time filter for temporal queries; passed through to search functions.
+        tag_mode (str): Tag matching mode (e.g., "any" or "all"); forwarded to search calls.
+        tag_match (str): Tag match strategy (e.g., "prefix" or "exact"); forwarded to search calls.
+        limit (int): Maximum number of results requested by the caller; used to bound the number of injected items.
+    
+    Returns:
+        bool: `true` if any priority memories were injected into `results`, `false` otherwise.
+    """
     priority_tags: Set[str] = context_profile.get("priority_tags") or set()
     if not priority_tags:
         return False
@@ -266,6 +357,17 @@ def _inject_priority_memories(
 
 
 def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
+    """
+    Check whether any result in `results` satisfies the context priority criteria contained in `profile`.
+    
+    Parameters:
+        results (List[Dict[str, Any]]): List of recall result objects (each representing a memory) to evaluate.
+        profile (Dict[str, Any]): Context priority profile produced by _build_context_profile, containing keys like
+            `priority_tags`, `priority_types`, and `priority_ids` used to determine matches.
+    
+    Returns:
+        `true` if at least one result matches the profile's priority criteria, `false` otherwise.
+    """
     for result in results:
         if _result_matches_context_priority(result, profile):
             return True
@@ -287,6 +389,37 @@ def handle_recall(
     recall_max_limit: int,
     logger: Any,
 ):
+    """
+    Handle an incoming HTTP recall request: parse query parameters, perform vector and/or graph searches, apply context-aware priority injection and scoring, filter and sort results, and return a JSON payload with matched memories and metadata.
+    
+    Parameters:
+        recall_max_limit (int): Maximum allowed number of results to return; incoming `limit` is clamped to this value.
+        logger: Logger used to emit a "recall_complete" info event with query and telemetry details.
+    
+    Behavior:
+        - Reads request query parameters (query, limit, embedding, time/time_query/start/end, tags, tag_mode, tag_match,
+          context, active_path/file_path/focus_path, language/lang, context_tags, context_types, priority_ids).
+        - Resolves time windows via parse_time_expression and normalize_timestamp; aborts with HTTP 400 if provided start or end timestamps are invalid.
+        - Performs vector and/or graph searches (subject to available clients) and may perform a tag-only vector lookup when no query text is provided.
+        - Builds an optional context profile from explicit inputs and inferred language/context, and may inject priority memories when no results match the profile.
+        - Computes metadata-aware final scores for each result using compute_metadata_score (context profile is passed through), filters and sorts results, and truncates to the effective limit.
+        - Logs a completion event and returns a JSON response.
+    
+    Returns:
+        Flask JSON response containing:
+          - status: "success"
+          - query: original query string
+          - results: list of result objects (each augmented with `final_score`, `original_score`, and `score_components`)
+          - count: number of returned results
+          - vector_search: { enabled: bool, matched: bool }
+          - keywords: list of extracted query keywords (present when a query was supplied)
+          - time_window: { start, end } (when time filters applied)
+          - tags: list of tag filters (when provided)
+          - tag_mode: "any" or "all"
+          - tag_match: "prefix" or "exact"
+          - query_time_ms: elapsed handling time in milliseconds
+          - context_priority: (when a context profile exists) { language, context, priority_tags, priority_types, injected }
+    """
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
     try:
@@ -522,6 +655,37 @@ def create_recall_blueprint(
     serialize_node: Callable[[Any], Dict[str, Any]] | None = None,
     summarize_relation_node: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
 ) -> Blueprint:
+    """
+    Create and return a Flask Blueprint providing recall-related HTTP endpoints.
+    
+    The returned blueprint mounts routes for:
+    - GET /recall: handles memory recall requests (parses query parameters, performs vector/graph searches, scores and returns memories).
+    - GET /startup-recall: returns a small set of critical lessons and system rules from the graph for startup use.
+    - GET /analyze: returns aggregated analytics about stored memories (types, patterns, preferences, temporal insights, entity frequency, confidence distribution).
+    - GET /memories/<memory_id>/related: returns related memories traversing allowed relationship types up to a configurable depth.
+    
+    Parameters:
+        get_memory_graph: Callable that returns the graph/database client or None when unavailable.
+        get_qdrant_client: Callable that returns the vector store client or None when unavailable.
+        normalize_tag_list: Callable to normalize/expand incoming tag filter values to List[str].
+        normalize_timestamp: Callable to normalize timestamp strings into a canonical string.
+        parse_time_expression: Callable to parse time range expressions, returning (start, end) strings or (None, None).
+        extract_keywords: Callable that extracts keyword tokens from a query string.
+        compute_metadata_score: Callable to compute a metadata score for a result; accepts (result, query_text, query_tokens, context_profile) and returns (score, components).
+        result_passes_filters: Callable to determine whether a result satisfies time/tag filters.
+        graph_keyword_search: Callable to run graph keyword queries and return a list of result dicts.
+        vector_search: Callable to run vector similarity searches and return a list of result dicts.
+        vector_filter_only_tag_search: Callable to run vector searches constrained only by tags.
+        recall_max_limit: Maximum number of recall results to return (int).
+        logger: Logger-like object used for error and event logging.
+        allowed_relations: Collection of relationship types allowed for related-memory traversal; if empty, no restriction is enforced.
+        relation_limit: Default maximum number of related memories to return for the related endpoint (int).
+        serialize_node: Optional callable to convert a graph node to a serializable dict; if None, nodes are returned as-is under "value".
+        summarize_relation_node: Optional callable that converts a serialized relation node into a summarized representation for responses.
+    
+    Returns:
+        Blueprint: A Flask Blueprint with configured recall, startup-recall, analyze, and related-memories routes.
+    """
     bp = Blueprint("recall", __name__)
 
     @bp.route("/recall", methods=["GET"])

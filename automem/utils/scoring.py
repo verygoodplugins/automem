@@ -55,6 +55,15 @@ def _collect_metadata_terms(metadata: Dict[str, Any]) -> Set[str]:
 
 
 def _compute_recency_score(timestamp: Optional[str]) -> float:
+    """
+    Compute a recency score for an ISO-8601 timestamp with a linear decay over 180 days.
+    
+    Parameters:
+        timestamp (Optional[str]): ISO-8601 timestamp string representing the item's time; if falsy or unparsable, treated as absent.
+    
+    Returns:
+        float: A score between 0.0 and 1.0 where 1.0 means the timestamp is now or in the future, values linearly decline to 0.0 at 180 days of age, and 0.0 is returned for missing or unparsable timestamps.
+    """
     if not timestamp:
         return 0.0
     parsed = _parse_iso_datetime(timestamp)
@@ -70,6 +79,16 @@ def _compute_recency_score(timestamp: Optional[str]) -> float:
 
 
 def _context_tag_hit(tags: Set[str], priority_tags: Set[str]) -> bool:
+    """
+    Determine if any tag equals or relates to a priority tag.
+    
+    Parameters:
+        tags (Set[str]): Candidate tag strings to check.
+        priority_tags (Set[str]): Priority tag strings to match against.
+    
+    Returns:
+        `true` if any tag equals a priority, starts with a priority, or contains a priority substring, `false` otherwise.
+    """
     if not tags or not priority_tags:
         return False
     for tag in tags:
@@ -86,6 +105,25 @@ def _compute_context_bonus(
     metadata_terms: Set[str],
     context_profile: Optional[Dict[str, Any]],
 ) -> float:
+    """
+    Compute an additive context-based bonus score for a search result based on a provided context profile.
+    
+    Parameters:
+        result (Dict[str, Any]): The search result object; used to obtain an identifier fallback when checking anchored IDs.
+        memory (Dict[str, Any]): The stored memory record associated with the result; used for type and other metadata fields.
+        tag_terms (Set[str]): Lowercased tag terms extracted from the memory.
+        metadata_terms (Set[str]): Lowercased terms extracted from the memory's metadata.
+        context_profile (Optional[Dict[str, Any]]): Profile that may include:
+            - "weights": dict of contribution weights for "tag", "type", "keyword", "anchor".
+            - "priority_tags": set of tags to prioritize.
+            - "priority_types": set of memory types to prioritize.
+            - "priority_ids": set of memory IDs to anchor to.
+            - "priority_keywords": set of metadata keywords to prioritize.
+            If None or empty, no bonus is applied.
+    
+    Returns:
+        float: The accumulated context bonus (>= 0.0) computed by summing applicable weighted contributions.
+    """
     if not context_profile:
         return 0.0
 
@@ -122,6 +160,18 @@ def _compute_metadata_score(
     tokens: List[str],
     context_profile: Optional[Dict[str, Any]] = None,
 ) -> Tuple[float, Dict[str, float]]:
+    """
+    Compute a composite metadata score for a search result and provide a per-component breakdown.
+    
+    Parameters:
+        result (Dict[str, Any]): Search result containing fields like `match_type`, `match_score`, and an optional `memory` dict with `metadata`, `tags`, `importance`, `confidence`, `timestamp`, and `id`.
+        query (str): Original query string used for exact-match checks against metadata terms.
+        tokens (List[str]): Tokenized query terms used to measure tag/metadata token hits.
+        context_profile (Optional[Dict[str, Any]]): Optional profile that can contribute a context-based bonus. Expected keys (optional) include `weights` (mapping of component names to weight floats), `priority_tags` (set of tags), `priority_types` (sequence of memory types), `priority_ids` (sequence of memory ids), and `priority_keywords` (set of keywords).
+    
+    Returns:
+        Tuple[float, Dict[str, float]]: A tuple where the first element is the final aggregated score and the second element is a dictionary of individual component scores with keys: `"vector"`, `"keyword"`, `"tag"`, `"importance"`, `"confidence"`, `"recency"`, `"exact"`, and `"context"`.
+    """
     memory = result.get("memory", {})
     metadata = _parse_metadata_field(memory.get("metadata")) if memory else {}
     metadata_terms = _collect_metadata_terms(metadata) if isinstance(metadata, dict) else set()
@@ -177,4 +227,3 @@ def _compute_metadata_score(
     }
 
     return final, components
-
