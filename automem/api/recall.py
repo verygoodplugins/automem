@@ -7,6 +7,9 @@ import json
 import time
 import re
 
+from automem.config import ALLOWED_RELATIONS, RECALL_RELATION_LIMIT, RECALL_EXPANSION_LIMIT
+from automem.utils.graph import _serialize_node
+
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
     "coding-style",
     "style",
@@ -76,6 +79,19 @@ def _split_multi_value(raw: Any) -> List[str]:
         else:
             normalized.append(text)
     return normalized
+
+
+def _parse_bool_param(raw: Any, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
 
 
 def _tokenize_lower(text: str) -> Set[str]:
@@ -272,6 +288,131 @@ def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any
     return False
 
 
+def _expand_related_memories(
+    graph: Any,
+    seed_results: List[Dict[str, Any]],
+    seen_ids: Set[str],
+    result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
+    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
+    query_text: str,
+    query_tokens: List[str],
+    context_profile: Optional[Dict[str, Any]],
+    start_time: Optional[str],
+    end_time: Optional[str],
+    tag_filters: Optional[List[str]],
+    tag_mode: str,
+    tag_match: str,
+    per_seed_limit: int,
+    expansion_limit: int,
+    allowed_relations: Set[str],
+    logger: Any,
+    seed_score_boost: float = 0.25,
+) -> List[Dict[str, Any]]:
+    if graph is None or not seed_results or expansion_limit <= 0:
+        return []
+
+    relation_types = sorted({rel.upper() for rel in allowed_relations}) if allowed_relations else []
+    per_seed_limit = max(1, per_seed_limit)
+    expansion_limit = max(1, expansion_limit)
+
+    expansions: Dict[str, Dict[str, Any]] = {}
+    total_added = 0
+
+    for seed_rank, seed in enumerate(seed_results):
+        if total_added >= expansion_limit:
+            break
+
+        memory = seed.get("memory") or {}
+        seed_id = str(seed.get("id") or memory.get("id") or memory.get("memory_id") or "").strip()
+        if not seed_id:
+            continue
+
+        seed_score = float(seed.get("final_score", seed.get("score", 0.0)) or 0.0)
+
+        try:
+            rel_filter = " AND type(r) IN $types" if relation_types else ""
+            query = f"""
+                MATCH (m:Memory {{id: $id}})-[r]-(related:Memory)
+                WHERE m.id <> related.id{rel_filter}
+                RETURN type(r) as relation_type, r.strength as strength, related
+                ORDER BY coalesce(r.updated_at, related.timestamp) DESC
+                LIMIT $limit
+            """
+            params: Dict[str, Any] = {"id": seed_id, "limit": per_seed_limit}
+            if relation_types:
+                params["types"] = relation_types
+            records = graph.query(query, params)
+        except Exception:
+            logger.exception("Failed to expand relations for seed %s", seed_id)
+            continue
+
+        for relation_type, relation_strength, related in getattr(records, "result_set", []) or []:
+            if total_added >= expansion_limit:
+                break
+
+            data = _serialize_node(related)
+            related_id = str(data.get("id") or "")
+            if not related_id or related_id in seen_ids:
+                continue
+
+            candidate = {"id": related_id, "memory": data}
+            if not result_passes_filters(candidate, start_time, end_time, tag_filters, tag_mode, tag_match):
+                continue
+
+            relation_strength_val = 0.0
+            try:
+                relation_strength_val = float(relation_strength) if relation_strength is not None else 0.0
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                relation_strength_val = 0.0
+
+            relation_score = relation_strength_val + max(seed_score, 0.0) * seed_score_boost
+
+            edge_info = {
+                "type": relation_type,
+                "strength": relation_strength_val,
+                "from": seed_id,
+                "seed_rank": seed_rank,
+                "seed_score": seed_score,
+            }
+
+            if related_id in expansions:
+                existing = expansions[related_id]
+                existing["relation_score"] = max(existing.get("relation_score", 0.0), relation_score)
+                existing.setdefault("relations", []).append(edge_info)
+                existing.setdefault("related_to", []).append(edge_info)
+            else:
+                record: Dict[str, Any] = {
+                    "id": related_id,
+                    "match_type": "relation",
+                    "source": "graph",
+                    "memory": data,
+                    "relations": [edge_info],
+                    "related_to": [edge_info],
+                    "relation_score": relation_score,
+                    "match_score": relation_score,
+                }
+                expansions[related_id] = record
+                seen_ids.add(related_id)
+                total_added += 1
+
+    expanded_list = list(expansions.values())
+
+    for result in expanded_list:
+        final_score, components = compute_metadata_score(
+            result,
+            query_text or "",
+            query_tokens,
+            context_profile,
+        )
+        components["relation"] = result.get("relation_score", 0.0)
+        result.setdefault("score_components", {}).update(components)
+        result["final_score"] = final_score
+        result["score"] = final_score
+
+    expanded_list.sort(key=lambda r: -float(r.get("final_score", 0.0)))
+    return expanded_list
+
+
 def handle_recall(
     get_memory_graph: Callable[[], Any],
     get_qdrant_client: Callable[[], Any],
@@ -286,6 +427,9 @@ def handle_recall(
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
     recall_max_limit: int,
     logger: Any,
+    allowed_relations: Optional[Set[str]] = None,
+    relation_limit: Optional[int] = None,
+    expansion_limit_default: Optional[int] = None,
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -325,6 +469,30 @@ def handle_recall(
             abort(400, description=f"Invalid end time: {exc}")
 
     tag_filters = normalize_tag_list(tags_param)
+
+    allowed_rel_set: Set[str] = set(allowed_relations) if allowed_relations else set(ALLOWED_RELATIONS)
+    relation_limit = relation_limit or RECALL_RELATION_LIMIT
+    expansion_limit = expansion_limit_default or RECALL_EXPANSION_LIMIT
+
+    expand_relations = _parse_bool_param(
+        request.args.get("expand_relations")
+        or request.args.get("expand_associations")
+        or request.args.get("expand"),
+        False,
+    )
+
+    try:
+        relation_limit = max(1, min(int(request.args.get("relation_limit", relation_limit)), 200))
+    except (TypeError, ValueError):
+        relation_limit = max(1, relation_limit)
+
+    try:
+        expansion_limit_param = request.args.get("expansion_limit") or request.args.get("relation_expansion_limit")
+        if expansion_limit_param is not None:
+            expansion_limit = int(expansion_limit_param)
+        expansion_limit = max(1, min(expansion_limit, 500))
+    except (TypeError, ValueError):
+        expansion_limit = max(1, expansion_limit)
 
     context_label = (request.args.get("context") or "").strip().lower()
     active_path = (
@@ -458,6 +626,31 @@ def handle_recall(
     if len(results) > limit:
         results = results[:limit]
 
+    seed_results = list(results)
+    expansion_results: List[Dict[str, Any]] = []
+
+    if expand_relations and graph is not None:
+        expansion_results = _expand_related_memories(
+            graph=graph,
+            seed_results=seed_results,
+            seen_ids=seen_ids,
+            result_passes_filters=result_passes_filters,
+            compute_metadata_score=compute_metadata_score,
+            query_text=query_text,
+            query_tokens=query_tokens,
+            context_profile=context_profile,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_filters,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            per_seed_limit=relation_limit,
+            expansion_limit=expansion_limit,
+            allowed_relations=allowed_rel_set,
+            logger=logger,
+        )
+        results = seed_results + expansion_results
+
     response = {
         "status": "success",
         "query": query_text,
@@ -468,6 +661,14 @@ def handle_recall(
             "matched": bool(vector_matches),
         },
     }
+    if expand_relations:
+        response["expansion"] = {
+            "enabled": True,
+            "seed_count": len(seed_results),
+            "expanded_count": len(expansion_results),
+            "relation_limit": relation_limit,
+            "expansion_limit": expansion_limit,
+        }
     if query_text:
         response["keywords"] = query_tokens
     if start_time or end_time:
@@ -540,6 +741,9 @@ def create_recall_blueprint(
             vector_filter_only_tag_search,
             recall_max_limit,
             logger,
+            allowed_relations=allowed_relations if allowed_relations else set(ALLOWED_RELATIONS),
+            relation_limit=relation_limit,
+            expansion_limit_default=RECALL_EXPANSION_LIMIT,
         )
 
     @bp.route("/startup-recall", methods=["GET"])
