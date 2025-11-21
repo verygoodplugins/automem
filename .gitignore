@@ -18,3 +18,4 @@ backups/
 tests/benchmarks/locomo/
 .DS_Store
 /automem/.venv
+/.venv

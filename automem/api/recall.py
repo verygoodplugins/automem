@@ -59,6 +59,75 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
 }
 
 
+def _fingerprint_content(content: str) -> Optional[str]:
+    """Lightweight content fingerprint for deduping near-identical memories."""
+    if not content:
+        return None
+    cleaned = (
+        re.sub(r"[`*_#>~\-]", " ", str(content).lower())
+        .encode("ascii", "ignore")
+        .decode("ascii", "ignore")
+    )
+    cleaned = re.sub(r"[^\w\s]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None
+    return cleaned[:320]
+
+
+def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+    """Dedupe by memory ID or content fingerprint, keeping highest-score/newest."""
+    buckets: Dict[str, Dict[str, Any]] = {}
+    removed = 0
+
+    def _mem_id(res: Dict[str, Any]) -> Optional[str]:
+        mem = res.get("memory") or {}
+        for key in ("id", "memory_id", "uuid"):
+            if mem.get(key):
+                return str(mem[key])
+        if res.get("id"):
+            return str(res["id"])
+        return None
+
+    for res in results:
+        mem = res.get("memory") or {}
+        mid = _mem_id(res)
+        fp = _fingerprint_content(mem.get("content") or "")
+        key = f"id:{mid}" if mid else (f"fp:{fp}" if fp else None)
+        if key is None:
+            buckets[f"raw:{len(buckets)}"] = {"item": res, "sources": []}
+            continue
+
+        existing_key = key if key in buckets else (f"fp:{fp}" if fp and f"fp:{fp}" in buckets else None)
+        if existing_key:
+            existing = buckets[existing_key]["item"]
+            removed += 1
+
+            def _score(item: Dict[str, Any]) -> float:
+                return float(item.get("final_score") or item.get("score") or 0.0)
+
+            def _ts(item: Dict[str, Any]) -> str:
+                return str((item.get("memory") or {}).get("timestamp") or "")
+
+            choose_new = _score(res) > _score(existing) or (
+                _score(res) == _score(existing) and _ts(res) > _ts(existing)
+            )
+            if choose_new:
+                buckets[existing_key]["item"] = res
+            buckets[existing_key]["sources"].append(mid or fp or "unknown")
+        else:
+            buckets[key] = {"item": res, "sources": [mid or fp or "unknown"]}
+
+    deduped: List[Dict[str, Any]] = []
+    for entry in buckets.values():
+        item = entry["item"]
+        if len(entry["sources"]) > 1:
+            item["deduped_from"] = sorted(set(entry["sources"]))
+        deduped.append(item)
+
+    return deduped, removed
+
+
 def _split_multi_value(raw: Any) -> List[str]:
     if raw is None:
         return []
@@ -433,6 +502,9 @@ def handle_recall(
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
+    multi_queries = _split_multi_value(
+        request.args.getlist("queries") or request.args.get("queries")
+    )
     try:
         requested_limit = int(request.args.get("limit", 5))
     except (TypeError, ValueError):
@@ -514,108 +586,159 @@ def handle_recall(
     )
 
     context_tags = normalize_tag_list(context_tags_input)
-    language_hint = _detect_language_hint(language_hint_param, context_label, query_text, active_path)
-    context_profile = _build_context_profile(
-        manual_tags=context_tags,
-        manual_types=context_types_input,
-        manual_ids=priority_ids_input,
-        language_hint=language_hint,
-        context_label=context_label,
-        query_text=query_text or "",
-    )
-
-    seen_ids: set[str] = set()
     graph = get_memory_graph()
     qdrant_client = get_qdrant_client()
 
-    results: List[Dict[str, Any]] = []
-    vector_matches: List[Dict[str, Any]] = []
-    if qdrant_client is not None:
-        vector_matches = vector_search(
-            qdrant_client,
-            graph,
-            query_text,
-            embedding_param,
-            limit,
-            seen_ids,
-            tag_filters,
-            tag_mode,
-            tag_match,
+    def _run_single_query(query_str: str, per_query_limit: int) -> Tuple[List[Dict[str, Any]], bool, Optional[Dict[str, Any]], int]:
+        """Run recall for one query string; returns (results, context_injected, context_profile, vector_match_count)."""
+        local_seen: set[str] = set()
+        language_hint = _detect_language_hint(language_hint_param, context_label, query_str, active_path)
+        context_profile = _build_context_profile(
+            manual_tags=context_tags,
+            manual_types=context_types_input,
+            manual_ids=priority_ids_input,
+            language_hint=language_hint,
+            context_label=context_label,
+            query_text=query_str or "",
         )
-        if start_time or end_time or tag_filters:
-            vector_matches = [
-                res
-                for res in vector_matches
-                if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
-            ]
-    results.extend(vector_matches[:limit])
 
-    remaining_slots = max(0, limit - len(results))
-    if remaining_slots and graph is not None:
-        graph_matches = graph_keyword_search(
-            graph,
-            query_text,
-            remaining_slots,
-            seen_ids,
-            start_time=start_time,
-            end_time=end_time,
-            tag_filters=tag_filters,
-            tag_mode=tag_mode,
-            tag_match=tag_match,
-        )
-        results.extend(graph_matches[:remaining_slots])
+        local_results: List[Dict[str, Any]] = []
+        vector_matches: List[Dict[str, Any]] = []
 
-    tags_only_request = (not query_text and not (embedding_param and embedding_param.strip()) and bool(tag_filters))
-    if tags_only_request and qdrant_client is not None and len(results) < limit:
-        tag_only_results = vector_filter_only_tag_search(
-            qdrant_client,
-            tag_filters,
-            tag_mode,
-            tag_match,
-            limit - len(results),
-            seen_ids,
-        )
-        results.extend(tag_only_results)
-
-    context_injected = False
-    if context_profile:
-        if not _results_have_priority(results, context_profile):
-            context_injected = _inject_priority_memories(
-                results,
-                graph,
+        if qdrant_client is not None:
+            vector_matches = vector_search(
                 qdrant_client,
-                graph_keyword_search,
-                vector_filter_only_tag_search,
-                context_profile,
-                seen_ids,
-                start_time,
-                end_time,
+                graph,
+                query_str,
+                embedding_param,
+                per_query_limit,
+                local_seen,
+                tag_filters,
                 tag_mode,
                 tag_match,
-                limit,
             )
+            if start_time or end_time or tag_filters:
+                vector_matches = [
+                    res
+                    for res in vector_matches
+                    if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
+                ]
+        local_results.extend(vector_matches[:per_query_limit])
 
-    query_tokens = extract_keywords(query_text.lower()) if query_text else []
-    for result in results:
-        final_score, components = compute_metadata_score(
-            result,
-            query_text or "",
-            query_tokens,
-            context_profile,
+        remaining_slots = max(0, per_query_limit - len(local_results))
+        if remaining_slots and graph is not None:
+            graph_matches = graph_keyword_search(
+                graph,
+                query_str,
+                remaining_slots,
+                local_seen,
+                start_time=start_time,
+                end_time=end_time,
+                tag_filters=tag_filters,
+                tag_mode=tag_mode,
+                tag_match=tag_match,
+            )
+            local_results.extend(graph_matches[:remaining_slots])
+
+        tags_only_request = (
+            not query_str
+            and not (embedding_param and embedding_param.strip())
+            and bool(tag_filters)
         )
-        result.setdefault("score_components", components)
-        result["score_components"].update(components)
-        result["final_score"] = final_score
-        result["original_score"] = result.get("score", 0.0)
-        result["score"] = final_score
+        if tags_only_request and qdrant_client is not None and len(local_results) < per_query_limit:
+            tag_only_results = vector_filter_only_tag_search(
+                qdrant_client,
+                tag_filters,
+                tag_mode,
+                tag_match,
+                per_query_limit - len(local_results),
+                local_seen,
+            )
+            local_results.extend(tag_only_results)
 
-    results = [
-        res
-        for res in results
-        if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
-    ]
+        context_injected = False
+        if context_profile:
+            if not _results_have_priority(local_results, context_profile):
+                context_injected = _inject_priority_memories(
+                    local_results,
+                    graph,
+                    qdrant_client,
+                    graph_keyword_search,
+                    vector_filter_only_tag_search,
+                    context_profile,
+                    local_seen,
+                    start_time,
+                    end_time,
+                    tag_mode,
+                    tag_match,
+                    per_query_limit,
+                )
 
-    results.sort(
+        query_tokens = extract_keywords(query_str.lower()) if query_str else []
+        for result in local_results:
+            final_score, components = compute_metadata_score(
+                result,
+                query_str or "",
+                query_tokens,
+                context_profile,
+            )
+            result.setdefault("score_components", components)
+            result["score_components"].update(components)
+            result["final_score"] = final_score
+            result["original_score"] = result.get("score", 0.0)
+            result["score"] = final_score
+
+        local_results = [
+            res
+            for res in local_results
+            if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
+        ]
+
+        local_results.sort(
+            key=lambda r: (
+                -float(r.get("final_score", 0.0)),
+                r.get("source") != "qdrant",
+                -float(r.get("original_score", 0.0)),
+                -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
+            )
+        )
+        if len(local_results) > per_query_limit:
+            local_results = local_results[:per_query_limit]
+
+        # Track originating query for debugging/clients
+        for res in local_results:
+            res["_query"] = query_str
+
+        return local_results, context_injected, context_profile, len(vector_matches)
+
+    is_multi = bool(multi_queries)
+    queries_to_run: List[str] = [q for q in multi_queries if q]
+    if not queries_to_run and query_text:
+        queries_to_run = [query_text]
+    if not queries_to_run:
+        queries_to_run = [query_text] if query_text else [""]
+
+    per_query_limit = limit
+    try:
+        per_query_limit = max(1, min(int(request.args.get("per_query_limit", per_query_limit)), recall_max_limit))
+    except (TypeError, ValueError):
+        per_query_limit = limit
+
+    aggregated_results: List[Dict[str, Any]] = []
+    any_context_profile: Optional[Dict[str, Any]] = None
+    any_context_injected = False
+    total_vector_matches = 0
+
+    for idx, q in enumerate(queries_to_run):
+        single_results, injected, context_profile, vector_count = _run_single_query(q, per_query_limit)
+        aggregated_results.extend(single_results)
+        total_vector_matches += vector_count
+        if any_context_profile is None:
+            any_context_profile = context_profile
+        any_context_injected = any_context_injected or injected
+
+    deduped_results, dedup_removed = _dedupe_results(aggregated_results)
+    deduped_results.sort(
         key=lambda r: (
             -float(r.get("final_score", 0.0)),
             r.get("source") != "qdrant",
@@ -623,13 +746,18 @@ def handle_recall(
             -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
         )
     )
-    if len(results) > limit:
-        results = results[:limit]
+    if len(deduped_results) > limit:
+        deduped_results = deduped_results[:limit]
 
-    seed_results = list(results)
+    # Graph expansion feature (from upstream branch)
+    seed_results = list(deduped_results)
     expansion_results: List[Dict[str, Any]] = []
+    results = deduped_results
 
     if expand_relations and graph is not None:
+        seen_ids = {str(r.get("id") or (r.get("memory") or {}).get("id") or "") for r in seed_results if r.get("id") or (r.get("memory") or {}).get("id")}
+        query_tokens = extract_keywords(query_text.lower()) if query_text else []
+        
         expansion_results = _expand_related_memories(
             graph=graph,
             seed_results=seed_results,
@@ -638,7 +766,7 @@ def handle_recall(
             compute_metadata_score=compute_metadata_score,
             query_text=query_text,
             query_tokens=query_tokens,
-            context_profile=context_profile,
+            context_profile=any_context_profile,
             start_time=start_time,
             end_time=end_time,
             tag_filters=tag_filters,
@@ -656,9 +784,10 @@ def handle_recall(
         "query": query_text,
         "results": results,
         "count": len(results),
+        "dedup_removed": dedup_removed,
         "vector_search": {
             "enabled": qdrant_client is not None,
-            "matched": bool(vector_matches),
+            "matched": bool(total_vector_matches),
         },
     }
     if expand_relations:
@@ -669,8 +798,10 @@ def handle_recall(
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
         }
-    if query_text:
-        response["keywords"] = query_tokens
+    if is_multi:
+        response["queries"] = queries_to_run
+    if query_text and not is_multi:
+        response["keywords"] = extract_keywords(query_text.lower()) if query_text else []
     if start_time or end_time:
         response["time_window"] = {"start": start_time, "end": end_time}
     if tag_filters:
@@ -678,27 +809,29 @@ def handle_recall(
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
-    if context_profile:
+    if any_context_profile:
         response["context_priority"] = {
-            "language": context_profile.get("language"),
-            "context": context_profile.get("context_label"),
-            "priority_tags": sorted(context_profile.get("priority_tags") or [])[:10],
-            "priority_types": sorted(context_profile.get("priority_types") or []),
-            "injected": context_injected,
+            "language": any_context_profile.get("language"),
+            "context": any_context_profile.get("context_label"),
+            "priority_tags": sorted(any_context_profile.get("priority_tags") or [])[:10],
+            "priority_types": sorted(any_context_profile.get("priority_types") or []),
+            "injected": any_context_injected,
         }
 
     logger.info(
         "recall_complete",
         extra={
             "query": query_text[:100] if query_text else "",
-            "results": len(results),
+            "results": len(deduped_results),
             "latency_ms": response["query_time_ms"],
             "vector_enabled": qdrant_client is not None,
-            "vector_matches": len(vector_matches),
+            "vector_matches": total_vector_matches,
             "has_time_filter": bool(start_time or end_time),
             "has_tag_filter": bool(tag_filters),
             "limit": limit,
-            "context_language": (context_profile or {}).get("language") if context_profile else None,
+            "dedup_removed": dedup_removed,
+            "is_multi": is_multi,
+            "context_language": (any_context_profile or {}).get("language") if any_context_profile else None,
         },
     )
     return jsonify(response)
