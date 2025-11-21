@@ -22,7 +22,6 @@ AI assistants forget everything between sessions. RAG systems retrieve context b
 ## What AutoMem Does
 
 AutoMem is a **graph-vector memory service** that gives AI assistants durable, relational memory:
-
 - 🧠 **Stores memories** with rich metadata, importance scores, and temporal context
 - 🔍 **Recalls with hybrid search** - vector similarity + keyword + tags + time
 - 🔗 **Builds knowledge graphs** - 11 relationship types between memories
@@ -142,7 +141,7 @@ AutoMem uses [dream-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC4648295/)
 - **Cluster (6hrs)**: Groups similar memories and creates meta-patterns
 - **Forget (Daily)**: Archives low-relevance memories, deletes very old unused ones
 
-Memories aren't deleted immediately - they're archived first (relevance 0.05-0.2), only removed if they drop below 0.05. Wrong rabbit holes fade naturally (~30-45 days without use). Important connected memories stay indefinitely.
+Memories aren't deleted immediately - they're archived first (relevance 0.05-0.2), only removed if they drop below 0.05. Wrong rabbit holes fade naturally (~30-45 days without use). Important connections survive longer.
 
 ### Background Intelligence
 
@@ -231,14 +230,12 @@ PORT=8001 python app.py
 curl -X POST http://localhost:8001/memory \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "content": "Chose PostgreSQL over MongoDB for ACID compliance",
+  -d '{\n    "content": "Chose PostgreSQL over MongoDB for ACID compliance",
     "type": "Decision",
     "confidence": 0.95,
     "tags": ["database", "architecture"],
     "importance": 0.9,
-    "metadata": {
-      "source": "architecture-meeting",
+    "metadata": {\n      "source": "architecture-meeting",
       "alternatives": ["MongoDB", "MySQL"],
       "deciding_factors": ["ACID", "team_expertise"]
     }
@@ -266,8 +263,7 @@ GET /recall?tags=slack&tag_match=prefix
 curl -X POST http://localhost:8001/associate \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "memory1_id": "uuid-postgres-decision",
+  -d '{\n    "memory1_id": "uuid-postgres-decision",
     "memory2_id": "uuid-mongodb-evaluation",
     "type": "PREFERS_OVER",
     "strength": 0.9
