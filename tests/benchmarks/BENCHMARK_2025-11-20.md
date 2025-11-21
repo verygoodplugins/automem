@@ -21,9 +21,7 @@ Multi-hop Reasoning    : 37.50% ( 36/ 96)
 Open Domain            : 96.31% (810/841)
 Complex Reasoning      : 100.0% (446/446)
 
-============================================================
-🏆 SOTA ACHIEVEMENT - AutoMem beats CORE
-============================================================
+# 🏆 SOTA ACHIEVEMENT - AutoMem beats CORE
 
 📊 Comparison with CORE (Previous SOTA):
 CORE:    88.24%
@@ -32,9 +30,7 @@ AutoMem: 90.38%
 
 **AutoMem is now State-of-the-Art (SOTA) for conversational memory systems.**
 
-============================================================
-🚀 Technical Innovations
-============================================================
+# 🚀 Technical Innovations
 
 ### Multi-Hop Bridge Discovery
 The breakthrough came from implementing **path-based memory expansion** that discovers "bridge" memories connecting multiple seed results:
@@ -93,9 +89,7 @@ score = vector×0.25 + keyword×0.15 + relation×0.25 + content×0.25
 - Limit: `bridge_limit=10` (default)
 - Multi-hop reasoning across conversation context
 
-============================================================
-📊 Performance Progression
-============================================================
+# 📊 Performance Progression
 
 | Date       | Version | Score  | vs CORE | Key Feature               |
 |------------|---------|--------|---------|---------------------------|
@@ -104,9 +98,7 @@ score = vector×0.25 + keyword×0.15 + relation×0.25 + content×0.25
 
 **14.3 percentage point improvement in 12 days.**
 
-============================================================
-🔧 Configuration Used
-============================================================
+# 🔧 Configuration Used
 
 ### New Environment Variables
 - `RECALL_BRIDGE_LIMIT=10` - Max bridge memories per query
@@ -125,9 +117,7 @@ score = vector×0.25 + keyword×0.15 + relation×0.25 + content×0.25
 - `SEARCH_WEIGHT_RECENCY=0.1` - Time-based boost
 - `SEARCH_WEIGHT_EXACT=0.15` - Exact phrase matching
 
-============================================================
-🎯 Category Analysis
-============================================================
+# 🎯 Category Analysis
 
 ### Strengths
 1. **Complex Reasoning (100%)**: Perfect score on multi-step reasoning
@@ -146,9 +136,7 @@ While bridge discovery significantly improved multi-hop performance, achieving h
 - Query decomposition for complex questions
 - Confidence calibration across hops
 
-============================================================
-📚 Benchmark Details
-============================================================
+# 📚 Benchmark Details
 
 **LoCoMo (Long-term Conversational Memory Benchmark)**
 - Source: Stanford research on conversational AI memory
@@ -167,18 +155,14 @@ Uses AutoMem's `/store` and `/recall` endpoints with:
 - `expand_relations=true` (neighbor expansion)
 - Default limits and weights (see Configuration above)
 
-============================================================
-🔗 Related Documentation
-============================================================
+# 🔗 Related Documentation
 
 - Full API documentation: `docs/API.md`
 - Configuration reference: `docs/ENVIRONMENT_VARIABLES.md`
 - Previous benchmark (Nov 8): `BENCHMARK_2025-11-08.md`
 - Testing guide: `docs/TESTING.md`
 
-============================================================
-🎉 Conclusion
-============================================================
+# 🎉 Conclusion
 
 **AutoMem achieves State-of-the-Art on LoCoMo benchmark**, beating the previous leader (CORE at 88.24%) by 2.14 percentage points.
 
