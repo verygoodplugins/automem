@@ -572,28 +572,46 @@ class MemoryConsolidator:
                 created = 0
                 for assoc in associations:
                     if not dry_run:
-                        create_query = """
-                            MATCH (m1:Memory {id: $id1})
-                            MATCH (m2:Memory {id: $id2})
-                            CREATE (m1)-[r:DISCOVERED {
-                                type: $type,
-                                confidence: $confidence,
-                                similarity: $similarity,
-                                discovered_at: $discovered_at
-                            }]->(m2)
+                        # Map discovery types to first-class relationship labels
+                        rel_type = str(assoc.get('type') or 'RELATES_TO').upper()
+                        if rel_type == 'CONTRASTS_WITH':
+                            rel_type = 'CONTRADICTS'
+                        allowed_labels = {
+                            'EXPLAINS', 'SHARES_THEME', 'PARALLEL_CONTEXT',
+                            'CONTRADICTS', 'RELATES_TO', 'SIMILAR_TO', 'PRECEDED_BY', 'DERIVED_FROM', 'PART_OF'
+                        }
+                        if rel_type not in allowed_labels:
+                            rel_type = 'RELATES_TO'
+
+                        # Build a typed MERGE with standard properties
+                        set_clauses = [
+                            "r.updated_at = $updated_at",
+                        ]
+                        params = {
+                            'id1': assoc['memory1_id'],
+                            'id2': assoc['memory2_id'],
+                            'updated_at': assoc.get('discovered_at'),
+                        }
+                        # Attach confidence/similarity when applicable
+                        if assoc.get('confidence') is not None:
+                            set_clauses.append("r.confidence = $confidence")
+                            params['confidence'] = float(assoc.get('confidence') or 0.0)
+                        if assoc.get('similarity') is not None:
+                            set_clauses.append("r.similarity = $similarity")
+                            params['similarity'] = float(assoc.get('similarity') or 0.0)
+
+                        query = f"""
+                            MATCH (m1:Memory {{id: $id1}})
+                            MATCH (m2:Memory {{id: $id2}})
+                            MERGE (m1)-[r:{rel_type}]->(m2)
+                            SET {', '.join(set_clauses)}
                         """
                         try:
-                            self.graph.query(create_query, {
-                                "id1": assoc['memory1_id'],
-                                "id2": assoc['memory2_id'],
-                                "type": assoc['type'],
-                                "confidence": assoc['confidence'],
-                                "similarity": assoc['similarity'],
-                                "discovered_at": assoc['discovered_at']
-                            })
+                            self.graph.query(query, params)
                             created += 1
-                        except:
-                            pass
+                        except Exception:
+                            # Log at debug level; non-fatal for consolidation run
+                            logger.debug("Failed to create %s edge between %s and %s", rel_type, params.get('id1'), params.get('id2'))
 
                 results['steps']['creative'] = {
                     'discovered': len(associations),

@@ -2425,6 +2425,9 @@ def recall_memories() -> Any:
         _vector_filter_only_tag_search,
         RECALL_MAX_LIMIT,
         logger,
+        allowed_relations=ALLOWED_RELATIONS,
+        relation_limit=RECALL_RELATION_LIMIT,
+        expansion_limit_default=RECALL_EXPANSION_LIMIT,
     )
 
 

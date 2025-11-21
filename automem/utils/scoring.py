@@ -13,6 +13,7 @@ from automem.config import (
     SEARCH_WEIGHT_CONFIDENCE,
     SEARCH_WEIGHT_RECENCY,
     SEARCH_WEIGHT_EXACT,
+    SEARCH_WEIGHT_RELATION,
 )
 
 
@@ -152,11 +153,18 @@ def _compute_metadata_score(
     vector_component = result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
     keyword_component = result.get("match_score", 0.0) if result.get("match_type") in {"keyword", "trending"} else 0.0
 
+    relation_component = 0.0
+    if result.get("match_type") == "relation":
+        relation_component = float(result.get("relation_score", result.get("match_score", 0.0)) or 0.0)
+    elif "relation_score" in result:
+        relation_component = float(result.get("relation_score") or 0.0)
+
     context_bonus = _compute_context_bonus(result, memory, tag_terms, metadata_terms, context_profile)
 
     final = (
         SEARCH_WEIGHT_VECTOR * vector_component
         + SEARCH_WEIGHT_KEYWORD * keyword_component
+        + SEARCH_WEIGHT_RELATION * relation_component
         + SEARCH_WEIGHT_TAG * tag_score
         + SEARCH_WEIGHT_IMPORTANCE * importance_score
         + SEARCH_WEIGHT_CONFIDENCE * confidence_score
@@ -168,6 +176,7 @@ def _compute_metadata_score(
     components = {
         "vector": vector_component,
         "keyword": keyword_component,
+        "relation": relation_component,
         "tag": tag_score,
         "importance": importance_score,
         "confidence": confidence_score,
@@ -177,4 +186,3 @@ def _compute_metadata_score(
     }
 
     return final, components
-
