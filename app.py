@@ -49,7 +49,6 @@ if PointStruct is None:  # pragma: no cover - test shim
             self.id = id
             self.vector = vector
             self.payload = payload
-
 from werkzeug.exceptions import HTTPException
 from consolidation import MemoryConsolidator, ConsolidationScheduler
 
