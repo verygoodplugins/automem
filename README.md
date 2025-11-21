@@ -1,5 +1,7 @@
 # AutoMem: Research-Validated AI Memory 🧠
 
+> **📅 November 20, 2025 Update** – Enhanced graph-vector hybrid architecture with improved enrichment pipeline, pattern detection, and deployment workflows. [See what's new](#whats-new-in-november-2025) ⚡
+
 **Graph + Vector architecture proven to match human long-term memory performance.**
 
 ```bash
@@ -9,7 +11,9 @@ railway up
 make dev
 ```
 
-Persistent memory for your AI.
+Give your AI persistent memory that actually learns and remembers.
+
+**Quick Navigation:** [What's New](#whats-new-in-november-2025) • [Architecture](#architecture) • [Quick Start](#quick-start) • [Features](#features) • [API Examples](#api-examples) • [Connect AI Platforms](#connect-to-ai-platforms) • [Documentation](#documentation)
 
 ---
 
@@ -36,7 +40,22 @@ AutoMem implements principles from:
 - **MELODI** (DeepMind, 2025): 8x memory compression without quality loss
 - **ReadAgent** (DeepMind, 2024): 20x context extension through gist memories
 
+## What's New in November 2025
+
+🎉 **Major enhancements to the graph-vector memory system:**
+
+- **🔗 Enhanced Knowledge Graphs** – 11 relationship types now include `PREFERS_OVER`, `EXEMPLIFIES`, and `CONTRADICTS` for richer context modeling
+- **🤖 Smarter Enrichment Pipeline** – Automatic entity extraction (people, tools, projects, concepts) with improved pattern detection
+- **🔄 Background Consolidation** – Memory decay, creative association discovery, clustering, and intelligent forgetting cycles
+- **⚡ Improved Hybrid Search** – Vector similarity + keyword + tags + temporal scoring for better recall accuracy
+- **🚀 One-Command Deployment** – Railway deployment simplified with `railway up` - production-ready in 60 seconds
+- **📊 Better Observability** – Enhanced health monitoring and enrichment status endpoints
+
+[Jump to Quick Start](#quick-start) | [See Full Changelog](CHANGELOG.md)
+
 ## Architecture
+
+**Dual-Engine Memory System for Human-Like Recall**
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -58,9 +77,12 @@ AutoMem implements principles from:
         └─────────────┘  └────────────┘
 ```
 
-**FalkorDB** (graph) = canonical record, relationships, consolidation  
-**Qdrant** (vectors) = semantic recall, similarity search  
-**Dual storage** = Built-in redundancy and disaster recovery
+**Why Two Databases?**
+- **FalkorDB (Graph)** – Canonical storage, relationships, and consolidation logic
+- **Qdrant (Vectors)** – Semantic search and similarity-based recall
+- **Dual Storage Benefits** – Built-in redundancy, disaster recovery, and graceful degradation
+
+The graph provides structure and relationships while vectors enable fuzzy semantic matching. Together, they create memory that's both precise and contextual.
 
 ## Why Graph + Vector?
 
@@ -125,23 +147,26 @@ Final score: 0.82 (weighted combination)
 ## Features
 
 ### Core Memory Operations
-- **Store** - Rich memories with metadata, importance, timestamps, embeddings
-- **Recall** - Hybrid search (vector + keyword + tags + time windows)
-- **Update** - Modify memories, auto-regenerate embeddings
-- **Delete** - Remove from both graph and vector stores
-- **Associate** - Create typed relationships between memories
-- **Filter** - Tag-based queries with prefix/exact matching
 
-## Memory Consolidation
+Everything your AI needs to build lasting knowledge:
 
-AutoMem uses [dream-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC4648295/) consolidation cycles to keep memories fresh and useful:
+- **📝 Store** – Rich memories with metadata, importance scores, timestamps, and embeddings
+- **🔍 Recall** – Hybrid search combining vector similarity, keywords, tags, and time windows
+- **✏️ Update** – Modify existing memories with automatic embedding regeneration
+- **🗑️ Delete** – Clean removal from both graph and vector stores
+- **🔗 Associate** – Create typed relationships between memories (11 relationship types)
+- **🏷️ Filter** – Tag-based queries with prefix and exact matching
 
-- **Decay (Hourly)**: Exponential relevance scoring based on age, access, relationships, and importance
-- **Creative (Hourly)**: Discovers non-obvious connections between memories (REM-like processing)
-- **Cluster (6hrs)**: Groups similar memories and creates meta-patterns
-- **Forget (Daily)**: Archives low-relevance memories, deletes very old unused ones
+### Memory Consolidation
 
-Memories aren't deleted immediately - they're archived first (relevance 0.05-0.2), only removed if they drop below 0.05. Wrong rabbit holes fade naturally (~30-45 days without use). Important connections survive longer.
+AutoMem uses [neuroscience-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC4648295/) consolidation cycles to keep memories relevant and organized:
+
+- **⏰ Decay (Hourly)** – Exponential relevance scoring based on age, access patterns, relationships, and importance
+- **💡 Creative (Hourly)** – Discovers surprising connections between memories during "REM-like" processing
+- **🧩 Cluster (Every 6 Hours)** – Groups similar memories and generates meta-patterns
+- **🗂️ Forget (Daily)** – Archives low-relevance memories, permanently deletes extremely old unused ones
+
+**Smart Forgetting:** Memories aren't immediately deleted. They're archived first (relevance 0.05-0.2), only removed if they drop below 0.05. This means wrong paths naturally fade (~30-45 days without use), while important connections survive longer.
 
 ### Background Intelligence
 
@@ -181,47 +206,66 @@ Build rich knowledge graphs:
 
 ## Quick Start
 
-### Option 1: Railway (Recommended)
+Choose your deployment path based on your needs:
 
-Deploy AutoMem + FalkorDB to Railway in 60 seconds:
+### Option 1: Railway (Recommended for Production)
+
+**Best for:** Production deployments, 24/7 availability, multi-device access
+
+Deploy AutoMem with managed FalkorDB and Qdrant in under 60 seconds:
 
 ```bash
 # Install Railway CLI
 npm i -g @railway/cli
 
-# Deploy
+# Login and deploy
 railway login
 railway init
 railway up
 ```
 
-👉 **[Deployment Guide](INSTALLATION.md#deployment)** for detailed Railway setup
+After deployment:
+1. Set `AUTOMEM_API_TOKEN` in Railway dashboard
+2. Copy your Railway URL (e.g., `https://automem-production.up.railway.app`)
+3. Test with: `curl https://your-url/health`
 
-### Option 2: Docker Compose (Local)
+👉 **[Complete Deployment Guide](INSTALLATION.md#deployment)** – Railway setup, environment variables, and configuration
 
-Run everything locally:
+### Option 2: Docker Compose (Recommended for Local Development)
+
+**Best for:** Local testing, development, privacy-focused work
+
+Run the full stack (AutoMem + FalkorDB + Qdrant) locally:
 
 ```bash
-# Clone and start services
+# Clone and start all services
 git clone https://github.com/verygoodplugins/automem.git
 cd automem
 make dev
 
-# API: http://localhost:8001
-# FalkorDB: localhost:6379
-# Qdrant: localhost:6333
+# Services will be available at:
+# • API: http://localhost:8001
+# • FalkorDB: localhost:6379
+# • Qdrant: localhost:6333
 ```
 
-### Option 3: Development Mode
+### Option 3: Development Mode (API Only)
 
-Run API without Docker:
+**Best for:** Quick testing without Docker, or when databases are remote
+
+Run just the Flask API:
 
 ```bash
+# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements-dev.txt
+
+# Start API (requires existing FalkorDB/Qdrant)
 PORT=8001 python app.py
 ```
+
+**Next Steps:** [API Examples](#api-examples) | [Configuration Guide](INSTALLATION.md#configuration)
 
 ## API Examples
 
@@ -270,40 +314,47 @@ curl -X POST http://localhost:8001/associate \
   }'
 ```
 
-## Use With AI Platforms
+## Connect to AI Platforms
 
-AutoMem works with any AI platform via:
+AutoMem integrates seamlessly with any AI assistant or application:
 
-### MCP (Model Context Protocol)
+### 🔌 MCP (Model Context Protocol)
 
-**Local MCP Bridge** (Claude Desktop, Cursor, Claude Code):
+**For Local AI Tools** (Claude Desktop, Cursor, Claude Code):
+
+Install the official MCP bridge to give your desktop AI tools persistent memory:
+
 ```bash
-# Install official MCP bridge
+# One-command setup
 npm install -g @verygoodplugins/mcp-automem
-
-# Configure for local AI tools
 npx @verygoodplugins/mcp-automem setup
 ```
 
-**SSE Sidecar** (Cloud AI Platforms):
+Your AI assistant can now store and recall memories automatically.
 
-Connect AutoMem to cloud AI platforms via HTTPS. Works with:
-- **ChatGPT** (requires developer mode)
-- **Claude.ai** web interface
-- **Claude mobile app**
-- **ElevenLabs Agents**
+**For Cloud AI Platforms** (ChatGPT, Claude.ai, ElevenLabs):
 
-See [MCP over SSE documentation](docs/MCP_SSE.md) for setup instructions.
+Connect AutoMem to cloud services via the SSE sidecar:
 
-👉 **Resources**:
-- NPM bridge (local): https://www.npmjs.com/package/@verygoodplugins/mcp-automem
-- SSE setup guide: [docs/MCP_SSE.md](docs/MCP_SSE.md)
+- ✅ **ChatGPT** (with developer mode)
+- ✅ **Claude.ai** web interface
+- ✅ **Claude mobile app**
+- ✅ **ElevenLabs Agents**
 
-### Direct API
-Any language, any framework:
+See the [MCP over SSE Setup Guide](docs/MCP_SSE.md) for detailed instructions.
+
+**Resources:**
+- 📦 [NPM Bridge Package](https://www.npmjs.com/package/@verygoodplugins/mcp-automem)
+- 📚 [SSE Configuration Guide](docs/MCP_SSE.md)
+
+### 🌐 Direct API Integration
+
+Use AutoMem from any language or framework:
+
 ```python
 import requests
 
+# Store a memory
 response = requests.post(
     "https://your-automem.railway.app/memory",
     headers={"Authorization": f"Bearer {token}"},
@@ -311,111 +362,136 @@ response = requests.post(
 )
 ```
 
+Perfect for custom integrations, backend services, or building your own AI assistant.
+
 ## What Makes AutoMem Different
 
-### vs. Traditional RAG
-- ✅ **Relationships** - Not just "similar", but "causes", "prefers", "invalidates"
-- ✅ **Temporal awareness** - Knows what came before, what evolved from what
-- ✅ **Pattern learning** - Discovers themes across memories
-- ✅ **Consolidation** - Memories improve over time, not just accumulate
+### vs. Traditional RAG Systems
+- ✅ **Rich Relationships** – Not just "similar" matches, but explicit relationships like "causes", "prefers", "invalidates"
+- ✅ **Temporal Intelligence** – Knows what came before, what evolved from what, and how knowledge changes over time
+- ✅ **Pattern Discovery** – Automatically discovers and reinforces recurring themes across memories
+- ✅ **Active Consolidation** – Memories improve and organize over time, not just pile up
 
 ### vs. Vector-Only Databases
-- ✅ **Structured relationships** - 11 edge types vs cosine similarity only
-- ✅ **Background intelligence** - Auto-enrichment, clustering, decay
-- ✅ **Hybrid scoring** - Vector + keyword + tags + time + importance
-- ✅ **Knowledge graphs** - Traverse relationships, not just retrieve vectors
+- ✅ **11 Relationship Types** – Structured edges vs. cosine similarity alone
+- ✅ **Background Intelligence** – Automatic enrichment, clustering, and relevance decay
+- ✅ **Hybrid Scoring** – Vector similarity + keyword matching + tag overlap + temporal context + importance weighting
+- ✅ **Graph Traversal** – Navigate relationship chains, not just retrieve similar vectors
 
-### vs. Building Your Own
-- ✅ **Research-validated** - Implements HippoRAG 2, A-MEM, MELODI principles
-- ✅ **Production-ready** - Authentication, admin tools, health monitoring
-- ✅ **Battle-tested** - Enrichment pipeline, consolidation, retry logic
-- ✅ **Open source** - MIT license, deploy anywhere
+### vs. Building Your Own Memory System
+- ✅ **Research-Validated** – Implements proven principles from HippoRAG 2, A-MEM, MELODI, and ReadAgent
+- ✅ **Production-Ready** – Built-in authentication, admin tools, health monitoring, and backup systems
+- ✅ **Battle-Tested** – Robust enrichment pipeline, consolidation logic, and automatic retry mechanisms
+- ✅ **Open Source** – MIT license, deploy anywhere, extend freely
 
 ## Performance & Reliability
 
-- **Sub-second recall** - Even with 100k+ memories
-- **Concurrent writes** - Background enrichment doesn't block API
-- **Graceful degradation** - Works without Qdrant (graph-only mode)
-- **Automatic retries** - Failed enrichments queue for reprocessing
-- **Health monitoring** - `/health` and `/enrichment/status` endpoints
-- **Automated backups** - Optional backup service for disaster recovery
-- **Dual storage** - Data in both FalkorDB and Qdrant provides redundancy
-- **Benchmark validated** - Test against LoCoMo (ACL 2024) with `make test-locomo`
+**Built for Real-World Production Use**
+
+- ⚡ **Sub-second recall** – Even with 100k+ memories
+- 🔄 **Concurrent writes** – Background enrichment doesn't block API requests
+- 🛡️ **Graceful degradation** – Works in graph-only mode if Qdrant is unavailable
+- 🔁 **Automatic retries** – Failed enrichments queue for reprocessing
+- 📊 **Health monitoring** – `/health` and `/enrichment/status` endpoints
+- 💾 **Automated backups** – Optional backup service for disaster recovery
+- 🔐 **Dual storage redundancy** – Data persisted in both FalkorDB and Qdrant
+- ✅ **Benchmark validated** – Tested against LoCoMo (ACL 2024) with `make test-locomo`
 
 ## Configuration
 
-### Required
-- `AUTOMEM_API_TOKEN` - Authentication for all endpoints (except `/health`)
-- `FALKORDB_HOST` / `FALKORDB_PORT` - Graph database connection
+### Essential Settings
 
-### Optional
-- `QDRANT_URL` / `QDRANT_API_KEY` - Enable semantic search
-- `OPENAI_API_KEY` - Real embeddings (otherwise deterministic placeholders)
-- `ADMIN_API_TOKEN` - Required for `/admin/reembed` and enrichment controls
-- Consolidation tuning: `CONSOLIDATION_*_INTERVAL_SECONDS`
-- Enrichment tuning: `ENRICHMENT_*` (similarity threshold, retry limits, etc.)
+**Required:**
+- `AUTOMEM_API_TOKEN` – Authentication for all endpoints (except `/health`)
+- `FALKORDB_HOST` / `FALKORDB_PORT` – Graph database connection
 
-👉 **[Full Configuration Guide](INSTALLATION.md#configuration)**
+**Optional but Recommended:**
+- `QDRANT_URL` / `QDRANT_API_KEY` – Enable semantic vector search
+- `OPENAI_API_KEY` – Generate real embeddings (otherwise uses deterministic placeholders)
+- `ADMIN_API_TOKEN` – Required for admin endpoints like `/admin/reembed`
+
+**Advanced Tuning:**
+- `CONSOLIDATION_*_INTERVAL_SECONDS` – Adjust decay, creative, cluster, and forget cycles
+- `ENRICHMENT_*` – Configure similarity thresholds, retry limits, and worker behavior
+
+👉 **[Complete Configuration Guide](INSTALLATION.md#configuration)** – All environment variables with examples
 
 ## Documentation
 
-- 📦 **[Installation Guide](INSTALLATION.md)** - Railway, Docker, development setup
-- 🌉 **[MCP over SSE Sidecar](docs/MCP_SSE.md)** - Expose AutoMem as an MCP server over SSE for ChatGPT/ElevenLabs
-- 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** - Health monitoring and automated backups
-- 🔧 **[API Reference](docs/API.md)** - All endpoints with examples
-- 🧪 **[Testing Guide](docs/TESTING.md)** - Unit, integration, live server, and LoCoMo benchmark tests
-- 📊 **[LoCoMo Benchmark](docs/TESTING.md#locomo-benchmark)** - Validate against ACL 2024 long-term memory benchmark
-- 🔄 **[Migration Guide](INSTALLATION.md#migration)** - Move from MCP SQLite
-- 🌐 **[automem.ai](https://automem.ai)** - Official website and guides
+**Get Started:**
+- 📦 **[Installation Guide](INSTALLATION.md)** – Railway, Docker, and development setup
+- 🚀 **[Quick Start](#quick-start)** – Deploy in 60 seconds
+
+**Integration:**
+- 🌉 **[MCP over SSE](docs/MCP_SSE.md)** – Connect to ChatGPT, Claude, and ElevenLabs
+- 🔧 **[API Reference](docs/API.md)** – Complete endpoint documentation with examples
+
+**Operations:**
+- 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** – Health checks and disaster recovery
+- 🧪 **[Testing Guide](docs/TESTING.md)** – Unit, integration, and benchmark tests
+- 📊 **[LoCoMo Benchmark](docs/TESTING.md#locomo-benchmark)** – ACL 2024 validation suite
+
+**Migration:**
+- 🔄 **[Migration Guide](INSTALLATION.md#migration)** – Move from MCP SQLite or other systems
+
+**Learn More:**
+- 🌐 **[automem.ai](https://automem.ai)** – Official website and tutorials
 
 ## Community & Support
 
-- 🌐 **[automem.ai](https://automem.ai)** - Official website
-- 🐙 **[GitHub](https://github.com/verygoodplugins/automem)** - Source code
-- 📦 **[NPM MCP Bridge](https://www.npmjs.com/package/@verygoodplugins/mcp-automem)** - MCP integration
-- 🐛 **[Issues](https://github.com/verygoodplugins/automem/issues)** - Bug reports and feature requests
+**Connect with Us:**
+- 🌐 **[automem.ai](https://automem.ai)** – Official website
+- 🐙 **[GitHub Repository](https://github.com/verygoodplugins/automem)** – Source code and discussions
+- 📦 **[NPM MCP Bridge](https://www.npmjs.com/package/@verygoodplugins/mcp-automem)** – Official MCP integration
+- 🐛 **[Issue Tracker](https://github.com/verygoodplugins/automem/issues)** – Bug reports and feature requests
 
-## The Science
+## The Science Behind AutoMem
 
-AutoMem's architecture is validated by peer-reviewed research:
+AutoMem isn't just inspired by research—it implements peer-reviewed principles from leading institutions:
 
-[HippoRAG 2](https://arxiv.org/abs/2502.14802) (Ohio State, June 2025)  
-Proves graph-vector hybrid achieves 7% better associative memory than pure vector RAG, approaching human long-term memory performance.
+**[HippoRAG 2](https://arxiv.org/abs/2502.14802)** (Ohio State, June 2025)  
+Graph-vector hybrid architecture achieves **7% better associative memory** than pure vector RAG, approaching human long-term memory performance.
 
-[A-MEM](https://arxiv.org/abs/2502.12110) (July 2025)  
-Validates dynamic memory organization with Zettelkasten-inspired principles - exactly what AutoMem's pattern detection and clustering implement.
+**[A-MEM](https://arxiv.org/abs/2502.12110)** (July 2025)  
+Validates dynamic memory organization with Zettelkasten-inspired principles—exactly what AutoMem's pattern detection and clustering implement.
 
-[MELODI](https://arxiv.org/html/2410.03156v1) (DeepMind, 2024)  
-Shows 8x memory compression without quality loss through gist representations - AutoMem's summary generation follows these principles.
+**[MELODI](https://arxiv.org/html/2410.03156v1)** (DeepMind, 2024)  
+Demonstrates **8x memory compression** without quality loss through gist representations—AutoMem's summary generation follows these principles.
 
-[ReadAgent](https://arxiv.org/abs/2402.09727) (DeepMind, 2024)  
-Demonstrates 20x context extension via episodic memory - AutoMem's consolidation engine implements similar temporal organization.
+**[ReadAgent](https://arxiv.org/abs/2402.09727)** (DeepMind, 2024)  
+Shows **20x context extension** via episodic memory—AutoMem's consolidation engine implements similar temporal organization.
 
-We didn't just read the papers - we built the system they describe.
+**We didn't just read the papers. We built the system they describe.**
 
 ## Contributing
 
-We welcome contributions! Please:
+We welcome contributions from the community! Here's how to get involved:
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for your changes
-4. Submit a pull request
+1. **Fork** the repository on GitHub
+2. **Create** a feature branch for your changes
+3. **Add tests** for new functionality
+4. **Submit** a pull request with a clear description
 
-See [TESTING.md](TESTING.md) for running the test suite.
+See our [Testing Guide](TESTING.md) for running the test suite locally.
 
 ## License
 
-MIT - Because AI memory should be free.
+**MIT License** – Because AI memory should be free and accessible to everyone.
 
 ---
 
-**Ready to give your AI human-like memory?**
+## Ready to Transform Your AI?
+
+Give your AI assistant the gift of human-like memory:
 
 ```bash
+# Deploy to production in 60 seconds
 railway up
+
+# Or start locally
+make dev
 ```
 
-*Built with obsession. Validated by neuroscience. Powered by graph theory.*
+**AutoMem turns AI from a tool into a thinking partner.**
 
-**Transform AI from a tool into a thinking partner. Deploy AutoMem now.**
+*Built with obsession. Validated by neuroscience. Powered by graph theory.*
