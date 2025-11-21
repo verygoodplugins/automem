@@ -14,8 +14,11 @@ backups/
 # Log files
 *.log
 
-/mcp-sse-server/node_modules
 tests/benchmarks/locomo/
 .DS_Store
 /.venv
 /automem/.venv
+
+# Node.js dependencies
+/mcp-sse-server/node_modules/
+node_modules/
