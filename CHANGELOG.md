@@ -2,6 +2,26 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.9.0] - 2025-11-20
+
+### 🏆 Benchmark Breakthrough
+- Achieved **90.38%** on LoCoMo-10 (SOTA, +2.14pp over CORE at 88.24%)
+- New benchmark report: `tests/benchmarks/BENCHMARK_2025-11-20.md`
+
+### 🧠 Retrieval Improvements
+- Added **multi-hop bridge discovery** to connect disparate seed memories
+- Introduced **temporal alignment scoring** for time-aware recall
+- Added **content token overlap** to boost lexical precision
+- Hybrid scoring now combines 9 weighted components (vector, keyword, relation, content, temporal, tag, importance, confidence, recency, exact)
+
+### 🔧 Configuration
+- New env vars: `RECALL_BRIDGE_LIMIT`, `SEARCH_WEIGHT_CONTENT`, `SEARCH_WEIGHT_TEMPORAL`
+- Tuned defaults for relation/path expansion (`expand_relations`, `expand_paths`, bridge limits)
+
+### 📝 Documentation
+- Documented LoCoMo SOTA run and configuration in `docs/TESTING.md`
+- Updated changelog and benchmark references
+
 ## [0.8.0] - 2025-11-08
 
 ### 🏗️ Major Refactoring
