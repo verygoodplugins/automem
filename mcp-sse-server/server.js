@@ -418,8 +418,12 @@ app.post('/mcp/messages', async (req, res) => {
 // Alexa skill endpoint (remember/recall via AutoMem)
 app.post('/alexa', async (req, res) => {
   const body = req.body || {};
-  const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
-  const apiKey = process.env.AUTOMEM_API_TOKEN;
+  const endpoint =
+    body?.endpoint ||
+    req.query.endpoint ||
+    process.env.AUTOMEM_ENDPOINT ||
+    'http://127.0.0.1:8001';
+  const apiKey = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
 
   if (!endpoint || !apiKey) {
     return res.status(500).json({ error: 'AutoMem endpoint or token not configured' });

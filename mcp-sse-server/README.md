@@ -12,6 +12,10 @@ Express service that bridges the AutoMem HTTP API to MCP over SSE and now expose
 - `AUTOMEM_API_TOKEN` – Bearer token for AutoMem HTTP calls (required for Alexa and MCP).
 - `PORT` (optional) – Listener port (default 8080).
 
+Overrides for testing (Alexa endpoint):
+- `?endpoint=` query param or `endpoint` field in the POST body will override `AUTOMEM_ENDPOINT`.
+- `api_key` query param or `Authorization: Bearer ...` / `X-API-Key` header will override `AUTOMEM_API_TOKEN`.
+
 ## Alexa Notes
 - Alexa cannot send custom headers; keep the AutoMem token in `AUTOMEM_API_TOKEN`.
 - Sample utterances (Custom model): `remember {note}`, `store {note}`, `recall {query}`, `what do you remember about {query}`.
