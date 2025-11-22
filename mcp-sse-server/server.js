@@ -254,6 +254,10 @@ app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', time
 const sessions = new Map();
 
 // Helper: validate and extract token from multiple sources
+/**
+ * Resolve the API token from request headers, query params, or process env.
+ * Order of precedence: Bearer Authorization -> X-API-Key header -> api_key query -> AUTOMEM_API_TOKEN env.
+ */
 function getAuthToken(req) {
   const auth = req.headers['authorization'] || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
@@ -266,6 +270,9 @@ function getAuthToken(req) {
 }
 
 // Alexa helpers
+/**
+ * Build a minimal Alexa speech response payload.
+ */
 function speech(text, { endSession = true } = {}) {
   return {
     version: '1.0',
@@ -279,11 +286,17 @@ function speech(text, { endSession = true } = {}) {
   };
 }
 
+/**
+ * Safely extract a slot value from an Alexa intent request.
+ */
 function getSlot(intent, name) {
   const slot = intent?.slots?.[name];
   return slot?.value || null;
 }
 
+/**
+ * Construct tag set for Alexa requests including user and device context.
+ */
 function buildAlexaTags(body) {
   const tags = ['alexa'];
   const userId = body?.session?.user?.userId;
@@ -293,6 +306,9 @@ function buildAlexaTags(body) {
   return tags;
 }
 
+/**
+ * Convert recall results into short Alexa-friendly speech text.
+ */
 function formatRecallSpeech(records, { limit = 2 } = {}) {
   const items = (records || []).slice(0, limit).map((r, idx) => {
     const mem = r.memory || r;
