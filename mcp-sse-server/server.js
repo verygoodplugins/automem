@@ -315,20 +315,17 @@ const sessions = new Map();
 
 // Helper: validate and extract token from multiple sources
 /**
- * Resolve the API token from request headers, query params, or process env.
- * Order of precedence: Bearer Authorization -> X-API-Key header -> api_key query -> AUTOMEM_API_TOKEN env.
+ * Resolve the API token from request headers or query params.
+ * Order: Bearer Authorization -> X-API-Key/X-API-Token header -> api_key/apiKey/api_token query.
  */
 function getAuthToken(req) {
-  const auth = req.headers['authorization'] || '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  const headerKey = req.headers['x-api-key'] || req.headers['x-api-token'];
-  const queryKey = req.query.api_key || req.query.apiKey || req.query.api_token;
-  return (
-    (m ? m[1] : undefined) ||
-    headerKey ||
-    queryKey ||
-    process.env.AUTOMEM_API_TOKEN
-  );
+  const normalize = (v) => (typeof v === 'string' ? v.trim() : undefined);
+  const auth = normalize(req.headers['authorization'] || '');
+  const m = auth ? auth.match(/^Bearer\s+(.+)$/i) : null;
+  const bearer = m ? normalize(m[1]) : undefined;
+  const headerKey = normalize(req.headers['x-api-key'] || req.headers['x-api-token']);
+  const queryKey = normalize(req.query.api_key || req.query.apiKey || req.query.api_token);
+  return bearer || headerKey || queryKey;
 }
 
 // Alexa helpers
@@ -466,7 +463,7 @@ app.post('/alexa', async (req, res) => {
 app.get('/mcp/sse', async (req, res) => {
   try {
     const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
-    const token = getAuthToken(req);
+    const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
     if (!endpoint) return res.status(500).json({ error: 'AUTOMEM_ENDPOINT not configured' });
     if (!token) return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
 
