@@ -20,10 +20,7 @@
         "FALKORDB_PORT": "6379",
         "FALKORDB_PASSWORD": "${{FalkorDB.FALKOR_PASSWORD}}",
         "AUTOMEM_API_TOKEN": "${{secret()}}",
-        "ADMIN_API_TOKEN": "${{secret()}}",
-        "OPENAI_API_KEY": "",
-        "QDRANT_URL": "",
-        "QDRANT_API_KEY": ""
+        "ADMIN_API_TOKEN": "${{secret()}}"
       }
     },
     {
@@ -41,7 +38,8 @@
       },
       "env": {
         "PORT": "8080",
-        "AUTOMEM_ENDPOINT": "http://${{memory-service.RAILWAY_PRIVATE_DOMAIN}}:8001"
+        "AUTOMEM_ENDPOINT": "http://${{memory-service.RAILWAY_PRIVATE_DOMAIN}}:8001",
+        "AUTOMEM_API_TOKEN": "${{memory-service.AUTOMEM_API_TOKEN}}"
       }
     },
     {
@@ -49,7 +47,7 @@
       "image": "falkordb/falkordb:latest",
       "volumes": [
         {
-          "mountPath": "/var/lib/falkordb/data",
+          "mountPath": "/data",
           "name": "falkordb_data"
         }
       ],
@@ -61,7 +59,7 @@
         "FALKOR_PORT": "${{PORT}}",
         "FALKOR_PUBLIC_HOST": "${{RAILWAY_TCP_PROXY_DOMAIN}}",
         "FALKOR_PUBLIC_PORT": "${{RAILWAY_TCP_PROXY_PORT}}",
-        "REDIS_ARGS": "--save 60 1 --appendonly yes --appendfsync everysec"
+        "REDIS_ARGS": "--dir /data --save 60 1 --appendonly yes --appendfsync everysec"
       }
     }
   ],

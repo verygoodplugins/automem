@@ -1085,14 +1085,19 @@ def init_falkordb() -> None:
 
     try:
         logger.info("Connecting to FalkorDB at %s:%s", host, FALKORDB_PORT)
-        state.falkordb = FalkorDB(
-            host=host,
-            port=FALKORDB_PORT,
-            password=password,
-            username="default" if password else None
-        )
+        
+        # Only pass authentication if password is actually configured
+        connection_params = {
+            "host": host,
+            "port": FALKORDB_PORT,
+        }
+        if password:
+            connection_params["password"] = password
+            connection_params["username"] = "default"
+        
+        state.falkordb = FalkorDB(**connection_params)
         state.memory_graph = state.falkordb.select_graph(GRAPH_NAME)
-        logger.info("FalkorDB connection established")
+        logger.info("FalkorDB connection established (auth: %s)", "enabled" if password else "disabled")
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to initialize FalkorDB connection")
         state.falkordb = None

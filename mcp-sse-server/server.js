@@ -265,6 +265,125 @@ function getAuthToken(req) {
   );
 }
 
+// Alexa helpers
+function speech(text, { endSession = true } = {}) {
+  return {
+    version: '1.0',
+    response: {
+      outputSpeech: {
+        type: 'PlainText',
+        text,
+      },
+      shouldEndSession: endSession,
+    },
+  };
+}
+
+function getSlot(intent, name) {
+  const slot = intent?.slots?.[name];
+  return slot?.value || null;
+}
+
+function buildAlexaTags(body) {
+  const tags = ['alexa'];
+  const userId = body?.session?.user?.userId;
+  const deviceId = body?.context?.System?.device?.deviceId;
+  if (userId) tags.push(`user:${userId}`);
+  if (deviceId) tags.push(`device:${deviceId}`);
+  return tags;
+}
+
+function formatRecallSpeech(records, { limit = 2 } = {}) {
+  const items = (records || []).slice(0, limit).map((r, idx) => {
+    const mem = r.memory || r;
+    const text = typeof mem === 'string' ? mem : mem?.content || mem?.text || '';
+    const trimmed = String(text || '').trim();
+    const shortened = trimmed.length > 240 ? `${trimmed.slice(0, 240)}...` : trimmed;
+    return `Item ${idx + 1}: ${shortened || 'empty'}`;
+  });
+  return items.length ? items.join(' ') : 'I could not find anything in memory for that.';
+}
+
+// Alexa skill endpoint (remember/recall via AutoMem)
+app.post('/alexa', async (req, res) => {
+  const body = req.body || {};
+  const endpoint =
+    body?.endpoint ||
+    req.query.endpoint ||
+    process.env.AUTOMEM_ENDPOINT ||
+    'http://127.0.0.1:8001';
+  const apiKey = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
+
+  if (!endpoint || !apiKey) {
+    return res.status(500).json({ error: 'AutoMem endpoint or token not configured' });
+  }
+
+  const intentType = body?.request?.type;
+  if (intentType === 'LaunchRequest') {
+    return res.json(speech('AutoMem is ready. Say remember to store something, or recall to fetch it.', { endSession: false }));
+  }
+  if (intentType !== 'IntentRequest') {
+    return res.json(speech('I did not understand that request.'));
+  }
+
+  const intent = body.request.intent;
+  const name = intent?.name;
+  const tags = buildAlexaTags(body);
+  const client = new AutoMemClient({ endpoint, apiKey });
+
+  if (name === 'RememberIntent') {
+    const note = getSlot(intent, 'note');
+    if (!note) {
+      return res.json(speech('I did not hear anything to remember.', { endSession: false }));
+    }
+    try {
+      await client.storeMemory({ content: note, tags });
+      return res.json(speech('Saved to memory.', { endSession: false }));
+    } catch (error) {
+      console.error('[Alexa] storeMemory failed:', error.message);
+      return res.json(speech('I could not save that right now.', { endSession: false }));
+    }
+  }
+
+  if (name === 'RecallIntent') {
+    const query = getSlot(intent, 'query');
+    if (!query) {
+      return res.json(speech('What should I recall?', { endSession: false }));
+    }
+    try {
+      // First try scoped tags; if nothing, fall back to untagged recall
+      const primary = await client.recallMemory({ query, tags, limit: 5 });
+      const recordsPrimary = Array.isArray(primary?.results)
+        ? primary.results
+        : Array.isArray(primary?.memories)
+          ? primary.memories
+          : [];
+      if (recordsPrimary.length) {
+        const reply = formatRecallSpeech(recordsPrimary, { limit: 3 });
+        return res.json(speech(reply, { endSession: false }));
+      }
+
+      const fallback = await client.recallMemory({ query, limit: 5 });
+      const recordsFallback = Array.isArray(fallback?.results)
+        ? fallback.results
+        : Array.isArray(fallback?.memories)
+          ? fallback.memories
+          : [];
+      const reply = formatRecallSpeech(recordsFallback, { limit: 3 });
+      return res.json(speech(reply, { endSession: false }));
+    } catch (error) {
+      console.error('[Alexa] recallMemory failed:', error.message);
+      return res.json(speech('I could not recall anything right now.', { endSession: false }));
+    }
+  }
+
+  if (name === 'AMAZON.HelpIntent') {
+    return res.json(speech('Say remember and a note to store it. Say recall and a topic to fetch it.', { endSession: false }));
+  }
+
+  return res.json(speech("I'm not sure how to handle that intent.", { endSession: false }));
+});
+
 // SSE endpoint
 app.get('/mcp/sse', async (req, res) => {
   try {

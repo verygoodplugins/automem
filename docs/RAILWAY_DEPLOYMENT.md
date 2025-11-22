@@ -10,8 +10,14 @@ This template automatically sets up:
 
 - ✅ AutoMem Flask API with health checks
 - ✅ FalkorDB with **persistent volumes** and password protection
+- ✅ MCP SSE server for AI agent integration
 - ✅ Automatic secret generation
 - ✅ Service networking configured
+
+**⚠️ After Deployment:**
+- Add `OPENAI_API_KEY` to memory-service for embeddings/enrichment (optional but recommended)
+- Add `QDRANT_URL` + `QDRANT_API_KEY` for vector search (optional - will use graph-only if omitted)
+- Without OpenAI key: embeddings disabled, memories stored in graph only
 
 ---
 
@@ -29,7 +35,7 @@ This template automatically sets up:
 
    - Go to service → Settings → Volumes
    - Click "Add Volume"
-   - Mount path: `/var/lib/falkordb/data`
+   - Mount path: `/data` (Redis/FalkorDB default)
    - This ensures data survives restarts
 
 3. **Configure environment variables**:
@@ -42,8 +48,10 @@ This template automatically sets up:
    FALKOR_PORT=${{PORT}}
    FALKOR_PUBLIC_HOST=${{RAILWAY_TCP_PROXY_DOMAIN}}
    FALKOR_PUBLIC_PORT=${{RAILWAY_TCP_PROXY_PORT}}
-   REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec
+   REDIS_ARGS=--dir /data --save 60 1 --appendonly yes --appendfsync everysec
    ```
+
+   **Note**: `--dir /data` ensures Redis saves to the mounted volume at `/data`
 
    **Note**: FalkorDB handles authentication via `FALKOR_PASSWORD` - don't add `--requirepass` to `REDIS_ARGS`.
 
@@ -73,16 +81,18 @@ This template automatically sets up:
    AUTOMEM_API_TOKEN=${{shared.AUTOMEM_API_TOKEN}}
    ADMIN_API_TOKEN=${{shared.ADMIN_API_TOKEN}}
 
-   # OpenAI for embeddings (required for semantic search)
+   # Port (REQUIRED - Flask needs explicit port)
+   PORT=8001
+   
+   # OPTIONAL: OpenAI for embeddings and enrichment
+   # Without this: graph-only storage, no semantic search, no automatic enrichment
    OPENAI_API_KEY=<your-openai-key>
 
-   # Optional: Qdrant Cloud for vector search
+   # OPTIONAL: Qdrant Cloud for vector search
+   # Without this: graph-only keyword search still works
    QDRANT_URL=<your-qdrant-cloud-url>
    QDRANT_API_KEY=<your-qdrant-api-key>
    QDRANT_COLLECTION=memories
-
-   # Port (REQUIRED - Flask needs explicit port)
-   PORT=8001
    ```
 
    **Option B: Hardcoded Values (recommended for stability)**
@@ -98,16 +108,16 @@ This template automatically sets up:
    AUTOMEM_API_TOKEN=<your-generated-token>
    ADMIN_API_TOKEN=<your-generated-token>
 
-   # OpenAI for embeddings
+   # Port (REQUIRED - Flask needs explicit port)
+   PORT=8001
+   
+   # OPTIONAL: OpenAI for embeddings and enrichment
    OPENAI_API_KEY=<your-openai-key>
 
-   # Qdrant Cloud
+   # OPTIONAL: Qdrant Cloud for vector search
    QDRANT_URL=<your-qdrant-cloud-url>
    QDRANT_API_KEY=<your-qdrant-api-key>
    QDRANT_COLLECTION=memories
-
-   # Port (REQUIRED - Flask needs explicit port)
-   PORT=8001
    ```
 
    **Note**: Hardcoded values (Option B) are more stable and easier to debug, while variable references (Option A) update automatically but can be harder to troubleshoot.
