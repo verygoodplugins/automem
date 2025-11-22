@@ -15,7 +15,7 @@ Service endpoint (on Railway):
 
 Auth model:
 - **Header-based** (ElevenLabs): `Authorization: Bearer <AUTOMEM_API_TOKEN>` header
-- **URL-based** (ChatGPT, Claude): append `?api_token=<AUTOMEM_API_TOKEN>` to the SSE URL
+- **URL-based** (ChatGPT, Claude): append `?api_token=<AUTOMEM_API_TOKEN>` to the SSE URL (`?api_key=` alias also works)
   - Example: `https://<your-mcp-domain>/mcp/sse?api_token=...`
   - Required for platforms that only support OAuth for custom connectors
   - Note: URL tokens may appear in logs/proxy metadata
@@ -61,7 +61,7 @@ ElevenLabs supports custom headers, so you can use either method:
   - Value: `Bearer <AUTOMEM_API_TOKEN>`
 
 **Option 2: URL Parameter**
-- **Server URL**: `https://<your-mcp-domain>/mcp/sse?api_token=<AUTOMEM_API_TOKEN>`
+- **Server URL**: `https://<your-mcp-domain>/mcp/sse?api_token=<AUTOMEM_API_TOKEN>` (`?api_key=` alias also supported)
 
 > **📚 Comprehensive Setup Guides**: Detailed step-by-step setup instructions for each platform are available in the [MCP-Automem project documentation](https://github.com/verygoodplugins/mcp-automem/blob/main/INSTALLATION.md) (coming soon).
 

@@ -314,18 +314,24 @@ app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', time
 const sessions = new Map();
 
 // Helper: validate and extract token from multiple sources
+/**
+ * Resolve the API token from request headers or query params.
+ * Order: Bearer Authorization -> X-API-Key/X-API-Token header -> api_key/apiKey/api_token query.
+ */
 function getAuthToken(req) {
-  const auth = req.headers['authorization'] || '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return (
-    (m ? m[1] : undefined) ||
-    req.headers['x-api-key'] ||
-    req.query.api_key ||
-    process.env.AUTOMEM_API_TOKEN
-  );
+  const normalize = (v) => (typeof v === 'string' ? v.trim() : undefined);
+  const auth = normalize(req.headers['authorization'] || '');
+  const m = auth ? auth.match(/^Bearer\s+(.+)$/i) : null;
+  const bearer = m ? normalize(m[1]) : undefined;
+  const headerKey = normalize(req.headers['x-api-key'] || req.headers['x-api-token']);
+  const queryKey = normalize(req.query.api_key || req.query.apiKey || req.query.api_token);
+  return bearer || headerKey || queryKey;
 }
 
 // Alexa helpers
+/**
+ * Build a minimal Alexa speech response payload.
+ */
 function speech(text, { endSession = true } = {}) {
   return {
     version: '1.0',
@@ -339,11 +345,17 @@ function speech(text, { endSession = true } = {}) {
   };
 }
 
+/**
+ * Safely extract a slot value from an Alexa intent request.
+ */
 function getSlot(intent, name) {
   const slot = intent?.slots?.[name];
   return slot?.value || null;
 }
 
+/**
+ * Construct tag set for Alexa requests including user and device context.
+ */
 function buildAlexaTags(body) {
   const tags = ['alexa'];
   const userId = body?.session?.user?.userId;
@@ -353,6 +365,9 @@ function buildAlexaTags(body) {
   return tags;
 }
 
+/**
+ * Convert recall results into short Alexa-friendly speech text.
+ */
 function formatRecallSpeech(records, { limit = 2 } = {}) {
   const items = (records || []).slice(0, limit).map((r, idx) => {
     const mem = r.memory || r;
@@ -363,57 +378,6 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
   });
   return items.length ? items.join(' ') : 'I could not find anything in memory for that.';
 }
-
-// SSE endpoint
-app.get('/mcp/sse', async (req, res) => {
-  try {
-    const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
-    const token = getAuthToken(req);
-    if (!endpoint) return res.status(500).json({ error: 'AUTOMEM_ENDPOINT not configured' });
-    if (!token) return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
-
-    const client = new AutoMemClient({ endpoint, apiKey: token });
-    const server = buildMcpServer(client);
-    // Help with proxy buffering before SSE headers are written
-    res.set('X-Accel-Buffering', 'no');
-    res.set('Cache-Control', 'no-cache, no-transform');
-    const transport = new SSEServerTransport('/mcp/messages', res);
-    await server.connect(transport);
-
-    // Prepare session and lifecycle BEFORE sending the endpoint event to avoid race
-    const heartbeat = setInterval(() => {
-      try { res.write(': ping\n\n'); } catch (_) { /* ignore */ }
-    }, 20000);
-    res.on('close', () => {
-      clearInterval(heartbeat);
-      sessions.delete(transport.sessionId);
-    });
-    sessions.set(transport.sessionId, { transport, server, res, heartbeat });
-    console.log(`[MCP] New SSE session established: ${transport.sessionId}`);
-
-    // Now start SSE (writes event: endpoint)
-    await transport.start();
-  } catch (e) {
-    try { res.status(500).json({ error: String(e) }); } catch (_) { /* ignore */ }
-  }
-});
-
-// Message POST endpoint
-app.post('/mcp/messages', async (req, res) => {
-  const sessionId = req.query.sessionId;
-  if (!sessionId || typeof sessionId !== 'string') return res.status(400).send('Missing sessionId');
-  const s = sessions.get(sessionId);
-  if (!s) {
-    console.warn(`[MCP] POST for unknown session: ${sessionId}`);
-    return res.status(404).send('Session not found');
-  }
-  try {
-    await s.transport.handlePostMessage(req, res, req.body);
-  } catch (e) {
-    console.error(`[MCP] Error handling message for session ${sessionId}:`, e);
-    try { res.status(400).send(String(e)); } catch (_) { /* ignore */ }
-  }
-});
 
 // Alexa skill endpoint (remember/recall via AutoMem)
 app.post('/alexa', async (req, res) => {
@@ -462,9 +426,25 @@ app.post('/alexa', async (req, res) => {
       return res.json(speech('What should I recall?', { endSession: false }));
     }
     try {
-      const r = await client.recallMemory({ query, tags, limit: 5 });
-      const records = Array.isArray(r?.results) ? r.results : Array.isArray(r?.memories) ? r.memories : [];
-      const reply = formatRecallSpeech(records, { limit: 3 });
+      // First try scoped tags; if nothing, fall back to untagged recall
+      const primary = await client.recallMemory({ query, tags, limit: 5 });
+      const recordsPrimary = Array.isArray(primary?.results)
+        ? primary.results
+        : Array.isArray(primary?.memories)
+          ? primary.memories
+          : [];
+      if (recordsPrimary.length) {
+        const reply = formatRecallSpeech(recordsPrimary, { limit: 3 });
+        return res.json(speech(reply, { endSession: false }));
+      }
+
+      const fallback = await client.recallMemory({ query, limit: 5 });
+      const recordsFallback = Array.isArray(fallback?.results)
+        ? fallback.results
+        : Array.isArray(fallback?.memories)
+          ? fallback.memories
+          : [];
+      const reply = formatRecallSpeech(recordsFallback, { limit: 3 });
       return res.json(speech(reply, { endSession: false }));
     } catch (error) {
       console.error('[Alexa] recallMemory failed:', error.message);
@@ -477,6 +457,57 @@ app.post('/alexa', async (req, res) => {
   }
 
   return res.json(speech("I'm not sure how to handle that intent.", { endSession: false }));
+});
+
+// SSE endpoint
+app.get('/mcp/sse', async (req, res) => {
+  try {
+    const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
+    const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
+    if (!endpoint) return res.status(500).json({ error: 'AUTOMEM_ENDPOINT not configured' });
+    if (!token) return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
+
+    const client = new AutoMemClient({ endpoint, apiKey: token });
+    const server = buildMcpServer(client);
+    // Help with proxy buffering before SSE headers are written
+    res.set('X-Accel-Buffering', 'no');
+    res.set('Cache-Control', 'no-cache, no-transform');
+    const transport = new SSEServerTransport('/mcp/messages', res);
+    await server.connect(transport);
+
+    // Prepare session and lifecycle BEFORE sending the endpoint event to avoid race
+    const heartbeat = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch (_) { /* ignore */ }
+    }, 20000);
+    res.on('close', () => {
+      clearInterval(heartbeat);
+      sessions.delete(transport.sessionId);
+    });
+    sessions.set(transport.sessionId, { transport, server, res, heartbeat });
+    console.log(`[MCP] New SSE session established: ${transport.sessionId}`);
+
+    // Now start SSE (writes event: endpoint)
+    await transport.start();
+  } catch (e) {
+    try { res.status(500).json({ error: String(e) }); } catch (_) { /* ignore */ }
+  }
+});
+
+// Message POST endpoint
+app.post('/mcp/messages', async (req, res) => {
+  const sessionId = req.query.sessionId;
+  if (!sessionId || typeof sessionId !== 'string') return res.status(400).send('Missing sessionId');
+  const s = sessions.get(sessionId);
+  if (!s) {
+    console.warn(`[MCP] POST for unknown session: ${sessionId}`);
+    return res.status(404).send('Session not found');
+  }
+  try {
+    await s.transport.handlePostMessage(req, res, req.body);
+  } catch (e) {
+    console.error(`[MCP] Error handling message for session ${sessionId}:`, e);
+    try { res.status(400).send(String(e)); } catch (_) { /* ignore */ }
+  }
 });
 
 const port = process.env.PORT || 8080;
