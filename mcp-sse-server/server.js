@@ -257,10 +257,12 @@ const sessions = new Map();
 function getAuthToken(req) {
   const auth = req.headers['authorization'] || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
+  const headerKey = req.headers['x-api-key'] || req.headers['x-api-token'];
+  const queryKey = req.query.api_key || req.query.apiKey || req.query.api_token;
   return (
     (m ? m[1] : undefined) ||
-    req.headers['x-api-key'] ||
-    req.query.api_key ||
+    headerKey ||
+    queryKey ||
     process.env.AUTOMEM_API_TOKEN
   );
 }
