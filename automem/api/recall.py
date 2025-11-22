@@ -305,6 +305,7 @@ def _inject_priority_memories(
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
     context_profile: Dict[str, Any],
     seen_ids: Set[str],
+    result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
     start_time: Optional[str],
     end_time: Optional[str],
     tag_mode: str,
@@ -315,6 +316,8 @@ def _inject_priority_memories(
     if not priority_tags:
         return False
 
+    effective_tag_mode = tag_mode if tag_mode in {"any", "all"} else "any"
+    effective_tag_match = tag_match if tag_match in {"exact", "prefix"} else "prefix"
     fetch_limit = max(1, min(limit, 3))
     tag_list = list(priority_tags)
 
@@ -327,8 +330,8 @@ def _inject_priority_memories(
             start_time=start_time,
             end_time=end_time,
             tag_filters=tag_list,
-            tag_mode="any",
-            tag_match="prefix",
+            tag_mode=effective_tag_mode,
+            tag_match=effective_tag_match,
         )
         if priority_matches:
             results.extend(priority_matches)
@@ -338,14 +341,27 @@ def _inject_priority_memories(
         tag_results = vector_filter_only_tag_search(
             qdrant_client,
             tag_list,
-            "any",
-            "prefix",
+            effective_tag_mode,
+            effective_tag_match,
             fetch_limit,
             seen_ids,
         )
         if tag_results:
-            results.extend(tag_results)
-            return True
+            filtered_results = [
+                record
+                for record in tag_results
+                if result_passes_filters(
+                    record,
+                    start_time,
+                    end_time,
+                    tag_list,
+                    effective_tag_mode,
+                    effective_tag_match,
+                )
+            ]
+            if filtered_results:
+                results.extend(filtered_results)
+                return True
 
     return False
 
@@ -667,6 +683,7 @@ def handle_recall(
                     vector_filter_only_tag_search,
                     context_profile,
                     local_seen,
+                    result_passes_filters,
                     start_time,
                     end_time,
                     tag_mode,
