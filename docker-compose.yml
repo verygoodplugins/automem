@@ -45,6 +45,8 @@ services:
       AUTOMEM_API_TOKEN: ${AUTOMEM_API_TOKEN:-test-token}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-test-admin-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}  # auto|openai|local|placeholder
+      AUTOMEM_MODELS_DIR: /root/.config/automem/models  # Keep in sync with volume mount
     depends_on:
       falkordb:
         condition: service_healthy
@@ -52,6 +54,7 @@ services:
         condition: service_started
     volumes:
       - .:/app
+      - fastembed_models:/root/.config/automem/models  # Persist embedding models
     restart: unless-stopped
 
   # Optional: FalkorDB Browser for visualization
@@ -69,3 +72,4 @@ services:
 volumes:
   falkordb_data:
   qdrant_data:
+  fastembed_models:  # Persistent cache for local embedding models
