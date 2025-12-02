@@ -133,31 +133,44 @@ class LoCoMoEvaluator:
         """Remove all test memories from AutoMem"""
         print(f"\n🧹 Cleaning up test memories with tag: {tag_prefix}")
         try:
-            # Recall all memories with the test tag
-            response = requests.get(
-                f"{self.config.base_url}/memory/by-tag",
-                headers=self.headers,
-                params={"tags": tag_prefix, "tag_match": "prefix"}
-            )
-            
-            if response.status_code == 200:
-                memories = response.json().get("memories", [])
-                print(f"Found {len(memories)} test memories to delete")
+            # Use /recall endpoint which is more reliable for tag search
+            # Loop until no more memories found (handles pagination)
+            total_deleted = 0
+            while True:
+                response = requests.get(
+                    f"{self.config.base_url}/recall",
+                    headers=self.headers,
+                    params={
+                        "tags": tag_prefix,
+                        "tag_match": "prefix",
+                        "limit": 100
+                    }
+                )
+                
+                if response.status_code != 200:
+                    print(f"⚠️  Could not fetch test memories: {response.status_code}")
+                    break
+                
+                results = response.json().get("results", [])
+                if not results:
+                    break
                 
                 # Delete each memory
-                for memory in memories:
-                    memory_id = memory.get("id")
+                for r in results:
+                    memory_id = r.get("id")
                     if memory_id:
                         requests.delete(
                             f"{self.config.base_url}/memory/{memory_id}",
                             headers=self.headers
                         )
+                        total_deleted += 1
                 
-                print(f"✅ Cleaned up {len(memories)} test memories")
-                return True
-            else:
-                print(f"⚠️  Could not fetch test memories: {response.status_code}")
-                return False
+                # If fewer than 100 returned, we're done
+                if len(results) < 100:
+                    break
+            
+            print(f"✅ Cleaned up {total_deleted} test memories")
+            return True
                 
         except Exception as e:
             print(f"⚠️  Cleanup error: {e}")
