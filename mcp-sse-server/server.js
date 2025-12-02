@@ -137,35 +137,17 @@ function buildMcpServer(client) {
       inputSchema: {
         type: 'object',
         properties: {
-          query: { type: 'string' },
-          embedding: { type: 'array', items: { type: 'number' } },
-          limit: { type: 'integer', minimum: 1, maximum: 50, default: 5 },
-          time_query: { type: 'string' },
-          start: { type: 'string' },
-          end: { type: 'string' },
-          tags: { type: 'array', items: { type: 'string' } },
-          tag_mode: { type: 'string', enum: ['any', 'all'] },
-          tag_match: { type: 'string', enum: ['exact', 'prefix'] }
+          query: { type: 'string', description: 'Text query to search for in memory content' },
+          queries: { type: 'array', items: { type: 'string' }, description: 'Multiple queries (server-side deduplication)' },
+          embedding: { type: 'array', items: { type: 'number' }, description: 'Embedding vector for semantic similarity search' },
+          limit: { type: 'integer', minimum: 1, maximum: 50, default: 5, description: 'Maximum number of memories to return' },
+          time_query: { type: 'string', description: 'Natural language time window (e.g. "today", "last week")' },
+          start: { type: 'string', description: 'Explicit ISO timestamp lower bound' },
+          end: { type: 'string', description: 'Explicit ISO timestamp upper bound' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
+          tag_mode: { type: 'string', enum: ['any', 'all'], description: 'How to combine multiple tags' },
+          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags' }
         }
-      }
-    },
-    {
-      name: 'recall_memory_multi',
-      description: 'Run multiple recall queries with server-side dedupe',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          queries: { type: 'array', items: { type: 'string' } },
-          limit_per_query: { type: 'integer', minimum: 1, maximum: 50, default: 5 },
-          overall_limit: { type: 'integer', minimum: 1, maximum: 200, default: 15 },
-          time_query: { type: 'string' },
-          start: { type: 'string' },
-          end: { type: 'string' },
-          tags: { type: 'array', items: { type: 'string' } },
-          tag_mode: { type: 'string', enum: ['any', 'all'] },
-          tag_match: { type: 'string', enum: ['exact', 'prefix'] }
-        },
-        required: ['queries']
       }
     },
     {
@@ -228,52 +210,42 @@ function buildMcpServer(client) {
           return { content: [{ type: 'text', text: `Memory stored: ${r.memory_id}` }] };
         }
         case 'recall_memory': {
-          const r = await client.recallMemory(args || {});
-          const items = (r.results || r.memories || []).map((it, i) => {
-            const mem = it.memory || it;
-            const tags = mem.tags?.length ? ` [${mem.tags.join(', ')}]` : '';
-            const score = it.final_score !== undefined ? ` score=${Number(it.final_score).toFixed(3)}` : '';
-            return `${i + 1}. ${mem.content}${tags}${score}\n   ID: ${mem.id || mem.memory_id || ''}`;
-          }).join('\n\n');
-          const count = r.count ?? (r.results ? r.results.length : (r.memories ? r.memories.length : 0));
-          return { content: [{ type: 'text', text: count ? `Found ${count} memories:\n\n${items}` : 'No memories found.' }] };
-        }
-        case 'recall_memory_multi': {
+          // Unified handler: supports single query OR multiple queries
           const queries = Array.isArray(args?.queries) ? args.queries.filter(q => !!(q && q.trim())) : [];
-          if (!queries.length) {
-            throw new Error('queries is required and must include at least one non-empty query');
-          }
-          const perQueryLimit = Math.max(1, Math.min(args?.limit_per_query || args?.limit || 5, 50));
-          const overallLimit = Math.max(1, Math.min(args?.overall_limit || args?.limit || queries.length * perQueryLimit || 15, 200));
+          const isMulti = queries.length > 0;
 
-          const r = await client.recallMemory({
-            queries,
-            limit: overallLimit,
-            per_query_limit: perQueryLimit,
+          const recallArgs = {
+            query: args?.query,
+            queries: isMulti ? queries : undefined,
+            limit: args?.limit || (isMulti ? queries.length * 5 : 5),
+            per_query_limit: isMulti ? Math.min(args?.limit || 5, 50) : undefined,
+            embedding: args?.embedding,
             time_query: args?.time_query,
             start: args?.start,
             end: args?.end,
             tags: Array.isArray(args?.tags) ? args.tags : undefined,
             tag_mode: args?.tag_mode,
             tag_match: args?.tag_match
-          });
+          };
 
-          const trimmed = r.results || r.memories || [];
-          const items = trimmed.map((it, i) => {
+          const r = await client.recallMemory(recallArgs);
+          const results = r.results || r.memories || [];
+
+          const items = results.map((it, i) => {
             const mem = it.memory || it;
             const tags = mem.tags?.length ? ` [${mem.tags.join(', ')}]` : '';
             const score = it.final_score !== undefined ? ` score=${Number(it.final_score).toFixed(3)}` : '';
             const dedupNote = it.deduped_from?.length ? ` (deduped x${it.deduped_from.length})` : '';
-            const queryNote = it._query ? ` query="${it._query}"` : '';
-            return `${i + 1}. ${mem.content}${tags}${score}${dedupNote}${queryNote}\n   ID: ${mem.id || mem.memory_id || ''}`;
+            return `${i + 1}. ${mem.content}${tags}${score}${dedupNote}\n   ID: ${mem.id || mem.memory_id || ''}`;
           }).join('\n\n');
+
+          const count = r.count ?? results.length;
+          const dedupInfo = r.dedup_removed ? ` (${r.dedup_removed} duplicates removed)` : '';
 
           return {
             content: [{
               type: 'text',
-              text: trimmed.length
-                ? `Found ${trimmed.length} memories (removed ${r.dedup_removed ?? 0} duplicates) across ${queries.length} queries:\n\n${items}`
-                : 'No memories found across the provided queries.'
+              text: count ? `Found ${count} memories${dedupInfo}:\n\n${items}` : 'No memories found.'
             }]
           };
         }
