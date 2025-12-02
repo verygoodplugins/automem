@@ -436,9 +436,10 @@ class LoCoMoEvaluator:
                 "tag_match": "exact"
             }
             
-            # Use auto_decompose for multi-hop questions to extract entity+topic queries
+            # Use auto_decompose and entity expansion for multi-hop questions
             if is_multihop:
                 params["auto_decompose"] = "true"
+                params["expand_entities"] = "true"  # Enable entity-to-entity expansion
             
             response = requests.get(
                 f"{self.config.base_url}/recall",

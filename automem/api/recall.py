@@ -489,6 +489,136 @@ def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any
     return False
 
 
+def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
+    """
+    Extract entity names (people, places) from seed result metadata.
+    
+    Returns entity names that can be used to search for related memories.
+    Entity tags are created by enrichment as: entity:{category}:{slug}
+    """
+    entities: Set[str] = set()
+    
+    for result in results:
+        memory = result.get("memory") or result
+        
+        # Check metadata.entities (populated by enrichment)
+        metadata = memory.get("metadata")
+        if isinstance(metadata, dict):
+            ent_section = metadata.get("entities")
+            if isinstance(ent_section, dict):
+                # Extract people and places - most useful for multi-hop
+                for category in ("people", "places", "organizations"):
+                    values = ent_section.get(category, [])
+                    if isinstance(values, list):
+                        for v in values:
+                            if isinstance(v, str) and len(v) > 1:
+                                entities.add(v.lower().strip())
+        
+        # Also check tags for entity: prefixed tags
+        tags = memory.get("tags") or []
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, str) and tag.startswith("entity:people:"):
+                    # entity:people:amanda -> amanda
+                    name = tag.split(":")[-1].replace("-", " ").strip()
+                    if name:
+                        entities.add(name)
+    
+    return entities
+
+
+def _expand_entity_memories(
+    seed_results: List[Dict[str, Any]],
+    seen_ids: Set[str],
+    vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
+    qdrant_client: Any,
+    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
+    query_text: str,
+    query_tokens: List[str],
+    context_profile: Optional[Dict[str, Any]],
+    limit_per_entity: int,
+    total_limit: int,
+    logger: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Expand results by finding memories that mention entities found in seed results.
+    
+    This enables multi-hop reasoning:
+    1. Query: "What is Amanda's sister's career?"
+    2. Seed result: "Amanda's sister is Rachel"
+    3. Entity expansion: Find memories tagged with entity:people:rachel
+    4. Returns: "Rachel works as a counselor"
+    """
+    if qdrant_client is None:
+        return []
+    
+    entities = _extract_entities_from_results(seed_results)
+    if not entities:
+        return []
+    
+    logger.debug("Entity expansion: found entities %s", entities)
+    
+    expanded: Dict[str, Dict[str, Any]] = {}
+    total_added = 0
+    
+    for entity in list(entities)[:5]:  # Limit to 5 entities
+        if total_added >= total_limit:
+            break
+        
+        # Search for entity tag (prefix match)
+        entity_slug = entity.lower().replace(" ", "-")
+        entity_tags = [f"entity:people:{entity_slug}"]
+        
+        try:
+            entity_results = vector_filter_only_tag_search(
+                qdrant_client,
+                entity_tags,
+                "any",  # tag_mode
+                "prefix",  # tag_match
+                limit_per_entity,
+                seen_ids,
+            )
+        except Exception:
+            logger.exception("Entity expansion search failed for %s", entity)
+            continue
+        
+        for result in entity_results:
+            result_id = str(result.get("id") or (result.get("memory") or {}).get("id") or "")
+            if not result_id or result_id in seen_ids:
+                continue
+            
+            # Mark as entity-expanded result
+            result["match_type"] = "entity_expansion"
+            result["expanded_from_entity"] = entity
+            
+            # Score the result
+            final_score, components = compute_metadata_score(
+                result,
+                query_text or "",
+                query_tokens,
+                context_profile,
+            )
+            components["entity_expansion"] = 0.15  # Small boost for entity matches
+            result.setdefault("score_components", {}).update(components)
+            result["final_score"] = final_score + 0.15
+            result["score"] = result["final_score"]
+            
+            if result_id not in expanded:
+                expanded[result_id] = result
+                seen_ids.add(result_id)
+                total_added += 1
+                
+                if total_added >= total_limit:
+                    break
+    
+    expanded_list = list(expanded.values())
+    expanded_list.sort(key=lambda r: -float(r.get("final_score", 0.0)))
+    
+    logger.debug("Entity expansion: added %d memories from %d entities", len(expanded_list), len(entities))
+    
+    return expanded_list
+
+
 def _expand_related_memories(
     graph: Any,
     seed_results: List[Dict[str, Any]],
@@ -682,6 +812,13 @@ def handle_recall(
         request.args.get("expand_relations")
         or request.args.get("expand_associations")
         or request.args.get("expand"),
+        False,
+    )
+    
+    # Entity expansion for multi-hop reasoning
+    expand_entities = _parse_bool_param(
+        request.args.get("expand_entities")
+        or request.args.get("entity_expansion"),
         False,
     )
 
@@ -920,12 +1057,14 @@ def handle_recall(
     # Graph expansion feature (from upstream branch)
     seed_results = list(deduped_results)
     expansion_results: List[Dict[str, Any]] = []
+    entity_expansion_results: List[Dict[str, Any]] = []
     results = deduped_results
 
+    # Track seen IDs for both expansion types
+    seen_ids = {str(r.get("id") or (r.get("memory") or {}).get("id") or "") for r in seed_results if r.get("id") or (r.get("memory") or {}).get("id")}
+    query_tokens = extract_keywords(query_text.lower()) if query_text else []
+
     if expand_relations and graph is not None:
-        seen_ids = {str(r.get("id") or (r.get("memory") or {}).get("id") or "") for r in seed_results if r.get("id") or (r.get("memory") or {}).get("id")}
-        query_tokens = extract_keywords(query_text.lower()) if query_text else []
-        
         expansion_results = _expand_related_memories(
             graph=graph,
             seed_results=seed_results,
@@ -947,6 +1086,23 @@ def handle_recall(
         )
         results = seed_results + expansion_results
 
+    # Entity-based expansion for multi-hop reasoning
+    if expand_entities and qdrant_client is not None:
+        entity_expansion_results = _expand_entity_memories(
+            seed_results=seed_results + expansion_results,  # Include relation-expanded results too
+            seen_ids=seen_ids,
+            vector_filter_only_tag_search=vector_filter_only_tag_search,
+            qdrant_client=qdrant_client,
+            compute_metadata_score=compute_metadata_score,
+            query_text=query_text,
+            query_tokens=query_tokens,
+            context_profile=any_context_profile,
+            limit_per_entity=5,
+            total_limit=expansion_limit,
+            logger=logger,
+        )
+        results = seed_results + expansion_results + entity_expansion_results
+
     response = {
         "status": "success",
         "query": query_text,
@@ -965,6 +1121,12 @@ def handle_recall(
             "expanded_count": len(expansion_results),
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
+        }
+    if expand_entities:
+        response["entity_expansion"] = {
+            "enabled": True,
+            "expanded_count": len(entity_expansion_results),
+            "entities_found": list(_extract_entities_from_results(seed_results + expansion_results))[:10],
         }
     if is_multi:
         response["queries"] = queries_to_run
