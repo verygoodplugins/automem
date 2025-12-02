@@ -62,6 +62,7 @@ def create_memory_blueprint_full(
     relation_types: Dict[str, Any],
     state: Any,
     logger: Any,
+    on_access: Optional[Callable[[List[str]], None]] = None,
 ) -> Blueprint:
     bp = Blueprint("memory", __name__)
 
@@ -471,6 +472,12 @@ def create_memory_blueprint_full(
             data = serialize_node(row[0])
             data["metadata"] = parse_metadata_field(data.get("metadata"))
             memories.append(data)
+
+        # Update last_accessed for retrieved memories
+        if on_access and memories:
+            accessed_ids = [str(m.get("id")) for m in memories if m.get("id")]
+            if accessed_ids:
+                on_access(accessed_ids)
 
         return jsonify({"status": "success", "tags": tags, "count": len(memories), "memories": memories})
 
