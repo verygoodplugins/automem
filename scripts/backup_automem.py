@@ -80,36 +80,62 @@ class AutoMemBackup:
             )
             graph = db.select_graph(FALKORDB_GRAPH)
             
-            # Export all nodes
-            nodes_result = graph.query("""
-                MATCH (n)
-                RETURN 
-                    id(n) as id,
-                    labels(n) as labels,
-                    properties(n) as props
-            """)
-            
+            # Export all nodes (using LIMIT to handle large graphs in batches)
+            # Note: FalkorDB has a default result limit, so we need to paginate
             nodes = []
-            if nodes_result.result_set:
+            batch_size = 10000
+            offset = 0
+
+            while True:
+                nodes_result = graph.query(f"""
+                    MATCH (n)
+                    RETURN 
+                        id(n) as id,
+                        labels(n) as labels,
+                        properties(n) as props
+                    SKIP {offset} LIMIT {batch_size}
+                """)
+
+                if not nodes_result.result_set:
+                    break
+
+                batch_count = 0
                 for row in nodes_result.result_set:
                     nodes.append({
                         "id": row[0],
                         "labels": row[1],
                         "properties": row[2]
                     })
+                    batch_count += 1
+
+                logger.info(f"   Exported batch: {batch_count} nodes (total: {len(nodes)})")
+
+                if batch_count < batch_size:
+                    break  # Last batch
+
+                offset += batch_size
             
-            # Export all relationships
-            rels_result = graph.query("""
-                MATCH (a)-[r]->(b)
-                RETURN 
-                    id(a) as source_id,
-                    type(r) as rel_type,
-                    id(b) as target_id,
-                    properties(r) as props
-            """)
-            
+            # Export all relationships (using LIMIT to handle large graphs in batches)
+            # Note: FalkorDB has a default result limit, so we need to paginate
             relationships = []
-            if rels_result.result_set:
+            batch_size = 10000
+            offset = 0
+
+            while True:
+                rels_result = graph.query(f"""
+                    MATCH (a)-[r]->(b)
+                    RETURN
+                        id(a) as source_id,
+                        type(r) as rel_type,
+                        id(b) as target_id,
+                        properties(r) as props
+                    SKIP {offset} LIMIT {batch_size}
+                """)
+
+                if not rels_result.result_set:
+                    break
+
+                batch_count = 0
                 for row in rels_result.result_set:
                     relationships.append({
                         "source_id": row[0],
@@ -117,7 +143,15 @@ class AutoMemBackup:
                         "target_id": row[2],
                         "properties": row[3]
                     })
-            
+                    batch_count += 1
+
+                logger.info(f"   Exported batch: {batch_count} relationships (total: {len(relationships)})")
+
+                if batch_count < batch_size:
+                    break  # Last batch
+
+                offset += batch_size
+
             # Create backup data
             backup_data = {
                 "timestamp": self.timestamp,
