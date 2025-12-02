@@ -58,6 +58,109 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
     ".swift": "swift",
 }
 
+# Words to skip when extracting entities from queries
+ENTITY_STOPWORDS: Set[str] = {
+    'What', 'Would', 'Could', 'Does', 'Did', 'How', 'Why', 'When', 'Where',
+    'Which', 'Who', 'Whose', 'Will', 'Can', 'Should', 'Has', 'Have', 'Had',
+    'Is', 'Are', 'Was', 'Were', 'Do', 'Been', 'Being', 'The', 'Answer',
+    'Yes', 'No', 'Likely', 'Based', 'According', 'Since', 'Because',
+    'January', 'February', 'March', 'April', 'May', 'June', 'July',
+    'August', 'September', 'October', 'November', 'December',
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    'National', 'American', 'European', 'Asian', 'African',
+}
+
+
+def _extract_query_entities(query: str) -> List[str]:
+    """
+    Extract named entities (people, places) from a query.
+    
+    This enables entity-aware recall for questions like:
+    "Would Caroline pursue writing?" -> extracts "Caroline"
+    
+    The recall can then run additional searches for entity-specific memories.
+    """
+    if not query:
+        return []
+    
+    words = query.split()
+    entities = []
+    
+    for i, word in enumerate(words):
+        # Clean punctuation
+        clean_word = re.sub(r'[^\w]', '', word)
+        
+        if len(clean_word) < 2:
+            continue
+        if clean_word in ENTITY_STOPWORDS:
+            continue
+        # Skip possessives (handle separately)
+        if "'s" in word or "'s" in word:
+            continue
+        
+        # Check for capitalized word (potential name)
+        if len(clean_word) > 1 and clean_word[0].isupper() and clean_word[1:].islower():
+            # Skip if first word (sentence start)
+            if i == 0:
+                continue
+            # Skip if after sentence boundary
+            if i > 0 and words[i-1][-1] in '.?!':
+                continue
+            entities.append(clean_word)
+    
+    # Handle possessives like "John's" or "Caroline's"
+    possessives = re.findall(r"\b([A-Z][a-z]+)'s\b", query)
+    for p in possessives:
+        if p not in ENTITY_STOPWORDS and p not in entities:
+            entities.append(p)
+    
+    return list(set(entities))
+
+
+def _extract_topic_keywords(query: str, exclude_entities: Optional[List[str]] = None) -> List[str]:
+    """
+    Extract meaningful topic keywords from a query.
+    
+    For "Would Caroline pursue writing as a career?" extracts:
+    ["writing", "career"]
+    
+    These can be combined with entities for broader searches.
+    """
+    if not query:
+        return []
+    
+    # Build exclusion set (lowercase entity names to skip)
+    exclude_lower = set()
+    if exclude_entities:
+        exclude_lower = {e.lower() for e in exclude_entities}
+    
+    # Common question/filler words to skip
+    skip_words = {
+        'would', 'could', 'should', 'will', 'can', 'may', 'might',
+        'does', 'did', 'has', 'have', 'had', 'is', 'are', 'was', 'were',
+        'be', 'been', 'being', 'the', 'a', 'an', 'to', 'for', 'of', 'in',
+        'on', 'at', 'by', 'with', 'about', 'as', 'if', 'or', 'and', 'but',
+        'what', 'which', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how',
+        'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them', 'their',
+        'he', 'she', 'his', 'her', 'him', 'likely', 'probably', 'possibly',
+        'considered', 'pursue', 'want', 'like', 'prefer', 'interested',
+        'still', 'ever', 'more', 'most', 'some', 'any', 'all', 'only',
+    }
+    
+    # Extract words, lowercase, filter
+    words = re.findall(r'\b[a-z]{4,}\b', query.lower())
+    topics = [w for w in words if w not in skip_words and w not in exclude_lower]
+    
+    # Return unique topics, preserving order
+    seen = set()
+    result = []
+    for t in topics:
+        if t not in seen:
+            seen.add(t)
+            result.append(t)
+    
+    return result[:5]  # Limit to 5 topics
+
 
 def _fingerprint_content(content: str) -> Optional[str]:
     """Lightweight content fingerprint for deduping near-identical memories."""
@@ -89,6 +192,9 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             return str(res["id"])
         return None
 
+    # Track fingerprints separately to catch same-content with different IDs
+    fp_to_key: Dict[str, str] = {}
+
     for res in results:
         mem = res.get("memory") or {}
         mid = _mem_id(res)
@@ -98,7 +204,14 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             buckets[f"raw:{len(buckets)}"] = {"item": res, "sources": []}
             continue
 
-        existing_key = key if key in buckets else (f"fp:{fp}" if fp and f"fp:{fp}" in buckets else None)
+        # Check for existing by ID first, then by fingerprint
+        existing_key = None
+        if key in buckets:
+            existing_key = key
+        elif fp and fp in fp_to_key:
+            # Same content but different ID - merge into existing
+            existing_key = fp_to_key[fp]
+        
         if existing_key:
             existing = buckets[existing_key]["item"]
             removed += 1
@@ -117,6 +230,9 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             buckets[existing_key]["sources"].append(mid or fp or "unknown")
         else:
             buckets[key] = {"item": res, "sources": [mid or fp or "unknown"]}
+            # Track this fingerprint -> key mapping
+            if fp:
+                fp_to_key[fp] = key
 
     deduped: List[Dict[str, Any]] = []
     for entry in buckets.values():
@@ -728,9 +844,44 @@ def handle_recall(
 
         return local_results, context_injected, context_profile, len(vector_matches)
 
-    is_multi = bool(multi_queries)
+    # Auto-decompose: extract entities from query and generate supplementary queries
+    auto_decompose = _parse_bool_param(request.args.get("auto_decompose"), False)
+    decomposed_queries: List[str] = []
+    
+    if auto_decompose and query_text and not multi_queries:
+        entities = _extract_query_entities(query_text)
+        topics = _extract_topic_keywords(query_text, exclude_entities=entities)
+        
+        # Generate entity+topic focused queries for multi-hop reasoning
+        # Strategy: Search both entity+specific_topic AND entity+broad_topic
+        # E.g., for "Would Caroline pursue writing?" with entities=["Caroline"], topics=["writing", "career"]
+        # Generate: ["Caroline", "Caroline career", "Caroline interests", "Caroline writing"]
+        for entity in entities[:2]:  # Limit to 2 entities
+            # First: entity alone with implicit career/interests context
+            decomposed_queries.append(entity)
+            
+            # Second: entity + each topic for specific focus
+            for topic in topics[:3]:
+                decomposed_queries.append(f"{entity} {topic}")
+            
+            # Third: entity + broad related terms to catch alternative answers
+            # E.g., "Caroline career writing" might not find "counseling" but "Caroline interests" might
+            if "career" in topics or "job" in topics or "work" in topics:
+                decomposed_queries.append(f"{entity} interests goals plans")
+        
+        # Also add topic-only queries for broader coverage
+        if topics and not entities:
+            for topic in topics[:3]:
+                decomposed_queries.append(topic)
+    
+    is_multi = bool(multi_queries) or bool(decomposed_queries)
     queries_to_run: List[str] = [q for q in multi_queries if q]
-    if not queries_to_run and query_text:
+    
+    # Add decomposed queries if auto_decompose is enabled
+    if decomposed_queries:
+        # Original query first, then decomposed variations
+        queries_to_run = [query_text] + decomposed_queries
+    elif not queries_to_run and query_text:
         queries_to_run = [query_text]
     if not queries_to_run:
         queries_to_run = [query_text] if query_text else [""]
