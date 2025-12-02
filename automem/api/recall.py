@@ -539,6 +539,7 @@ def _expand_entity_memories(
     limit_per_entity: int,
     total_limit: int,
     logger: Any,
+    additional_tag_filters: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Expand results by finding memories that mention entities found in seed results.
@@ -548,6 +549,10 @@ def _expand_entity_memories(
     2. Seed result: "Amanda's sister is Rachel"
     3. Entity expansion: Find memories tagged with entity:people:rachel
     4. Returns: "Rachel works as a counselor"
+    
+    Args:
+        additional_tag_filters: Extra tags to filter by (e.g., conversation:conv-26)
+                               to ensure expanded memories are from same context.
     """
     if qdrant_client is None:
         return []
@@ -561,19 +566,22 @@ def _expand_entity_memories(
     expanded: Dict[str, Dict[str, Any]] = {}
     total_added = 0
     
+    # Add any required tag filters (e.g., conversation tag)
+    base_filters = list(additional_tag_filters) if additional_tag_filters else []
+    
     for entity in list(entities)[:5]:  # Limit to 5 entities
         if total_added >= total_limit:
             break
         
-        # Search for entity tag (prefix match)
+        # Search for entity tag (prefix match) + any additional filters
         entity_slug = entity.lower().replace(" ", "-")
-        entity_tags = [f"entity:people:{entity_slug}"]
+        entity_tags = [f"entity:people:{entity_slug}"] + base_filters
         
         try:
             entity_results = vector_filter_only_tag_search(
                 qdrant_client,
                 entity_tags,
-                "any",  # tag_mode
+                "all" if base_filters else "any",  # Must match all tags if filtering
                 "prefix",  # tag_match
                 limit_per_entity,
                 seen_ids,
@@ -1100,6 +1108,7 @@ def handle_recall(
             limit_per_entity=5,
             total_limit=expansion_limit,
             logger=logger,
+            additional_tag_filters=tag_filters,  # Pass conversation tag filter
         )
         results = seed_results + expansion_results + entity_expansion_results
 
