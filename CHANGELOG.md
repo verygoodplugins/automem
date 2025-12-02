@@ -2,6 +2,35 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.9.1] - 2025-12-02
+
+### 🏆 Benchmark Improvement
+- Achieved **90.53%** on LoCoMo-10 (SOTA, +2.29pp over CORE at 88.24%)
+- Multi-hop reasoning improved from 37.5% to **50%** (+12.5pp)
+- New benchmark report: `tests/benchmarks/BENCHMARK_2025-12-02.md`
+
+### 🔗 Entity-to-Entity Expansion
+- **Feature**: New `expand_entities` parameter for multi-hop reasoning via entity tags
+- **How it works**: Extracts entities from seed results → searches for `entity:people:{name}` tags
+- **Use case**: Query about "Amanda's sister's career" finds "Amanda's sister is Rachel" → entity expansion finds "Rachel works as counselor"
+- Respects original tag filters for proper context scoping
+
+### 🧪 Test Infrastructure
+- Fixed test cleanup: was missing 99% of tagged memories (used wrong endpoint)
+- Added `test_multihop_quick.py` for rapid multi-hop iteration
+- Improved Q+A embedding similarity checking in test harness
+
+### 📝 Documentation
+- Updated API.md with `expand_entities` and `expand_relations` params
+- Updated ENVIRONMENT_VARIABLES.md with `RECALL_EXPANSION_LIMIT`
+- Updated TESTING.md with latest benchmark results
+- Updated README with 90.53% score
+
+### 🔧 Configuration
+- New param: `expand_entities` (default: false) - enables entity-to-entity expansion
+- New param: `entity_expansion` (alias for expand_entities)
+- Existing: `RECALL_EXPANSION_LIMIT=25` - total expansion results limit
+
 ## [0.9.0] - 2025-11-20
 
 ### 🏆 Benchmark Breakthrough

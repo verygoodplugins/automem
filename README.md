@@ -8,7 +8,7 @@
 ║   ██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║ ╚═╝ ██║███████╗██║ ╚═╝ ██║        ║
 ║   ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝        ║
 ║                                                                              ║
-║        State-of-the-Art Conversational Memory • 90.38% LoCoMo Score         ║
+║        State-of-the-Art Conversational Memory • 90.53% LoCoMo Score         ║
 ║              Graph + Vector Architecture • Research-Validated               ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -16,7 +16,7 @@
 
 # **AI Memory That Actually Learns**
 
-AutoMem is the **world's best-performing long-term memory system** for AI assistants. On November 20, 2025, AutoMem achieved **90.38% accuracy** on the LoCoMo benchmark (ACL 2024), beating the previous state-of-the-art by 2.14 points.
+AutoMem is the **world's best-performing long-term memory system** for AI assistants. On December 2, 2025, AutoMem achieved **90.53% accuracy** on the LoCoMo benchmark (ACL 2024), beating the previous state-of-the-art by 2.29 points.
 
 **Deploy production-grade AI memory in 60 seconds:**
 
@@ -26,22 +26,23 @@ railway up
 
 ---
 
-## 🎯 November 20, 2025 Update: State-of-the-Art Achieved
+## 🎯 December 2, 2025 Update: State-of-the-Art Improved
 
-AutoMem achieved **90.38% accuracy** on the LoCoMo benchmark (ACL 2024)—the academic standard for long-term conversational memory. This makes AutoMem the **highest-performing memory system in the world**, beating:
+AutoMem achieved **90.53% accuracy** on the LoCoMo benchmark (ACL 2024)—the academic standard for long-term conversational memory. This makes AutoMem the **highest-performing memory system in the world**, beating:
 
 - **CORE** (heysol.ai): 88.24% (previous SOTA)
 - **OpenAI's baseline**: 39%
-- **+14.3 percentage points** improvement in just 12 days
+- **+14.45 percentage points** improvement since baseline
 
 **Key breakthroughs:**
 
+- 🔗 **Entity-to-entity expansion** - Multi-hop reasoning via entity tag linking
 - 🌉 **Multi-hop bridge discovery** - Finds connecting memories across conversation threads
 - ⏰ **Temporal alignment scoring** - Understands time-aware queries ("what happened last year?")
 - 🎯 **9-component hybrid search** - Semantic + lexical + graph + temporal signals
 - 💯 **100% complex reasoning** - Perfect score on multi-step reasoning tasks
 
-**[Full benchmark results →](tests/benchmarks/BENCHMARK_2025-11-20.md)**
+**[Full benchmark results →](tests/benchmarks/BENCHMARK_2025-12-02.md)**
 
 ---
 
@@ -53,10 +54,10 @@ AutoMem gives AI assistants the ability to **remember, connect, and evolve** the
 
 ## What Makes AutoMem State-of-the-Art
 
-**November 20, 2025**: AutoMem scored **90.38%** on LoCoMo—the academic benchmark for long-term conversational memory (ACL 2024). This beats:
+**December 2, 2025**: AutoMem scored **90.53%** on LoCoMo—the academic benchmark for long-term conversational memory (ACL 2024). This beats:
 - **CORE (heysol.ai)**: 88.24% (previous SOTA)
 - **OpenAI's implementation**: 39%
-- **+14.3 points** improvement in 12 days
+- **+14.45 points** improvement since baseline
 
 AutoMem is a **graph-vector memory service** built on peer-reviewed neuroscience and validated by academic benchmarks:
 
@@ -416,7 +417,7 @@ Vector databases match embeddings. AutoMem builds knowledge graphs:
 ### vs. Building Your Own
 AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 
-- ✅ **Benchmark-proven** - 90.38% on LoCoMo (ACL 2024), beats funded competitors
+- ✅ **Benchmark-proven** - 90.53% on LoCoMo (ACL 2024), beats funded competitors
 - ✅ **Research-validated** - Implements HippoRAG 2, A-MEM, MELODI, ReadAgent principles  
 - ✅ **Production-ready** - Auth, admin tools, health monitoring, automated backups
 - ✅ **Battle-tested** - Enrichment pipeline, consolidation engine, retry logic, dual storage
@@ -424,21 +425,21 @@ AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 
 ## Benchmark-Proven Performance
 
-### LoCoMo Benchmark Results (November 20, 2025)
+### LoCoMo Benchmark Results (December 2, 2025)
 
-**90.38% overall accuracy** across 1,986 questions:
+**90.53% overall accuracy** across 1,986 questions:
 
 | Category | AutoMem | Notes |
 |----------|---------|-------|
 | **Complex Reasoning** | **100%** | Perfect score on multi-step reasoning |
-| **Open Domain** | **96.31%** | General knowledge recall |
-| **Single-hop Recall** | **83.33%** | Basic fact retrieval |
-| **Temporal Understanding** | **83.49%** | Time-aware queries |
-| **Multi-hop Reasoning** | **37.50%** | Connecting disparate memories |
+| **Open Domain** | **95.84%** | General knowledge recall |
+| **Temporal Understanding** | **85.05%** | Time-aware queries |
+| **Single-hop Recall** | **79.79%** | Basic fact retrieval |
+| **Multi-hop Reasoning** | **50.00%** | Connecting disparate memories (+12.5pp) |
 
 **Comparison:**
 - CORE (previous SOTA): 88.24%
-- AutoMem: **90.38%** (+2.14 points)
+- AutoMem: **90.53%** (+2.29 points)
 - OpenAI baseline: 39%
 
 Run the benchmark yourself: `make test-locomo`
@@ -488,7 +489,7 @@ Run the benchmark yourself: `make test-locomo`
 
 ## The Science Behind SOTA
 
-AutoMem's **90.38% LoCoMo score** didn't come from hype—it came from implementing peer-reviewed neuroscience and graph theory:
+AutoMem's **90.53% LoCoMo score** didn't come from hype—it came from implementing peer-reviewed neuroscience and graph theory:
 
 ### [HippoRAG 2](https://arxiv.org/abs/2502.14802) (Ohio State, June 2025)
 **Finding**: Graph-vector hybrid achieves 7% better associative memory than pure vector RAG, approaching human long-term memory performance.
@@ -538,7 +539,7 @@ railway up
 ```
 
 **AutoMem is the world's best-performing long-term memory system.**  
-90.38% LoCoMo score. Open source. Research-validated. Production-ready.
+90.53% LoCoMo score. Open source. Research-validated. Production-ready.
 
 Transform your AI from a chatbot into a thinking partner that **actually remembers.**
 
