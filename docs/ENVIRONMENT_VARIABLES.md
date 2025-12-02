@@ -173,7 +173,8 @@ These act as **relative weights** in the scoring formula. Keeping them roughly n
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `RECALL_RELATION_LIMIT` | Max related memories returned by `/memories/{id}/related` | `5` |
+| `RECALL_RELATION_LIMIT` | Max related memories per seed in graph expansion | `5` |
+| `RECALL_EXPANSION_LIMIT` | Total max expansion results (relations + entities) | `25` |
 
 ---
 
