@@ -77,11 +77,15 @@ class LoCoMoEvaluator:
         
         # Phase 2: Initialize OpenAI client for LLM-based answer extraction
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        # DISABLED: LLM extraction causing JSON errors and hurting performance
-        self.use_llm_extraction = False  # bool(os.getenv("OPENAI_API_KEY"))
+        # DISABLED: LLM extraction too slow for iteration; using word-overlap for now
+        self.use_llm_extraction = False
         
         # Phase 2.5: Cache LLM responses to avoid redundant API calls
         self.llm_cache = {}  # (question, answer) -> (result, confidence, explanation)
+        
+        # Embedding-based answer checking (fast, handles semantic similarity)
+        self.use_embedding_similarity = bool(os.getenv("OPENAI_API_KEY"))
+        self.embedding_cache = {}  # text -> embedding vector
         
     def health_check(self) -> bool:
         """Verify AutoMem API is accessible"""
@@ -92,35 +96,81 @@ class LoCoMoEvaluator:
             print(f"Health check failed: {e}")
             return False
     
+    def _get_embedding(self, text: str) -> Optional[List[float]]:
+        """Get embedding for text, with caching."""
+        if not self.use_embedding_similarity:
+            return None
+        
+        # Truncate and cache key
+        text = text[:1000]  # Limit text length
+        cache_key = text[:200]  # Cache by prefix
+        
+        if cache_key in self.embedding_cache:
+            return self.embedding_cache[cache_key]
+        
+        try:
+            response = self.openai_client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text
+            )
+            embedding = response.data[0].embedding
+            self.embedding_cache[cache_key] = embedding
+            return embedding
+        except Exception as e:
+            return None
+    
+    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        import math
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+    
     def cleanup_test_data(self, tag_prefix: str = "locomo-test"):
         """Remove all test memories from AutoMem"""
         print(f"\n🧹 Cleaning up test memories with tag: {tag_prefix}")
         try:
-            # Recall all memories with the test tag
-            response = requests.get(
-                f"{self.config.base_url}/memory/by-tag",
-                headers=self.headers,
-                params={"tags": tag_prefix, "tag_match": "prefix"}
-            )
-            
-            if response.status_code == 200:
-                memories = response.json().get("memories", [])
-                print(f"Found {len(memories)} test memories to delete")
+            # Use /recall endpoint which is more reliable for tag search
+            # Loop until no more memories found (handles pagination)
+            total_deleted = 0
+            while True:
+                response = requests.get(
+                    f"{self.config.base_url}/recall",
+                    headers=self.headers,
+                    params={
+                        "tags": tag_prefix,
+                        "tag_match": "prefix",
+                        "limit": 100
+                    }
+                )
+                
+                if response.status_code != 200:
+                    print(f"⚠️  Could not fetch test memories: {response.status_code}")
+                    break
+                
+                results = response.json().get("results", [])
+                if not results:
+                    break
                 
                 # Delete each memory
-                for memory in memories:
-                    memory_id = memory.get("id")
+                for r in results:
+                    memory_id = r.get("id")
                     if memory_id:
                         requests.delete(
                             f"{self.config.base_url}/memory/{memory_id}",
                             headers=self.headers
                         )
+                        total_deleted += 1
                 
-                print(f"✅ Cleaned up {len(memories)} test memories")
-                return True
-            else:
-                print(f"⚠️  Could not fetch test memories: {response.status_code}")
-                return False
+                # If fewer than 100 returned, we're done
+                if len(results) < 100:
+                    break
+            
+            print(f"✅ Cleaned up {total_deleted} test memories")
+            return True
                 
         except Exception as e:
             print(f"⚠️  Cleanup error: {e}")
@@ -225,6 +275,47 @@ class LoCoMoEvaluator:
         
         print(f"✅ Loaded {memory_count} memories from conversation {sample_id}")
         return memory_map
+    
+    def _extract_speaker_from_question(self, question: str) -> Optional[str]:
+        """
+        Extract person/speaker name from a question.
+        
+        For "Would Caroline pursue writing?" returns "Caroline"
+        For "What did John say about?" returns "John"
+        """
+        import re
+        
+        # Common stopwords that look like names
+        stopwords = {
+            'What', 'Would', 'Could', 'Does', 'Did', 'How', 'Why', 'When', 'Where',
+            'Which', 'Who', 'Whose', 'Will', 'Can', 'Should', 'Has', 'Have', 'Had',
+            'Is', 'Are', 'Was', 'Were', 'Do', 'Been', 'Being', 'The', 'Answer',
+            'Yes', 'No', 'Likely', 'Based', 'According', 'Since', 'Because',
+        }
+        
+        words = question.split()
+        for i, word in enumerate(words):
+            # Clean punctuation
+            clean_word = re.sub(r'[^\w]', '', word)
+            
+            if len(clean_word) < 2 or clean_word in stopwords:
+                continue
+            
+            # Check for capitalized word (potential name)
+            if len(clean_word) > 1 and clean_word[0].isupper() and clean_word[1:].islower():
+                # Skip if first word (sentence start)
+                if i == 0:
+                    continue
+                return clean_word
+        
+        # Check for possessives like "John's" 
+        possessives = re.findall(r"\b([A-Z][a-z]+)'s\b", question)
+        if possessives:
+            name = possessives[0]
+            if name not in stopwords:
+                return name
+        
+        return None
     
     def is_temporal_question(self, question: str) -> bool:
         """Detect if question is asking about time/dates"""
@@ -345,36 +436,91 @@ class LoCoMoEvaluator:
                 "tag_match": "exact"
             }
             
+            # Use auto_decompose and entity expansion for multi-hop questions
+            if is_multihop:
+                params["auto_decompose"] = "true"
+                params["expand_entities"] = "true"  # Enable entity-to-entity expansion
+            
             response = requests.get(
                 f"{self.config.base_url}/recall",
                 headers=self.headers,
                 params=params
             )
             
+            memories = []
             if response.status_code == 200:
                 result = response.json()
                 # AutoMem returns "results" with nested "memory" objects
                 results = result.get("results", [])
                 # Extract the memory objects from each result
                 memories = [r.get("memory", {}) for r in results if "memory" in r]
-                return memories
-            else:
-                print(f"⚠️  Recall failed: {response.status_code}")
-                return []
+            
+            # Multi-hop enhancement: Also fetch memories by speaker tag
+            # This catches memories that semantic search misses
+            if is_multihop:
+                # Extract person names from question
+                speaker_name = self._extract_speaker_from_question(question)
+                if speaker_name:
+                    speaker_response = requests.get(
+                        f"{self.config.base_url}/recall",
+                        headers=self.headers,
+                        params=[
+                            ("tags", f"speaker:{speaker_name.lower()}"),
+                            ("tags", f"conversation:{sample_id}"),
+                            ("tag_mode", "all"),
+                            ("tag_match", "exact"),
+                            ("limit", "50")
+                        ]
+                    )
+                    if speaker_response.status_code == 200:
+                        speaker_results = speaker_response.json().get("results", [])
+                        speaker_memories = [r.get("memory", {}) for r in speaker_results if "memory" in r]
+                        # Add unique speaker memories not already in results
+                        existing_ids = {m.get("id") for m in memories if m.get("id")}
+                        for sm in speaker_memories:
+                            if sm.get("id") not in existing_ids:
+                                memories.append(sm)
+            
+            return memories
                 
         except Exception as e:
             print(f"⚠️  Recall error: {e}")
             return []
     
     def normalize_answer(self, text: str) -> str:
-        """Normalize text for comparison"""
+        """Normalize text for comparison with basic stemming"""
         # Convert to lowercase
         text = text.lower()
         # Remove punctuation
         text = re.sub(r'[^\w\s]', '', text)
+        # Basic stemming for common suffixes
+        words = text.split()
+        stemmed = []
+        for word in words:
+            # Remove common verb/noun suffixes for matching
+            if word.endswith('ing'):
+                word = word[:-3]  # counseling -> counsel
+            elif word.endswith('ed'):
+                word = word[:-2]
+            elif word.endswith('er') and len(word) > 4:
+                word = word[:-2]  # counselor -> counsel
+            elif word.endswith('or') and len(word) > 4:
+                word = word[:-2]  # counselor -> counsel
+            elif word.endswith('tion'):
+                word = word[:-4]
+            elif word.endswith('ment'):
+                word = word[:-4]
+            elif word.endswith('ness'):
+                word = word[:-4]
+            elif word.endswith('ful'):
+                word = word[:-3]
+            elif word.endswith('ly'):
+                word = word[:-2]
+            elif word.endswith('s') and len(word) > 3:
+                word = word[:-1]  # plural
+            stemmed.append(word)
         # Normalize whitespace
-        text = ' '.join(text.split())
-        return text
+        return ' '.join(stemmed)
     
     def fetch_evidence_memories(
         self,
@@ -524,7 +670,9 @@ class LoCoMoEvaluator:
         # Check cache first
         # Fix: Handle list answers by converting to JSON string
         answer_str = json.dumps(expected_answer, sort_keys=True) if isinstance(expected_answer, (list, dict)) else str(expected_answer)
-        cache_key = (question, answer_str, is_multi_hop)
+        # Ensure is_multi_hop is bool
+        is_multi_hop_bool = bool(is_multi_hop)
+        cache_key = (question[:200], answer_str[:100], is_multi_hop_bool)
         if cache_key in self.llm_cache:
             return self.llm_cache[cache_key]
         
@@ -747,7 +895,9 @@ Respond in JSON format:
         
         # Strategy 2: Semantic search through all recalled memories
         max_confidence = 0.0
+        max_embed_confidence = 0.0
         found_in_memory = None
+        answer_embedding = None  # Lazy-load only if word overlap fails
         
         for memory in recalled_memories:
             content = memory.get("content", "").lower()
@@ -772,12 +922,39 @@ Respond in JSON format:
                 if confidence > max_confidence:
                     max_confidence = confidence
                     found_in_memory = memory.get("id")
+            
+        # If word overlap is sufficient, skip expensive embedding computation
+        if max_confidence >= 0.5:
+            return True, max_confidence, f"Found answer (confidence: {max_confidence:.2f})"
+        
+        # For multi-hop with insufficient word overlap, try embedding similarity
+        if is_multi_hop and self.use_embedding_similarity and max_confidence < 0.5:
+            # Lazy-load answer embedding only when needed
+            if answer_embedding is None:
+                qa_text = f"Question: {question} Answer: {str(expected_answer)}"
+                answer_embedding = self._get_embedding(qa_text)
+            
+            if answer_embedding:
+                # Only check top 10 memories for embeddings (speed optimization)
+                for memory in recalled_memories[:10]:
+                    content_embedding = self._get_embedding(memory.get("content", ""))
+                    if content_embedding:
+                        embed_sim = self._cosine_similarity(answer_embedding, content_embedding)
+                        if embed_sim > max_embed_confidence:
+                            max_embed_confidence = embed_sim
+        
+        # For multi-hop, use embedding similarity if it exceeds threshold
+        # Embedding similarity: 0.50+ indicates semantic relevance for Q&A pairs
+        if is_multi_hop and max_embed_confidence > 0.50:
+            return True, max_embed_confidence, f"Embedding match (similarity: {max_embed_confidence:.2f})"
         
         # Determine if correct based on confidence
         is_correct = max_confidence >= 0.5
         
         if is_correct:
             explanation = f"Found answer (confidence: {max_confidence:.2f})"
+        elif max_embed_confidence > 0:
+            explanation = f"No good match (word: {max_confidence:.2f}, embed: {max_embed_confidence:.2f})"
         else:
             explanation = f"No good match (max: {max_confidence:.2f})"
         

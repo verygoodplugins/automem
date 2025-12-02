@@ -58,6 +58,109 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
     ".swift": "swift",
 }
 
+# Words to skip when extracting entities from queries
+ENTITY_STOPWORDS: Set[str] = {
+    'What', 'Would', 'Could', 'Does', 'Did', 'How', 'Why', 'When', 'Where',
+    'Which', 'Who', 'Whose', 'Will', 'Can', 'Should', 'Has', 'Have', 'Had',
+    'Is', 'Are', 'Was', 'Were', 'Do', 'Been', 'Being', 'The', 'Answer',
+    'Yes', 'No', 'Likely', 'Based', 'According', 'Since', 'Because',
+    'January', 'February', 'March', 'April', 'May', 'June', 'July',
+    'August', 'September', 'October', 'November', 'December',
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    'National', 'American', 'European', 'Asian', 'African',
+}
+
+
+def _extract_query_entities(query: str) -> List[str]:
+    """
+    Extract named entities (people, places) from a query.
+    
+    This enables entity-aware recall for questions like:
+    "Would Caroline pursue writing?" -> extracts "Caroline"
+    
+    The recall can then run additional searches for entity-specific memories.
+    """
+    if not query:
+        return []
+    
+    words = query.split()
+    entities = []
+    
+    for i, word in enumerate(words):
+        # Clean punctuation
+        clean_word = re.sub(r'[^\w]', '', word)
+        
+        if len(clean_word) < 2:
+            continue
+        if clean_word in ENTITY_STOPWORDS:
+            continue
+        # Skip possessives (handle separately)
+        if "'s" in word or "'s" in word:
+            continue
+        
+        # Check for capitalized word (potential name)
+        if len(clean_word) > 1 and clean_word[0].isupper() and clean_word[1:].islower():
+            # Skip if first word (sentence start)
+            if i == 0:
+                continue
+            # Skip if after sentence boundary
+            if i > 0 and words[i-1][-1] in '.?!':
+                continue
+            entities.append(clean_word)
+    
+    # Handle possessives like "John's" or "Caroline's"
+    possessives = re.findall(r"\b([A-Z][a-z]+)'s\b", query)
+    for p in possessives:
+        if p not in ENTITY_STOPWORDS and p not in entities:
+            entities.append(p)
+    
+    return list(set(entities))
+
+
+def _extract_topic_keywords(query: str, exclude_entities: Optional[List[str]] = None) -> List[str]:
+    """
+    Extract meaningful topic keywords from a query.
+    
+    For "Would Caroline pursue writing as a career?" extracts:
+    ["writing", "career"]
+    
+    These can be combined with entities for broader searches.
+    """
+    if not query:
+        return []
+    
+    # Build exclusion set (lowercase entity names to skip)
+    exclude_lower = set()
+    if exclude_entities:
+        exclude_lower = {e.lower() for e in exclude_entities}
+    
+    # Common question/filler words to skip
+    skip_words = {
+        'would', 'could', 'should', 'will', 'can', 'may', 'might',
+        'does', 'did', 'has', 'have', 'had', 'is', 'are', 'was', 'were',
+        'be', 'been', 'being', 'the', 'a', 'an', 'to', 'for', 'of', 'in',
+        'on', 'at', 'by', 'with', 'about', 'as', 'if', 'or', 'and', 'but',
+        'what', 'which', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how',
+        'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them', 'their',
+        'he', 'she', 'his', 'her', 'him', 'likely', 'probably', 'possibly',
+        'considered', 'pursue', 'want', 'like', 'prefer', 'interested',
+        'still', 'ever', 'more', 'most', 'some', 'any', 'all', 'only',
+    }
+    
+    # Extract words, lowercase, filter
+    words = re.findall(r'\b[a-z]{4,}\b', query.lower())
+    topics = [w for w in words if w not in skip_words and w not in exclude_lower]
+    
+    # Return unique topics, preserving order
+    seen = set()
+    result = []
+    for t in topics:
+        if t not in seen:
+            seen.add(t)
+            result.append(t)
+    
+    return result[:5]  # Limit to 5 topics
+
 
 def _fingerprint_content(content: str) -> Optional[str]:
     """Lightweight content fingerprint for deduping near-identical memories."""
@@ -89,6 +192,9 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             return str(res["id"])
         return None
 
+    # Track fingerprints separately to catch same-content with different IDs
+    fp_to_key: Dict[str, str] = {}
+
     for res in results:
         mem = res.get("memory") or {}
         mid = _mem_id(res)
@@ -98,7 +204,14 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             buckets[f"raw:{len(buckets)}"] = {"item": res, "sources": []}
             continue
 
-        existing_key = key if key in buckets else (f"fp:{fp}" if fp and f"fp:{fp}" in buckets else None)
+        # Check for existing by ID first, then by fingerprint
+        existing_key = None
+        if key in buckets:
+            existing_key = key
+        elif fp and fp in fp_to_key:
+            # Same content but different ID - merge into existing
+            existing_key = fp_to_key[fp]
+        
         if existing_key:
             existing = buckets[existing_key]["item"]
             removed += 1
@@ -117,6 +230,9 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             buckets[existing_key]["sources"].append(mid or fp or "unknown")
         else:
             buckets[key] = {"item": res, "sources": [mid or fp or "unknown"]}
+            # Track this fingerprint -> key mapping
+            if fp:
+                fp_to_key[fp] = key
 
     deduped: List[Dict[str, Any]] = []
     for entry in buckets.values():
@@ -373,6 +489,144 @@ def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any
     return False
 
 
+def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
+    """
+    Extract entity names (people, places) from seed result metadata.
+    
+    Returns entity names that can be used to search for related memories.
+    Entity tags are created by enrichment as: entity:{category}:{slug}
+    """
+    entities: Set[str] = set()
+    
+    for result in results:
+        memory = result.get("memory") or result
+        
+        # Check metadata.entities (populated by enrichment)
+        metadata = memory.get("metadata")
+        if isinstance(metadata, dict):
+            ent_section = metadata.get("entities")
+            if isinstance(ent_section, dict):
+                # Extract people and places - most useful for multi-hop
+                for category in ("people", "places", "organizations"):
+                    values = ent_section.get(category, [])
+                    if isinstance(values, list):
+                        for v in values:
+                            if isinstance(v, str) and len(v) > 1:
+                                entities.add(v.lower().strip())
+        
+        # Also check tags for entity: prefixed tags
+        tags = memory.get("tags") or []
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, str) and tag.startswith("entity:people:"):
+                    # entity:people:amanda -> amanda
+                    name = tag.split(":")[-1].replace("-", " ").strip()
+                    if name:
+                        entities.add(name)
+    
+    return entities
+
+
+def _expand_entity_memories(
+    seed_results: List[Dict[str, Any]],
+    seen_ids: Set[str],
+    vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
+    qdrant_client: Any,
+    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
+    query_text: str,
+    query_tokens: List[str],
+    context_profile: Optional[Dict[str, Any]],
+    limit_per_entity: int,
+    total_limit: int,
+    logger: Any,
+    additional_tag_filters: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Expand results by finding memories that mention entities found in seed results.
+    
+    This enables multi-hop reasoning:
+    1. Query: "What is Amanda's sister's career?"
+    2. Seed result: "Amanda's sister is Rachel"
+    3. Entity expansion: Find memories tagged with entity:people:rachel
+    4. Returns: "Rachel works as a counselor"
+    
+    Args:
+        additional_tag_filters: Extra tags to filter by (e.g., conversation:conv-26)
+                               to ensure expanded memories are from same context.
+    """
+    if qdrant_client is None:
+        return []
+    
+    entities = _extract_entities_from_results(seed_results)
+    if not entities:
+        return []
+    
+    logger.debug("Entity expansion: found entities %s", entities)
+    
+    expanded: Dict[str, Dict[str, Any]] = {}
+    total_added = 0
+    
+    # Add any required tag filters (e.g., conversation tag)
+    base_filters = list(additional_tag_filters) if additional_tag_filters else []
+    
+    for entity in list(entities)[:5]:  # Limit to 5 entities
+        if total_added >= total_limit:
+            break
+        
+        # Search for entity tag (prefix match) + any additional filters
+        entity_slug = entity.lower().replace(" ", "-")
+        entity_tags = [f"entity:people:{entity_slug}"] + base_filters
+        
+        try:
+            entity_results = vector_filter_only_tag_search(
+                qdrant_client,
+                entity_tags,
+                "all" if base_filters else "any",  # Must match all tags if filtering
+                "prefix",  # tag_match
+                limit_per_entity,
+                seen_ids,
+            )
+        except Exception:
+            logger.exception("Entity expansion search failed for %s", entity)
+            continue
+        
+        for result in entity_results:
+            result_id = str(result.get("id") or (result.get("memory") or {}).get("id") or "")
+            if not result_id or result_id in seen_ids:
+                continue
+            
+            # Mark as entity-expanded result
+            result["match_type"] = "entity_expansion"
+            result["expanded_from_entity"] = entity
+            
+            # Score the result
+            final_score, components = compute_metadata_score(
+                result,
+                query_text or "",
+                query_tokens,
+                context_profile,
+            )
+            components["entity_expansion"] = 0.15  # Small boost for entity matches
+            result.setdefault("score_components", {}).update(components)
+            result["final_score"] = final_score + 0.15
+            result["score"] = result["final_score"]
+            
+            if result_id not in expanded:
+                expanded[result_id] = result
+                seen_ids.add(result_id)
+                total_added += 1
+                
+                if total_added >= total_limit:
+                    break
+    
+    expanded_list = list(expanded.values())
+    expanded_list.sort(key=lambda r: -float(r.get("final_score", 0.0)))
+    
+    logger.debug("Entity expansion: added %d memories from %d entities", len(expanded_list), len(entities))
+    
+    return expanded_list
+
+
 def _expand_related_memories(
     graph: Any,
     seed_results: List[Dict[str, Any]],
@@ -568,6 +822,13 @@ def handle_recall(
         or request.args.get("expand"),
         False,
     )
+    
+    # Entity expansion for multi-hop reasoning
+    expand_entities = _parse_bool_param(
+        request.args.get("expand_entities")
+        or request.args.get("entity_expansion"),
+        False,
+    )
 
     try:
         relation_limit = max(1, min(int(request.args.get("relation_limit", relation_limit)), 200))
@@ -728,9 +989,44 @@ def handle_recall(
 
         return local_results, context_injected, context_profile, len(vector_matches)
 
-    is_multi = bool(multi_queries)
+    # Auto-decompose: extract entities from query and generate supplementary queries
+    auto_decompose = _parse_bool_param(request.args.get("auto_decompose"), False)
+    decomposed_queries: List[str] = []
+    
+    if auto_decompose and query_text and not multi_queries:
+        entities = _extract_query_entities(query_text)
+        topics = _extract_topic_keywords(query_text, exclude_entities=entities)
+        
+        # Generate entity+topic focused queries for multi-hop reasoning
+        # Strategy: Search both entity+specific_topic AND entity+broad_topic
+        # E.g., for "Would Caroline pursue writing?" with entities=["Caroline"], topics=["writing", "career"]
+        # Generate: ["Caroline", "Caroline career", "Caroline interests", "Caroline writing"]
+        for entity in entities[:2]:  # Limit to 2 entities
+            # First: entity alone with implicit career/interests context
+            decomposed_queries.append(entity)
+            
+            # Second: entity + each topic for specific focus
+            for topic in topics[:3]:
+                decomposed_queries.append(f"{entity} {topic}")
+            
+            # Third: entity + broad related terms to catch alternative answers
+            # E.g., "Caroline career writing" might not find "counseling" but "Caroline interests" might
+            if "career" in topics or "job" in topics or "work" in topics:
+                decomposed_queries.append(f"{entity} interests goals plans")
+        
+        # Also add topic-only queries for broader coverage
+        if topics and not entities:
+            for topic in topics[:3]:
+                decomposed_queries.append(topic)
+    
+    is_multi = bool(multi_queries) or bool(decomposed_queries)
     queries_to_run: List[str] = [q for q in multi_queries if q]
-    if not queries_to_run and query_text:
+    
+    # Add decomposed queries if auto_decompose is enabled
+    if decomposed_queries:
+        # Original query first, then decomposed variations
+        queries_to_run = [query_text] + decomposed_queries
+    elif not queries_to_run and query_text:
         queries_to_run = [query_text]
     if not queries_to_run:
         queries_to_run = [query_text] if query_text else [""]
@@ -769,12 +1065,14 @@ def handle_recall(
     # Graph expansion feature (from upstream branch)
     seed_results = list(deduped_results)
     expansion_results: List[Dict[str, Any]] = []
+    entity_expansion_results: List[Dict[str, Any]] = []
     results = deduped_results
 
+    # Track seen IDs for both expansion types
+    seen_ids = {str(r.get("id") or (r.get("memory") or {}).get("id") or "") for r in seed_results if r.get("id") or (r.get("memory") or {}).get("id")}
+    query_tokens = extract_keywords(query_text.lower()) if query_text else []
+
     if expand_relations and graph is not None:
-        seen_ids = {str(r.get("id") or (r.get("memory") or {}).get("id") or "") for r in seed_results if r.get("id") or (r.get("memory") or {}).get("id")}
-        query_tokens = extract_keywords(query_text.lower()) if query_text else []
-        
         expansion_results = _expand_related_memories(
             graph=graph,
             seed_results=seed_results,
@@ -796,6 +1094,24 @@ def handle_recall(
         )
         results = seed_results + expansion_results
 
+    # Entity-based expansion for multi-hop reasoning
+    if expand_entities and qdrant_client is not None:
+        entity_expansion_results = _expand_entity_memories(
+            seed_results=seed_results + expansion_results,  # Include relation-expanded results too
+            seen_ids=seen_ids,
+            vector_filter_only_tag_search=vector_filter_only_tag_search,
+            qdrant_client=qdrant_client,
+            compute_metadata_score=compute_metadata_score,
+            query_text=query_text,
+            query_tokens=query_tokens,
+            context_profile=any_context_profile,
+            limit_per_entity=5,
+            total_limit=expansion_limit,
+            logger=logger,
+            additional_tag_filters=tag_filters,  # Pass conversation tag filter
+        )
+        results = seed_results + expansion_results + entity_expansion_results
+
     response = {
         "status": "success",
         "query": query_text,
@@ -814,6 +1130,12 @@ def handle_recall(
             "expanded_count": len(expansion_results),
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
+        }
+    if expand_entities:
+        response["entity_expansion"] = {
+            "enabled": True,
+            "expanded_count": len(entity_expansion_results),
+            "entities_found": list(_extract_entities_from_results(seed_results + expansion_results))[:10],
         }
     if is_multi:
         response["queries"] = queries_to_run

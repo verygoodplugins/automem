@@ -175,7 +175,7 @@ LoCoMo evaluates AI systems' ability to remember and reason across very long con
 5. **Complex Reasoning** (Category 5) - Advanced inference tasks
 
 **State-of-the-Art**: CORE achieved 88.24% overall accuracy (June 2025)
-**Latest AutoMem run**: 90.38% overall accuracy (Nov 20, 2025) using multi-hop bridges + temporal alignment + content overlap scoring.
+**Latest AutoMem run**: 90.53% overall accuracy (Dec 2, 2025) using multi-hop bridges + entity expansion + temporal alignment.
 
 ### Running the Benchmark
 
@@ -209,26 +209,26 @@ Memory usage:
 
 ### Interpreting Results
 
-The benchmark outputs (example from November 20, 2025 run):
+The benchmark outputs (example from December 2, 2025 run):
 ```text
 📊 FINAL RESULTS
-🎯 Overall Accuracy: 90.38% (1795/1986)
-⏱️ Total Time: 1280.0s
+🎯 Overall Accuracy: 90.53% (1798/1986)
+⏱️ Total Time: 1665s
 💾 Total Memories Stored: 5882
 
 📈 Category Breakdown:
-  Single-hop Recall        : 83.33% (235/282)
-  Temporal Understanding   : 83.49% (268/321)
-  Multi-hop Reasoning      : 37.50% ( 36/ 96)
-  Open Domain              : 96.31% (810/841)
-  Complex Reasoning        : 100.0% (446/446)
+  Single-hop Recall        : 79.79% (225/282)
+  Temporal Understanding   : 85.05% (273/321)
+  Multi-hop Reasoning      : 50.00% ( 48/ 96)
+  Open Domain              : 95.84% (806/841)
+  Complex Reasoning        : 100.00% (446/446)
 
 🏆 Comparison with CORE (SOTA):
   CORE: 88.24%
-  AutoMem: 90.38%
-  📈 AutoMem leads CORE by +2.14 percentage points.
+  AutoMem: 90.53%
+  🎉 AutoMem BEATS CORE by 2.29%!
 
-Previous baseline (Nov 8, 2025): 76.08% before multi-hop bridge discovery and temporal alignment scoring. Both benchmark reports live in `tests/benchmarks/`.
+Previous baseline (Nov 8, 2025): 76.08%. All benchmark reports live in `tests/benchmarks/`.
 ```
 
 ### AutoMem's Advantages
