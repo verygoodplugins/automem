@@ -1,76 +1,244 @@
-# MCP over SSE Sidecar (Railway)
+# MCP over SSE Bridge
 
-This sidecar exposes AutoMem as an MCP server over SSE so cloud AI platforms can connect via HTTPS and use your memories.
+The SSE bridge exposes AutoMem as an MCP server over HTTPS, enabling cloud-based AI platforms to access your memories without local installation.
 
-**Supported platforms:**
-- **ChatGPT** (requires developer mode: Settings >> Connectors >> Advanced)
-- **Claude.ai** (web interface)
-- **Claude Mobile App** (iOS/Android)
-- **ElevenLabs Agents**
+## Why Use the SSE Bridge?
 
-Service endpoint (on Railway):
-- GET `/mcp/sse` — SSE stream (server → client). Include `Authorization: Bearer <AUTOMEM_API_TOKEN>`.
-- POST `/mcp/messages?sessionId=<id>` — Client → server JSON-RPC messages.
-- GET `/health` — Health probe.
+**Use Case: Cloud AI Platforms**
 
-Auth model:
-- **Header-based** (ElevenLabs): `Authorization: Bearer <AUTOMEM_API_TOKEN>` header
-- **URL-based** (ChatGPT, Claude): append `?api_token=<AUTOMEM_API_TOKEN>` to the SSE URL (`?api_key=` alias also works)
-  - Example: `https://<your-mcp-domain>/mcp/sse?api_token=...`
-  - Required for platforms that only support OAuth for custom connectors
-  - Note: URL tokens may appear in logs/proxy metadata
+Most AI platforms (ChatGPT, Claude.ai, ElevenLabs) run in the cloud and can't connect to local MCP servers. The SSE bridge solves this by:
 
-Supported tools:
-- `store_memory`, `recall_memory`, `associate_memories`, `update_memory`, `delete_memory`, `check_database_health`
+1. Running alongside your AutoMem API on Railway
+2. Exposing MCP tools over HTTPS with Server-Sent Events
+3. Allowing cloud platforms to store and recall memories
 
-Deploy (one‑click template):
-- The template adds a new service `automem-mcp-sse` alongside `memory-service` and `FalkorDB`.
-- It preconfigures `AUTOMEM_ENDPOINT` to the internal URL of `memory-service`: `http://${memory-service.RAILWAY_PRIVATE_DOMAIN}:8001`.
-- **Manual setup**: Use `AUTOMEM_ENDPOINT=http://memory-service.railway.internal:8001` (hardcoded internal DNS is more stable).
-- **Important**: The internal DNS must match your memory service's `RAILWAY_PRIVATE_DOMAIN`. If you renamed the service, verify with `railway variables --service memory-service | grep RAILWAY_PRIVATE_DOMAIN`.
+**When to Deploy It:**
+
+| Platform | Needs SSE Bridge? | Notes |
+|----------|-------------------|-------|
+| **ChatGPT** | ✅ Yes | Web/mobile, uses MCP connectors |
+| **Claude.ai** | ✅ Yes | Web interface MCP support |
+| **Claude Mobile** | ✅ Yes | iOS/Android app |
+| **ElevenLabs Agents** | ✅ Yes | Voice AI with tool calling |
+| **Cursor IDE** | ❌ No | Use local `mcp-automem` package |
+| **Claude Desktop** | ❌ No | Use local `mcp-automem` package |
+| **Claude Code** | ❌ No | Use local `mcp-automem` package |
+
+**If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the SSE bridge—just install the local MCP package:
+```bash
+npx @verygoodplugins/mcp-automem cursor  # or 'claude' or 'claude-code'
+```
+
+---
+
+## Deploy SSE Bridge on Railway
+
+### Option 1: Add Service Manually (Recommended)
+
+If you deployed AutoMem without the SSE bridge, add it as a new service:
+
+1. **Create New Service**
+   - In your Railway project, click `+ New Service`
+   - Select `GitHub Repo` → `verygoodplugins/automem`
+
+2. **Configure Build Settings**
+   - **Root Directory**: Leave empty
+   - **Builder**: `Nixpacks`
+   - **Build Command**: `cd mcp-sse-server && npm i`
+   - **Start Command**: `node mcp-sse-server/server.js`
+
+3. **Set Environment Variables**
+   ```
+   PORT=8080
+   AUTOMEM_ENDPOINT=http://memory-service.railway.internal:8001
+   AUTOMEM_API_TOKEN=<copy from memory-service>
+   ```
+   
+   > **Important**: Replace `memory-service` with your actual service name if different. Check with: `railway variables --service <your-api-service> | grep RAILWAY_PRIVATE_DOMAIN`
+
+4. **Configure Health Check**
+   - Path: `/health`
+   - Timeout: 100s
+
+5. **Generate Public Domain**
+   - Settings → Networking → Generate Domain
+   - Save your URL: `https://your-sse-bridge.up.railway.app`
+
+### Option 2: Redeploy with Template
+
+If starting fresh, the AutoMem template includes the SSE bridge. Enable it during deployment or add it later using Option 1.
+
+---
+
+## Supported Tools
+
+The SSE bridge exposes these MCP tools:
+
+| Tool | Description |
+|------|-------------|
+| `store_memory` | Store a new memory with tags and importance |
+| `recall_memory` | Semantic search across memories |
+| `associate_memories` | Create relationships between memories |
+| `update_memory` | Modify existing memory content or metadata |
+| `delete_memory` | Remove a memory |
+| `check_database_health` | Verify FalkorDB/Qdrant connectivity |
+
+---
 
 ## Client Setup
 
-### ChatGPT
-ChatGPT only supports OAuth for custom connectors, so authentication must be via URL parameter:
+### Endpoints
 
-1. Enable **Developer Mode**: Settings >> Connectors >> Advanced
-2. Configure MCP server:
-   - **Server URL**: `https://<your-mcp-domain>/mcp/sse?api_token=<AUTOMEM_API_TOKEN>`
-   - Replace `<AUTOMEM_API_TOKEN>` with your actual token
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/mcp/sse` | GET | SSE stream (server → client) |
+| `/mcp/messages?sessionId=<id>` | POST | Client → server JSON-RPC |
+| `/health` | GET | Health probe |
 
-### Claude.ai (Web Interface)
-Claude.ai only supports OAuth for custom connectors, so authentication must be via URL parameter:
+### Authentication
 
-- **Server URL**: `https://<your-mcp-domain>/mcp/sse?api_token=<AUTOMEM_API_TOKEN>`
-- Replace `<AUTOMEM_API_TOKEN>` with your actual token
+**Header-based** (preferred when supported):
+```
+Authorization: Bearer <AUTOMEM_API_TOKEN>
+```
 
-### Claude Mobile App
-Claude mobile only supports OAuth for custom connectors, so authentication must be via URL parameter:
+**URL-based** (for platforms that only support OAuth):
+```
+https://your-sse-bridge.up.railway.app/mcp/sse?api_token=<AUTOMEM_API_TOKEN>
+```
+> Note: `?api_key=` also works as an alias
 
-- **Server URL**: `https://<your-mcp-domain>/mcp/sse?api_token=<AUTOMEM_API_TOKEN>`
-- Replace `<AUTOMEM_API_TOKEN>` with your actual token
+---
 
-### ElevenLabs Agents
-ElevenLabs supports custom headers, so you can use either method:
+### ChatGPT Setup
+
+ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
+
+1. **Enable Developer Mode**
+   - Settings → Connectors → Advanced → Enable Developer Mode
+
+2. **Add MCP Server**
+   - Click `+ Add Server`
+   - **Server URL**: 
+     ```
+     https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
+     ```
+
+3. **Test It**
+   - Ask ChatGPT: "Store a memory: I prefer dark mode in all applications"
+   - Then: "What are my preferences?"
+
+---
+
+### Claude.ai Setup (Web)
+
+1. Go to Settings → MCP Servers (or similar)
+2. **Server URL**:
+   ```
+   https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
+   ```
+
+---
+
+### Claude Mobile Setup (iOS/Android)
+
+1. Open Settings → MCP Servers
+2. **Server URL**:
+   ```
+   https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
+   ```
+
+---
+
+### ElevenLabs Agents Setup
+
+ElevenLabs supports custom headers, giving you two options:
 
 **Option 1: Custom Header (Recommended)**
-- **Server URL**: `https://<your-mcp-domain>/mcp/sse`
+- **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse`
 - **Custom Header**:
   - Name: `Authorization`
-  - Value: `Bearer <AUTOMEM_API_TOKEN>`
+  - Value: `Bearer YOUR_TOKEN`
 
 **Option 2: URL Parameter**
-- **Server URL**: `https://<your-mcp-domain>/mcp/sse?api_token=<AUTOMEM_API_TOKEN>` (`?api_key=` alias also supported)
+- **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN`
 
-> **📚 Comprehensive Setup Guides**: Detailed step-by-step setup instructions for each platform are available in the [MCP-Automem project documentation](https://github.com/verygoodplugins/mcp-automem/blob/main/INSTALLATION.md) (coming soon).
+**Using with Voice Agents:**
+ElevenLabs agents can use AutoMem to:
+- Remember user preferences across conversations
+- Recall context from previous sessions
+- Store important decisions and facts
 
-Notes:
-- Keepalive heartbeats are sent every 20s to prevent idle timeouts.
-- Rate limiting and multi-tenant token scoping can be added in front of this service if needed.
+Example agent prompt:
+```
+You have access to a persistent memory system. Use store_memory to save 
+important user preferences, decisions, and facts. Use recall_memory to 
+retrieve relevant context before answering questions.
+```
 
-Troubleshooting `fetch failed` errors:
-1. **Check memory-service has `PORT=8001`** - Most common cause. Without it, Flask runs on wrong port.
-2. **Verify `AUTOMEM_ENDPOINT`** - Should be `http://memory-service.railway.internal:8001` (or your service's actual `RAILWAY_PRIVATE_DOMAIN`).
-3. **Check SSE logs** - Enable debug mode and check logs for actual error: `railway logs --service automem-mcp-sse`.
-4. **Alternative**: Use public URL as fallback: `AUTOMEM_ENDPOINT=https://<your-memory-service-domain>` (but internal is faster).
+---
+
+## Troubleshooting
+
+### "fetch failed" or Connection Refused
+
+1. **Check memory-service has `PORT=8001`**
+   - Most common cause. Without it, Flask defaults to port 5000.
+   - Fix: Add `PORT=8001` to memory-service environment variables.
+
+2. **Verify AUTOMEM_ENDPOINT**
+   - Should match your memory service's internal domain:
+     ```
+     AUTOMEM_ENDPOINT=http://memory-service.railway.internal:8001
+     ```
+   - Check actual domain: `railway variables --service memory-service | grep RAILWAY_PRIVATE_DOMAIN`
+
+3. **Check SSE service logs**
+   ```bash
+   railway logs --service automem-mcp-sse
+   ```
+
+4. **Fallback: Use public URL**
+   - If internal networking fails, use the public URL (slower but works):
+     ```
+     AUTOMEM_ENDPOINT=https://your-memory-service.up.railway.app
+     ```
+
+### SSE Connection Drops
+
+- Keepalive heartbeats are sent every 20 seconds
+- Some proxies/firewalls may still timeout; check platform-specific limits
+- ElevenLabs has a 30-second idle timeout; ensure heartbeats are reaching client
+
+### Authentication Errors
+
+- **401 Unauthorized**: Check token matches `AUTOMEM_API_TOKEN` in memory-service
+- **URL tokens in logs**: Normal for URL-based auth; use header auth if security is critical
+
+---
+
+## Advanced: Alexa Integration
+
+The SSE server also includes an Alexa skill endpoint:
+
+**Endpoint**: `POST /alexa`
+
+**Supported Intents**:
+- `RememberIntent`: "Alexa, tell AutoMem to remember {note}"
+- `RecallIntent`: "Alexa, ask AutoMem what I said about {query}"
+
+**Setup**:
+1. Create Alexa Custom Skill in developer console
+2. Point HTTPS endpoint to: `https://your-sse-bridge.up.railway.app/alexa`
+3. Configure intents with sample utterances
+
+See `mcp-sse-server/README.md` for full Alexa configuration.
+
+---
+
+## Security Notes
+
+- **URL tokens appear in logs**: If using `?api_token=`, be aware tokens may be logged by proxies
+- **Internal networking**: Railway private domains are only accessible within your project
+- **Rate limiting**: Consider adding a reverse proxy with rate limiting for production
+- **Token rotation**: Rotate `AUTOMEM_API_TOKEN` periodically via Railway dashboard

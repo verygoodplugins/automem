@@ -15,6 +15,57 @@ This template automatically sets up:
 
 ---
 
+## Post-Deploy Checklist
+
+After deploying, complete these steps to fully configure AutoMem:
+
+### Required: Add Your API Keys
+
+1. **Go to `memory-service` → Variables**
+2. **Set these variables:**
+
+| Variable | Required | How to Get |
+|----------|----------|------------|
+| `OPENAI_API_KEY` | Yes* | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `QDRANT_URL` | Recommended | [cloud.qdrant.io](https://cloud.qdrant.io) (free 1GB tier) |
+| `QDRANT_API_KEY` | With Qdrant | From Qdrant Cloud dashboard |
+
+*Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
+
+3. **Redeploy** the memory-service after adding variables.
+
+### Verify Deployment
+
+```bash
+# Check health (should show falkordb: connected)
+curl https://your-automem.up.railway.app/health
+
+# Store a test memory
+curl -X POST "https://your-automem.up.railway.app/memory" \
+  -H "Authorization: Bearer YOUR_AUTOMEM_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Test memory from Railway", "tags": ["test"]}'
+```
+
+### Optional: Add SSE Bridge for Cloud AI Platforms
+
+If you want to use AutoMem with **ChatGPT**, **Claude.ai**, **Claude Mobile**, or **ElevenLabs**:
+
+👉 **See [MCP_SSE.md](MCP_SSE.md)** for setup instructions.
+
+The SSE bridge is **not needed** for:
+- Cursor IDE (use local `mcp-automem` package)
+- Claude Desktop (use local `mcp-automem` package)
+- Direct API access
+
+### Get Your API Tokens
+
+Your tokens were auto-generated during deployment. Find them in:
+- Railway Dashboard → `memory-service` → Variables
+- Look for `AUTOMEM_API_TOKEN` and `ADMIN_API_TOKEN`
+
+---
+
 ## Manual Setup (Recommended for Production)
 
 ### Step 1: Create FalkorDB Service with Persistence
