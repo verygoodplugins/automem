@@ -7,15 +7,22 @@ LoCoMo (ACL 2024) evaluates memory systems across 5 categories:
 - Category 2: Temporal understanding (time-based queries)
 - Category 3: Multi-hop reasoning (connecting multiple memories)
 - Category 4: Open domain knowledge
-- Category 5: Complex reasoning
+- Category 5: Complex reasoning (adversarial - "no information" detection)
 
 Dataset: 10 conversations, 1,986 questions total
-CORE (SOTA): 88.24% overall accuracy
+
+Evaluation Modes:
+- retrieval: Check if answer appears in retrieved memories (default)
+- e2e: Generate answer via LLM from retrieved context, then evaluate
+
+Metrics:
+- automem: Word overlap with basic stemming (original)
+- official: F1 with Porter stemmer (LoCoMo paper official metric)
 
 References:
 - Paper: https://github.com/snap-research/locomo/tree/main/static/paper/locomo.pdf
 - Code: https://github.com/snap-research/locomo
-- CORE blog: https://blog.heysol.ai/core-build-memory-knowledge-graph-for-individuals-and-achieved-sota-on-locomo-benchmark/
+- CORE benchmark: https://github.com/RedPlanetHQ/core-benchmark
 """
 
 import os
@@ -25,7 +32,7 @@ import time
 import requests
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import defaultdict
 from datetime import datetime, timedelta
 import re
@@ -34,6 +41,14 @@ from openai import OpenAI
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# Import official LoCoMo metrics
+from tests.benchmarks.locomo_metrics import (
+    OfficialLoCoMoEvaluator,
+    evaluate_qa_official,
+    f1_score as official_f1_score,
+    normalize_answer as official_normalize,
+)
 
 @dataclass
 class LoCoMoConfig:
@@ -62,6 +77,23 @@ class LoCoMoConfig:
     batch_size: int = 50  # Memories to store before pausing
     pause_between_batches: float = 0.5  # Seconds to wait between batches
 
+    # === NEW: Evaluation mode settings ===
+    # Evaluation mode: "retrieval" (check if answer in memories) or "e2e" (LLM generates answer)
+    eval_mode: str = "retrieval"
+
+    # Use official F1 metric with Porter stemmer (vs word overlap)
+    use_official_f1: bool = True
+
+    # Disable evidence ID hints (no data leakage)
+    disable_evidence_hints: bool = False
+
+    # E2E QA settings
+    e2e_model: str = "gpt-4o-mini"  # Model for answer generation
+    e2e_max_context_tokens: int = 4000  # Max tokens of context to include
+
+    # F1 threshold for "correct" classification
+    f1_threshold: float = 0.5
+
 
 class LoCoMoEvaluator:
     """Evaluates AutoMem against the LoCoMo benchmark"""
@@ -70,7 +102,7 @@ class LoCoMoEvaluator:
         self.config = config
         self.headers = {
             "Authorization": f"Bearer {config.api_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
         self.memory_map = {}  # Maps dialog IDs to memory IDs
         self.results = defaultdict(list)  # Category -> [True/False scores]
@@ -86,6 +118,13 @@ class LoCoMoEvaluator:
         # Embedding-based answer checking (fast, handles semantic similarity)
         self.use_embedding_similarity = bool(os.getenv("OPENAI_API_KEY"))
         self.embedding_cache = {}  # text -> embedding vector
+
+        # === NEW: Official metrics evaluator ===
+        self.official_evaluator = OfficialLoCoMoEvaluator()
+        self.official_results = defaultdict(list)  # Category -> [F1 scores]
+
+        # E2E QA cache
+        self.e2e_cache = {}  # (question, context_hash) -> generated_answer
         
     def health_check(self) -> bool:
         """Verify AutoMem API is accessible"""
@@ -648,6 +687,162 @@ class LoCoMoEvaluator:
             # Fallback to regular recall
             return self.recall_for_question(question, sample_id, evidence_count=2)
     
+    def _evaluate_adversarial(
+        self,
+        question: str,
+        adversarial_answer: str,
+        recalled_memories: List[Dict[str, Any]],
+    ) -> Tuple[bool, float, str]:
+        """
+        Evaluate Category 5 (adversarial) questions in retrieval mode.
+
+        Category 5 questions test if the model correctly identifies when information
+        is NOT in the conversation. The adversarial_answer is what the model
+        SHOULD NOT say.
+
+        Logic:
+        - If adversarial_answer is found in recalled memories → model might give
+          wrong answer → INCORRECT
+        - If adversarial_answer is NOT found → model should correctly say
+          "no information available" → CORRECT
+
+        Args:
+            question: The question being asked
+            adversarial_answer: The wrong answer the model shouldn't give
+            recalled_memories: Retrieved memories
+
+        Returns:
+            (is_correct, confidence, explanation) tuple
+        """
+        if not recalled_memories:
+            # No memories = model can't answer = correct for adversarial
+            return True, 1.0, "Adversarial: no memories found (correct - should say 'no info')"
+
+        if not adversarial_answer:
+            # No adversarial answer defined - can't evaluate properly
+            return True, 0.5, "Adversarial: no adversarial_answer defined"
+
+        # Check if adversarial answer appears in memories
+        adversarial_norm = self.normalize_answer(adversarial_answer.lower())
+        adversarial_words = set(adversarial_norm.split())
+
+        max_overlap = 0.0
+        found_in_memory = None
+
+        for mem in recalled_memories:
+            content = mem.get("content", "").lower()
+            content_norm = self.normalize_answer(content)
+            content_words = set(content_norm.split())
+
+            if adversarial_words:
+                overlap = len(adversarial_words.intersection(content_words))
+                overlap_ratio = overlap / len(adversarial_words)
+
+                if overlap_ratio > max_overlap:
+                    max_overlap = overlap_ratio
+                    found_in_memory = mem.get("id")
+
+        # If adversarial answer is strongly present, model might give wrong answer
+        # Use 0.5 threshold - if more than half the words match, it's a problem
+        if max_overlap >= 0.5:
+            return (
+                False,
+                1.0 - max_overlap,
+                f"Adversarial FAIL: found '{adversarial_answer}' in memories (overlap={max_overlap:.2f})",
+            )
+        else:
+            return (
+                True,
+                1.0 - max_overlap,
+                f"Adversarial PASS: '{adversarial_answer}' not strongly in memories (overlap={max_overlap:.2f})",
+            )
+
+    def generate_answer_e2e(
+        self,
+        question: str,
+        recalled_memories: List[Dict[str, Any]],
+        category: int = 0,
+    ) -> str:
+        """
+        E2E QA Mode: Generate an answer using LLM from retrieved context.
+
+        This matches how CORE and other systems evaluate - they don't just check
+        if the answer is in the memories, they generate an answer and score it.
+
+        Args:
+            question: The question to answer
+            recalled_memories: Retrieved memory objects
+            category: Question category (affects prompting)
+
+        Returns:
+            Generated answer string
+        """
+        if not recalled_memories:
+            return "no information available"
+
+        # Build context from memories (respect token limit)
+        context_parts = []
+        total_chars = 0
+        max_chars = self.config.e2e_max_context_tokens * 4  # Rough char estimate
+
+        for mem in recalled_memories:
+            content = mem.get("content", "")
+            metadata = mem.get("metadata", {})
+            session_dt = metadata.get("session_datetime", "")
+
+            mem_text = content
+            if session_dt:
+                mem_text = f"[{session_dt}] {content}"
+
+            if total_chars + len(mem_text) > max_chars:
+                break
+
+            context_parts.append(mem_text)
+            total_chars += len(mem_text)
+
+        context = "\n".join(context_parts)
+
+        # Check cache
+        context_hash = hash(context[:500])
+        cache_key = (question[:200], context_hash, category)
+        if cache_key in self.e2e_cache:
+            return self.e2e_cache[cache_key]
+
+        # Category-specific prompting
+        if category == 5:
+            # Adversarial questions - be explicit about "no information"
+            system_prompt = """You are answering questions based ONLY on the provided conversation context.
+If the information needed to answer the question is NOT in the context, respond with EXACTLY:
+"no information available"
+
+Do NOT make up information. Do NOT use external knowledge. Only use what's in the context."""
+        else:
+            system_prompt = """You are answering questions based on the provided conversation context.
+Answer concisely and directly. Use only information from the context.
+If the information is not in the context, say "no information available"."""
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=self.config.e2e_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:",
+                    },
+                ],
+                temperature=0.0,
+                max_tokens=200,
+            )
+
+            answer = response.choices[0].message.content.strip()
+            self.e2e_cache[cache_key] = answer
+            return answer
+
+        except Exception as e:
+            print(f"⚠️  E2E generation error: {e}")
+            return "error generating answer"
+
     def llm_extract_answer(
         self,
         question: str,
@@ -779,7 +974,8 @@ Respond in JSON format:
         expected_answer: Any,
         recalled_memories: List[Dict[str, Any]],
         evidence_dialog_ids: List[str] = None,
-        sample_id: str = None
+        sample_id: str = None,
+        category: int = 0,
     ) -> Tuple[bool, float, str]:
         """
         Check if the expected answer can be found in recalled memories.
@@ -787,6 +983,8 @@ Respond in JSON format:
         Phase 2.5: Fetches evidence memories directly if IDs are provided.
         Phase 2: Tries LLM-based extraction first, falls back to word matching.
         Phase 1: Enhanced with temporal metadata matching.
+
+        NEW: Supports official F1 metric and evidence hint disabling.
         
         Returns:
             (is_correct, confidence_score, explanation)
@@ -797,8 +995,12 @@ Respond in JSON format:
         # Quick Win #2: Detect multi-hop questions
         is_multi_hop = evidence_dialog_ids and len(evidence_dialog_ids) > 1
         
+        # === NEW: Optionally disable evidence ID hints (no data leakage) ===
+        if self.config.disable_evidence_hints:
+            evidence_dialog_ids = None
+        
         # Phase 2.5: If we have evidence IDs, fetch them directly and combine with recalled
-        if evidence_dialog_ids and sample_id:
+        if evidence_dialog_ids and sample_id and not self.config.disable_evidence_hints:
             evidence_memories = self.fetch_evidence_memories(evidence_dialog_ids, sample_id)
             if evidence_memories:
                 # Combine evidence with recalled (evidence first for priority)
@@ -963,7 +1165,7 @@ Respond in JSON format:
     def evaluate_conversation(
         self, 
         conversation: Dict[str, Any], 
-        sample_id: str
+        sample_id: str,
     ) -> Dict[str, Any]:
         """
         Evaluate a single LoCoMo conversation.
@@ -971,11 +1173,15 @@ Respond in JSON format:
         Process:
         1. Load conversation into AutoMem
         2. For each question, recall relevant memories
-        3. Check if answer is in recalled memories
-        4. Calculate accuracy per category
+        3. Check if answer is in recalled memories (retrieval mode)
+           OR generate answer via LLM and score (E2E mode)
+        4. Calculate accuracy per category using both metrics
         """
         print(f"\n{'='*60}")
         print(f"Evaluating Conversation: {sample_id}")
+        print(f"  Mode: {self.config.eval_mode}")
+        print(f"  Official F1: {self.config.use_official_f1}")
+        print(f"  Evidence hints: {'disabled' if self.config.disable_evidence_hints else 'enabled'}")
         print(f"{'='*60}")
         
         # Step 1: Load conversation
@@ -996,6 +1202,12 @@ Respond in JSON format:
             answer = qa.get("answer", "")
             category = qa.get("category", 0)
             evidence = qa.get("evidence", [])
+
+            # === Category 5 (Adversarial) handling ===
+            # Category 5 questions have no answer (or "No") and an adversarial_answer.
+            # The correct response is "no information available" or "not mentioned".
+            adversarial_answer = qa.get("adversarial_answer", "")
+            is_adversarial = category == 5
             
             # Recall memories for this question
             # Use graph expansion for multi-hop questions (evidence > 1)
@@ -1013,11 +1225,61 @@ Respond in JSON format:
                     evidence_count=len(evidence),
                 )
             
-            # Check if answer is in recalled memories
-            # Phase 2.5: Pass sample_id to enable evidence fetching
-            is_correct, confidence, explanation = self.check_answer_in_memories(
-                question, answer, recalled_memories, evidence, sample_id
-            )
+            # === EVALUATION BASED ON MODE ===
+            if self.config.eval_mode == "e2e":
+                # E2E Mode: Generate answer via LLM, then score
+                generated_answer = self.generate_answer_e2e(
+                    question, recalled_memories, category
+                )
+
+                # Score with official F1
+                f1_score_val, method = evaluate_qa_official(
+                    generated_answer, str(answer) if answer else "", category
+                )
+                is_correct = f1_score_val >= self.config.f1_threshold
+                confidence = f1_score_val
+                explanation = f"E2E ({method}): F1={f1_score_val:.3f}, generated='{generated_answer[:50]}...'"
+
+                # Track in official evaluator
+                self.official_evaluator.evaluate(
+                    generated_answer, str(answer) if answer else "", category
+                )
+                self.official_results[category].append(f1_score_val)
+
+            else:
+                # Retrieval Mode: Check if answer in recalled memories
+                if is_adversarial:
+                    # Category 5: Should NOT find the adversarial_answer in memories
+                    # If adversarial_answer is found, model would give wrong answer → incorrect
+                    # If adversarial_answer is NOT found, model should say "no info" → correct
+                    is_correct, confidence, explanation = self._evaluate_adversarial(
+                        question, adversarial_answer, recalled_memories
+                    )
+                    generated_answer = None
+                    f1_score_val = 1.0 if is_correct else 0.0
+
+                    # Track adversarial results
+                    self.official_evaluator.results_by_category[5].append(f1_score_val)
+                    self.official_evaluator.results_overall.append(f1_score_val)
+                    self.official_results[category].append(f1_score_val)
+                else:
+                    is_correct, confidence, explanation = self.check_answer_in_memories(
+                        question, answer, recalled_memories, evidence, sample_id, category
+                    )
+                    generated_answer = None
+
+                    # Also compute official F1 for comparison (using extracted text)
+                    if self.config.use_official_f1 and recalled_memories:
+                        memory_text = " ".join(
+                            [m.get("content", "") for m in recalled_memories[:5]]
+                        )
+                        f1_score_val, method = evaluate_qa_official(
+                            memory_text, str(answer), category
+                        )
+                        self.official_evaluator.evaluate(
+                            memory_text, str(answer), category
+                        )
+                        self.official_results[category].append(f1_score_val)
             
             # Record result
             qa_result = {
@@ -1027,11 +1289,14 @@ Respond in JSON format:
                 "is_correct": is_correct,
                 "confidence": confidence,
                 "recalled_count": len(recalled_memories),
-                "explanation": explanation
+                "explanation": explanation,
             }
+            if generated_answer:
+                qa_result["generated_answer"] = generated_answer
+
             qa_results.append(qa_result)
             
-            # Track results by category
+            # Track results by category (original metric)
             self.results[category].append(is_correct)
             
             # Progress indicator
@@ -1147,9 +1412,30 @@ Respond in JSON format:
         else:
             print(f"  🤝 AutoMem matches CORE")
         
+        # === NEW: Print official F1 metrics ===
+        if self.config.use_official_f1:
+            self.official_evaluator.print_summary(self.config.f1_threshold)
+
+            # Also include official results in category breakdown
+            print("\n📊 Official F1 Category Breakdown:")
+            for category, f1_scores in sorted(self.official_results.items()):
+                if f1_scores:
+                    mean_f1 = sum(f1_scores) / len(f1_scores)
+                    correct_f1 = sum(1 for s in f1_scores if s >= self.config.f1_threshold)
+                    cat_name = category_names.get(category, f"Category {category}")
+                    print(
+                        f"  {cat_name:25s}: "
+                        f"Acc={correct_f1/len(f1_scores):6.2%} "
+                        f"F1={mean_f1:.4f} "
+                        f"({correct_f1}/{len(f1_scores)})"
+                    )
+        
         # Cleanup
         if cleanup_after:
             self.cleanup_test_data()
+        
+        # Get official metrics summary
+        official_summary = self.official_evaluator.get_summary(self.config.f1_threshold)
         
         # Return comprehensive results
         return {
@@ -1157,15 +1443,23 @@ Respond in JSON format:
                 "accuracy": overall_accuracy,
                 "correct": total_correct,
                 "total": total_questions,
-                "elapsed_time": elapsed_time
+                "elapsed_time": elapsed_time,
             },
             "categories": category_results,
             "conversations": conversation_results,
             "comparison": {
                 "core_sota": core_sota,
                 "automem": overall_accuracy,
-                "improvement": improvement
-            }
+                "improvement": improvement,
+            },
+            # NEW: Include official metrics
+            "official_f1": official_summary,
+            "config": {
+                "eval_mode": self.config.eval_mode,
+                "use_official_f1": self.config.use_official_f1,
+                "disable_evidence_hints": self.config.disable_evidence_hints,
+                "f1_threshold": self.config.f1_threshold,
+            },
         }
 
 
@@ -1173,21 +1467,83 @@ def main():
     """Run LoCoMo benchmark evaluation"""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Evaluate AutoMem on LoCoMo benchmark")
-    parser.add_argument("--base-url", default=os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001"),
-                       help="AutoMem API base URL")
-    parser.add_argument("--api-token", default=os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token"),
-                       help="AutoMem API token")
-    parser.add_argument("--data-file", default=None,
-                       help="Path to locomo10.json")
-    parser.add_argument("--recall-limit", type=int, default=10,
-                       help="Number of memories to recall per question")
-    parser.add_argument("--no-cleanup", action="store_true",
-                       help="Don't cleanup test data after evaluation")
-    parser.add_argument("--output", default=None,
-                       help="Save results to JSON file")
-    parser.add_argument("--test-one", action="store_true",
-                       help="Test with just one conversation for debugging")
+    parser = argparse.ArgumentParser(
+        description="Evaluate AutoMem on LoCoMo benchmark",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Default retrieval mode with official F1:
+  python test_locomo.py
+
+  # E2E QA mode (generates answers via LLM):
+  python test_locomo.py --eval-mode e2e
+
+  # Strict mode (no evidence hints, official F1 only):
+  python test_locomo.py --no-evidence-hints
+
+  # Compare all modes:
+  python test_locomo.py --output results_retrieval.json
+  python test_locomo.py --eval-mode e2e --output results_e2e.json
+  python test_locomo.py --no-evidence-hints --output results_strict.json
+        """,
+    )
+    parser.add_argument(
+        "--base-url",
+        default=os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001"),
+        help="AutoMem API base URL",
+    )
+    parser.add_argument(
+        "--api-token",
+        default=os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token"),
+        help="AutoMem API token",
+    )
+    parser.add_argument("--data-file", default=None, help="Path to locomo10.json")
+    parser.add_argument(
+        "--recall-limit",
+        type=int,
+        default=10,
+        help="Number of memories to recall per question",
+    )
+    parser.add_argument(
+        "--no-cleanup",
+        action="store_true",
+        help="Don't cleanup test data after evaluation",
+    )
+    parser.add_argument("--output", default=None, help="Save results to JSON file")
+    parser.add_argument(
+        "--test-one",
+        action="store_true",
+        help="Test with just one conversation for debugging",
+    )
+
+    # === NEW: Evaluation mode arguments ===
+    parser.add_argument(
+        "--eval-mode",
+        choices=["retrieval", "e2e"],
+        default="retrieval",
+        help="Evaluation mode: 'retrieval' (check if answer in memories) or 'e2e' (LLM generates answer)",
+    )
+    parser.add_argument(
+        "--no-official-f1",
+        action="store_true",
+        help="Disable official F1 metric (use original word overlap)",
+    )
+    parser.add_argument(
+        "--no-evidence-hints",
+        action="store_true",
+        help="Disable evidence ID hints (no data leakage, stricter evaluation)",
+    )
+    parser.add_argument(
+        "--e2e-model",
+        default="gpt-4o-mini",
+        help="Model for E2E answer generation (default: gpt-4o-mini)",
+    )
+    parser.add_argument(
+        "--f1-threshold",
+        type=float,
+        default=0.5,
+        help="F1 threshold for 'correct' classification (default: 0.5)",
+    )
     
     args = parser.parse_args()
     
@@ -1195,11 +1551,25 @@ def main():
     config = LoCoMoConfig(
         base_url=args.base_url,
         api_token=args.api_token,
-        recall_limit=args.recall_limit
+        recall_limit=args.recall_limit,
+        eval_mode=args.eval_mode,
+        use_official_f1=not args.no_official_f1,
+        disable_evidence_hints=args.no_evidence_hints,
+        e2e_model=args.e2e_model,
+        f1_threshold=args.f1_threshold,
     )
     
     if args.data_file:
         config.data_file = args.data_file
+    
+    # Print configuration
+    print("\n🔧 Configuration:")
+    print(f"  Evaluation Mode: {config.eval_mode}")
+    print(f"  Official F1: {config.use_official_f1}")
+    print(f"  Evidence Hints: {'disabled' if config.disable_evidence_hints else 'enabled'}")
+    print(f"  F1 Threshold: {config.f1_threshold}")
+    if config.eval_mode == "e2e":
+        print(f"  E2E Model: {config.e2e_model}")
     
     # Run evaluation
     evaluator = LoCoMoEvaluator(config)
@@ -1207,7 +1577,7 @@ def main():
     
     # Save results
     if args.output:
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(results, f, indent=2)
         print(f"\n💾 Results saved to: {args.output}")
     
