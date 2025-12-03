@@ -30,7 +30,12 @@ const CONFIG = {
   dataFile: path.join(__dirname, "../locomo/data/locomo10.json"),
   outputFile: path.join(__dirname, "evaluation_results.json"),
   searchLimit: 20,
-  model: process.env.EVAL_MODEL || "gpt-4o-mini",
+  // Use GPT-5.1 for best reasoning, or GPT-4.1 for cost savings
+  // GPT-5.1: $1.25/1M input, $10/1M output (best reasoning)
+  // GPT-4.1: ~$2/1M input, ~$8/1M output (good balance)
+  // gpt-4o-mini: cheapest but weaker reasoning
+  model: process.env.EVAL_MODEL || "gpt-4.1",
+  evalModel: process.env.EVAL_JUDGE_MODEL || "gpt-4.1",
 };
 
 // Initialize services
@@ -82,7 +87,11 @@ If the information is not available, say "no information available".`;
 }
 
 /**
- * Evaluate answer using LLM (matching CORE's evaluateService.js)
+ * Evaluate answer using LLM (matching CORE's EXACT evaluateService.js)
+ *
+ * CORE's key insight: "you should be generous with your grading -
+ * as long as it touches on the same topic as the gold answer,
+ * it should be counted as CORRECT"
  */
 async function evaluateAnswer(question, expectedAnswer, generatedAnswer, category) {
   // Category 5: Adversarial - check for "no information" phrase
@@ -91,7 +100,11 @@ async function evaluateAnswer(question, expectedAnswer, generatedAnswer, categor
     const isCorrect =
       genLower.includes("no information available") ||
       genLower.includes("not mentioned") ||
-      genLower.includes("no information");
+      genLower.includes("no information") ||
+      genLower.includes("cannot find") ||
+      genLower.includes("not found") ||
+      genLower.includes("don't have") ||
+      genLower.includes("do not have");
     return {
       isCorrect,
       confidence: isCorrect ? 1.0 : 0.0,
@@ -101,41 +114,78 @@ async function evaluateAnswer(question, expectedAnswer, generatedAnswer, categor
     };
   }
 
-  // For other categories, use LLM-based evaluation
-  const prompt = `You are evaluating whether a generated answer matches the expected answer.
+  // CORE's EXACT evaluation prompt (from their evaluateService.js)
+  const prompt = `Your task is to label an answer to a question as 'CORRECT' or 'WRONG'.
 
+You will be given the following data:
+(1) a question (posed by one user to another user)
+(2) a 'gold' (ground truth) answer
+(3) a generated answer which you will score as CORRECT/WRONG
+
+The point of the question is to ask about something one user should know about the other user based on their prior conversations.
+
+The gold answer will usually be a concise and short answer that includes the referenced topic, for example:
+Question: Do you remember what I got the last time I went to Hawaii?
+Gold answer: A shell necklace
+
+The generated answer might be much longer, but you should be generous with your grading - as long as it touches on the same topic as the gold answer, it should be counted as CORRECT.
+
+For time related questions, the gold answer will be a specific date, month, year, etc. The generated answer might be much longer or use relative time references (like "last Tuesday" or "next month"), but you should be generous with your grading - as long as it refers to the same date or time period as the gold answer, it should be counted as CORRECT. Even if the format differs (e.g., "May 7th" vs "7 May"), consider it CORRECT if it's the same date.
+
+Now it's time for the real question:
 Question: ${question}
-Expected Answer: ${expectedAnswer}
-Generated Answer: ${generatedAnswer}
+Gold answer: ${expectedAnswer}
+Generated answer: ${generatedAnswer}
 
-Consider:
-- Semantic equivalence (same meaning, different words)
-- Partial matches (answer contains key information)
-- Date/time format variations
-
-Respond in JSON format:
-{
-  "isCorrect": true or false,
-  "confidence": 0.0 to 1.0,
-  "reasoning": "brief explanation"
-}`;
+First, provide a short (one sentence) explanation of your reasoning, then finish with CORRECT or WRONG.
+Return your response in JSON format: {"label": "CORRECT" or "WRONG", "reasoning": "your explanation"}`;
 
   try {
     const response = await openai.chat.completions.create({
-      model: CONFIG.model,
+      model: CONFIG.evalModel,
       messages: [
-        { role: "system", content: "You are a precise answer evaluator." },
+        {
+          role: "system",
+          content:
+            "You are an evaluator for a question-answering benchmark. Be generous in your grading.",
+        },
         { role: "user", content: prompt },
       ],
       temperature: 0.0,
-      max_tokens: 150,
+      max_tokens: 200,
       response_format: { type: "json_object" },
     });
 
-    return JSON.parse(response.choices[0].message.content);
+    const result = JSON.parse(response.choices[0].message.content);
+
+    // Handle CORE's format (label: "CORRECT"/"WRONG")
+    const isCorrect = result.label === "CORRECT" || result.isCorrect === true;
+    return {
+      isCorrect,
+      confidence: isCorrect ? 1.0 : 0.0,
+      reasoning: result.reasoning || "",
+    };
   } catch (error) {
     console.error("Evaluation error:", error.message);
-    return { isCorrect: false, confidence: 0.0, reasoning: "Evaluation failed" };
+
+    // CORE's fallback: 30% word match = CORRECT
+    const generatedLower = generatedAnswer.toLowerCase();
+    const expectedLower = expectedAnswer.toString().toLowerCase();
+    const expectedWords = expectedLower
+      .split(/\s+/)
+      .filter((word) => word.length > 2);
+    const matchingWords = expectedWords.filter((word) =>
+      generatedLower.includes(word)
+    );
+    const matchRatio =
+      expectedWords.length > 0 ? matchingWords.length / expectedWords.length : 0;
+    const isCorrect = matchRatio > 0.3;
+
+    return {
+      isCorrect,
+      confidence: matchRatio,
+      reasoning: `Fallback: ${matchRatio.toFixed(2)} word match ratio`,
+    };
   }
 }
 

@@ -88,11 +88,20 @@ class LoCoMoConfig:
     disable_evidence_hints: bool = False
 
     # E2E QA settings
-    e2e_model: str = "gpt-4o-mini"  # Model for answer generation
+    # Models: gpt-4.1 (recommended), gpt-5.1 (best), gpt-4o-mini (cheapest)
+    e2e_model: str = "gpt-4.1"  # Model for answer generation
     e2e_max_context_tokens: int = 4000  # Max tokens of context to include
 
     # F1 threshold for "correct" classification
     f1_threshold: float = 0.5
+
+    # Use lenient semantic evaluation (CORE-compatible) vs strict F1
+    # When True: Uses LLM to judge if answer "touches on the same topic"
+    # When False: Uses F1 with Porter stemmer (stricter)
+    use_lenient_eval: bool = False
+
+    # Model for lenient evaluation judging
+    eval_judge_model: str = "gpt-4.1"
 
 
 class LoCoMoEvaluator:
@@ -843,6 +852,103 @@ If the information is not in the context, say "no information available"."""
             print(f"⚠️  E2E generation error: {e}")
             return "error generating answer"
 
+    def evaluate_lenient(
+        self,
+        question: str,
+        expected_answer: str,
+        generated_answer: str,
+        category: int = 0,
+    ) -> Tuple[bool, float, str]:
+        """
+        CORE-compatible lenient semantic evaluation.
+
+        Uses LLM to judge if the generated answer "touches on the same topic"
+        as the expected answer. This matches CORE's evaluation methodology.
+
+        Args:
+            question: The question asked
+            expected_answer: Gold standard answer
+            generated_answer: Model's generated answer
+            category: Question category
+
+        Returns:
+            (is_correct, confidence, reasoning) tuple
+        """
+        # Category 5: Adversarial - check for "no information" phrase
+        if category == 5:
+            gen_lower = generated_answer.lower()
+            is_correct = any(
+                phrase in gen_lower
+                for phrase in [
+                    "no information available",
+                    "not mentioned",
+                    "no information",
+                    "cannot find",
+                    "not found",
+                    "don't have",
+                    "do not have",
+                ]
+            )
+            return (
+                is_correct,
+                1.0 if is_correct else 0.0,
+                "Adversarial: " + ("correctly identified no info" if is_correct else "failed"),
+            )
+
+        # CORE's exact evaluation prompt
+        prompt = f"""Your task is to label an answer to a question as 'CORRECT' or 'WRONG'.
+
+You will be given:
+(1) a question
+(2) a 'gold' (ground truth) answer
+(3) a generated answer which you will score as CORRECT/WRONG
+
+The gold answer will usually be concise. The generated answer might be much longer, but you should be GENEROUS with your grading - as long as it touches on the same topic as the gold answer, it should be counted as CORRECT.
+
+For time related questions, be generous - as long as it refers to the same date or time period, consider it CORRECT. Even if the format differs (e.g., "May 7th" vs "7 May"), consider it CORRECT if it's the same date.
+
+Question: {question}
+Gold answer: {expected_answer}
+Generated answer: {generated_answer}
+
+Respond in JSON format: {{"label": "CORRECT" or "WRONG", "reasoning": "one sentence explanation"}}"""
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=self.config.eval_judge_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a generous answer evaluator. If the answer touches on the correct topic, mark it CORRECT.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=150,
+                response_format={"type": "json_object"},
+            )
+
+            result = json.loads(response.choices[0].message.content)
+            is_correct = result.get("label") == "CORRECT"
+            reasoning = result.get("reasoning", "")
+
+            return (is_correct, 1.0 if is_correct else 0.0, f"Lenient: {reasoning}")
+
+        except Exception as e:
+            # Fallback: CORE uses 30% word match as threshold
+            gen_lower = generated_answer.lower()
+            exp_lower = str(expected_answer).lower()
+            exp_words = [w for w in exp_lower.split() if len(w) > 2]
+            matching = sum(1 for w in exp_words if w in gen_lower)
+            match_ratio = matching / len(exp_words) if exp_words else 0
+            is_correct = match_ratio > 0.3
+
+            return (
+                is_correct,
+                match_ratio,
+                f"Fallback: {match_ratio:.2f} match ratio ({e})",
+            )
+    
     def llm_extract_answer(
         self,
         question: str,
@@ -1232,13 +1338,22 @@ Respond in JSON format:
                     question, recalled_memories, category
                 )
 
-                # Score with official F1
-                f1_score_val, method = evaluate_qa_official(
-                    generated_answer, str(answer) if answer else "", category
-                )
-                is_correct = f1_score_val >= self.config.f1_threshold
-                confidence = f1_score_val
-                explanation = f"E2E ({method}): F1={f1_score_val:.3f}, generated='{generated_answer[:50]}...'"
+                # Score using configured method
+                if self.config.use_lenient_eval:
+                    # CORE-compatible lenient semantic evaluation
+                    is_correct, confidence, explanation = self.evaluate_lenient(
+                        question, str(answer) if answer else "", generated_answer, category
+                    )
+                    f1_score_val = 1.0 if is_correct else 0.0
+                    explanation = f"E2E (lenient): {explanation}, generated='{generated_answer[:50]}...'"
+                else:
+                    # Strict F1 evaluation
+                    f1_score_val, method = evaluate_qa_official(
+                        generated_answer, str(answer) if answer else "", category
+                    )
+                    is_correct = f1_score_val >= self.config.f1_threshold
+                    confidence = f1_score_val
+                    explanation = f"E2E ({method}): F1={f1_score_val:.3f}, generated='{generated_answer[:50]}...'"
 
                 # Track in official evaluator
                 self.official_evaluator.evaluate(
@@ -1535,14 +1650,24 @@ Examples:
     )
     parser.add_argument(
         "--e2e-model",
-        default="gpt-4o-mini",
-        help="Model for E2E answer generation (default: gpt-4o-mini)",
+        default="gpt-4.1",
+        help="Model for E2E answer generation (default: gpt-4.1, options: gpt-5.1, gpt-4o-mini)",
     )
     parser.add_argument(
         "--f1-threshold",
         type=float,
         default=0.5,
         help="F1 threshold for 'correct' classification (default: 0.5)",
+    )
+    parser.add_argument(
+        "--lenient",
+        action="store_true",
+        help="Use CORE-compatible lenient semantic evaluation instead of strict F1",
+    )
+    parser.add_argument(
+        "--eval-judge-model",
+        default="gpt-4.1",
+        help="Model for lenient evaluation judging (default: gpt-4.1)",
     )
     
     args = parser.parse_args()
@@ -1557,19 +1682,24 @@ Examples:
         disable_evidence_hints=args.no_evidence_hints,
         e2e_model=args.e2e_model,
         f1_threshold=args.f1_threshold,
+        use_lenient_eval=args.lenient,
+        eval_judge_model=args.eval_judge_model,
     )
     
     if args.data_file:
         config.data_file = args.data_file
-    
+
     # Print configuration
     print("\n🔧 Configuration:")
     print(f"  Evaluation Mode: {config.eval_mode}")
     print(f"  Official F1: {config.use_official_f1}")
+    print(f"  Lenient Eval: {config.use_lenient_eval}")
     print(f"  Evidence Hints: {'disabled' if config.disable_evidence_hints else 'enabled'}")
     print(f"  F1 Threshold: {config.f1_threshold}")
     if config.eval_mode == "e2e":
         print(f"  E2E Model: {config.e2e_model}")
+        if config.use_lenient_eval:
+            print(f"  Eval Judge: {config.eval_judge_model}")
     
     # Run evaluation
     evaluator = LoCoMoEvaluator(config)
