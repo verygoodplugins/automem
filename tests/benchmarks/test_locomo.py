@@ -88,8 +88,8 @@ class LoCoMoConfig:
     disable_evidence_hints: bool = False
 
     # E2E QA settings
-    # Models: gpt-4.1 (recommended), gpt-5.1 (best), gpt-4o-mini (cheapest)
-    e2e_model: str = "gpt-4.1"  # Model for answer generation
+    # Models: gpt-5.1 (best), gpt-4.1 (good balance), gpt-4o-mini (cheapest)
+    e2e_model: str = "gpt-5.1"  # Model for answer generation
     e2e_max_context_tokens: int = 4000  # Max tokens of context to include
 
     # F1 threshold for "correct" classification
@@ -101,7 +101,7 @@ class LoCoMoConfig:
     use_lenient_eval: bool = False
 
     # Model for lenient evaluation judging
-    eval_judge_model: str = "gpt-4.1"
+    eval_judge_model: str = "gpt-5.1"
 
 
 class LoCoMoEvaluator:
@@ -1435,9 +1435,13 @@ Respond in JSON format:
             "memory_count": len(memory_map)
         }
     
-    def run_benchmark(self, cleanup_after: bool = True) -> Dict[str, Any]:
+    def run_benchmark(self, cleanup_after: bool = True, conversation_ids: List[str] = None) -> Dict[str, Any]:
         """
         Run the complete LoCoMo benchmark evaluation.
+        
+        Args:
+            cleanup_after: Whether to clean up test data after evaluation
+            conversation_ids: Optional list of specific conversation IDs to evaluate (e.g., ["conv-26", "conv-30"])
         
         Returns comprehensive results including per-category accuracy.
         """
@@ -1459,7 +1463,12 @@ Respond in JSON format:
         with open(self.config.data_file, 'r') as f:
             conversations = json.load(f)
         
-        print(f"✅ Loaded {len(conversations)} conversations")
+        # Filter conversations if specific IDs provided
+        if conversation_ids:
+            conversations = [c for c in conversations if c.get("sample_id") in conversation_ids]
+            print(f"✅ Filtered to {len(conversations)} conversations: {conversation_ids}")
+        else:
+            print(f"✅ Loaded {len(conversations)} conversations")
         
         # Evaluate each conversation
         conversation_results = []
@@ -1650,8 +1659,8 @@ Examples:
     )
     parser.add_argument(
         "--e2e-model",
-        default="gpt-4.1",
-        help="Model for E2E answer generation (default: gpt-4.1, options: gpt-5.1, gpt-4o-mini)",
+        default="gpt-5.1",
+        help="Model for E2E answer generation (default: gpt-5.1, options: gpt-4.1, gpt-4o-mini)",
     )
     parser.add_argument(
         "--f1-threshold",
@@ -1666,8 +1675,13 @@ Examples:
     )
     parser.add_argument(
         "--eval-judge-model",
-        default="gpt-4.1",
-        help="Model for lenient evaluation judging (default: gpt-4.1)",
+        default="gpt-5.1",
+        help="Model for lenient evaluation judging (default: gpt-5.1)",
+    )
+    parser.add_argument(
+        "--conversations",
+        nargs="+",
+        help="Specific conversation IDs to evaluate (e.g., conv-26 conv-30)",
     )
     
     args = parser.parse_args()
@@ -1703,7 +1717,10 @@ Examples:
     
     # Run evaluation
     evaluator = LoCoMoEvaluator(config)
-    results = evaluator.run_benchmark(cleanup_after=not args.no_cleanup)
+    results = evaluator.run_benchmark(
+        cleanup_after=not args.no_cleanup,
+        conversation_ids=args.conversations,
+    )
     
     # Save results
     if args.output:
