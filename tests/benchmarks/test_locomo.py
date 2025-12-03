@@ -841,7 +841,7 @@ If the information is not in the context, say "no information available"."""
                     },
                 ],
                 temperature=0.0,
-                max_tokens=200,
+                max_completion_tokens=200,
             )
 
             answer = response.choices[0].message.content.strip()
@@ -924,7 +924,7 @@ Respond in JSON format: {{"label": "CORRECT" or "WRONG", "reasoning": "one sente
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.0,
-                max_tokens=150,
+                max_completion_tokens=150,
                 response_format={"type": "json_object"},
             )
 
@@ -1052,7 +1052,7 @@ Respond in JSON format:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.0,
-                max_tokens=200,
+                max_completion_tokens=200,
                 response_format={"type": "json_object"}
             )
             
