@@ -120,6 +120,12 @@ from automem.config import (
     CONSOLIDATION_RUN_LABEL,
     CONSOLIDATION_CONTROL_NODE_ID,
     CONSOLIDATION_TASK_FIELDS,
+    # Memory protection configuration
+    CONSOLIDATION_DELETE_THRESHOLD,
+    CONSOLIDATION_ARCHIVE_THRESHOLD,
+    CONSOLIDATION_GRACE_PERIOD_DAYS,
+    CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+    CONSOLIDATION_PROTECTED_TYPES,
     ENRICHMENT_MAX_ATTEMPTS,
     ENRICHMENT_SIMILARITY_LIMIT,
     ENRICHMENT_SIMILARITY_THRESHOLD,
@@ -1465,7 +1471,15 @@ def _persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:
 
 def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
     vector_store = get_qdrant_client()
-    consolidator = MemoryConsolidator(graph, vector_store)
+    consolidator = MemoryConsolidator(
+        graph,
+        vector_store,
+        delete_threshold=CONSOLIDATION_DELETE_THRESHOLD,
+        archive_threshold=CONSOLIDATION_ARCHIVE_THRESHOLD,
+        grace_period_days=CONSOLIDATION_GRACE_PERIOD_DAYS,
+        importance_protection_threshold=CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+        protected_types=CONSOLIDATION_PROTECTED_TYPES,
+    )
     scheduler = ConsolidationScheduler(consolidator)
     _apply_scheduler_overrides(scheduler)
 
@@ -2655,7 +2669,15 @@ def consolidate_memories() -> Any:
 
     try:
         vector_store = get_qdrant_client()
-        consolidator = MemoryConsolidator(graph, vector_store)
+        consolidator = MemoryConsolidator(
+            graph,
+            vector_store,
+            delete_threshold=CONSOLIDATION_DELETE_THRESHOLD,
+            archive_threshold=CONSOLIDATION_ARCHIVE_THRESHOLD,
+            grace_period_days=CONSOLIDATION_GRACE_PERIOD_DAYS,
+            importance_protection_threshold=CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+            protected_types=CONSOLIDATION_PROTECTED_TYPES,
+        )
         results = consolidator.consolidate(mode=mode, dry_run=dry_run)
 
         if not dry_run:
