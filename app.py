@@ -1005,6 +1005,9 @@ class ServiceState:
     embedding_inflight: Set[str] = field(default_factory=set)
     embedding_pending: Set[str] = field(default_factory=set)
     embedding_lock: Lock = field(default_factory=Lock)
+    # Access tracking (updates last_accessed on recall)
+    access_update_queue: Optional[Queue] = None
+    access_update_thread: Optional[Thread] = None
 
 
 state = ServiceState()
@@ -1317,6 +1320,83 @@ def enqueue_enrichment(memory_id: str, *, forced: bool = False, attempt: int = 0
 
         state.enrichment_pending.add(memory_id)
         state.enrichment_queue.put(job)
+
+
+# ---------------------------------------------------------------------------
+# Access Tracking Pipeline (updates last_accessed on recall)
+# ---------------------------------------------------------------------------
+
+
+def init_access_update_pipeline() -> None:
+    """Initialize the background access timestamp updater."""
+    if state.access_update_queue is not None:
+        return
+
+    state.access_update_queue = Queue()
+    state.access_update_thread = Thread(
+        target=access_update_worker, daemon=True, name="access-updater"
+    )
+    state.access_update_thread.start()
+    logger.info("Access update pipeline initialized")
+
+
+def enqueue_access_update(memory_ids: List[str]) -> None:
+    """Queue memory IDs for last_accessed timestamp update (non-blocking)."""
+    if not memory_ids or state.access_update_queue is None:
+        return
+
+    for mid in memory_ids:
+        if mid:
+            state.access_update_queue.put_nowait(mid)
+
+
+def access_update_worker() -> None:
+    """Background worker to batch-update last_accessed timestamps."""
+    while True:
+        try:
+            if state.access_update_queue is None:
+                time.sleep(1)
+                continue
+
+            # Wait for first item
+            try:
+                memory_id = state.access_update_queue.get(timeout=5)
+            except Empty:
+                continue
+
+            # Collect batch (drain queue up to 100 items)
+            batch = [memory_id]
+            while len(batch) < 100:
+                try:
+                    batch.append(state.access_update_queue.get_nowait())
+                except Empty:
+                    break
+
+            # Batch update last_accessed
+            if batch:
+                graph = get_memory_graph()
+                timestamp = utc_now()
+                if graph:
+                    try:
+                        graph.query(
+                            """
+                            UNWIND $ids AS mid
+                            MATCH (m:Memory {id: mid})
+                            SET m.last_accessed = $ts
+                            """,
+                            {"ids": batch, "ts": timestamp},
+                        )
+                        logger.debug("Updated last_accessed for %d memories", len(batch))
+                    except Exception:
+                        logger.exception("Failed to update last_accessed for batch")
+
+                # Mark tasks as done
+                for _ in batch:
+                    state.access_update_queue.task_done()
+
+        except Exception:
+            logger.exception("Error in access update worker loop")
+            time.sleep(1)
 
 
 def _load_control_record(graph: Any) -> Dict[str, Any]:
@@ -3207,6 +3287,7 @@ recall_bp = create_recall_blueprint(
     RECALL_RELATION_LIMIT,
     _serialize_node,
     _summarize_relation_node,
+    enqueue_access_update,
 )
 
 memory_bp = create_memory_blueprint_full(
@@ -3231,6 +3312,7 @@ memory_bp = create_memory_blueprint_full(
     RELATIONSHIP_TYPES,
     state,
     logger,
+    enqueue_access_update,
 )
 
 admin_bp = create_admin_blueprint_full(
@@ -3276,6 +3358,7 @@ if __name__ == "__main__":
     init_embedding_provider()  # New provider pattern for embeddings
     init_enrichment_pipeline()
     init_embedding_pipeline()
+    init_access_update_pipeline()
     init_consolidation_scheduler()
     # Use :: for IPv6 dual-stack (Railway internal networking uses IPv6)
     app.run(host="::", port=port, debug=False)
