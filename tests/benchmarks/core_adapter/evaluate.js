@@ -30,12 +30,12 @@ const CONFIG = {
   dataFile: path.join(__dirname, "../locomo/data/locomo10.json"),
   outputFile: path.join(__dirname, "evaluation_results.json"),
   searchLimit: 20,
-  // Use GPT-5.1 for best reasoning, or GPT-4.1 for cost savings
+  // Use GPT-5.1 for best reasoning
   // GPT-5.1: $1.25/1M input, $10/1M output (best reasoning)
   // GPT-4.1: ~$2/1M input, ~$8/1M output (good balance)
   // gpt-4o-mini: cheapest but weaker reasoning
-  model: process.env.EVAL_MODEL || "gpt-4.1",
-  evalModel: process.env.EVAL_JUDGE_MODEL || "gpt-4.1",
+  model: process.env.EVAL_MODEL || "gpt-5.1",
+  evalModel: process.env.EVAL_JUDGE_MODEL || "gpt-5.1",
 };
 
 // Initialize services

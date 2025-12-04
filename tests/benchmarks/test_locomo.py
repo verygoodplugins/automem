@@ -88,8 +88,8 @@ class LoCoMoConfig:
     disable_evidence_hints: bool = False
 
     # E2E QA settings
-    # Models: gpt-4.1 (recommended), gpt-5.1 (best), gpt-4o-mini (cheapest)
-    e2e_model: str = "gpt-4.1"  # Model for answer generation
+    # Models: gpt-5.1 (best reasoning), gpt-4.1 (good balance), gpt-4o-mini (cheapest)
+    e2e_model: str = "gpt-5.1"  # Model for answer generation - using best for accuracy
     e2e_max_context_tokens: int = 4000  # Max tokens of context to include
 
     # F1 threshold for "correct" classification
@@ -101,7 +101,7 @@ class LoCoMoConfig:
     use_lenient_eval: bool = False
 
     # Model for lenient evaluation judging
-    eval_judge_model: str = "gpt-4.1"
+    eval_judge_model: str = "gpt-5.1"
 
 
 class LoCoMoEvaluator:
@@ -1650,8 +1650,8 @@ Examples:
     )
     parser.add_argument(
         "--e2e-model",
-        default="gpt-4.1",
-        help="Model for E2E answer generation (default: gpt-4.1, options: gpt-5.1, gpt-4o-mini)",
+        default="gpt-5.1",
+        help="Model for E2E answer generation (default: gpt-5.1, options: gpt-4.1, gpt-4o-mini)",
     )
     parser.add_argument(
         "--f1-threshold",
@@ -1666,8 +1666,8 @@ Examples:
     )
     parser.add_argument(
         "--eval-judge-model",
-        default="gpt-4.1",
-        help="Model for lenient evaluation judging (default: gpt-4.1)",
+        default="gpt-5.1",
+        help="Model for lenient evaluation judging (default: gpt-5.1)",
     )
     
     args = parser.parse_args()
