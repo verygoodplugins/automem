@@ -368,7 +368,8 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `QDRANT_URL`        | Qdrant API endpoint                   | _unset_    |
 | `QDRANT_API_KEY`    | Qdrant authentication                 | _optional_ |
 | `QDRANT_COLLECTION` | Qdrant collection name                | `memories` |
-| `VECTOR_SIZE`       | Embedding dimension                   | `768`      |
+| `VECTOR_SIZE`       | Embedding dimension                   | `3072`     |
+| `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-large` |
 | `OPENAI_API_KEY`    | For real embeddings (vs placeholders) | _unset_    |
 
 #### Enrichment Pipeline

@@ -22,3 +22,8 @@ tests/benchmarks/locomo/
 # Node.js dependencies
 /mcp-sse-server/node_modules/
 node_modules/
+<<<<<<< HEAD
+=======
+# Experiment results (promote notable runs to tests/benchmarks/results/)
+/tests/benchmarks/experiments/results_*/
+>>>>>>> b6c1be7 (feat: configurable embedding model, default to text-embedding-3-large (3072d))
