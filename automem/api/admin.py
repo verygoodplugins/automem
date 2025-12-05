@@ -13,6 +13,7 @@ def create_admin_blueprint_full(
     point_struct: Any,
     collection_name: str,
     vector_size: int,
+    embedding_model: str,
     utc_now: Callable[[], str],
     logger: Any,
 ) -> Blueprint:
@@ -86,7 +87,7 @@ def create_admin_blueprint_full(
                 try:
                     resp = openai_client.embeddings.create(
                         input=content,
-                        model="text-embedding-3-small",
+                        model=embedding_model,
                         dimensions=vector_size,
                     )
                     embedding = resp.data[0].embedding

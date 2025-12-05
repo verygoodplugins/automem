@@ -127,6 +127,8 @@ from automem.config import (
     ENRICHMENT_FAILURE_BACKOFF_SECONDS,
     ENRICHMENT_ENABLE_SUMMARIES,
     ENRICHMENT_SPACY_MODEL,
+    EMBEDDING_MODEL,
+    CLASSIFICATION_MODEL,
     RECALL_RELATION_LIMIT,
     MEMORY_TYPES,
     RELATIONSHIP_TYPES,
@@ -735,7 +737,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         
         try:
             response = state.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CLASSIFICATION_MODEL,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": content[:1000]}  # Limit to 1000 chars
@@ -1114,7 +1116,7 @@ def init_embedding_provider() -> None:
             from automem.embedding.openai import OpenAIEmbeddingProvider
             state.embedding_provider = OpenAIEmbeddingProvider(
                 api_key=api_key,
-                model="text-embedding-3-small",
+                model=EMBEDDING_MODEL,
                 dimension=vector_size
             )
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
@@ -1146,7 +1148,7 @@ def init_embedding_provider() -> None:
                 from automem.embedding.openai import OpenAIEmbeddingProvider
                 state.embedding_provider = OpenAIEmbeddingProvider(
                     api_key=api_key,
-                    model="text-embedding-3-small",
+                    model=EMBEDDING_MODEL,
                     dimension=vector_size
                 )
                 logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
@@ -3242,6 +3244,7 @@ admin_bp = create_admin_blueprint_full(
     PointStruct,
     COLLECTION_NAME,
     VECTOR_SIZE,
+    EMBEDDING_MODEL,
     utc_now,
     logger,
 )
