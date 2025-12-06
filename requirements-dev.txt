@@ -7,3 +7,6 @@ black==24.8.0
 flake8==7.1.1
 isort==5.13.2
 pre-commit==4.0.1
+
+# Benchmark evaluation (LoCoMo official metrics)
+nltk==3.9.1

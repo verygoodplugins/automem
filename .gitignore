@@ -22,3 +22,5 @@ tests/benchmarks/locomo/
 # Node.js dependencies
 /mcp-sse-server/node_modules/
 node_modules/
+# Experiment results (promote notable runs to tests/benchmarks/results/)
+/tests/benchmarks/experiments/results_*/

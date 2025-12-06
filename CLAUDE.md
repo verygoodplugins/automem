@@ -132,10 +132,10 @@ Memories are classified into types for better organization:
 AutoMem uses a provider pattern with three embedding backends:
 
 #### Provider Priority (Auto-Selection)
-1. **OpenAI** (`openai:text-embedding-3-small`) - If `OPENAI_API_KEY` is set
+1. **OpenAI** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
    - High-quality semantic embeddings via API
    - Requires network and API costs
-   - 768 dimensions (configurable via `VECTOR_SIZE`)
+   - 3072 dimensions by default (configurable via `EMBEDDING_MODEL` and `VECTOR_SIZE`)
 
 2. **FastEmbed** (`fastembed:BAAI/bge-base-en-v1.5`) - Local ONNX model
    - Good quality semantic embeddings
@@ -202,7 +202,7 @@ FALKORDB_GRAPH=memories      # Graph name
 QDRANT_URL=                  # Vector database URL (optional)
 QDRANT_API_KEY=              # Qdrant cloud API key (optional)
 QDRANT_COLLECTION=memories   # Collection name
-VECTOR_SIZE=768              # Embedding dimensions
+VECTOR_SIZE=3072             # Embedding dimensions (3072 for large, 768 for small)
 
 # API configuration
 PORT=8001                    # API port

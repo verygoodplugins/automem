@@ -2,7 +2,10 @@
 """Reclassify 'Memory' fallback types using LLM classification.
 
 This script finds all memories with type='Memory' (the fallback) and reclassifies
-them using GPT-4o-mini for more accurate type assignment.
+them using the configured CLASSIFICATION_MODEL for more accurate type assignment.
+
+Environment:
+    CLASSIFICATION_MODEL: LLM model for classification (default: gpt-4o-mini)
 """
 
 import os
@@ -28,6 +31,7 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "memories")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 
 # Valid memory types
 VALID_TYPES = {"Decision", "Pattern", "Preference", "Style", "Habit", "Insight", "Context"}
@@ -72,7 +76,7 @@ def classify_with_llm(openai_client: OpenAI, content: str) -> tuple[str, float]:
     """Use OpenAI to classify memory type."""
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=CLASSIFICATION_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": content[:1000]}
@@ -165,7 +169,7 @@ def main():
             print("   (Will update FalkorDB only)\n")
     
     # Initialize OpenAI
-    print("🤖 Initializing OpenAI client")
+    print(f"🤖 Initializing OpenAI client (model: {CLASSIFICATION_MODEL})")
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     print("✅ OpenAI ready\n")
     
