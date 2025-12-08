@@ -87,9 +87,10 @@ AutoMem supports three embedding backends with automatic fallback.
 | `QDRANT_URL` | Qdrant endpoint URL | `http://localhost:6333` | `https://xyz.qdrant.io` |
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
 | `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
-| `VECTOR_SIZE` | Embedding dimension | `768` | `768` (text-embedding-3-small) |
+| `VECTOR_SIZE` | Embedding dimension | `3072` | `3072` (large), `768` (small) |
 
 **Note**: Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
+**Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script. The service now fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption.
 
 ### API Server
 
@@ -136,6 +137,39 @@ Controls memory merging, pattern detection, and decay.
 | `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Min importance to keep | `0.3` | 0-1 |
 | `CONSOLIDATION_HISTORY_LIMIT` | Max consolidation history | `20` | count |
 | `CONSOLIDATION_CONTROL_NODE_ID` | Control node identifier | `global` | string |
+
+### Model Configuration
+
+Controls which OpenAI models are used for embeddings and classification.
+
+| Variable | Description | Default | Options |
+|----------|-------------|---------|---------|
+| `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-large` | `text-embedding-3-large` (3072d), `text-embedding-3-small` (768d) |
+| `VECTOR_SIZE` | Embedding dimension | `3072` | Must match embedding model |
+| `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
+
+**Embedding Model Comparison:**
+| Model | Dimensions | Cost/1M tokens | Quality | Use Case |
+|-------|-----------|----------------|---------|----------|
+| `text-embedding-3-large` | 3072 | $0.13 | Excellent | **Default** - Better semantic precision |
+| `text-embedding-3-small` | 768 | $0.02 | Good | Cost-sensitive, high-volume deployments |
+
+To use small embeddings (saves ~$0.11/1M tokens):
+```bash
+EMBEDDING_MODEL=text-embedding-3-small
+VECTOR_SIZE=768
+```
+
+**Upgrade safety**: Changing embedding dimensions requires a full re-embed. AutoMem will refuse to start if `VECTOR_SIZE` does not match the existing Qdrant collection; set the value to your current dimension (usually `768`) before migrating, then switch to `3072` after running `scripts/reembed_embeddings.py`.
+
+**Classification Model Pricing (Dec 2025):**
+| Model | Input | Output | Notes |
+|-------|-------|--------|-------|
+| `gpt-4o-mini` | $0.15/1M | $0.60/1M | **Default** - Good enough for classification |
+| `gpt-4.1` | ~$2/1M | ~$8/1M | Better reasoning |
+| `gpt-5.1` | $1.25/1M | $10/1M | Best reasoning, use for benchmarks |
+
+**⚠️ Changing embedding models requires re-embedding all memories.** See [Re-embedding Guide](#re-embedding-memories) below.
 
 ### Enrichment Engine
 
@@ -292,6 +326,47 @@ FALKORDB_HOST = (
 | `DEVELOPMENT` | - | Removed (unused) |
 
 **Backward compatibility**: Old names still work but will show deprecation warnings.
+
+---
+
+## Re-embedding Memories
+
+When changing `EMBEDDING_MODEL` or `VECTOR_SIZE`, you must re-embed all existing memories:
+
+### 1. Backup First
+```bash
+python scripts/backup_automem.py
+```
+
+### 2. Set New Environment Variables
+```bash
+export EMBEDDING_MODEL=text-embedding-3-large  # or text-embedding-3-small
+export VECTOR_SIZE=3072  # 3072 for large, 768 for small
+```
+
+### 3. Recreate Qdrant Collection
+The collection must be recreated with the new dimension:
+
+```bash
+# Delete old collection
+curl -X DELETE "$QDRANT_URL/collections/memories" \
+  -H "api-key: $QDRANT_API_KEY"
+
+# Create new collection with correct dimension
+curl -X PUT "$QDRANT_URL/collections/memories" \
+  -H "api-key: $QDRANT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"vectors": {"size": 3072, "distance": "Cosine"}}'  # Use 768 for small
+```
+
+### 4. Re-embed All Memories
+```bash
+python scripts/reembed_embeddings.py --batch-size 32
+```
+
+The script reads from FalkorDB (which retains all memory data) and re-creates the vector embeddings in Qdrant.
+
+**Cost estimate:** ~$0.15 for 6000 memories with large embeddings, ~$0.02 with small.
 
 ---
 

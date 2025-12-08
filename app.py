@@ -127,6 +127,8 @@ from automem.config import (
     ENRICHMENT_FAILURE_BACKOFF_SECONDS,
     ENRICHMENT_ENABLE_SUMMARIES,
     ENRICHMENT_SPACY_MODEL,
+    EMBEDDING_MODEL,
+    CLASSIFICATION_MODEL,
     RECALL_RELATION_LIMIT,
     MEMORY_TYPES,
     RELATIONSHIP_TYPES,
@@ -155,6 +157,7 @@ from automem.utils.tags import (
     _compute_tag_prefixes,
     _prepare_tag_filters,
 )
+from automem.utils.validation import validate_vector_dimensions
 from automem.utils.scoring import (
     _compute_metadata_score,
     _parse_metadata_field,
@@ -735,7 +738,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         
         try:
             response = state.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CLASSIFICATION_MODEL,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": content[:1000]}  # Limit to 1000 chars
@@ -1114,7 +1117,7 @@ def init_embedding_provider() -> None:
             from automem.embedding.openai import OpenAIEmbeddingProvider
             state.embedding_provider = OpenAIEmbeddingProvider(
                 api_key=api_key,
-                model="text-embedding-3-small",
+                model=EMBEDDING_MODEL,
                 dimension=vector_size
             )
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
@@ -1146,7 +1149,7 @@ def init_embedding_provider() -> None:
                 from automem.embedding.openai import OpenAIEmbeddingProvider
                 state.embedding_provider = OpenAIEmbeddingProvider(
                     api_key=api_key,
-                    model="text-embedding-3-small",
+                    model=EMBEDDING_MODEL,
                     dimension=vector_size
                 )
                 logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
@@ -1231,6 +1234,10 @@ def init_qdrant() -> None:
         state.qdrant = QdrantClient(url=url, api_key=api_key)
         _ensure_qdrant_collection()
         logger.info("Qdrant connection established")
+    except ValueError:
+        # Surface migration guidance (e.g., vector dimension mismatch) and halt startup
+        state.qdrant = None
+        raise
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to initialize Qdrant client")
         state.qdrant = None
@@ -1242,6 +1249,9 @@ def _ensure_qdrant_collection() -> None:
         return
 
     try:
+        # Prevent accidental writes with mismatched dimensions when upgrading embeddings
+        validate_vector_dimensions(state.qdrant)
+
         collections = state.qdrant.get_collections()
         existing = {collection.name for collection in collections.collections}
         if COLLECTION_NAME not in existing:
@@ -1277,6 +1287,9 @@ def _ensure_qdrant_collection() -> None:
                 field_name="tag_prefixes",
                 field_schema="keyword",
             )
+    except ValueError:
+        # Bubble up migration guidance so the service fails fast instead of silently degrading
+        raise
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to ensure Qdrant collection; disabling client")
         state.qdrant = None
@@ -3242,6 +3255,7 @@ admin_bp = create_admin_blueprint_full(
     PointStruct,
     COLLECTION_NAME,
     VECTOR_SIZE,
+    EMBEDDING_MODEL,
     utc_now,
     logger,
 )

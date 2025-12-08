@@ -3,6 +3,10 @@
 
 Usage:
     python scripts/reembed_embeddings.py [--batch-size 32] [--limit 0]
+    
+Environment:
+    EMBEDDING_MODEL: OpenAI embedding model (default: text-embedding-3-large)
+    VECTOR_SIZE: Embedding dimension (default: 3072; set to your current collection size before migrating)
 """
 from __future__ import annotations
 
@@ -10,6 +14,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -18,12 +23,13 @@ from falkordb import FalkorDB
 from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
+from automem.config import VECTOR_SIZE, EMBEDDING_MODEL
 
 logger = logging.getLogger("reembed")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
-    stream=sys.stdout  # Write to stdout so Railway correctly parses log levels
+    stream=sys.stdout
 )
 
 
@@ -40,10 +46,17 @@ def get_graph() -> Any:
         or "localhost"
     )
     port = int(os.getenv("FALKORDB_PORT", "6379"))
+    password = os.getenv("FALKORDB_PASSWORD")
 
-    db = FalkorDB(host=host, port=port)
+    logger.info("Connecting to FalkorDB at %s:%s (auth: %s)", host, port, "yes" if password else "no")
+    
+    if password:
+        db = FalkorDB(host=host, port=port, password=password, username="default")
+    else:
+        db = FalkorDB(host=host, port=port)
+    
     graph_name = os.getenv("FALKORDB_GRAPH", "memories")
-    logger.info("Connecting to FalkorDB graph '%s' at %s:%s", graph_name, host, port)
+    logger.info("Using graph '%s'", graph_name)
     return db.select_graph(graph_name)
 
 
@@ -124,16 +137,19 @@ def reembed_memories(memories: List[Dict[str, Any]], batch_size: int) -> None:
         raise SystemExit(1)
 
     collection = os.getenv("QDRANT_COLLECTION", "memories")
-    vector_size = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "768"))
+    vector_size = VECTOR_SIZE
+    embedding_model = EMBEDDING_MODEL
+    
+    logger.info("Using embedding model: %s (dimension: %d)", embedding_model, vector_size)
 
     total = len(memories)
     processed = 0
 
     for batch in chunked(memories, batch_size):
         texts = [m["content"] or "" for m in batch]
-        logger.info("Embedding batch %d-%d", processed + 1, processed + len(batch))
+        logger.info("Embedding batch %d-%d of %d", processed + 1, processed + len(batch), total)
         response = client.embeddings.create(
-            model="text-embedding-3-small",
+            model=embedding_model,
             input=texts,
             dimensions=vector_size,
         )
@@ -174,6 +190,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-= "__main__":
     main()
