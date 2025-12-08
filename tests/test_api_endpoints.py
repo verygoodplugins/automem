@@ -1,6 +1,7 @@
 """Comprehensive test suite for AutoMem Flask API endpoints."""
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
@@ -12,6 +13,7 @@ from qdrant_client import models as qdrant_models
 
 import app
 from app import utc_now, _normalize_timestamp
+from automem import config
 
 
 class MockGraph:
@@ -615,9 +617,8 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
 
 
 def test_admin_reembed_no_openai(client, mock_state, admin_headers):
-    """Test reembed works with fallback providers when OpenAI not configured."""
+    """Test reembed returns appropriate error when OpenAI not configured."""
     mock_state.openai_client = None
-    mock_state.embedding_provider = None  # Force re-initialization
 
     # Add memories to reembed
     mock_state.memory_graph.memories["mem1"] = {
@@ -630,10 +631,10 @@ def test_admin_reembed_no_openai(client, mock_state, admin_headers):
                           json={"batch_size": 10, "limit": 1},
                           headers=admin_headers)
 
-    # Should succeed with fallback provider (fastembed or placeholder)
-    assert response.status_code == 200
+    # Should return 503 when OpenAI is not available (reembed requires OpenAI)
+    assert response.status_code == 503
     data = response.get_json()
-    assert data["status"] == "complete"
+    assert "OpenAI" in data["message"]
 
 
 def test_admin_reembed_no_qdrant(client, mock_state, admin_headers):
@@ -914,7 +915,7 @@ def test_embedding_dimension_validation(client, mock_state, auth_headers):
                           headers=auth_headers)
     assert response.status_code == 400
     data = response.get_json()
-    assert "768" in data["message"]
+    assert str(config.VECTOR_SIZE) in data["message"]
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

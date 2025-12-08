@@ -542,13 +542,16 @@ def test_provider_initialization_failure_recovery(monkeypatch):
     def failing_init(*args, **kwargs):
         raise Exception("Init failed")
 
-    with patch('automem.embedding.fastembed.TextEmbedding', side_effect=failing_init):
-        # Should fall back to placeholder
-        app.state.embedding_provider = None
-        app.init_embedding_provider()
+    # Mock environment to ensure no OpenAI key is available
+    with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+        with patch('automem.embedding.fastembed.TextEmbedding', side_effect=failing_init):
+            # Should fall back to placeholder when both OpenAI and FastEmbed fail
+            app.state.embedding_provider = None
+            app.init_embedding_provider()
 
-        assert app.state.embedding_provider is not None
-        assert app.state.embedding_provider.provider_name() == "placeholder"
+            assert app.state.embedding_provider is not None
+            # With no OpenAI key and FastEmbed failing, should use placeholder
+            assert app.state.embedding_provider.provider_name() == "placeholder"
 
 
 # ==================== Provider Feature Tests ====================
