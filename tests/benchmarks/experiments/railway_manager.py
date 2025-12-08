@@ -270,6 +270,14 @@ class RailwayManager:
     
     async def _get_deployment_url(self, project_id: str) -> str:
         """Get the public URL for a Railway deployment"""
+        # TODO: Railway CLI is directory-context dependent. Currently this will
+        # return the domain for whatever project is linked in the current directory,
+        # not necessarily the project_id passed in. For multi-project scenarios,
+        # we need to:
+        # 1. Create per-project working directories during deploy_instance
+        # 2. Store the working directory in RailwayInstance
+        # 3. Pass cwd=working_dir to all subprocess.run() calls
+        # OR use Railway API directly instead of CLI
         result = subprocess.run(
             ["railway", "domain"],
             capture_output=True,
