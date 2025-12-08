@@ -1,7 +1,36 @@
 from __future__ import annotations
 
-from typing import Any, Callable, List, Tuple
+import json
+from typing import Any, Callable, Dict, List
 from flask import Blueprint, request, abort, jsonify
+
+
+def _parse_metadata(raw: Any) -> Dict[str, Any]:
+    """Parse metadata from FalkorDB which may be a string or dict."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            decoded = json.loads(raw)
+            if isinstance(decoded, dict):
+                return decoded
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def _parse_tags(raw: Any) -> List[str]:
+    """Parse tags which may be a list or JSON string."""
+    if isinstance(raw, list):
+        return [str(t) for t in raw if t]
+    if isinstance(raw, str) and raw:
+        try:
+            decoded = json.loads(raw)
+            if isinstance(decoded, list):
+                return [str(t) for t in decoded if t]
+        except json.JSONDecodeError:
+            pass
+    return []
 
 
 def create_admin_blueprint_full(
@@ -44,28 +73,61 @@ def create_admin_blueprint_full(
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
-        if force_reembed:
-            query = "MATCH (m:Memory) RETURN m.id, m.content ORDER BY m.timestamp DESC"
-        else:
-            query = (
-                "MATCH (m:Memory)\n"
-                "WHERE m.content IS NOT NULL\n"
-                "RETURN m.id, m.content\n"
-                "ORDER BY m.timestamp DESC"
-            )
+        # Fetch full memory data from FalkorDB (not just id and content)
+        base_query = """
+            MATCH (m:Memory)
+            RETURN m.id AS id,
+                   m.content AS content,
+                   m.tags AS tags,
+                   m.importance AS importance,
+                   m.timestamp AS timestamp,
+                   m.type AS type,
+                   m.confidence AS confidence,
+                   m.metadata AS metadata,
+                   m.updated_at AS updated_at,
+                   m.last_accessed AS last_accessed
+            ORDER BY m.timestamp DESC
+        """
+        if not force_reembed:
+            base_query = """
+                MATCH (m:Memory)
+                WHERE m.content IS NOT NULL
+                RETURN m.id AS id,
+                       m.content AS content,
+                       m.tags AS tags,
+                       m.importance AS importance,
+                       m.timestamp AS timestamp,
+                       m.type AS type,
+                       m.confidence AS confidence,
+                       m.metadata AS metadata,
+                       m.updated_at AS updated_at,
+                       m.last_accessed AS last_accessed
+                ORDER BY m.timestamp DESC
+            """
         if limit:
             try:
-                query += f" LIMIT {int(limit)}"
+                base_query += f" LIMIT {int(limit)}"
             except (TypeError, ValueError):
                 pass
 
-        result = graph.query(query)
-        to_process: List[Tuple[str, str]] = []
+        result = graph.query(base_query)
+        to_process: List[Dict[str, Any]] = []
         for row in getattr(result, "result_set", []) or []:
             memory_id = row[0]
             content = row[1]
             if content:
-                to_process.append((memory_id, content))
+                to_process.append({
+                    "id": memory_id,
+                    "content": content,
+                    "tags": _parse_tags(row[2]),
+                    "importance": row[3] if row[3] is not None else 0.5,
+                    "timestamp": row[4],
+                    "type": row[5] or "Context",
+                    "confidence": row[6] if row[6] is not None else 0.6,
+                    "metadata": _parse_metadata(row[7]),
+                    "updated_at": row[8],
+                    "last_accessed": row[9],
+                })
 
         if not to_process:
             return jsonify({
@@ -82,43 +144,42 @@ def create_admin_blueprint_full(
         # Process in batches
         for i in range(0, len(to_process), batch_size):
             batch = to_process[i : i + batch_size]
-            points = []
-            for memory_id, content in batch:
-                try:
-                    resp = openai_client.embeddings.create(
-                        input=content,
-                        model=embedding_model,
-                        dimensions=vector_size,
-                    )
-                    embedding = resp.data[0].embedding
-                    payload_data = {
-                        "content": content,
-                        "tags": [],
-                        "importance": 0.5,
-                        "timestamp": utc_now(),
-                        "type": "Context",
-                        "confidence": 0.6,
-                        "metadata": {},
-                    }
-                    points.append(point_struct(id=memory_id, vector=embedding, payload=payload_data))
-                except Exception as e:
-                    logger.error(f"Failed to generate embedding for memory {memory_id}: {e}")
-                    failed += 1
-                    failed_ids.append(memory_id)
-
-            if points:
-                upserted = 0
-                try:
-                    qdrant_client.upsert(collection_name=collection_name, points=points)
-                    upserted = len(points)
-                    logger.info(f"Successfully reembedded batch of {upserted} memories")
-                except Exception as e:
-                    logger.error(f"Failed to upsert batch to Qdrant: {e}")
-                    failed += len(points)
-                    failed_ids.extend([p.id for p in points if hasattr(p, 'id')])
+            texts = [mem["content"] for mem in batch]
+            
+            try:
+                # Batch embedding request
+                resp = openai_client.embeddings.create(
+                    input=texts,
+                    model=embedding_model,
+                    dimensions=vector_size,
+                )
                 
-                # Adjust counters: processed tracks only successfully stored items
-                processed += upserted
+                points = []
+                for mem, data in zip(batch, resp.data):
+                    embedding = data.embedding
+                    # Preserve full payload from FalkorDB
+                    payload_data = {
+                        "content": mem["content"],
+                        "tags": mem["tags"],
+                        "importance": mem["importance"],
+                        "timestamp": mem["timestamp"],
+                        "type": mem["type"],
+                        "confidence": mem["confidence"],
+                        "metadata": mem["metadata"],
+                        "updated_at": mem["updated_at"],
+                        "last_accessed": mem["last_accessed"],
+                    }
+                    points.append(point_struct(id=mem["id"], vector=embedding, payload=payload_data))
+                
+                if points:
+                    qdrant_client.upsert(collection_name=collection_name, points=points)
+                    processed += len(points)
+                    logger.info(f"Successfully reembedded batch of {len(points)} memories (preserving metadata)")
+                    
+            except Exception as e:
+                logger.error(f"Failed to process batch starting at index {i}: {e}")
+                failed += len(batch)
+                failed_ids.extend([mem["id"] for mem in batch])
 
         response = {
             "status": "complete",
@@ -126,6 +187,7 @@ def create_admin_blueprint_full(
             "failed": failed,
             "total": len(to_process),
             "batch_size": batch_size,
+            "metadata_preserved": True,
         }
         if failed_ids:
             response["failed_ids"] = failed_ids[:10]
