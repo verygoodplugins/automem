@@ -157,7 +157,30 @@ Config:
         """Create a new config by applying changes to base"""
         config_dict = base_config.__dict__.copy()
         config_dict["name"] = name
-        config_dict.update(changes)
+        
+        # Map common LLM naming variations to our field names
+        key_mapping = {
+            "embedding": "embedding_model",
+            "enrichment": "enrichment_model",
+            "recall": "recall_limit",
+            "vector": "vector_weight",
+            "graph": "graph_weight",
+            "facts": "extract_facts",
+        }
+        
+        # Normalize and apply changes
+        for key, value in changes.items():
+            # Normalize key (lowercase, remove spaces)
+            norm_key = key.lower().replace(" ", "_").replace("-", "_")
+            
+            # Check for common mappings
+            if norm_key in key_mapping:
+                norm_key = key_mapping[norm_key]
+            
+            # Only update if it's a valid config field
+            if norm_key in config_dict:
+                config_dict[norm_key] = value
+        
         return ExperimentConfig(**config_dict)
     
     async def run_autonomous_optimization(
