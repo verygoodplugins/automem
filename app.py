@@ -142,6 +142,10 @@ from automem.config import (
     SEARCH_WEIGHT_EXACT,
     API_TOKEN,
     ADMIN_TOKEN,
+    TYPE_ALIASES,
+    normalize_memory_type,
+    SYNC_CHECK_INTERVAL_SECONDS,
+    SYNC_AUTO_REPAIR,
 )
 
 # Shared utils and helpers
@@ -749,13 +753,17 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             )
             
             result = json.loads(response.choices[0].message.content)
-            memory_type = result.get("type", "Memory")
+            raw_type = result.get("type", "Memory")
             confidence = float(result.get("confidence", 0.7))
             
-            # Validate type
-            if memory_type not in MEMORY_TYPES:
-                logger.warning("LLM returned invalid type '%s', using Context", memory_type)
+            # Normalize type (handles aliases and case variations)
+            memory_type, was_normalized = normalize_memory_type(raw_type)
+            if not memory_type:
+                logger.warning("LLM returned unmappable type '%s', using Context", raw_type)
                 return "Context", 0.5
+            
+            if was_normalized and memory_type != raw_type:
+                logger.debug("LLM type normalized '%s' -> '%s'", raw_type, memory_type)
             
             logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
             return memory_type, confidence
@@ -1008,6 +1016,11 @@ class ServiceState:
     embedding_inflight: Set[str] = field(default_factory=set)
     embedding_pending: Set[str] = field(default_factory=set)
     embedding_lock: Lock = field(default_factory=Lock)
+    # Background sync worker
+    sync_thread: Optional[Thread] = None
+    sync_stop_event: Optional[Event] = None
+    sync_last_run: Optional[str] = None
+    sync_last_result: Optional[Dict[str, Any]] = None
 
 
 state = ServiceState()
@@ -1738,6 +1751,117 @@ def generate_and_store_embedding(memory_id: str, content: str) -> None:
     _store_embedding_in_qdrant(memory_id, content, embedding)
 
 
+# ---------------------------------------------------------------------------
+# Background Sync Worker
+# ---------------------------------------------------------------------------
+
+
+def init_sync_worker() -> None:
+    """Initialize the background sync worker if auto-repair is enabled."""
+    if not SYNC_AUTO_REPAIR:
+        logger.info("Sync auto-repair disabled (SYNC_AUTO_REPAIR=false)")
+        return
+
+    if state.sync_thread is not None:
+        return
+
+    state.sync_stop_event = Event()
+    state.sync_thread = Thread(target=sync_worker, daemon=True)
+    state.sync_thread.start()
+    logger.info("Sync worker initialized (interval: %ds)", SYNC_CHECK_INTERVAL_SECONDS)
+
+
+def sync_worker() -> None:
+    """Background worker that detects and repairs FalkorDB/Qdrant sync drift.
+
+    This is non-destructive: only adds missing embeddings, never removes existing ones.
+    """
+    while not state.sync_stop_event.is_set():
+        try:
+            # Wait for the interval (or until stop event)
+            if state.sync_stop_event.wait(timeout=SYNC_CHECK_INTERVAL_SECONDS):
+                break  # Stop event set
+
+            _run_sync_check()
+
+        except Exception:
+            logger.exception("Error in sync worker")
+            # Sleep briefly on error before retrying
+            time.sleep(60)
+
+
+def _run_sync_check() -> None:
+    """Check for sync drift and repair if needed."""
+    graph = get_memory_graph()
+    qdrant = get_qdrant_client()
+
+    if graph is None or qdrant is None:
+        logger.debug("Sync check skipped: services unavailable")
+        return
+
+    try:
+        # Get memory IDs from FalkorDB
+        falkor_result = graph.query("MATCH (m:Memory) RETURN m.id AS id")
+        falkor_ids: Set[str] = set()
+        for row in getattr(falkor_result, "result_set", []) or []:
+            if row[0]:
+                falkor_ids.add(str(row[0]))
+
+        # Get point IDs from Qdrant
+        qdrant_ids: Set[str] = set()
+        offset = None
+        while True:
+            result = qdrant.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=1000,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            points, next_offset = result
+            for point in points:
+                qdrant_ids.add(str(point.id))
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        # Check for drift
+        missing_ids = falkor_ids - qdrant_ids
+
+        state.sync_last_run = utc_now()
+        state.sync_last_result = {
+            "falkordb_count": len(falkor_ids),
+            "qdrant_count": len(qdrant_ids),
+            "missing_count": len(missing_ids),
+        }
+
+        if not missing_ids:
+            logger.debug("Sync check: no drift detected (%d memories)", len(falkor_ids))
+            return
+
+        logger.warning(
+            "Sync drift detected: %d memories missing from Qdrant (will auto-repair)",
+            len(missing_ids)
+        )
+
+        # Queue missing memories for embedding
+        for memory_id in missing_ids:
+            # Fetch content to queue
+            mem_result = graph.query(
+                "MATCH (m:Memory {id: $id}) RETURN m.content",
+                {"id": memory_id}
+            )
+            if getattr(mem_result, "result_set", None):
+                content = mem_result.result_set[0][0]
+                if content:
+                    enqueue_embedding(memory_id, content)
+
+        logger.info("Queued %d memories for sync repair", len(missing_ids))
+
+    except Exception:
+        logger.exception("Sync check failed")
+
+
 def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     """Enrich a memory with relationships, patterns, and entity extraction."""
     graph = get_memory_graph()
@@ -2124,13 +2248,29 @@ def store_memory() -> Any:
     metadata_json = json.dumps(metadata, default=str)
 
     # Accept explicit type/confidence or classify automatically
-    memory_type = payload.get("type")
+    raw_type = payload.get("type")
     type_confidence = payload.get("confidence")
     
-    if memory_type:
-        # Validate explicit type
-        if memory_type not in MEMORY_TYPES:
-            abort(400, description=f"Invalid memory type '{memory_type}'. Must be one of: {', '.join(sorted(MEMORY_TYPES))}")
+    if raw_type:
+        # Normalize type (handles aliases and case variations)
+        memory_type, was_normalized = normalize_memory_type(raw_type)
+        
+        # Empty string means unknown type that couldn't be mapped
+        if not memory_type:
+            valid_types = sorted(MEMORY_TYPES)
+            alias_examples = ", ".join(f"'{k}'" for k in list(TYPE_ALIASES.keys())[:5])
+            abort(
+                400,
+                description=(
+                    f"Invalid memory type '{raw_type}'. "
+                    f"Must be one of: {', '.join(valid_types)}, "
+                    f"or aliases like {alias_examples}..."
+                )
+            )
+        
+        if was_normalized and memory_type != raw_type:
+            logger.debug("Normalized type '%s' -> '%s'", raw_type, memory_type)
+        
         # Use provided confidence or default
         if type_confidence is None:
             type_confidence = 0.9  # High confidence for explicit types
@@ -3192,6 +3332,7 @@ health_bp = create_health_blueprint(
     get_qdrant_client,
     state,
     GRAPH_NAME,
+    COLLECTION_NAME,
     utc_now,
 )
 
@@ -3291,5 +3432,6 @@ if __name__ == "__main__":
     init_enrichment_pipeline()
     init_embedding_pipeline()
     init_consolidation_scheduler()
+    init_sync_worker()
     # Use :: for IPv6 dual-stack (Railway internal networking uses IPv6)
     app.run(host="::", port=port, debug=False)

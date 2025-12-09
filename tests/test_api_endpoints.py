@@ -86,12 +86,31 @@ class MockGraph:
                     results.append([node])
             return SimpleNamespace(result_set=results)
 
-        # Get all memories for reembedding
+        # Get all memories for reembedding (old simple format)
         if "MATCH (m:Memory)" in query and "RETURN m.id, m.content" in query:
             results = []
             for mem_id, mem in self.memories.items():
                 if mem.get("content"):
                     results.append([mem_id, mem["content"]])
+            return SimpleNamespace(result_set=results)
+
+        # Get all memories for reembedding (new full format with all fields)
+        if "MATCH (m:Memory)" in query and "RETURN m.id AS id" in query and "m.content AS content" in query:
+            results = []
+            for mem_id, mem in self.memories.items():
+                if mem.get("content"):
+                    results.append([
+                        mem_id,
+                        mem.get("content", ""),
+                        mem.get("tags", []),
+                        mem.get("importance", 0.5),
+                        mem.get("timestamp"),
+                        mem.get("type", "Context"),
+                        mem.get("confidence", 0.6),
+                        mem.get("metadata", "{}"),
+                        mem.get("updated_at"),
+                        mem.get("last_accessed"),
+                    ])
             return SimpleNamespace(result_set=results)
 
         # Handle association creation - check both memories exist
@@ -599,10 +618,10 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
         "importance": 0.8
     }
 
-    # Mock OpenAI client
+    # Mock OpenAI client - return one embedding per input (batch processing)
     mock_state.openai_client = Mock()
     mock_state.openai_client.embeddings.create.return_value = Mock(
-        data=[Mock(embedding=[0.2] * 768)]
+        data=[Mock(embedding=[0.2] * 768), Mock(embedding=[0.3] * 768)]
     )
 
     response = client.post("/admin/reembed",
@@ -668,10 +687,10 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
         "tags": ["test"]
     }
 
-    # Mock OpenAI
+    # Mock OpenAI - return one embedding per input (batch processing)
     mock_state.openai_client = Mock()
     mock_state.openai_client.embeddings.create.return_value = Mock(
-        data=[Mock(embedding=[0.3] * 768)]
+        data=[Mock(embedding=[0.3] * 768)]  # One memory = one embedding
     )
 
     response = client.post("/admin/reembed",
