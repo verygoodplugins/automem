@@ -65,7 +65,7 @@ def create_admin_blueprint_full(
     get_memory_graph: Callable[[], Any],
     point_struct: Any,
     collection_name: str,
-    vector_size: int,
+    get_vector_size: Callable[[], int],
     embedding_model: str,
     utc_now: Callable[[], str],
     logger: Any,
@@ -175,7 +175,7 @@ def create_admin_blueprint_full(
                 resp = openai_client.embeddings.create(
                     input=texts,
                     model=embedding_model,
-                    dimensions=vector_size,
+                    dimensions=get_vector_size(),
                 )
                 
                 points = []
@@ -342,7 +342,7 @@ def create_admin_blueprint_full(
                 resp = openai_client.embeddings.create(
                     input=texts,
                     model=embedding_model,
-                    dimensions=vector_size,
+                    dimensions=get_vector_size(),
                 )
 
                 points = []

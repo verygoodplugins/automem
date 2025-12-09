@@ -1,50 +1,68 @@
 """Runtime validation utilities for AutoMem configuration."""
 
+import logging
 
-def validate_vector_dimensions(qdrant_client=None):
+logger = logging.getLogger("automem.validation")
+
+
+def get_effective_vector_size(qdrant_client=None):
     """
-    Validate that Qdrant collection vector dimension matches VECTOR_SIZE config.
+    Get the effective vector size, preferring existing collection dimension over config.
+    
+    This ensures backwards compatibility: existing users keep their current embedding
+    dimension, while new installations get the configured default.
     
     Args:
-        qdrant_client: Optional QdrantClient instance. If None, validation is skipped.
+        qdrant_client: Optional QdrantClient instance. If None, returns config default.
     
-    Raises:
-        ValueError: If collection dimension doesn't match VECTOR_SIZE, with migration instructions.
+    Returns:
+        tuple: (effective_dimension: int, source: str)
+            - source is "collection" if detected from existing, "config" otherwise
     """
     from automem.config import VECTOR_SIZE, COLLECTION_NAME
     
     if qdrant_client is None:
-        return  # No client available, skip validation
+        return VECTOR_SIZE, "config"
     
     try:
         collection_info = qdrant_client.get_collection(COLLECTION_NAME)
         collection_dim = collection_info.config.params.vectors.size
         
         if collection_dim != VECTOR_SIZE:
-            raise ValueError(
-                f"\n{'='*70}\n"
-                f"VECTOR DIMENSION MISMATCH\n"
-                f"{'='*70}\n"
-                f"Qdrant collection '{COLLECTION_NAME}': {collection_dim}d\n"
-                f"Config VECTOR_SIZE: {VECTOR_SIZE}d\n\n"
-                f"Your Qdrant collection uses {collection_dim}-dimensional vectors,\n"
-                f"but your config expects {VECTOR_SIZE}-dimensional vectors.\n\n"
-                f"{'Option 1: Keep existing embeddings (recommended)'}\n"
-                f"  Set VECTOR_SIZE={collection_dim} in your .env file\n\n"
-                f"{'Option 2: Migrate to ' + str(VECTOR_SIZE) + 'd embeddings'}\n"
-                f"  1. Backup:  python scripts/backup_automem.py\n"
-                f"  2. Migrate: python scripts/reembed_embeddings.py\n"
-                f"  3. Verify:  Check collection dimension in Qdrant\n"
-                f"  4. Update:  Add VECTOR_SIZE={VECTOR_SIZE} to .env\n\n"
-                f"See docs/MIGRATIONS.md for detailed migration guide.\n"
-                f"{'='*70}\n"
+            logger.info(
+                "Auto-detected existing collection dimension: %dd (config default: %dd). "
+                "Using %dd to preserve existing embeddings. "
+                "To migrate, run: python scripts/reembed_embeddings.py",
+                collection_dim, VECTOR_SIZE, collection_dim
             )
+        return collection_dim, "collection"
+        
     except Exception as e:
-        # Collection doesn't exist yet (first run) - this is fine
+        # Collection doesn't exist yet (first run) - use config default
         if isinstance(e, AttributeError):
-            # Likely running with a stubbed client (tests); skip validation
-            return
+            # Likely running with a stubbed client (tests)
+            return VECTOR_SIZE, "config"
         error_msg = str(e).lower()
-        if "not found" not in error_msg and "doesn't exist" not in error_msg:
-            # Re-raise unexpected errors
-            raise
+        if "not found" in error_msg or "doesn't exist" in error_msg:
+            # New installation, collection will be created with config dimension
+            return VECTOR_SIZE, "config"
+        # Re-raise unexpected errors
+        raise
+
+
+def validate_vector_dimensions(qdrant_client=None):
+    """
+    Legacy validation function - now just logs info about dimension detection.
+    
+    Kept for backwards compatibility but no longer raises on mismatch.
+    Use get_effective_vector_size() to get the actual dimension to use.
+    """
+    effective_dim, source = get_effective_vector_size(qdrant_client)
+    if source == "collection":
+        from automem.config import VECTOR_SIZE
+        if effective_dim != VECTOR_SIZE:
+            logger.info(
+                "Vector dimension: %dd (from existing collection, config says %dd)",
+                effective_dim, VECTOR_SIZE
+            )
+    return effective_dim

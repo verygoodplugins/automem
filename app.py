@@ -161,7 +161,7 @@ from automem.utils.tags import (
     _compute_tag_prefixes,
     _prepare_tag_filters,
 )
-from automem.utils.validation import validate_vector_dimensions
+from automem.utils.validation import validate_vector_dimensions, get_effective_vector_size
 from automem.utils.scoring import (
     _compute_metadata_score,
     _parse_metadata_field,
@@ -1021,6 +1021,8 @@ class ServiceState:
     sync_stop_event: Optional[Event] = None
     sync_last_run: Optional[str] = None
     sync_last_result: Optional[Dict[str, Any]] = None
+    # Effective vector size (auto-detected from existing collection or config default)
+    effective_vector_size: int = VECTOR_SIZE
 
 
 state = ServiceState()
@@ -1119,7 +1121,8 @@ def init_embedding_provider() -> None:
         return
 
     provider_config = (os.getenv("EMBEDDING_PROVIDER", "auto") or "auto").strip().lower()
-    vector_size = VECTOR_SIZE
+    # Use effective dimension (auto-detected from existing collection or config default)
+    vector_size = state.effective_vector_size
 
     # Explicit provider selection
     if provider_config == "openai":
@@ -1262,16 +1265,26 @@ def _ensure_qdrant_collection() -> None:
         return
 
     try:
-        # Prevent accidental writes with mismatched dimensions when upgrading embeddings
-        validate_vector_dimensions(state.qdrant)
+        # Auto-detect vector dimension from existing collection (backwards compatibility)
+        # This ensures users with 768d embeddings aren't broken by default change to 3072d
+        effective_dim, source = get_effective_vector_size(state.qdrant)
+        state.effective_vector_size = effective_dim
+        
+        if source == "collection":
+            logger.info(
+                "Using existing collection dimension: %dd (config default: %dd)",
+                effective_dim, VECTOR_SIZE
+            )
+        else:
+            logger.info("Using configured vector dimension: %dd", effective_dim)
 
         collections = state.qdrant.get_collections()
         existing = {collection.name for collection in collections.collections}
         if COLLECTION_NAME not in existing:
-            logger.info("Creating Qdrant collection '%s'", COLLECTION_NAME)
+            logger.info("Creating Qdrant collection '%s' with %dd vectors", COLLECTION_NAME, effective_dim)
             state.qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+                vectors_config=VectorParams(size=effective_dim, distance=Distance.COSINE),
             )
         
         # Ensure payload indexes exist for tag filtering
@@ -3125,8 +3138,10 @@ def _coerce_embedding(value: Any) -> Optional[List[float]]:
             "Embedding must be a list of floats or a comma-separated string"
         )
 
-    if len(vector) != VECTOR_SIZE:
-        raise ValueError(f"Embedding must contain exactly {VECTOR_SIZE} values")
+    # Use effective dimension (auto-detected or config)
+    expected_dim = state.effective_vector_size
+    if len(vector) != expected_dim:
+        raise ValueError(f"Embedding must contain exactly {expected_dim} values")
 
     try:
         return [float(component) for component in vector]
@@ -3139,7 +3154,8 @@ def _generate_placeholder_embedding(content: str) -> List[float]:
     digest = hashlib.sha256(content.encode("utf-8")).digest()
     seed = int.from_bytes(digest[:8], "little", signed=False)
     rng = random.Random(seed)
-    return [rng.random() for _ in range(VECTOR_SIZE)]
+    # Use effective dimension (auto-detected or config)
+    return [rng.random() for _ in range(state.effective_vector_size)]
 
 
 def _generate_real_embedding(content: str) -> List[float]:
@@ -3150,14 +3166,15 @@ def _generate_real_embedding(content: str) -> List[float]:
         logger.warning("No embedding provider available, using placeholder")
         return _generate_placeholder_embedding(content)
 
+    expected_dim = state.effective_vector_size
     try:
         embedding = state.embedding_provider.generate_embedding(content)
-        if not isinstance(embedding, list) or len(embedding) != VECTOR_SIZE:
+        if not isinstance(embedding, list) or len(embedding) != expected_dim:
             logger.warning(
                 "Provider %s returned %s dims (expected %d); falling back to placeholder",
                 state.embedding_provider.provider_name(),
                 len(embedding) if isinstance(embedding, list) else "invalid",
-                VECTOR_SIZE,
+                expected_dim,
             )
             return _generate_placeholder_embedding(content)
         return embedding
@@ -3177,9 +3194,10 @@ def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
         logger.debug("No embedding provider available, falling back to placeholder embeddings")
         return [_generate_placeholder_embedding(c) for c in contents]
 
+    expected_dim = state.effective_vector_size
     try:
         embeddings = state.embedding_provider.generate_embeddings_batch(contents)
-        if not embeddings or any(len(e) != VECTOR_SIZE for e in embeddings):
+        if not embeddings or any(len(e) != expected_dim for e in embeddings):
             logger.warning(
                 "Provider %s returned invalid dims in batch; using placeholders",
                 state.embedding_provider.provider_name() if state.embedding_provider else "unknown",
@@ -3395,7 +3413,7 @@ admin_bp = create_admin_blueprint_full(
     get_memory_graph,
     PointStruct,
     COLLECTION_NAME,
-    VECTOR_SIZE,
+    lambda: state.effective_vector_size,  # Use runtime-detected dimension
     EMBEDDING_MODEL,
     utc_now,
     logger,
