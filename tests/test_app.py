@@ -297,3 +297,71 @@ def test_analytics_endpoint(client, reset_state, auth_headers):
     assert "temporal_insights" in analytics
     assert "entity_frequency" in analytics
     assert "confidence_distribution" in analytics
+
+
+def test_recall_updates_last_accessed(client, reset_state, auth_headers):
+    """Test that /recall updates last_accessed for retrieved memories."""
+    # Store a memory
+    response = client.post(
+        "/memory",
+        data=json.dumps({"content": "Test memory for recall", "tags": ["test"]}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    assert response.status_code == 201
+
+    # Do a recall - this should trigger last_accessed update
+    response = client.get("/recall?query=test&limit=5", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["status"] == "success"
+
+    # Verify the query was issued (check DummyGraph recorded queries)
+    # Look for the UNWIND query that updates last_accessed
+    last_accessed_queries = [
+        q for q, p in reset_state.queries
+        if "SET m.last_accessed" in q
+    ]
+    assert len(last_accessed_queries) >= 1, "last_accessed update query should have been issued"
+
+
+def test_by_tag_updates_last_accessed(client, reset_state, auth_headers):
+    """Test that /memory/by-tag updates last_accessed for retrieved memories."""
+    # Store a memory with a specific tag
+    response = client.post(
+        "/memory",
+        data=json.dumps({"content": "Tagged memory", "tags": ["unique-tag"]}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    assert response.status_code == 201
+
+    # Query by tag - this should trigger last_accessed update
+    response = client.get("/memory/by-tag?tags=unique-tag", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["status"] == "success"
+
+    # Verify the last_accessed update query was issued
+    last_accessed_queries = [
+        q for q, p in reset_state.queries
+        if "SET m.last_accessed" in q
+    ]
+    assert len(last_accessed_queries) >= 1, "last_accessed update query should have been issued"
+
+
+def test_update_last_accessed_handles_empty_list():
+    """Test that update_last_accessed gracefully handles empty list."""
+    # Should not raise, should be a no-op
+    app.update_last_accessed([])
+
+
+def test_update_last_accessed_handles_none_graph(monkeypatch):
+    """Test that update_last_accessed handles missing graph gracefully."""
+    # Set graph to None
+    state = app.ServiceState()
+    state.memory_graph = None
+    monkeypatch.setattr(app, "state", state)
+
+    # Should not raise, should be a no-op
+    app.update_last_accessed(["some-id"])
