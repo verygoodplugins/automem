@@ -10,7 +10,7 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 # Qdrant / FalkorDB configuration
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "memories")
-VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "768"))
+VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "3072"))
 GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "memories")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 
@@ -38,6 +38,10 @@ CONSOLIDATION_TASK_FIELDS = {
     "full": "full_last_run",
 }
 
+# Sync configuration (background sync worker)
+SYNC_CHECK_INTERVAL_SECONDS = int(os.getenv("SYNC_CHECK_INTERVAL_SECONDS", "3600"))  # 1 hour
+SYNC_AUTO_REPAIR = os.getenv("SYNC_AUTO_REPAIR", "true").lower() not in {"0", "false", "no"}
+
 # Enrichment configuration
 ENRICHMENT_MAX_ATTEMPTS = int(os.getenv("ENRICHMENT_MAX_ATTEMPTS", "3"))
 ENRICHMENT_SIMILARITY_LIMIT = int(os.getenv("ENRICHMENT_SIMILARITY_LIMIT", "5"))
@@ -46,6 +50,13 @@ ENRICHMENT_IDLE_SLEEP_SECONDS = float(os.getenv("ENRICHMENT_IDLE_SLEEP_SECONDS",
 ENRICHMENT_FAILURE_BACKOFF_SECONDS = float(os.getenv("ENRICHMENT_FAILURE_BACKOFF_SECONDS", "5"))
 ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").lower() not in {"0", "false", "no"}
 ENRICHMENT_SPACY_MODEL = os.getenv("ENRICHMENT_SPACY_MODEL", "en_core_web_sm")
+
+# Model configuration
+# text-embedding-3-large (3072d): Better semantic precision, recommended for production
+# text-embedding-3-small (768d): Cheaper, use VECTOR_SIZE=768 if switching
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
+CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
+
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
 
@@ -54,6 +65,64 @@ MEMORY_TYPES = {
     "Decision", "Pattern", "Preference", "Style",
     "Habit", "Insight", "Context"
 }
+
+# Type aliases for normalization (lowercase and legacy types → canonical)
+# Non-canonical types are auto-mapped to canonical types on store
+TYPE_ALIASES: dict[str, str] = {
+    # Lowercase versions of canonical types
+    "decision": "Decision",
+    "pattern": "Pattern",
+    "preference": "Preference",
+    "style": "Style",
+    "habit": "Habit",
+    "insight": "Insight",
+    "context": "Context",
+    # Legacy/alternative types
+    "memory": "Context",
+    "milestone": "Context",
+    "analysis": "Insight",
+    "observation": "Insight",
+    "document": "Context",
+    "meeting_notes": "Context",
+    "template": "Pattern",
+    "project": "Context",
+    "issue": "Insight",
+    "timeline": "Context",
+    "organization": "Context",
+    "person": "Context",
+    "interests": "Preference",
+    "personality": "Preference",
+    "emotional_patterns": "Preference",
+    "relationship_dynamics": "Preference",
+    "personal_situation": "Context",
+    "health_habits": "Habit",
+    "practical_info": "Context",
+    "communication": "Preference",
+    "legal_analysis": "Insight",
+}
+
+
+def normalize_memory_type(raw_type: str | None) -> tuple[str, bool]:
+    """Normalize a memory type to a canonical type.
+
+    Returns:
+        tuple of (normalized_type, was_modified)
+        - normalized_type: The canonical type (e.g., "Decision", "Context")
+        - was_modified: True if the type was changed, False if already canonical
+    """
+    if not raw_type:
+        return "Context", True
+
+    # Already canonical
+    if raw_type in MEMORY_TYPES:
+        return raw_type, False
+
+    # Check aliases
+    if raw_type in TYPE_ALIASES:
+        return TYPE_ALIASES[raw_type], True
+
+    # Unknown type - reject by returning None marker
+    return "", True  # Empty string signals rejection
 
 # Enhanced relationship types with their properties
 RELATIONSHIP_TYPES = {

@@ -127,6 +127,8 @@ from automem.config import (
     ENRICHMENT_FAILURE_BACKOFF_SECONDS,
     ENRICHMENT_ENABLE_SUMMARIES,
     ENRICHMENT_SPACY_MODEL,
+    EMBEDDING_MODEL,
+    CLASSIFICATION_MODEL,
     RECALL_RELATION_LIMIT,
     MEMORY_TYPES,
     RELATIONSHIP_TYPES,
@@ -140,6 +142,10 @@ from automem.config import (
     SEARCH_WEIGHT_EXACT,
     API_TOKEN,
     ADMIN_TOKEN,
+    TYPE_ALIASES,
+    normalize_memory_type,
+    SYNC_CHECK_INTERVAL_SECONDS,
+    SYNC_AUTO_REPAIR,
 )
 
 # Shared utils and helpers
@@ -155,6 +161,7 @@ from automem.utils.tags import (
     _compute_tag_prefixes,
     _prepare_tag_filters,
 )
+from automem.utils.validation import validate_vector_dimensions, get_effective_vector_size
 from automem.utils.scoring import (
     _compute_metadata_score,
     _parse_metadata_field,
@@ -735,7 +742,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         
         try:
             response = state.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CLASSIFICATION_MODEL,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": content[:1000]}  # Limit to 1000 chars
@@ -746,13 +753,17 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             )
             
             result = json.loads(response.choices[0].message.content)
-            memory_type = result.get("type", "Memory")
+            raw_type = result.get("type", "Memory")
             confidence = float(result.get("confidence", 0.7))
             
-            # Validate type
-            if memory_type not in MEMORY_TYPES:
-                logger.warning("LLM returned invalid type '%s', using Context", memory_type)
+            # Normalize type (handles aliases and case variations)
+            memory_type, was_normalized = normalize_memory_type(raw_type)
+            if not memory_type:
+                logger.warning("LLM returned unmappable type '%s', using Context", raw_type)
                 return "Context", 0.5
+            
+            if was_normalized and memory_type != raw_type:
+                logger.debug("LLM type normalized '%s' -> '%s'", raw_type, memory_type)
             
             logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
             return memory_type, confidence
@@ -1005,6 +1016,13 @@ class ServiceState:
     embedding_inflight: Set[str] = field(default_factory=set)
     embedding_pending: Set[str] = field(default_factory=set)
     embedding_lock: Lock = field(default_factory=Lock)
+    # Background sync worker
+    sync_thread: Optional[Thread] = None
+    sync_stop_event: Optional[Event] = None
+    sync_last_run: Optional[str] = None
+    sync_last_result: Optional[Dict[str, Any]] = None
+    # Effective vector size (auto-detected from existing collection or config default)
+    effective_vector_size: int = VECTOR_SIZE
 
 
 state = ServiceState()
@@ -1103,7 +1121,11 @@ def init_embedding_provider() -> None:
         return
 
     provider_config = (os.getenv("EMBEDDING_PROVIDER", "auto") or "auto").strip().lower()
-    vector_size = VECTOR_SIZE
+    # Use effective dimension (auto-detected from existing collection or config default).
+    # If Qdrant hasn't set it (or config was changed in-process), align to VECTOR_SIZE.
+    if state.qdrant is None and state.effective_vector_size != VECTOR_SIZE:
+        state.effective_vector_size = VECTOR_SIZE
+    vector_size = state.effective_vector_size
 
     # Explicit provider selection
     if provider_config == "openai":
@@ -1114,7 +1136,7 @@ def init_embedding_provider() -> None:
             from automem.embedding.openai import OpenAIEmbeddingProvider
             state.embedding_provider = OpenAIEmbeddingProvider(
                 api_key=api_key,
-                model="text-embedding-3-small",
+                model=EMBEDDING_MODEL,
                 dimension=vector_size
             )
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
@@ -1146,7 +1168,7 @@ def init_embedding_provider() -> None:
                 from automem.embedding.openai import OpenAIEmbeddingProvider
                 state.embedding_provider = OpenAIEmbeddingProvider(
                     api_key=api_key,
-                    model="text-embedding-3-small",
+                    model=EMBEDDING_MODEL,
                     dimension=vector_size
                 )
                 logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
@@ -1231,6 +1253,10 @@ def init_qdrant() -> None:
         state.qdrant = QdrantClient(url=url, api_key=api_key)
         _ensure_qdrant_collection()
         logger.info("Qdrant connection established")
+    except ValueError:
+        # Surface migration guidance (e.g., vector dimension mismatch) and halt startup
+        state.qdrant = None
+        raise
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to initialize Qdrant client")
         state.qdrant = None
@@ -1242,13 +1268,26 @@ def _ensure_qdrant_collection() -> None:
         return
 
     try:
+        # Auto-detect vector dimension from existing collection (backwards compatibility)
+        # This ensures users with 768d embeddings aren't broken by default change to 3072d
+        effective_dim, source = get_effective_vector_size(state.qdrant)
+        state.effective_vector_size = effective_dim
+        
+        if source == "collection":
+            logger.info(
+                "Using existing collection dimension: %dd (config default: %dd)",
+                effective_dim, VECTOR_SIZE
+            )
+        else:
+            logger.info("Using configured vector dimension: %dd", effective_dim)
+
         collections = state.qdrant.get_collections()
         existing = {collection.name for collection in collections.collections}
         if COLLECTION_NAME not in existing:
-            logger.info("Creating Qdrant collection '%s'", COLLECTION_NAME)
+            logger.info("Creating Qdrant collection '%s' with %dd vectors", COLLECTION_NAME, effective_dim)
             state.qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+                vectors_config=VectorParams(size=effective_dim, distance=Distance.COSINE),
             )
         
         # Ensure payload indexes exist for tag filtering
@@ -1277,6 +1316,9 @@ def _ensure_qdrant_collection() -> None:
                 field_name="tag_prefixes",
                 field_schema="keyword",
             )
+    except ValueError:
+        # Bubble up migration guidance so the service fails fast instead of silently degrading
+        raise
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to ensure Qdrant collection; disabling client")
         state.qdrant = None
@@ -1725,6 +1767,117 @@ def generate_and_store_embedding(memory_id: str, content: str) -> None:
     _store_embedding_in_qdrant(memory_id, content, embedding)
 
 
+# ---------------------------------------------------------------------------
+# Background Sync Worker
+# ---------------------------------------------------------------------------
+
+
+def init_sync_worker() -> None:
+    """Initialize the background sync worker if auto-repair is enabled."""
+    if not SYNC_AUTO_REPAIR:
+        logger.info("Sync auto-repair disabled (SYNC_AUTO_REPAIR=false)")
+        return
+
+    if state.sync_thread is not None:
+        return
+
+    state.sync_stop_event = Event()
+    state.sync_thread = Thread(target=sync_worker, daemon=True)
+    state.sync_thread.start()
+    logger.info("Sync worker initialized (interval: %ds)", SYNC_CHECK_INTERVAL_SECONDS)
+
+
+def sync_worker() -> None:
+    """Background worker that detects and repairs FalkorDB/Qdrant sync drift.
+
+    This is non-destructive: only adds missing embeddings, never removes existing ones.
+    """
+    while not state.sync_stop_event.is_set():
+        try:
+            # Wait for the interval (or until stop event)
+            if state.sync_stop_event.wait(timeout=SYNC_CHECK_INTERVAL_SECONDS):
+                break  # Stop event set
+
+            _run_sync_check()
+
+        except Exception:
+            logger.exception("Error in sync worker")
+            # Sleep briefly on error before retrying
+            time.sleep(60)
+
+
+def _run_sync_check() -> None:
+    """Check for sync drift and repair if needed."""
+    graph = get_memory_graph()
+    qdrant = get_qdrant_client()
+
+    if graph is None or qdrant is None:
+        logger.debug("Sync check skipped: services unavailable")
+        return
+
+    try:
+        # Get memory IDs from FalkorDB
+        falkor_result = graph.query("MATCH (m:Memory) RETURN m.id AS id")
+        falkor_ids: Set[str] = set()
+        for row in getattr(falkor_result, "result_set", []) or []:
+            if row[0]:
+                falkor_ids.add(str(row[0]))
+
+        # Get point IDs from Qdrant
+        qdrant_ids: Set[str] = set()
+        offset = None
+        while True:
+            result = qdrant.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=1000,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            points, next_offset = result
+            for point in points:
+                qdrant_ids.add(str(point.id))
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        # Check for drift
+        missing_ids = falkor_ids - qdrant_ids
+
+        state.sync_last_run = utc_now()
+        state.sync_last_result = {
+            "falkordb_count": len(falkor_ids),
+            "qdrant_count": len(qdrant_ids),
+            "missing_count": len(missing_ids),
+        }
+
+        if not missing_ids:
+            logger.debug("Sync check: no drift detected (%d memories)", len(falkor_ids))
+            return
+
+        logger.warning(
+            "Sync drift detected: %d memories missing from Qdrant (will auto-repair)",
+            len(missing_ids)
+        )
+
+        # Queue missing memories for embedding
+        for memory_id in missing_ids:
+            # Fetch content to queue
+            mem_result = graph.query(
+                "MATCH (m:Memory {id: $id}) RETURN m.content",
+                {"id": memory_id}
+            )
+            if getattr(mem_result, "result_set", None):
+                content = mem_result.result_set[0][0]
+                if content:
+                    enqueue_embedding(memory_id, content)
+
+        logger.info("Queued %d memories for sync repair", len(missing_ids))
+
+    except Exception:
+        logger.exception("Sync check failed")
+
+
 def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     """Enrich a memory with relationships, patterns, and entity extraction."""
     graph = get_memory_graph()
@@ -2111,13 +2264,29 @@ def store_memory() -> Any:
     metadata_json = json.dumps(metadata, default=str)
 
     # Accept explicit type/confidence or classify automatically
-    memory_type = payload.get("type")
+    raw_type = payload.get("type")
     type_confidence = payload.get("confidence")
     
-    if memory_type:
-        # Validate explicit type
-        if memory_type not in MEMORY_TYPES:
-            abort(400, description=f"Invalid memory type '{memory_type}'. Must be one of: {', '.join(sorted(MEMORY_TYPES))}")
+    if raw_type:
+        # Normalize type (handles aliases and case variations)
+        memory_type, was_normalized = normalize_memory_type(raw_type)
+        
+        # Empty string means unknown type that couldn't be mapped
+        if not memory_type:
+            valid_types = sorted(MEMORY_TYPES)
+            alias_examples = ", ".join(f"'{k}'" for k in list(TYPE_ALIASES.keys())[:5])
+            abort(
+                400,
+                description=(
+                    f"Invalid memory type '{raw_type}'. "
+                    f"Must be one of: {', '.join(valid_types)}, "
+                    f"or aliases like {alias_examples}..."
+                )
+            )
+        
+        if was_normalized and memory_type != raw_type:
+            logger.debug("Normalized type '%s' -> '%s'", raw_type, memory_type)
+        
         # Use provided confidence or default
         if type_confidence is None:
             type_confidence = 0.9  # High confidence for explicit types
@@ -2972,8 +3141,10 @@ def _coerce_embedding(value: Any) -> Optional[List[float]]:
             "Embedding must be a list of floats or a comma-separated string"
         )
 
-    if len(vector) != VECTOR_SIZE:
-        raise ValueError(f"Embedding must contain exactly {VECTOR_SIZE} values")
+    # Use effective dimension (auto-detected or config)
+    expected_dim = state.effective_vector_size
+    if len(vector) != expected_dim:
+        raise ValueError(f"Embedding must contain exactly {expected_dim} values")
 
     try:
         return [float(component) for component in vector]
@@ -2986,7 +3157,8 @@ def _generate_placeholder_embedding(content: str) -> List[float]:
     digest = hashlib.sha256(content.encode("utf-8")).digest()
     seed = int.from_bytes(digest[:8], "little", signed=False)
     rng = random.Random(seed)
-    return [rng.random() for _ in range(VECTOR_SIZE)]
+    # Use effective dimension (auto-detected or config)
+    return [rng.random() for _ in range(state.effective_vector_size)]
 
 
 def _generate_real_embedding(content: str) -> List[float]:
@@ -2997,14 +3169,15 @@ def _generate_real_embedding(content: str) -> List[float]:
         logger.warning("No embedding provider available, using placeholder")
         return _generate_placeholder_embedding(content)
 
+    expected_dim = state.effective_vector_size
     try:
         embedding = state.embedding_provider.generate_embedding(content)
-        if not isinstance(embedding, list) or len(embedding) != VECTOR_SIZE:
+        if not isinstance(embedding, list) or len(embedding) != expected_dim:
             logger.warning(
                 "Provider %s returned %s dims (expected %d); falling back to placeholder",
                 state.embedding_provider.provider_name(),
                 len(embedding) if isinstance(embedding, list) else "invalid",
-                VECTOR_SIZE,
+                expected_dim,
             )
             return _generate_placeholder_embedding(content)
         return embedding
@@ -3024,9 +3197,10 @@ def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
         logger.debug("No embedding provider available, falling back to placeholder embeddings")
         return [_generate_placeholder_embedding(c) for c in contents]
 
+    expected_dim = state.effective_vector_size
     try:
         embeddings = state.embedding_provider.generate_embeddings_batch(contents)
-        if not embeddings or any(len(e) != VECTOR_SIZE for e in embeddings):
+        if not embeddings or any(len(e) != expected_dim for e in embeddings):
             logger.warning(
                 "Provider %s returned invalid dims in batch; using placeholders",
                 state.embedding_provider.provider_name() if state.embedding_provider else "unknown",
@@ -3179,6 +3353,7 @@ health_bp = create_health_blueprint(
     get_qdrant_client,
     state,
     GRAPH_NAME,
+    COLLECTION_NAME,
     utc_now,
 )
 
@@ -3241,7 +3416,8 @@ admin_bp = create_admin_blueprint_full(
     get_memory_graph,
     PointStruct,
     COLLECTION_NAME,
-    VECTOR_SIZE,
+    lambda: state.effective_vector_size,  # Use runtime-detected dimension
+    EMBEDDING_MODEL,
     utc_now,
     logger,
 )
@@ -3277,5 +3453,6 @@ if __name__ == "__main__":
     init_enrichment_pipeline()
     init_embedding_pipeline()
     init_consolidation_scheduler()
+    init_sync_worker()
     # Use :: for IPv6 dual-stack (Railway internal networking uses IPv6)
     app.run(host="::", port=port, debug=False)

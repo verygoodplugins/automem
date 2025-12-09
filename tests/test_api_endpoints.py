@@ -1,6 +1,7 @@
 """Comprehensive test suite for AutoMem Flask API endpoints."""
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch, MagicMock
@@ -12,6 +13,8 @@ from qdrant_client import models as qdrant_models
 
 import app
 from app import utc_now, _normalize_timestamp
+from automem import config
+from automem.api.recall import _expand_related_memories
 
 
 class MockGraph:
@@ -84,12 +87,31 @@ class MockGraph:
                     results.append([node])
             return SimpleNamespace(result_set=results)
 
-        # Get all memories for reembedding
+        # Get all memories for reembedding (old simple format)
         if "MATCH (m:Memory)" in query and "RETURN m.id, m.content" in query:
             results = []
             for mem_id, mem in self.memories.items():
                 if mem.get("content"):
                     results.append([mem_id, mem["content"]])
+            return SimpleNamespace(result_set=results)
+
+        # Get all memories for reembedding (new full format with all fields)
+        if "MATCH (m:Memory)" in query and "RETURN m.id AS id" in query and "m.content AS content" in query:
+            results = []
+            for mem_id, mem in self.memories.items():
+                if mem.get("content"):
+                    results.append([
+                        mem_id,
+                        mem.get("content", ""),
+                        mem.get("tags", []),
+                        mem.get("importance", 0.5),
+                        mem.get("timestamp"),
+                        mem.get("type", "Context"),
+                        mem.get("confidence", 0.6),
+                        mem.get("metadata", "{}"),
+                        mem.get("updated_at"),
+                        mem.get("last_accessed"),
+                    ])
             return SimpleNamespace(result_set=results)
 
         # Handle association creation - check both memories exist
@@ -597,10 +619,10 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
         "importance": 0.8
     }
 
-    # Mock OpenAI client
+    # Mock OpenAI client - return one embedding per input (batch processing)
     mock_state.openai_client = Mock()
     mock_state.openai_client.embeddings.create.return_value = Mock(
-        data=[Mock(embedding=[0.2] * 768)]
+        data=[Mock(embedding=[0.2] * 768), Mock(embedding=[0.3] * 768)]
     )
 
     response = client.post("/admin/reembed",
@@ -615,9 +637,8 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
 
 
 def test_admin_reembed_no_openai(client, mock_state, admin_headers):
-    """Test reembed works with fallback providers when OpenAI not configured."""
+    """Test reembed returns appropriate error when OpenAI not configured."""
     mock_state.openai_client = None
-    mock_state.embedding_provider = None  # Force re-initialization
 
     # Add memories to reembed
     mock_state.memory_graph.memories["mem1"] = {
@@ -630,10 +651,10 @@ def test_admin_reembed_no_openai(client, mock_state, admin_headers):
                           json={"batch_size": 10, "limit": 1},
                           headers=admin_headers)
 
-    # Should succeed with fallback provider (fastembed or placeholder)
-    assert response.status_code == 200
+    # Should return 503 when OpenAI is not available (reembed requires OpenAI)
+    assert response.status_code == 503
     data = response.get_json()
-    assert data["status"] == "complete"
+    assert "OpenAI" in data["message"]
 
 
 def test_admin_reembed_no_qdrant(client, mock_state, admin_headers):
@@ -667,10 +688,10 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
         "tags": ["test"]
     }
 
-    # Mock OpenAI
+    # Mock OpenAI - return one embedding per input (batch processing)
     mock_state.openai_client = Mock()
     mock_state.openai_client.embeddings.create.return_value = Mock(
-        data=[Mock(embedding=[0.3] * 768)]
+        data=[Mock(embedding=[0.3] * 768)]  # One memory = one embedding
     )
 
     response = client.post("/admin/reembed",
@@ -914,7 +935,57 @@ def test_embedding_dimension_validation(client, mock_state, auth_headers):
                           headers=auth_headers)
     assert response.status_code == 400
     data = response.get_json()
-    assert "768" in data["message"]
+    assert str(config.VECTOR_SIZE) in data["message"]
+
+
+def test_expand_related_memories_filters_strength_and_importance():
+    seed_results = [{"id": "seed1", "final_score": 0.8, "memory": {"id": "seed1"}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, query: str, params: dict):
+            related = [
+                ("RELATES_TO", 0.2, _Node(properties={"id": "keep", "importance": 0.9})),
+                ("RELATES_TO", 0.05, _Node(properties={"id": "weak", "importance": 0.9})),
+                ("RELATES_TO", 0.8, _Node(properties={"id": "low_importance", "importance": 0.1})),
+            ]
+            return SimpleNamespace(result_set=related)
+
+    graph = Graph()
+    seen_ids: set[str] = set()
+
+    def _passes(*args, **kwargs):
+        return True
+
+    def _score(*args, **kwargs):
+        return 0.5, {}
+
+    results = _expand_related_memories(
+        graph=graph,
+        seed_results=seed_results,
+        seen_ids=seen_ids,
+        result_passes_filters=_passes,
+        compute_metadata_score=_score,
+        query_text="",
+        query_tokens=[],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=None,
+        tag_mode="any",
+        tag_match="prefix",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"RELATES_TO"},
+        logger=Mock(),
+        expand_min_strength=0.1,
+        expand_min_importance=0.2,
+    )
+
+    ids = {res["id"] for res in results}
+    assert ids == {"keep"}
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

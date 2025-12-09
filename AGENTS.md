@@ -39,16 +39,4 @@
 - Local dev uses Docker defaults; see `docs/ENVIRONMENT_VARIABLES.md` and `docker-compose.yml` for ports and credentials.
 
 ## Agent Memory Protocol
-- Start of task: fetch context with recall. Example:
-  - `curl -H "Authorization: Bearer $AUTOMEM_API_TOKEN" "http://localhost:8001/recall?query=$TASK_SUMMARY&tags=repo:automem&tags=task:$TASK_ID&limit=20"`
-  - Optionally read `GET /startup-recall` for rules and lessons.
-- Persist key steps: POST `/memory` for starts, decisions, assumptions, and outputs. Always tag and set importance.
-  - `curl -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \`
-    `-d '{"content":"Started: write AGENTS.md","tags":["agent","repo:automem","task:AGENTS","docs"],"importance":0.6}' http://localhost:8001/memory`
-- Finish or checkpoints: summarize results and store another memory; PATCH to refine if needed.
-  - `curl -X POST ... -d '{"content":"Completed: AGENTS.md contributor guide","tags":["agent","task:AGENTS","result"],"importance":0.7}' http://localhost:8001/memory`
-- Associate related memories: link start/end, decisions → results, artifacts → tasks.
-  - `curl -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \`
-    `-d '{"memory1_id":"$START_ID","memory2_id":"$END_ID","type":"RELATES_TO","strength":0.9}' http://localhost:8001/associate`
-- Tagging conventions: `agent`, `repo:<name>`, `task:<id>`, `file:<path>`, `pr:<num>`, `issue:<num>`, `result`, `decision`, `docs`.
-- Temporal fields: when appropriate, include `t_valid`/`t_invalid` to bound applicability.
+Follow rules in `.cursor/rules/automem.mdc` for memory operations.

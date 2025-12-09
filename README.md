@@ -98,7 +98,7 @@ AutoMem implements breakthroughs from:
         │             │  │            │
         │ • 11 edge   │  │ • Semantic │
         │   types     │  │   search   │
-        │ • Pattern   │  │ • 768-d    │
+        │ • Pattern   │  │ • 3072-d   │
         │   nodes     │  │   vectors  │
         └─────────────┘  └────────────┘
 ```
