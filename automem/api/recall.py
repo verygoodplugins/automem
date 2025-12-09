@@ -646,6 +646,8 @@ def _expand_related_memories(
     allowed_relations: Set[str],
     logger: Any,
     seed_score_boost: float = 0.25,
+    expand_min_strength: Optional[float] = None,
+    expand_min_importance: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     if graph is None or not seed_results or expansion_limit <= 0:
         return []
@@ -695,14 +697,27 @@ def _expand_related_memories(
                 continue
 
             candidate = {"id": related_id, "memory": data}
-            if not result_passes_filters(candidate, start_time, end_time, tag_filters, tag_mode, tag_match):
-                continue
 
+            # Relation strength filter (applies only to expanded results)
             relation_strength_val = 0.0
             try:
                 relation_strength_val = float(relation_strength) if relation_strength is not None else 0.0
             except (TypeError, ValueError):  # pragma: no cover - defensive
                 relation_strength_val = 0.0
+
+            if expand_min_strength is not None and relation_strength_val < expand_min_strength:
+                continue
+
+            # Importance filter (applies only to expanded results)
+            importance_val = data.get("importance")
+            if expand_min_importance is not None:
+                try:
+                    if float(importance_val or 0.0) < expand_min_importance:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            if not result_passes_filters(candidate, start_time, end_time, tag_filters, tag_mode, tag_match):
+                continue
 
             relation_score = relation_strength_val + max(seed_score, 0.0) * seed_score_boost
 
@@ -816,6 +831,20 @@ def handle_recall(
     relation_limit = relation_limit or RECALL_RELATION_LIMIT
     expansion_limit = expansion_limit_default or RECALL_EXPANSION_LIMIT
 
+    def _parse_threshold(param_name: str) -> Optional[float]:
+        raw = request.args.get(param_name)
+        if raw is None:
+            return None
+        try:
+            val = float(raw)
+            if val < 0:
+                return 0.0
+            if val > 1:
+                return 1.0
+            return val
+        except (TypeError, ValueError):
+            return None
+
     expand_relations = _parse_bool_param(
         request.args.get("expand_relations")
         or request.args.get("expand_associations")
@@ -842,6 +871,9 @@ def handle_recall(
         expansion_limit = max(1, min(expansion_limit, 500))
     except (TypeError, ValueError):
         expansion_limit = max(1, expansion_limit)
+
+    expand_min_importance = _parse_threshold("expand_min_importance")
+    expand_min_strength = _parse_threshold("expand_min_strength")
 
     context_label = (request.args.get("context") or "").strip().lower()
     active_path = (
@@ -1091,6 +1123,8 @@ def handle_recall(
             expansion_limit=expansion_limit,
             allowed_relations=allowed_rel_set,
             logger=logger,
+            expand_min_strength=expand_min_strength,
+            expand_min_importance=expand_min_importance,
         )
         results = seed_results + expansion_results
 

@@ -34,7 +34,7 @@ Recall
   - Query: `query`, `limit`, `tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
   - Optional context hints: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`
   - Graph expansion: `expand_relations` (follow graph edges), `expand_entities` (multi-hop via entity tags)
-  - Expansion limits: `relation_limit` (per-seed, default 5), `expansion_limit` (total, default 25)
+  - Expansion limits and filters: `relation_limit` (per-seed, default 5), `expansion_limit` (total, default 25), `expand_min_strength` (0-1, relation strength floor), `expand_min_importance` (0-1, drop low-importance expanded results)
   - Response: `{ "status": "success", "results": [...], "count": M, "context_priority": {...} }`
   - When `expand_entities=true`: includes `entity_expansion: { enabled, expanded_count, entities_found }`
 
@@ -74,4 +74,3 @@ Notes
 - Tag matching supports exact and prefix semantics; vector searches are filtered by tag conditions when provided.
 - Time filtering accepts ISO timestamps (`start`, `end`) or a natural expression via `time_query`.
 - Context hints boost matching preferences (e.g., Python coding style) and guarantee at least one anchor memory when applicable; responses echo what was applied via `context_priority`.
-

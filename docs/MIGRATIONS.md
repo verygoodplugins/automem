@@ -2,7 +2,7 @@
 
 This document provides step-by-step instructions for migrating between different AutoMem configurations.
 
-**Heads up for existing deployments:** The default embedding dimension is now **3072d** for new installs. If your Qdrant collection is still 768d, set `VECTOR_SIZE=768` (and keep `text-embedding-3-small`) until you complete the upgrade steps below. AutoMem will fail fast if the configured dimension does not match your collection to prevent accidental corruption.
+**Heads up for existing deployments:** The default embedding dimension is now **3072d** for new installs. If your Qdrant collection is still 768d, set `VECTOR_SIZE=768` (and keep `text-embedding-3-small`) until you complete the upgrade steps below. AutoMem will fail fast if the configured dimension does not match your collection to prevent accidental corruption. If you must start with the existing dimension without migrating, set `VECTOR_SIZE_AUTODETECT=true` to adopt the collection size (use with caution).
 
 ## Table of Contents
 - [Upgrading to 3072d Embeddings](#upgrading-to-3072d-embeddings)
@@ -274,4 +274,3 @@ python scripts/reembed_embeddings.py
 - [Testing Guide](TESTING.md) - Benchmark testing
 - [Monitoring & Backups](MONITORING_AND_BACKUPS.md) - Backup strategies
 - [Railway Deployment](RAILWAY_DEPLOYMENT.md) - Cloud deployment guide
-

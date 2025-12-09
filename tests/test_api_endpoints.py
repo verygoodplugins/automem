@@ -14,6 +14,7 @@ from qdrant_client import models as qdrant_models
 import app
 from app import utc_now, _normalize_timestamp
 from automem import config
+from automem.api.recall import _expand_related_memories
 
 
 class MockGraph:
@@ -935,6 +936,56 @@ def test_embedding_dimension_validation(client, mock_state, auth_headers):
     assert response.status_code == 400
     data = response.get_json()
     assert str(config.VECTOR_SIZE) in data["message"]
+
+
+def test_expand_related_memories_filters_strength_and_importance():
+    seed_results = [{"id": "seed1", "final_score": 0.8, "memory": {"id": "seed1"}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, query: str, params: dict):
+            related = [
+                ("RELATES_TO", 0.2, _Node(properties={"id": "keep", "importance": 0.9})),
+                ("RELATES_TO", 0.05, _Node(properties={"id": "weak", "importance": 0.9})),
+                ("RELATES_TO", 0.8, _Node(properties={"id": "low_importance", "importance": 0.1})),
+            ]
+            return SimpleNamespace(result_set=related)
+
+    graph = Graph()
+    seen_ids: set[str] = set()
+
+    def _passes(*args, **kwargs):
+        return True
+
+    def _score(*args, **kwargs):
+        return 0.5, {}
+
+    results = _expand_related_memories(
+        graph=graph,
+        seed_results=seed_results,
+        seen_ids=seen_ids,
+        result_passes_filters=_passes,
+        compute_metadata_score=_score,
+        query_text="",
+        query_tokens=[],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=None,
+        tag_mode="any",
+        tag_match="prefix",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"RELATES_TO"},
+        logger=Mock(),
+        expand_min_strength=0.1,
+        expand_min_importance=0.2,
+    )
+
+    ids = {res["id"] for res in results}
+    assert ids == {"keep"}
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

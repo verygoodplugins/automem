@@ -1121,7 +1121,10 @@ def init_embedding_provider() -> None:
         return
 
     provider_config = (os.getenv("EMBEDDING_PROVIDER", "auto") or "auto").strip().lower()
-    # Use effective dimension (auto-detected from existing collection or config default)
+    # Use effective dimension (auto-detected from existing collection or config default).
+    # If Qdrant hasn't set it (or config was changed in-process), align to VECTOR_SIZE.
+    if state.qdrant is None and state.effective_vector_size != VECTOR_SIZE:
+        state.effective_vector_size = VECTOR_SIZE
     vector_size = state.effective_vector_size
 
     # Explicit provider selection

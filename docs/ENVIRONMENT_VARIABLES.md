@@ -88,9 +88,10 @@ AutoMem supports three embedding backends with automatic fallback.
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
 | `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
 | `VECTOR_SIZE` | Embedding dimension | `3072` | `3072` (large), `768` (small) |
+| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `false` | `true` |
 
 **Note**: Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
-**Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script. The service now fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption.
+**Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script. By default the service fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption. To opt into legacy auto-detection (use the existing collection dimension), set `VECTOR_SIZE_AUTODETECT=true`.
 
 ### API Server
 
@@ -146,6 +147,7 @@ Controls which OpenAI models are used for embeddings and classification.
 |----------|-------------|---------|---------|
 | `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-large` | `text-embedding-3-large` (3072d), `text-embedding-3-small` (768d) |
 | `VECTOR_SIZE` | Embedding dimension | `3072` | Must match embedding model |
+| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `false` | `true` |
 | `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
 
 **Embedding Model Comparison:**
@@ -160,7 +162,7 @@ EMBEDDING_MODEL=text-embedding-3-small
 VECTOR_SIZE=768
 ```
 
-**Upgrade safety**: Changing embedding dimensions requires a full re-embed. AutoMem will refuse to start if `VECTOR_SIZE` does not match the existing Qdrant collection; set the value to your current dimension (usually `768`) before migrating, then switch to `3072` after running `scripts/reembed_embeddings.py`.
+**Upgrade safety**: Changing embedding dimensions requires a full re-embed. AutoMem refuses to start if `VECTOR_SIZE` does not match the existing Qdrant collection; set the value to your current dimension (usually `768`) before migrating, then switch to `3072` after running `scripts/reembed_embeddings.py`. To override strict mode and adopt the existing collection dimension, set `VECTOR_SIZE_AUTODETECT=true` (use only if you understand the risk of dimension drift).
 
 **Classification Model Pricing (Dec 2025):**
 | Model | Input | Output | Notes |
