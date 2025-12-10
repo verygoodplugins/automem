@@ -2,6 +2,24 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.9.3] - 2025-12-10
+
+### Fixed
+- **Critical**: Fixed missing `RECALL_EXPANSION_LIMIT` import that caused crashes when using expansion features
+
+### CI/CD
+- Added GitHub Actions CI workflow with tests on Python 3.10, 3.11, 3.12
+- Added pre-commit hooks for code quality enforcement
+  - Black formatting (100 char line length)
+  - isort import sorting
+  - Flake8 syntax checking
+  - Conventional commit validation
+  - Secret detection
+- Added release-please for automated versioning and releases
+
+### Style
+- Applied consistent formatting across entire codebase with Black and isort
+
 ## [0.9.2] - 2025-12-10
 
 ### Added
