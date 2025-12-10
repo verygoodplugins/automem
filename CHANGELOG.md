@@ -2,6 +2,16 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.9.2] - 2025-12-10
+
+### Added
+- **Expansion Filtering**: Added `expand_min_strength` and `expand_min_importance` parameters to `recall` API
+  - Filters expanded relation results by connection strength and target memory importance
+  - Reduces noise in multi-hop reasoning and graph expansion
+- **Vector Dimension Autodetect**: Added `VECTOR_SIZE_AUTODETECT` env var
+  - Automatically detects and adopts existing Qdrant collection dimension
+  - Prevents service crashes when upgrading defaults (e.g. 768d -> 3072d)
+
 ## [0.9.1] - 2025-12-02
 
 ### 🏆 Benchmark Improvement
