@@ -2,6 +2,11 @@
 #
 # This ensures all PRs pass tests before merging to main.
 # Tests run on multiple Python versions for compatibility.
+#
+# Jobs:
+# 1. pre-commit: Code quality checks (formatting, linting, secrets)
+# 2. test: Unit tests on Python 3.10-3.12
+# 3. coverage: Test coverage reporting
 
 name: CI
 
@@ -12,8 +17,23 @@ on:
         branches: [main]
 
 jobs:
+    # Code quality checks
+    pre-commit:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+
+            - name: Run pre-commit
+              uses: pre-commit/action@v3.0.1
+
     test:
         runs-on: ubuntu-latest
+        needs: pre-commit
 
         strategy:
             matrix:
