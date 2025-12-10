@@ -784,6 +784,7 @@ def handle_recall(
     allowed_relations: Optional[Set[str]] = None,
     relation_limit: Optional[int] = None,
     expansion_limit_default: Optional[int] = None,
+    on_access: Optional[Callable[[List[str]], None]] = None,
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -1207,6 +1208,17 @@ def handle_recall(
             "context_language": (any_context_profile or {}).get("language") if any_context_profile else None,
         },
     )
+
+    # Update last_accessed for direct matches (not expanded related memories)
+    if on_access and seed_results:
+        accessed_ids = [
+            str(r.get("id") or (r.get("memory") or {}).get("id"))
+            for r in seed_results
+            if r.get("id") or (r.get("memory") or {}).get("id")
+        ]
+        if accessed_ids:
+            on_access(accessed_ids)
+
     return jsonify(response)
 
 
@@ -1228,6 +1240,7 @@ def create_recall_blueprint(
     relation_limit: int = 5,
     serialize_node: Callable[[Any], Dict[str, Any]] | None = None,
     summarize_relation_node: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
+    on_access: Optional[Callable[[List[str]], None]] = None,
 ) -> Blueprint:
     bp = Blueprint("recall", __name__)
 
@@ -1250,6 +1263,7 @@ def create_recall_blueprint(
             allowed_relations=allowed_relations if allowed_relations else set(ALLOWED_RELATIONS),
             relation_limit=relation_limit,
             expansion_limit_default=RECALL_EXPANSION_LIMIT,
+            on_access=on_access,
         )
 
     @bp.route("/startup-recall", methods=["GET"])

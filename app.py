@@ -1361,6 +1361,35 @@ def enqueue_enrichment(memory_id: str, *, forced: bool = False, attempt: int = 0
         state.enrichment_queue.put(job)
 
 
+# ---------------------------------------------------------------------------
+# Access Tracking (updates last_accessed on recall)
+# ---------------------------------------------------------------------------
+
+
+def update_last_accessed(memory_ids: List[str]) -> None:
+    """Update last_accessed timestamp for retrieved memories (direct, synchronous)."""
+    if not memory_ids:
+        return
+
+    graph = get_memory_graph()
+    if graph is None:
+        return
+
+    timestamp = utc_now()
+    try:
+        graph.query(
+            """
+            UNWIND $ids AS mid
+            MATCH (m:Memory {id: mid})
+            SET m.last_accessed = $ts
+            """,
+            {"ids": memory_ids, "ts": timestamp},
+        )
+        logger.debug("Updated last_accessed for %d memories", len(memory_ids))
+    except Exception:
+        logger.exception("Failed to update last_accessed for memories")
+
+
 def _load_control_record(graph: Any) -> Dict[str, Any]:
     """Fetch or create the consolidation control node."""
     try:
@@ -3382,6 +3411,7 @@ recall_bp = create_recall_blueprint(
     RECALL_RELATION_LIMIT,
     _serialize_node,
     _summarize_relation_node,
+    update_last_accessed,
 )
 
 memory_bp = create_memory_blueprint_full(
@@ -3406,6 +3436,7 @@ memory_bp = create_memory_blueprint_full(
     RELATIONSHIP_TYPES,
     state,
     logger,
+    update_last_accessed,
 )
 
 admin_bp = create_admin_blueprint_full(
