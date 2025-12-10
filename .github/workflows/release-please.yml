@@ -1,7 +1,7 @@
 # Release Please - Automated versioning and releases
 #
 # How it works:
-# 1. Every push to main with conventional commits (feat:, fix:, etc.) 
+# 1. Every push to main with conventional commits (feat:, fix:, etc.)
 #    updates a "Release PR" that tracks all unreleased changes
 # 2. When you merge the Release PR, it:
 #    - Updates version in pyproject.toml/setup.py
@@ -21,24 +21,24 @@
 name: Release Please
 
 on:
-  push:
-    branches:
-      - main
+    push:
+        branches:
+            - main
 
 permissions:
-  contents: write
-  pull-requests: write
+    contents: write
+    pull-requests: write
 
 jobs:
-  release-please:
-    runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
-        with:
-          release-type: python
-          # Optional: specify package name if different from repo
-          # package-name: automem
+    release-please:
+        runs-on: ubuntu-latest
+        outputs:
+            release_created: ${{ steps.release.outputs.release_created }}
+            tag_name: ${{ steps.release.outputs.tag_name }}
+        steps:
+            - uses: googleapis/release-please-action@v4
+              id: release
+              with:
+                  release-type: python
+                  # Optional: specify package name if different from repo
+                  # package-name: automem
