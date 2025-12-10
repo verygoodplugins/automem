@@ -337,6 +337,12 @@ GET /recall?embedding=0.12,0.56,...&limit=10
 
 # Tag prefix matching (finds slack:U123:*, slack:channel-ops, etc.)
 GET /recall?tags=slack&tag_match=prefix
+
+# Graph expansion with filtering (reduce noise in related memories)
+GET /recall?query=auth%20architecture&expand_relations=true&expand_min_importance=0.5&expand_min_strength=0.3
+
+# Multi-hop entity expansion (e.g., "What is Sarah's sister's job?")
+GET /recall?query=What%20is%20Sarah%27s%20sister%27s%20job&expand_entities=true
 ```
 
 ### Create Relationship
