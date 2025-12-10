@@ -1,0 +1,44 @@
+# Release Please - Automated versioning and releases
+#
+# How it works:
+# 1. Every push to main with conventional commits (feat:, fix:, etc.) 
+#    updates a "Release PR" that tracks all unreleased changes
+# 2. When you merge the Release PR, it:
+#    - Updates version in pyproject.toml/setup.py
+#    - Updates CHANGELOG.md
+#    - Creates a GitHub Release with tag (v0.9.3, etc.)
+#    - The release triggers any publish workflows
+#
+# Commit message format:
+#   feat: add new feature          → minor version bump (0.9.0 → 0.10.0)
+#   fix: fix a bug                 → patch version bump (0.9.0 → 0.9.1)
+#   feat!: breaking change         → major version bump (0.9.0 → 1.0.0)
+#   chore: update deps             → no version bump (goes in next release)
+#   docs: update readme            → no version bump
+#
+# See: https://github.com/googleapis/release-please
+
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          release-type: python
+          # Optional: specify package name if different from repo
+          # package-name: automem
