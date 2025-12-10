@@ -2,6 +2,28 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.10.0](https://github.com/verygoodplugins/automem/compare/v0.9.1...v0.10.0) (2025-12-10)
+
+
+### Features
+
+* Add restore_from_backup.py script ([#15](https://github.com/verygoodplugins/automem/issues/15)) ([e1b3aeb](https://github.com/verygoodplugins/automem/commit/e1b3aeb3bb1dce7c3f1449164abc584b5b4f64a2))
+* **mcp-sse:** unify recall_memory tool, remove recall_memory_multi ([7af61ae](https://github.com/verygoodplugins/automem/commit/7af61ae6527b8069a4a458195955c7cef05e10f6))
+* update last_accessed on memory recall ([#17](https://github.com/verygoodplugins/automem/issues/17)) ([2ae2bca](https://github.com/verygoodplugins/automem/commit/2ae2bca92889f67ca84940425a178bde751f3ab8))
+
+
+### Bug Fixes
+
+* Add pagination to backup script for large graphs ([#14](https://github.com/verygoodplugins/automem/issues/14)) ([1f39948](https://github.com/verygoodplugins/automem/commit/1f399482560021076535b2172a9b9f4978a75c90))
+* lint issues in backup and restore scripts from PRs [#14](https://github.com/verygoodplugins/automem/issues/14) and [#15](https://github.com/verygoodplugins/automem/issues/15) ([c7cbe18](https://github.com/verygoodplugins/automem/commit/c7cbe183d00783150fa0b8b2baf56af405245e52))
+* use shared variables in Railway template for reliable cross-service config ([423ca30](https://github.com/verygoodplugins/automem/commit/423ca30478024cc1c61b1f2bc0c89a2016e8a822))
+
+
+### Documentation
+
+* enhance SSE bridge and Railway deployment documentation ([abc689d](https://github.com/verygoodplugins/automem/commit/abc689de0c98d2275cc7ba19a58e599bb38d4bf7))
+* expand expansion filtering documentation ([001996e](https://github.com/verygoodplugins/automem/commit/001996ee4b3b3743751f17a612d0ca121e9c09c3))
+
 ## [0.9.2] - 2025-12-10
 
 ### Added
