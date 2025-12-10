@@ -31,12 +31,25 @@ Memory
 
 Recall
 - GET `/recall`
-  - Query: `query`, `limit`, `tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
-  - Optional context hints: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`
-  - Graph expansion: `expand_relations` (follow graph edges), `expand_entities` (multi-hop via entity tags)
-  - Expansion limits and filters: `relation_limit` (per-seed, default 5), `expansion_limit` (total, default 25), `expand_min_strength` (0-1, relation strength floor), `expand_min_importance` (0-1, drop low-importance expanded results)
+  - **Basic parameters**: `query`, `limit`, `tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
+  - **Context hints**: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`
+  - **Graph expansion**:
+    - `expand_relations` - Follow graph edges from seed results to related memories
+    - `expand_entities` - Multi-hop reasoning via entity tags (finds "Amanda → Rachel" then "Rachel's job")
+    - `relation_limit` - Max relations per seed (default: 5)
+    - `expansion_limit` - Total max expanded memories (default: 25)
+  - **Expansion filtering** (reduce noise in expanded results):
+    - `expand_min_importance` - Minimum importance (0-1) for expanded memories. Seed results are never filtered, only expanded ones. Recommended: 0.3-0.5 for broad context, 0.6+ for focused results.
+    - `expand_min_strength` - Minimum relation strength (0-1) to traverse during graph expansion. Only edges above this threshold are followed. Recommended: 0.3 for exploratory, 0.6+ for high-confidence connections.
   - Response: `{ "status": "success", "results": [...], "count": M, "context_priority": {...} }`
   - When `expand_entities=true`: includes `entity_expansion: { enabled, expanded_count, entities_found }`
+  - When `expand_relations=true`: includes `expansion: { enabled, seed_count, expanded_count, relation_limit }`
+
+**Expansion Filtering Example:**
+```bash
+# Get architecture decisions with related context, but filter out low-importance noise
+GET /recall?query=database%20architecture&expand_relations=true&expand_min_importance=0.5&expand_min_strength=0.3
+```
 
 - GET `/memories/{id}/related`
   - Query: `relationship_types`, `max_depth` (1..3), `limit` (<=200)
