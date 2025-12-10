@@ -1,16 +1,65 @@
+# Pre-commit hooks for AutoMem
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
 repos:
+  # Code formatting
   - repo: https://github.com/psf/black
-    rev: 24.8.0
+    rev: 24.4.2
     hooks:
       - id: black
-        args: ["--line-length=100"]
+        args: [--line-length=100]
+
+  # Import sorting
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        args: ["--profile=black"]
+        args: [--profile=black, --line-length=100]
+
+  # Linting - catch syntax errors and undefined names (fast, blocking)
   - repo: https://github.com/pycqa/flake8
-    rev: 7.1.1
+    rev: 7.0.0
     hooks:
       - id: flake8
-        additional_dependencies: []
+        args: [--select=E9,F63,F7,F82, --show-source]
+        files: ^(app\.py|automem/.*)$
+
+  # Conventional commits - enforce commit message format
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.2.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert]
+
+  # Trailing whitespace, end of file, YAML syntax
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: debug-statements
+
+  # Security - check for hardcoded secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: (tests/|\.md$|\.json$)
+
+# Run tests before push (optional, can be slow)
+# Uncomment to enable:
+# - repo: local
+#   hooks:
+#     - id: pytest
+#       name: pytest
+#       entry: pytest tests/ --ignore=tests/benchmarks -x -q
+#       language: system
+#       pass_filenames: false
+#       stages: [push]
