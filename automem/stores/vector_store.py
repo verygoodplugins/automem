@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import List, Optional
+
 from qdrant_client import models as qdrant_models
+
 from automem.utils.tags import _prepare_tag_filters
 
 
@@ -40,4 +42,3 @@ def _build_qdrant_tag_filter(
     ]
 
     return qdrant_models.Filter(must=must_conditions)
-

@@ -50,13 +50,28 @@ ENTITY_STOPWORDS = {
 # Common error codes and technical strings to exclude from entity extraction
 ENTITY_BLOCKLIST = {
     # HTTP errors
-    "bad request", "not found", "unauthorized", "forbidden", "internal server error",
-    "service unavailable", "gateway timeout",
+    "bad request",
+    "not found",
+    "unauthorized",
+    "forbidden",
+    "internal server error",
+    "service unavailable",
+    "gateway timeout",
     # Network errors
-    "econnreset", "econnrefused", "etimedout", "enotfound", "enetunreach",
-    "ehostunreach", "epipe", "eaddrinuse",
+    "econnreset",
+    "econnrefused",
+    "etimedout",
+    "enotfound",
+    "enetunreach",
+    "ehostunreach",
+    "epipe",
+    "eaddrinuse",
     # Common error patterns
-    "error", "warning", "exception", "failed", "failure",
+    "error",
+    "warning",
+    "exception",
+    "failed",
+    "failure",
 }
 
 
@@ -81,4 +96,3 @@ def _extract_keywords(text: str) -> List[str]:
         keywords.append(cleaned)
 
     return keywords
-

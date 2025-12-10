@@ -104,10 +104,12 @@ class AutoMemMigrator:
         self.offset = max(0, offset)
         self.session = requests.Session()
         if api_token:
-            self.session.headers.update({
-                "Authorization": f"Bearer {api_token}",
-                "X-API-Key": api_token,
-            })
+            self.session.headers.update(
+                {
+                    "Authorization": f"Bearer {api_token}",
+                    "X-API-Key": api_token,
+                }
+            )
 
     def run(self) -> int:
         if not self.db_path.exists():

@@ -103,8 +103,8 @@ AutoMem implements breakthroughs from:
         └─────────────┘  └────────────┘
 ```
 
-**FalkorDB** (graph) = canonical record, relationships, consolidation  
-**Qdrant** (vectors) = semantic recall, similarity search  
+**FalkorDB** (graph) = canonical record, relationships, consolidation
+**Qdrant** (vectors) = semantic recall, similarity search
 **Dual storage** = Built-in redundancy and disaster recovery
 
 ## Why Graph + Vector?
@@ -404,7 +404,7 @@ response = requests.post(
 ### vs. Traditional RAG Systems
 Traditional RAG retrieves similar documents. AutoMem understands relationships:
 
-**RAG**: "Here are 5 documents about PostgreSQL"  
+**RAG**: "Here are 5 documents about PostgreSQL"
 **AutoMem**: "You chose PostgreSQL over MongoDB because you prefer boring technology for operational simplicity. This pattern also influenced your Redis and RabbitMQ decisions."
 
 - ✅ **Typed relationships** - Not just "similar", but "causes", "contradicts", "evolved from"
@@ -424,7 +424,7 @@ Vector databases match embeddings. AutoMem builds knowledge graphs:
 AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 
 - ✅ **Benchmark-proven** - 90.53% on LoCoMo (ACL 2024), beats funded competitors
-- ✅ **Research-validated** - Implements HippoRAG 2, A-MEM, MELODI, ReadAgent principles  
+- ✅ **Research-validated** - Implements HippoRAG 2, A-MEM, MELODI, ReadAgent principles
 - ✅ **Production-ready** - Auth, admin tools, health monitoring, automated backups
 - ✅ **Battle-tested** - Enrichment pipeline, consolidation engine, retry logic, dual storage
 - ✅ **Open source** - MIT license, deploy anywhere, no vendor lock-in
@@ -544,13 +544,12 @@ MIT - Because AI memory should be free.
 railway up
 ```
 
-**AutoMem is the world's best-performing long-term memory system.**  
+**AutoMem is the world's best-performing long-term memory system.**
 90.53% LoCoMo score. Open source. Research-validated. Production-ready.
 
 Transform your AI from a chatbot into a thinking partner that **actually remembers.**
 
 ---
 
-*Built by a solo developer. Validated by academic benchmarks. Beats well-funded competitors.*  
+*Built by a solo developer. Validated by academic benchmarks. Beats well-funded competitors.*
 *MIT License. Deploy anywhere. No vendor lock-in.*
-

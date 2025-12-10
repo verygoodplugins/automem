@@ -22,13 +22,15 @@ class DummyGraph:
         if "MERGE (m:Memory {id:" in query:
             memory_id = params["id"]
             self.nodes.add(memory_id)
-            self.memories.append({
-                "id": memory_id,
-                "content": params.get("content", ""),
-                "type": params.get("type", "Memory"),
-                "confidence": params.get("confidence", 0.5),
-                "importance": params.get("importance", 0.5),
-            })
+            self.memories.append(
+                {
+                    "id": memory_id,
+                    "content": params.get("content", ""),
+                    "type": params.get("type", "Memory"),
+                    "confidence": params.get("confidence", 0.5),
+                    "importance": params.get("importance", 0.5),
+                }
+            )
             return SimpleNamespace(result_set=[[SimpleNamespace(properties={"id": memory_id})]])
 
         # Analytics queries
@@ -71,7 +73,15 @@ class DummyGraph:
 
         # Simulate an association creation returning a stub relation
         if "MERGE (m1)-[r:" in query:
-            return SimpleNamespace(result_set=[["RELATES_TO", params.get("strength", 0.5), {"properties": {"id": params.get("id2", "")}}]])
+            return SimpleNamespace(
+                result_set=[
+                    [
+                        "RELATES_TO",
+                        params.get("strength", 0.5),
+                        {"properties": {"id": params.get("id2", "")}},
+                    ]
+                ]
+            )
 
         # Graph recall relations query
         if "MATCH (m:Memory {id:" in query and "RETURN type" in query:
@@ -115,7 +125,9 @@ def auth_headers():
 
 
 def test_store_memory_without_content_returns_400(client, auth_headers):
-    response = client.post("/memory", data=json.dumps({}), content_type="application/json", headers=auth_headers)
+    response = client.post(
+        "/memory", data=json.dumps({}), content_type="application/json", headers=auth_headers
+    )
     assert response.status_code == 400
     body = response.get_json()
     assert body["status"] == "error"
@@ -150,18 +162,20 @@ def test_create_association_success(client, reset_state, auth_headers):
             "/memory",
             data=json.dumps({"id": memory_id, "content": f"Memory {memory_id}"}),
             content_type="application/json",
-        headers=auth_headers,
+            headers=auth_headers,
         )
         assert response.status_code == 201
 
     response = client.post(
         "/associate",
-        data=json.dumps({
-            "memory1_id": "a",
-            "memory2_id": "b",
-            "type": "relates_to",
-            "strength": 0.9,
-        }),
+        data=json.dumps(
+            {
+                "memory1_id": "a",
+                "memory2_id": "b",
+                "type": "relates_to",
+                "strength": 0.9,
+            }
+        ),
         content_type="application/json",
         headers=auth_headers,
     )
@@ -211,11 +225,13 @@ def test_temporal_validity_fields(client, reset_state, auth_headers):
     """Test temporal validity fields t_valid and t_invalid."""
     response = client.post(
         "/memory",
-        data=json.dumps({
-            "content": "This was valid in 2023",
-            "t_valid": "2023-01-01T00:00:00Z",
-            "t_invalid": "2024-01-01T00:00:00Z",
-        }),
+        data=json.dumps(
+            {
+                "content": "This was valid in 2023",
+                "t_valid": "2023-01-01T00:00:00Z",
+                "t_invalid": "2024-01-01T00:00:00Z",
+            }
+        ),
         content_type="application/json",
         headers=auth_headers,
     )
@@ -246,14 +262,16 @@ def test_new_relationship_types(client, reset_state, auth_headers):
     # Create PREFERS_OVER relationship with properties
     response = client.post(
         "/associate",
-        data=json.dumps({
-            "memory1_id": "tool1",
-            "memory2_id": "tool2",
-            "type": "PREFERS_OVER",
-            "strength": 0.95,
-            "context": "cost-effectiveness",
-            "reason": "30x cost difference",
-        }),
+        data=json.dumps(
+            {
+                "memory1_id": "tool1",
+                "memory2_id": "tool2",
+                "type": "PREFERS_OVER",
+                "strength": 0.95,
+                "context": "cost-effectiveness",
+                "reason": "30x cost difference",
+            }
+        ),
         content_type="application/json",
         headers=auth_headers,
     )
@@ -278,7 +296,7 @@ def test_analytics_endpoint(client, reset_state, auth_headers):
             "/memory",
             data=json.dumps(memory),
             content_type="application/json",
-        headers=auth_headers,
+            headers=auth_headers,
         )
         assert response.status_code == 201
 
@@ -318,10 +336,7 @@ def test_recall_updates_last_accessed(client, reset_state, auth_headers):
 
     # Verify the query was issued (check DummyGraph recorded queries)
     # Look for the UNWIND query that updates last_accessed
-    last_accessed_queries = [
-        q for q, p in reset_state.queries
-        if "SET m.last_accessed" in q
-    ]
+    last_accessed_queries = [q for q, p in reset_state.queries if "SET m.last_accessed" in q]
     assert len(last_accessed_queries) >= 1, "last_accessed update query should have been issued"
 
 
@@ -343,10 +358,7 @@ def test_by_tag_updates_last_accessed(client, reset_state, auth_headers):
     assert body["status"] == "success"
 
     # Verify the last_accessed update query was issued
-    last_accessed_queries = [
-        q for q, p in reset_state.queries
-        if "SET m.last_accessed" in q
-    ]
+    last_accessed_queries = [q for q, p in reset_state.queries if "SET m.last_accessed" in q]
     assert len(last_accessed_queries) >= 1, "last_accessed update query should have been issued"
 
 

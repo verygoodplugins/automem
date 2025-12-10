@@ -15,15 +15,14 @@ import os
 import subprocess
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
-from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
 
 _INTEGRATION_ENABLED = os.getenv("AUTOMEM_RUN_INTEGRATION_TESTS")
 if not _INTEGRATION_ENABLED:
@@ -91,21 +90,19 @@ def maybe_start_docker():
 def api_client():
     """Create a session with retries for the real API."""
     session = requests.Session()
-    retry = Retry(
-        total=3,
-        backoff_factor=0.3,
-        status_forcelist=[500, 502, 503, 504]
-    )
+    retry = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
 
     # Set auth header for all requests (configurable)
     api_token = os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token")
-    session.headers.update({
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-    })
+    session.headers.update(
+        {
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json",
+        }
+    )
 
     # Base URL for the API (override via AUTOMEM_TEST_BASE_URL)
     session.base_url = _BASE_URL
@@ -156,8 +153,8 @@ def test_memory_lifecycle_real(api_client):
             "content": memory_content,
             "tags": ["test", "integration"],
             "importance": 0.8,
-            "metadata": {"source": "integration_test"}
-        }
+            "metadata": {"source": "integration_test"},
+        },
     )
     assert store_response.status_code == 201
     store_data = store_response.json()
@@ -166,11 +163,11 @@ def test_memory_lifecycle_real(api_client):
 
     # 2. Recall the memory by content (with retry for async embedding)
     import time
+
     found = False
     for attempt in range(5):  # Retry up to 5 times
         recall_response = api_client.get(
-            f"{api_client.base_url}/recall",
-            params={"query": memory_content, "limit": 5}
+            f"{api_client.base_url}/recall", params={"query": memory_content, "limit": 5}
         )
         assert recall_response.status_code == 200
         recall_data = recall_response.json()
@@ -183,24 +180,21 @@ def test_memory_lifecycle_real(api_client):
                 assert result["memory"]["content"] == memory_content
                 assert "test" in result["memory"]["tags"]
                 break
-        
+
         if found:
             break
-            
+
         # Wait before retrying (embeddings are async)
         if attempt < 4:
             time.sleep(0.5)
-    
+
     assert found, f"Memory {memory_id} not found in recall results after {attempt + 1} attempts"
 
     # 3. Update the memory
     updated_content = f"Updated: {memory_content}"
     update_response = api_client.patch(
         f"{api_client.base_url}/memory/{memory_id}",
-        json={
-            "content": updated_content,
-            "importance": 0.9
-        }
+        json={"content": updated_content, "importance": 0.9},
     )
     assert update_response.status_code == 200
     update_data = update_response.json()
@@ -208,8 +202,7 @@ def test_memory_lifecycle_real(api_client):
 
     # 4. Verify update by recalling
     recall2_response = api_client.get(
-        f"{api_client.base_url}/recall",
-        params={"query": updated_content, "limit": 5}
+        f"{api_client.base_url}/recall", params={"query": updated_content, "limit": 5}
     )
     assert recall2_response.status_code == 200
     recall2_data = recall2_response.json()
@@ -224,17 +217,14 @@ def test_memory_lifecycle_real(api_client):
     assert found_updated, "Updated memory not found"
 
     # 5. Delete the memory
-    delete_response = api_client.delete(
-        f"{api_client.base_url}/memory/{memory_id}"
-    )
+    delete_response = api_client.delete(f"{api_client.base_url}/memory/{memory_id}")
     assert delete_response.status_code == 200
     delete_data = delete_response.json()
     assert delete_data["status"] == "success"
 
     # 6. Verify deletion
     recall3_response = api_client.get(
-        f"{api_client.base_url}/recall",
-        params={"query": updated_content, "limit": 5}
+        f"{api_client.base_url}/recall", params={"query": updated_content, "limit": 5}
     )
     assert recall3_response.status_code == 200
     recall3_data = recall3_response.json()
@@ -249,20 +239,14 @@ def test_association_real(api_client):
     # Create two memories
     memory1_response = api_client.post(
         f"{api_client.base_url}/memory",
-        json={
-            "content": f"Association test memory 1 - {uuid.uuid4()}",
-            "importance": 0.7
-        }
+        json={"content": f"Association test memory 1 - {uuid.uuid4()}", "importance": 0.7},
     )
     assert memory1_response.status_code == 201
     memory1_id = memory1_response.json()["memory_id"]
 
     memory2_response = api_client.post(
         f"{api_client.base_url}/memory",
-        json={
-            "content": f"Association test memory 2 - {uuid.uuid4()}",
-            "importance": 0.7
-        }
+        json={"content": f"Association test memory 2 - {uuid.uuid4()}", "importance": 0.7},
     )
     assert memory2_response.status_code == 201
     memory2_id = memory2_response.json()["memory_id"]
@@ -274,8 +258,8 @@ def test_association_real(api_client):
             "memory1_id": memory1_id,
             "memory2_id": memory2_id,
             "type": "RELATES_TO",
-            "strength": 0.8
-        }
+            "strength": 0.8,
+        },
     )
     assert assoc_response.status_code == 201
     assoc_data = assoc_response.json()
@@ -299,16 +283,15 @@ def test_tag_filtering_real(api_client):
             json={
                 "content": f"Tagged memory {i} with {unique_tag}",
                 "tags": [unique_tag, f"index_{i}"],
-                "importance": 0.5 + (i * 0.1)
-            }
+                "importance": 0.5 + (i * 0.1),
+            },
         )
         assert response.status_code == 201
         memory_ids.append(response.json()["memory_id"])
 
     # Filter by tag
     tag_response = api_client.get(
-        f"{api_client.base_url}/memory/by-tag",
-        params={"tags": unique_tag, "limit": 10}
+        f"{api_client.base_url}/memory/by-tag", params={"tags": unique_tag, "limit": 10}
     )
     assert tag_response.status_code == 200
     tag_data = tag_response.json()
@@ -333,8 +316,8 @@ def test_time_range_recall_real(api_client):
         json={
             "content": f"Time-based memory {uuid.uuid4()}",
             "timestamp": now.isoformat(),
-            "importance": 0.6
-        }
+            "importance": 0.6,
+        },
     )
     assert memory_response.status_code == 201
     memory_id = memory_response.json()["memory_id"]
@@ -344,12 +327,7 @@ def test_time_range_recall_real(api_client):
     end_time = (now + timedelta(hours=1)).isoformat()
 
     recall_response = api_client.get(
-        f"{api_client.base_url}/recall",
-        params={
-            "start": start_time,
-            "end": end_time,
-            "limit": 10
-        }
+        f"{api_client.base_url}/recall", params={"start": start_time, "end": end_time, "limit": 10}
     )
     assert recall_response.status_code == 200
     recall_data = recall_response.json()
@@ -372,8 +350,8 @@ def test_embedding_handling_real(api_client):
         json={
             "content": f"Memory with embedding {uuid.uuid4()}",
             "embedding": embedding,
-            "importance": 0.7
-        }
+            "importance": 0.7,
+        },
     )
     assert memory_response.status_code == 201
     memory_id = memory_response.json()["memory_id"]
@@ -387,10 +365,7 @@ def test_admin_reembed_real(api_client, admin_headers):
     # First create a memory without embedding
     memory_response = api_client.post(
         f"{api_client.base_url}/memory",
-        json={
-            "content": f"Memory for re-embedding {uuid.uuid4()}",
-            "importance": 0.6
-        }
+        json={"content": f"Memory for re-embedding {uuid.uuid4()}", "importance": 0.6},
     )
     assert memory_response.status_code == 201
     memory_id = memory_response.json()["memory_id"]
@@ -399,10 +374,7 @@ def test_admin_reembed_real(api_client, admin_headers):
     reembed_response = requests.post(
         f"{api_client.base_url}/admin/reembed",
         headers=admin_headers,
-        json={
-            "limit": 1,
-            "batch_size": 1
-        }
+        json={"limit": 1, "batch_size": 1},
     )
 
     # Should either succeed or return 503 if OpenAI not configured
@@ -415,22 +387,18 @@ def test_admin_reembed_real(api_client, admin_headers):
 def test_error_handling_real(api_client):
     """Test various error conditions."""
     # 1. Non-existent memory delete should 404
-    response = api_client.delete(
-        f"{api_client.base_url}/memory/{uuid.uuid4()}"
-    )
+    response = api_client.delete(f"{api_client.base_url}/memory/{uuid.uuid4()}")
     assert response.status_code == 404
 
     # 2. Missing required field
     response = api_client.post(
-        f"{api_client.base_url}/memory",
-        json={"importance": 0.5}  # Missing 'content'
+        f"{api_client.base_url}/memory", json={"importance": 0.5}  # Missing 'content'
     )
     assert response.status_code == 400
 
     # 3. Invalid association (same memory)
     memory_response = api_client.post(
-        f"{api_client.base_url}/memory",
-        json={"content": "Test memory for association"}
+        f"{api_client.base_url}/memory", json={"content": "Test memory for association"}
     )
     memory_id = memory_response.json()["memory_id"]
 
@@ -440,8 +408,8 @@ def test_error_handling_real(api_client):
             "memory1_id": memory_id,
             "memory2_id": memory_id,  # Same as memory1
             "type": "RELATES_TO",
-            "strength": 0.5
-        }
+            "strength": 0.5,
+        },
     )
     assert assoc_response.status_code == 400
 

@@ -53,7 +53,7 @@ If you deployed AutoMem without the SSE bridge, add it as a new service:
    AUTOMEM_ENDPOINT=http://memory-service.railway.internal:8001
    AUTOMEM_API_TOKEN=<copy from memory-service>
    ```
-   
+
    > **Important**: Replace `memory-service` with your actual service name if different. Check with: `railway variables --service <your-api-service> | grep RAILWAY_PRIVATE_DOMAIN`
 
 4. **Configure Health Check**
@@ -119,7 +119,7 @@ ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
 
 2. **Add MCP Server**
    - Click `+ Add Server`
-   - **Server URL**: 
+   - **Server URL**:
      ```
      https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
      ```
@@ -171,8 +171,8 @@ ElevenLabs agents can use AutoMem to:
 
 Example agent prompt:
 ```
-You have access to a persistent memory system. Use store_memory to save 
-important user preferences, decisions, and facts. Use recall_memory to 
+You have access to a persistent memory system. Use store_memory to save
+important user preferences, decisions, and facts. Use recall_memory to
 retrieve relevant context before answering questions.
 ```
 

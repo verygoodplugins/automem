@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Callable, List, Dict, Optional, Tuple, Set
-from flask import Blueprint, request, abort, jsonify
-from pathlib import Path
 import json
-import time
 import re
+import time
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from automem.config import ALLOWED_RELATIONS, RECALL_RELATION_LIMIT, RECALL_EXPANSION_LIMIT
+from flask import Blueprint, abort, jsonify, request
+
+from automem.config import ALLOWED_RELATIONS, RECALL_EXPANSION_LIMIT, RECALL_RELATION_LIMIT
 from automem.utils.graph import _serialize_node
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
@@ -60,36 +61,86 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
 
 # Words to skip when extracting entities from queries
 ENTITY_STOPWORDS: Set[str] = {
-    'What', 'Would', 'Could', 'Does', 'Did', 'How', 'Why', 'When', 'Where',
-    'Which', 'Who', 'Whose', 'Will', 'Can', 'Should', 'Has', 'Have', 'Had',
-    'Is', 'Are', 'Was', 'Were', 'Do', 'Been', 'Being', 'The', 'Answer',
-    'Yes', 'No', 'Likely', 'Based', 'According', 'Since', 'Because',
-    'January', 'February', 'March', 'April', 'May', 'June', 'July',
-    'August', 'September', 'October', 'November', 'December',
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
-    'National', 'American', 'European', 'Asian', 'African',
+    "What",
+    "Would",
+    "Could",
+    "Does",
+    "Did",
+    "How",
+    "Why",
+    "When",
+    "Where",
+    "Which",
+    "Who",
+    "Whose",
+    "Will",
+    "Can",
+    "Should",
+    "Has",
+    "Have",
+    "Had",
+    "Is",
+    "Are",
+    "Was",
+    "Were",
+    "Do",
+    "Been",
+    "Being",
+    "The",
+    "Answer",
+    "Yes",
+    "No",
+    "Likely",
+    "Based",
+    "According",
+    "Since",
+    "Because",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+    "National",
+    "American",
+    "European",
+    "Asian",
+    "African",
 }
 
 
 def _extract_query_entities(query: str) -> List[str]:
     """
     Extract named entities (people, places) from a query.
-    
+
     This enables entity-aware recall for questions like:
     "Would Caroline pursue writing?" -> extracts "Caroline"
-    
+
     The recall can then run additional searches for entity-specific memories.
     """
     if not query:
         return []
-    
+
     words = query.split()
     entities = []
-    
+
     for i, word in enumerate(words):
         # Clean punctuation
-        clean_word = re.sub(r'[^\w]', '', word)
-        
+        clean_word = re.sub(r"[^\w]", "", word)
+
         if len(clean_word) < 2:
             continue
         if clean_word in ENTITY_STOPWORDS:
@@ -97,60 +148,127 @@ def _extract_query_entities(query: str) -> List[str]:
         # Skip possessives (handle separately)
         if "'s" in word or "'s" in word:
             continue
-        
+
         # Check for capitalized word (potential name)
         if len(clean_word) > 1 and clean_word[0].isupper() and clean_word[1:].islower():
             # Skip if first word (sentence start)
             if i == 0:
                 continue
             # Skip if after sentence boundary
-            if i > 0 and words[i-1][-1] in '.?!':
+            if i > 0 and words[i - 1][-1] in ".?!":
                 continue
             entities.append(clean_word)
-    
+
     # Handle possessives like "John's" or "Caroline's"
     possessives = re.findall(r"\b([A-Z][a-z]+)'s\b", query)
     for p in possessives:
         if p not in ENTITY_STOPWORDS and p not in entities:
             entities.append(p)
-    
+
     return list(set(entities))
 
 
 def _extract_topic_keywords(query: str, exclude_entities: Optional[List[str]] = None) -> List[str]:
     """
     Extract meaningful topic keywords from a query.
-    
+
     For "Would Caroline pursue writing as a career?" extracts:
     ["writing", "career"]
-    
+
     These can be combined with entities for broader searches.
     """
     if not query:
         return []
-    
+
     # Build exclusion set (lowercase entity names to skip)
     exclude_lower = set()
     if exclude_entities:
         exclude_lower = {e.lower() for e in exclude_entities}
-    
+
     # Common question/filler words to skip
     skip_words = {
-        'would', 'could', 'should', 'will', 'can', 'may', 'might',
-        'does', 'did', 'has', 'have', 'had', 'is', 'are', 'was', 'were',
-        'be', 'been', 'being', 'the', 'a', 'an', 'to', 'for', 'of', 'in',
-        'on', 'at', 'by', 'with', 'about', 'as', 'if', 'or', 'and', 'but',
-        'what', 'which', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how',
-        'this', 'that', 'these', 'those', 'it', 'its', 'they', 'them', 'their',
-        'he', 'she', 'his', 'her', 'him', 'likely', 'probably', 'possibly',
-        'considered', 'pursue', 'want', 'like', 'prefer', 'interested',
-        'still', 'ever', 'more', 'most', 'some', 'any', 'all', 'only',
+        "would",
+        "could",
+        "should",
+        "will",
+        "can",
+        "may",
+        "might",
+        "does",
+        "did",
+        "has",
+        "have",
+        "had",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "the",
+        "a",
+        "an",
+        "to",
+        "for",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "about",
+        "as",
+        "if",
+        "or",
+        "and",
+        "but",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "where",
+        "when",
+        "why",
+        "how",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "he",
+        "she",
+        "his",
+        "her",
+        "him",
+        "likely",
+        "probably",
+        "possibly",
+        "considered",
+        "pursue",
+        "want",
+        "like",
+        "prefer",
+        "interested",
+        "still",
+        "ever",
+        "more",
+        "most",
+        "some",
+        "any",
+        "all",
+        "only",
     }
-    
+
     # Extract words, lowercase, filter
-    words = re.findall(r'\b[a-z]{4,}\b', query.lower())
+    words = re.findall(r"\b[a-z]{4,}\b", query.lower())
     topics = [w for w in words if w not in skip_words and w not in exclude_lower]
-    
+
     # Return unique topics, preserving order
     seen = set()
     result = []
@@ -158,7 +276,7 @@ def _extract_topic_keywords(query: str, exclude_entities: Optional[List[str]] = 
         if t not in seen:
             seen.add(t)
             result.append(t)
-    
+
     return result[:5]  # Limit to 5 topics
 
 
@@ -211,7 +329,7 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
         elif fp and fp in fp_to_key:
             # Same content but different ID - merge into existing
             existing_key = fp_to_key[fp]
-        
+
         if existing_key:
             existing = buckets[existing_key]["item"]
             removed += 1
@@ -421,7 +539,9 @@ def _inject_priority_memories(
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
     context_profile: Dict[str, Any],
     seen_ids: Set[str],
-    result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
+    result_passes_filters: Callable[
+        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+    ],
     start_time: Optional[str],
     end_time: Optional[str],
     tag_mode: str,
@@ -492,15 +612,15 @@ def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any
 def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
     """
     Extract entity names (people, places) from seed result metadata.
-    
+
     Returns entity names that can be used to search for related memories.
     Entity tags are created by enrichment as: entity:{category}:{slug}
     """
     entities: Set[str] = set()
-    
+
     for result in results:
         memory = result.get("memory") or result
-        
+
         # Check metadata.entities (populated by enrichment)
         metadata = memory.get("metadata")
         if isinstance(metadata, dict):
@@ -513,7 +633,7 @@ def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
                         for v in values:
                             if isinstance(v, str) and len(v) > 1:
                                 entities.add(v.lower().strip())
-        
+
         # Also check tags for entity: prefixed tags
         tags = memory.get("tags") or []
         if isinstance(tags, list):
@@ -523,7 +643,7 @@ def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
                     name = tag.split(":")[-1].replace("-", " ").strip()
                     if name:
                         entities.add(name)
-    
+
     return entities
 
 
@@ -532,7 +652,9 @@ def _expand_entity_memories(
     seen_ids: Set[str],
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
     qdrant_client: Any,
-    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
+    compute_metadata_score: Callable[
+        [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
+    ],
     query_text: str,
     query_tokens: List[str],
     context_profile: Optional[Dict[str, Any]],
@@ -543,40 +665,40 @@ def _expand_entity_memories(
 ) -> List[Dict[str, Any]]:
     """
     Expand results by finding memories that mention entities found in seed results.
-    
+
     This enables multi-hop reasoning:
     1. Query: "What is Amanda's sister's career?"
     2. Seed result: "Amanda's sister is Rachel"
     3. Entity expansion: Find memories tagged with entity:people:rachel
     4. Returns: "Rachel works as a counselor"
-    
+
     Args:
         additional_tag_filters: Extra tags to filter by (e.g., conversation:conv-26)
                                to ensure expanded memories are from same context.
     """
     if qdrant_client is None:
         return []
-    
+
     entities = _extract_entities_from_results(seed_results)
     if not entities:
         return []
-    
+
     logger.debug("Entity expansion: found entities %s", entities)
-    
+
     expanded: Dict[str, Dict[str, Any]] = {}
     total_added = 0
-    
+
     # Add any required tag filters (e.g., conversation tag)
     base_filters = list(additional_tag_filters) if additional_tag_filters else []
-    
+
     for entity in list(entities)[:5]:  # Limit to 5 entities
         if total_added >= total_limit:
             break
-        
+
         # Search for entity tag (prefix match) + any additional filters
         entity_slug = entity.lower().replace(" ", "-")
         entity_tags = [f"entity:people:{entity_slug}"] + base_filters
-        
+
         try:
             entity_results = vector_filter_only_tag_search(
                 qdrant_client,
@@ -589,16 +711,16 @@ def _expand_entity_memories(
         except Exception:
             logger.exception("Entity expansion search failed for %s", entity)
             continue
-        
+
         for result in entity_results:
             result_id = str(result.get("id") or (result.get("memory") or {}).get("id") or "")
             if not result_id or result_id in seen_ids:
                 continue
-            
+
             # Mark as entity-expanded result
             result["match_type"] = "entity_expansion"
             result["expanded_from_entity"] = entity
-            
+
             # Score the result
             final_score, components = compute_metadata_score(
                 result,
@@ -610,20 +732,22 @@ def _expand_entity_memories(
             result.setdefault("score_components", {}).update(components)
             result["final_score"] = final_score + 0.15
             result["score"] = result["final_score"]
-            
+
             if result_id not in expanded:
                 expanded[result_id] = result
                 seen_ids.add(result_id)
                 total_added += 1
-                
+
                 if total_added >= total_limit:
                     break
-    
+
     expanded_list = list(expanded.values())
     expanded_list.sort(key=lambda r: -float(r.get("final_score", 0.0)))
-    
-    logger.debug("Entity expansion: added %d memories from %d entities", len(expanded_list), len(entities))
-    
+
+    logger.debug(
+        "Entity expansion: added %d memories from %d entities", len(expanded_list), len(entities)
+    )
+
     return expanded_list
 
 
@@ -631,8 +755,12 @@ def _expand_related_memories(
     graph: Any,
     seed_results: List[Dict[str, Any]],
     seen_ids: Set[str],
-    result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
-    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
+    result_passes_filters: Callable[
+        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+    ],
+    compute_metadata_score: Callable[
+        [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
+    ],
     query_text: str,
     query_tokens: List[str],
     context_profile: Optional[Dict[str, Any]],
@@ -701,7 +829,9 @@ def _expand_related_memories(
             # Relation strength filter (applies only to expanded results)
             relation_strength_val = 0.0
             try:
-                relation_strength_val = float(relation_strength) if relation_strength is not None else 0.0
+                relation_strength_val = (
+                    float(relation_strength) if relation_strength is not None else 0.0
+                )
             except (TypeError, ValueError):  # pragma: no cover - defensive
                 relation_strength_val = 0.0
 
@@ -716,7 +846,9 @@ def _expand_related_memories(
                         continue
                 except (TypeError, ValueError):
                     continue
-            if not result_passes_filters(candidate, start_time, end_time, tag_filters, tag_mode, tag_match):
+            if not result_passes_filters(
+                candidate, start_time, end_time, tag_filters, tag_mode, tag_match
+            ):
                 continue
 
             relation_score = relation_strength_val + max(seed_score, 0.0) * seed_score_boost
@@ -731,7 +863,9 @@ def _expand_related_memories(
 
             if related_id in expansions:
                 existing = expansions[related_id]
-                existing["relation_score"] = max(existing.get("relation_score", 0.0), relation_score)
+                existing["relation_score"] = max(
+                    existing.get("relation_score", 0.0), relation_score
+                )
                 existing.setdefault("relations", []).append(edge_info)
                 existing.setdefault("related_to", []).append(edge_info)
             else:
@@ -774,8 +908,12 @@ def handle_recall(
     normalize_timestamp: Callable[[str], str],
     parse_time_expression: Callable[[Optional[str]], Tuple[Optional[str], Optional[str]]],
     extract_keywords: Callable[[str], List[str]],
-    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
-    result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
+    compute_metadata_score: Callable[
+        [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
+    ],
+    result_passes_filters: Callable[
+        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+    ],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
@@ -828,7 +966,9 @@ def handle_recall(
 
     tag_filters = normalize_tag_list(tags_param)
 
-    allowed_rel_set: Set[str] = set(allowed_relations) if allowed_relations else set(ALLOWED_RELATIONS)
+    allowed_rel_set: Set[str] = (
+        set(allowed_relations) if allowed_relations else set(ALLOWED_RELATIONS)
+    )
     relation_limit = relation_limit or RECALL_RELATION_LIMIT
     expansion_limit = expansion_limit_default or RECALL_EXPANSION_LIMIT
 
@@ -852,11 +992,10 @@ def handle_recall(
         or request.args.get("expand"),
         False,
     )
-    
+
     # Entity expansion for multi-hop reasoning
     expand_entities = _parse_bool_param(
-        request.args.get("expand_entities")
-        or request.args.get("entity_expansion"),
+        request.args.get("expand_entities") or request.args.get("entity_expansion"),
         False,
     )
 
@@ -866,7 +1005,9 @@ def handle_recall(
         relation_limit = max(1, relation_limit)
 
     try:
-        expansion_limit_param = request.args.get("expansion_limit") or request.args.get("relation_expansion_limit")
+        expansion_limit_param = request.args.get("expansion_limit") or request.args.get(
+            "relation_expansion_limit"
+        )
         if expansion_limit_param is not None:
             expansion_limit = int(expansion_limit_param)
         expansion_limit = max(1, min(expansion_limit, 500))
@@ -899,10 +1040,14 @@ def handle_recall(
     graph = get_memory_graph()
     qdrant_client = get_qdrant_client()
 
-    def _run_single_query(query_str: str, per_query_limit: int) -> Tuple[List[Dict[str, Any]], bool, Optional[Dict[str, Any]], int]:
+    def _run_single_query(
+        query_str: str, per_query_limit: int
+    ) -> Tuple[List[Dict[str, Any]], bool, Optional[Dict[str, Any]], int]:
         """Run recall for one query string; returns (results, context_injected, context_profile, vector_match_count)."""
         local_seen: set[str] = set()
-        language_hint = _detect_language_hint(language_hint_param, context_label, query_str, active_path)
+        language_hint = _detect_language_hint(
+            language_hint_param, context_label, query_str, active_path
+        )
         context_profile = _build_context_profile(
             manual_tags=context_tags,
             manual_types=context_types_input,
@@ -931,7 +1076,9 @@ def handle_recall(
                 vector_matches = [
                     res
                     for res in vector_matches
-                    if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
+                    if result_passes_filters(
+                        res, start_time, end_time, tag_filters, tag_mode, tag_match
+                    )
                 ]
         local_results.extend(vector_matches[:per_query_limit])
 
@@ -1025,11 +1172,11 @@ def handle_recall(
     # Auto-decompose: extract entities from query and generate supplementary queries
     auto_decompose = _parse_bool_param(request.args.get("auto_decompose"), False)
     decomposed_queries: List[str] = []
-    
+
     if auto_decompose and query_text and not multi_queries:
         entities = _extract_query_entities(query_text)
         topics = _extract_topic_keywords(query_text, exclude_entities=entities)
-        
+
         # Generate entity+topic focused queries for multi-hop reasoning
         # Strategy: Search both entity+specific_topic AND entity+broad_topic
         # E.g., for "Would Caroline pursue writing?" with entities=["Caroline"], topics=["writing", "career"]
@@ -1037,24 +1184,24 @@ def handle_recall(
         for entity in entities[:2]:  # Limit to 2 entities
             # First: entity alone with implicit career/interests context
             decomposed_queries.append(entity)
-            
+
             # Second: entity + each topic for specific focus
             for topic in topics[:3]:
                 decomposed_queries.append(f"{entity} {topic}")
-            
+
             # Third: entity + broad related terms to catch alternative answers
             # E.g., "Caroline career writing" might not find "counseling" but "Caroline interests" might
             if "career" in topics or "job" in topics or "work" in topics:
                 decomposed_queries.append(f"{entity} interests goals plans")
-        
+
         # Also add topic-only queries for broader coverage
         if topics and not entities:
             for topic in topics[:3]:
                 decomposed_queries.append(topic)
-    
+
     is_multi = bool(multi_queries) or bool(decomposed_queries)
     queries_to_run: List[str] = [q for q in multi_queries if q]
-    
+
     # Add decomposed queries if auto_decompose is enabled
     if decomposed_queries:
         # Original query first, then decomposed variations
@@ -1066,7 +1213,9 @@ def handle_recall(
 
     per_query_limit = limit
     try:
-        per_query_limit = max(1, min(int(request.args.get("per_query_limit", per_query_limit)), recall_max_limit))
+        per_query_limit = max(
+            1, min(int(request.args.get("per_query_limit", per_query_limit)), recall_max_limit)
+        )
     except (TypeError, ValueError):
         per_query_limit = limit
 
@@ -1076,7 +1225,9 @@ def handle_recall(
     total_vector_matches = 0
 
     for idx, q in enumerate(queries_to_run):
-        single_results, injected, context_profile, vector_count = _run_single_query(q, per_query_limit)
+        single_results, injected, context_profile, vector_count = _run_single_query(
+            q, per_query_limit
+        )
         aggregated_results.extend(single_results)
         total_vector_matches += vector_count
         if any_context_profile is None:
@@ -1102,7 +1253,11 @@ def handle_recall(
     results = deduped_results
 
     # Track seen IDs for both expansion types
-    seen_ids = {str(r.get("id") or (r.get("memory") or {}).get("id") or "") for r in seed_results if r.get("id") or (r.get("memory") or {}).get("id")}
+    seen_ids = {
+        str(r.get("id") or (r.get("memory") or {}).get("id") or "")
+        for r in seed_results
+        if r.get("id") or (r.get("memory") or {}).get("id")
+    }
     query_tokens = extract_keywords(query_text.lower()) if query_text else []
 
     if expand_relations and graph is not None:
@@ -1170,7 +1325,9 @@ def handle_recall(
         response["entity_expansion"] = {
             "enabled": True,
             "expanded_count": len(entity_expansion_results),
-            "entities_found": list(_extract_entities_from_results(seed_results + expansion_results))[:10],
+            "entities_found": list(
+                _extract_entities_from_results(seed_results + expansion_results)
+            )[:10],
         }
     if is_multi:
         response["queries"] = queries_to_run
@@ -1205,7 +1362,9 @@ def handle_recall(
             "limit": limit,
             "dedup_removed": dedup_removed,
             "is_multi": is_multi,
-            "context_language": (any_context_profile or {}).get("language") if any_context_profile else None,
+            "context_language": (
+                (any_context_profile or {}).get("language") if any_context_profile else None
+            ),
         },
     )
 
@@ -1229,8 +1388,12 @@ def create_recall_blueprint(
     normalize_timestamp: Callable[[str], str],
     parse_time_expression: Callable[[Optional[str]], Tuple[Optional[str], Optional[str]]],
     extract_keywords: Callable[[str], List[str]],
-    compute_metadata_score: Callable[[Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]],
-    result_passes_filters: Callable[[Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool],
+    compute_metadata_score: Callable[
+        [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
+    ],
+    result_passes_filters: Callable[
+        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+    ],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
@@ -1286,14 +1449,16 @@ def create_recall_blueprint(
             lessons = []
             if getattr(lesson_results, "result_set", None):
                 for row in lesson_results.result_set:
-                    lessons.append({
-                        'id': row[0],
-                        'content': row[1],
-                        'tags': row[2] if row[2] else [],
-                        'importance': row[3] if row[3] else 0.5,
-                        'type': row[4] if row[4] else 'Context',
-                        'metadata': json.loads(row[5]) if row[5] else {}
-                    })
+                    lessons.append(
+                        {
+                            "id": row[0],
+                            "content": row[1],
+                            "tags": row[2] if row[2] else [],
+                            "importance": row[3] if row[3] else 0.5,
+                            "type": row[4] if row[4] else "Context",
+                            "metadata": json.loads(row[5]) if row[5] else {},
+                        }
+                    )
 
             system_query = """
                 MATCH (m:Memory)
@@ -1306,27 +1471,22 @@ def create_recall_blueprint(
             system_rules = []
             if getattr(system_results, "result_set", None):
                 for row in system_results.result_set:
-                    system_rules.append({
-                        'id': row[0],
-                        'content': row[1],
-                        'tags': row[2] if row[2] else []
-                    })
+                    system_rules.append(
+                        {"id": row[0], "content": row[1], "tags": row[2] if row[2] else []}
+                    )
 
             response = {
-                'status': 'success',
-                'critical_lessons': lessons,
-                'system_rules': system_rules,
-                'lesson_count': len(lessons),
-                'has_critical': any(l.get('importance', 0) >= 0.9 for l in lessons),
-                'summary': f"Recalled {len(lessons)} lesson(s) and {len(system_rules)} system rule(s)"
+                "status": "success",
+                "critical_lessons": lessons,
+                "system_rules": system_rules,
+                "lesson_count": len(lessons),
+                "has_critical": any(l.get("importance", 0) >= 0.9 for l in lessons),
+                "summary": f"Recalled {len(lessons)} lesson(s) and {len(system_rules)} system rule(s)",
             }
             return jsonify(response), 200
         except Exception as e:
             logger.error(f"Startup recall failed: {e}")
-            return jsonify({
-                "error": "Startup recall failed",
-                "details": str(e)
-            }), 500
+            return jsonify({"error": "Startup recall failed", "details": str(e)}), 500
 
     @bp.route("/analyze", methods=["GET"])
     def analyze_memories() -> Any:
@@ -1365,13 +1525,17 @@ def create_recall_blueprint(
                 LIMIT 10
                 """
             )
-            for p_type, content, confidence, observations in getattr(pattern_result, "result_set", []) or []:
-                analytics["patterns"].append({
-                    "type": p_type,
-                    "description": content,
-                    "confidence": round(confidence, 3) if confidence else 0,
-                    "observations": observations or 0,
-                })
+            for p_type, content, confidence, observations in (
+                getattr(pattern_result, "result_set", []) or []
+            ):
+                analytics["patterns"].append(
+                    {
+                        "type": p_type,
+                        "description": content,
+                        "confidence": round(confidence, 3) if confidence else 0,
+                        "observations": observations or 0,
+                    }
+                )
 
             pref_result = graph.query(
                 """
@@ -1382,12 +1546,14 @@ def create_recall_blueprint(
                 """
             )
             for preferred, over, context, strength in getattr(pref_result, "result_set", []) or []:
-                analytics["preferences"].append({
-                    "prefers": preferred,
-                    "over": over,
-                    "context": context,
-                    "strength": round(strength, 3) if strength else 0,
-                })
+                analytics["preferences"].append(
+                    {
+                        "prefers": preferred,
+                        "over": over,
+                        "context": context,
+                        "strength": round(strength, 3) if strength else 0,
+                    }
+                )
 
             try:
                 temporal_result = graph.query(
@@ -1399,6 +1565,7 @@ def create_recall_blueprint(
                     """
                 )
                 from collections import defaultdict
+
                 hour_data = defaultdict(lambda: {"count": 0, "total_importance": 0})
                 for timestamp, importance in getattr(temporal_result, "result_set", []) or []:
                     if timestamp and len(timestamp) > 13:
@@ -1411,7 +1578,7 @@ def create_recall_blueprint(
                     if data["count"] > 0:
                         analytics["temporal_insights"][f"hour_{hour:02d}"] = {
                             "count": data["count"],
-                            "avg_importance": round(data["total_importance"] / data["count"], 3)
+                            "avg_importance": round(data["total_importance"] / data["count"], 3),
                         }
             except Exception:
                 pass
@@ -1425,17 +1592,22 @@ def create_recall_blueprint(
                 """
             )
             from collections import Counter
+
             entities = Counter()
             for (metadata_json,) in getattr(entity_result, "result_set", []) or []:
                 try:
-                    metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else (metadata_json or {})
+                    metadata = (
+                        json.loads(metadata_json)
+                        if isinstance(metadata_json, str)
+                        else (metadata_json or {})
+                    )
                 except Exception:
                     metadata = {}
                 if not isinstance(metadata, dict):
                     # Skip unsupported metadata shapes (e.g., SimpleNamespace in dummy graphs)
                     continue
                 for key in ("entities", "keywords", "topics"):
-                    for item in (metadata.get(key) or []):
+                    for item in metadata.get(key) or []:
                         val = str(item).strip().lower()
                         if len(val) >= 3:
                             entities[val] += 1
@@ -1477,7 +1649,9 @@ def create_recall_blueprint(
 
         rel_types_param = (request.args.get("relationship_types") or "").strip()
         if rel_types_param:
-            requested = [part.strip().upper() for part in rel_types_param.split(",") if part.strip()]
+            requested = [
+                part.strip().upper() for part in rel_types_param.split(",") if part.strip()
+            ]
             rel_types = [t for t in requested if (t in allowed if allowed else True)]
             if not rel_types and allowed:
                 rel_types = sorted(allowed)
@@ -1539,14 +1713,16 @@ def create_recall_blueprint(
                     related.append(summarize_relation_node(data))
                 else:
                     related.append(data)
-        return jsonify({
-            "status": "success",
-            "memory_id": memory_id,
-            "count": len(related),
-            "related_memories": related,
-            "relationship_types": rel_types,
-            "max_depth": max_depth,
-            "limit": limit,
-        })
+        return jsonify(
+            {
+                "status": "success",
+                "memory_id": memory_id,
+                "count": len(related),
+                "related_memories": related,
+                "relationship_types": rel_types,
+                "max_depth": max_depth,
+                "limit": limit,
+            }
+        )
 
     return bp

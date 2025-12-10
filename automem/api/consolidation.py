@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
-from flask import Blueprint, request, abort, jsonify
+
+from flask import Blueprint, abort, jsonify, request
 
 
 def create_consolidation_blueprint_full(
@@ -49,16 +50,22 @@ def create_consolidation_blueprint_full(
             scheduler = build_scheduler(graph)
             history = load_recent_runs(graph, history_limit)
             next_runs = scheduler.get_next_runs() if scheduler else {}
-            return jsonify({
-                "status": "success",
-                "next_runs": next_runs,
-                "history": history,
-                "thread_alive": bool(state.consolidation_thread and state.consolidation_thread.is_alive()),
-                "tick_seconds": tick_seconds,
-            }), 200
+            return (
+                jsonify(
+                    {
+                        "status": "success",
+                        "next_runs": next_runs,
+                        "history": history,
+                        "thread_alive": bool(
+                            state.consolidation_thread and state.consolidation_thread.is_alive()
+                        ),
+                        "tick_seconds": tick_seconds,
+                    }
+                ),
+                200,
+            )
         except Exception as e:
             logger.error(f"Failed to get consolidation status: {e}")
             return jsonify({"error": "Failed to get status", "details": str(e)}), 500
 
     return bp
-

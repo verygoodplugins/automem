@@ -51,8 +51,5 @@ def _compute_tag_prefixes(tags: List[str]) -> List[str]:
 def _prepare_tag_filters(tag_filters: Optional[List[str]]) -> List[str]:
     """Normalize incoming tag filters for matching and persistence."""
     return [
-        tag.strip().lower()
-        for tag in (tag_filters or [])
-        if isinstance(tag, str) and tag.strip()
+        tag.strip().lower() for tag in (tag_filters or []) if isinstance(tag, str) and tag.strip()
     ]
-

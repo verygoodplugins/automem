@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+
 from automem.utils.scoring import _parse_metadata_field
 
 
@@ -38,4 +39,3 @@ def _summarize_relation_node(data: Dict[str, Any]) -> Dict[str, Any]:
         summary["tags"] = tags[:5]
 
     return summary
-

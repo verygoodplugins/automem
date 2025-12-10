@@ -3,7 +3,7 @@
 
 Usage:
     python scripts/reembed_embeddings.py [--batch-size 32] [--limit 0]
-    
+
 Environment:
     EMBEDDING_MODEL: OpenAI embedding model (default: text-embedding-3-large)
     VECTOR_SIZE: Embedding dimension (default: 3072; set to your current collection size before migrating)
@@ -23,13 +23,12 @@ from falkordb import FalkorDB
 from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
-from automem.config import VECTOR_SIZE, EMBEDDING_MODEL
+
+from automem.config import EMBEDDING_MODEL, VECTOR_SIZE
 
 logger = logging.getLogger("reembed")
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    stream=sys.stdout
+    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s", stream=sys.stdout
 )
 
 
@@ -48,13 +47,15 @@ def get_graph() -> Any:
     port = int(os.getenv("FALKORDB_PORT", "6379"))
     password = os.getenv("FALKORDB_PASSWORD")
 
-    logger.info("Connecting to FalkorDB at %s:%s (auth: %s)", host, port, "yes" if password else "no")
-    
+    logger.info(
+        "Connecting to FalkorDB at %s:%s (auth: %s)", host, port, "yes" if password else "no"
+    )
+
     if password:
         db = FalkorDB(host=host, port=port, password=password, username="default")
     else:
         db = FalkorDB(host=host, port=port)
-    
+
     graph_name = os.getenv("FALKORDB_GRAPH", "memories")
     logger.info("Using graph '%s'", graph_name)
     return db.select_graph(graph_name)
@@ -139,7 +140,7 @@ def reembed_memories(memories: List[Dict[str, Any]], batch_size: int) -> None:
     collection = os.getenv("QDRANT_COLLECTION", "memories")
     vector_size = VECTOR_SIZE
     embedding_model = EMBEDDING_MODEL
-    
+
     logger.info("Using embedding model: %s (dimension: %d)", embedding_model, vector_size)
 
     total = len(memories)
@@ -176,7 +177,9 @@ def reembed_memories(memories: List[Dict[str, Any]], batch_size: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Re-embed memories into Qdrant")
     parser.add_argument("--batch-size", type=int, default=32, help="Embedding batch size")
-    parser.add_argument("--limit", type=int, default=0, help="Optional limit of memories to process")
+    parser.add_argument(
+        "--limit", type=int, default=0, help="Optional limit of memories to process"
+    )
     args = parser.parse_args()
 
     load_environment()

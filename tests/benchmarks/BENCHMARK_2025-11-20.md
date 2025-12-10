@@ -2,14 +2,14 @@
 
 ## LoCoMo Benchmark (Long-term Conversational Memory)
 
-**Benchmark Version**: LoCoMo-10 (1,986 questions across 10 conversations)  
-**Date**: November 20, 2025  
+**Benchmark Version**: LoCoMo-10 (1,986 questions across 10 conversations)
+**Date**: November 20, 2025
 **AutoMem Version**: v0.9.0 (feat/codex-multi-hop branch)
 
 ## 📊 Final Results
 
-🎯 **Overall Accuracy**: 90.38% (1795/1986)  
-⏱️ **Total Time**: 1280s (~21 minutes)  
+🎯 **Overall Accuracy**: 90.38% (1795/1986)
+⏱️ **Total Time**: 1280s (~21 minutes)
 💾 **Total Memories Stored**: 5882
 
 ### 📈 Category Breakdown
@@ -178,4 +178,3 @@ The breakthrough technologies:
 - ✅ Hybrid 9-component scoring combining semantic + lexical + graph + temporal signals
 
 This validates AutoMem's graph-vector architecture as the most effective approach for long-term conversational memory.
-

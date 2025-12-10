@@ -1,7 +1,7 @@
+import os
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-import os
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -36,7 +36,9 @@ def _install_qdrant_stub() -> None:
             return SimpleNamespace(collections=self._collections)
 
         def create_collection(self, *args, **kwargs):
-            self._collections.append(SimpleNamespace(name=kwargs.get("collection_name", "memories")))
+            self._collections.append(
+                SimpleNamespace(name=kwargs.get("collection_name", "memories"))
+            )
 
         def upsert(self, *args, **kwargs):
             return None
@@ -111,12 +113,11 @@ def _install_openai_stub() -> None:
         def create(self, *args, **kwargs):  # pragma: no cover - deterministic stub
             # Return a mock response for chat completions
             from types import SimpleNamespace
+
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
-                        message=SimpleNamespace(
-                            content='{"type": "Context", "confidence": 0.7}'
-                        )
+                        message=SimpleNamespace(content='{"type": "Context", "confidence": 0.7}')
                     )
                 ]
             )
@@ -147,9 +148,7 @@ if "openai" not in sys.modules:
 def pytest_report_header(config):  # pragma: no cover - cosmetic output
     msgs = []
     if not os.getenv("AUTOMEM_RUN_INTEGRATION_TESTS"):
-        msgs.append(
-            "Integration tests: disabled (set AUTOMEM_RUN_INTEGRATION_TESTS=1 to enable)."
-        )
+        msgs.append("Integration tests: disabled (set AUTOMEM_RUN_INTEGRATION_TESTS=1 to enable).")
     else:
         base = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
         msgs.append(f"Integration tests: enabled (base_url={base}).")

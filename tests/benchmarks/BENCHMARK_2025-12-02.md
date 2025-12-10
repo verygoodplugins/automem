@@ -2,14 +2,14 @@
 
 ## LoCoMo Benchmark (Long-term Conversational Memory)
 
-**Benchmark Version**: LoCoMo-10 (1,986 questions across 10 conversations)  
-**Date**: December 2, 2025  
+**Benchmark Version**: LoCoMo-10 (1,986 questions across 10 conversations)
+**Date**: December 2, 2025
 **AutoMem Version**: experiment/multi-hop-v2 branch
 
 ## 📊 Final Results
 
-🎯 **Overall Accuracy**: 90.53% (1798/1986)  
-⏱️ **Total Time**: 1665s (~28 minutes)  
+🎯 **Overall Accuracy**: 90.53% (1798/1986)
+⏱️ **Total Time**: 1665s (~28 minutes)
 💾 **Total Memories Stored**: 5882
 
 ### 📈 Category Breakdown
@@ -120,4 +120,3 @@ December 2 improvements:
 - ✅ Multi-hop improved from 37.5% to 50%
 
 Further multi-hop improvement would require LLM-based reasoning for inference questions, which is a different category of problem than memory retrieval.
-

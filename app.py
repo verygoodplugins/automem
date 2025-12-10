@@ -15,25 +15,28 @@ import math
 import os
 import random
 import re
+import sys
+import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sys
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
-from threading import Thread, Event, Lock
 from queue import Empty, Queue
-import time
+from threading import Event, Lock, Thread
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from flask import Flask, abort, jsonify, request, Blueprint
 from falkordb import FalkorDB
-from qdrant_client import QdrantClient, models as qdrant_models
+from flask import Blueprint, Flask, abort, jsonify, request
+from qdrant_client import QdrantClient
+from qdrant_client import models as qdrant_models
+
 try:  # Allow tests to import without full qdrant client installed
-    from qdrant_client.models import Distance, PointStruct, VectorParams, PayloadSchemaType
+    from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
 except Exception:  # pragma: no cover - degraded import path
     try:
         from qdrant_client.http import models as _qmodels
+
         Distance = getattr(_qmodels, "Distance", None)
         PointStruct = getattr(_qmodels, "PointStruct", None)
         VectorParams = getattr(_qmodels, "VectorParams", None)
@@ -44,14 +47,17 @@ except Exception:  # pragma: no cover - degraded import path
 
 # Provide a simple PointStruct shim for tests/environments lacking qdrant models
 if PointStruct is None:  # pragma: no cover - test shim
+
     class PointStruct:  # type: ignore[no-redef]
         def __init__(self, id: str, vector: List[float], payload: Dict[str, Any]):
             self.id = id
             self.vector = vector
             self.payload = payload
 
+
 from werkzeug.exceptions import HTTPException
-from consolidation import MemoryConsolidator, ConsolidationScheduler
+
+from consolidation import ConsolidationScheduler, MemoryConsolidator
 
 # Make OpenAI import optional to allow running without it
 try:
@@ -82,7 +88,9 @@ for logger_name in ["werkzeug", "flask.app"]:
     framework_logger = logging.getLogger(logger_name)
     framework_logger.handlers.clear()
     stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    stdout_handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
     framework_logger.addHandler(stdout_handler)
     framework_logger.setLevel(logging.INFO)
 
@@ -105,73 +113,68 @@ consolidation_bp = Blueprint("consolidation_legacy", __name__)
 
 # Import canonical configuration constants
 from automem.config import (
+    ADMIN_TOKEN,
+    ALLOWED_RELATIONS,
+    API_TOKEN,
+    CLASSIFICATION_MODEL,
     COLLECTION_NAME,
-    VECTOR_SIZE,
-    GRAPH_NAME,
-    FALKORDB_PORT,
-    CONSOLIDATION_TICK_SECONDS,
-    CONSOLIDATION_DECAY_INTERVAL_SECONDS,
-    CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
     CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
-    CONSOLIDATION_FORGET_INTERVAL_SECONDS,
-    CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
-    CONSOLIDATION_HISTORY_LIMIT,
     CONSOLIDATION_CONTROL_LABEL,
-    CONSOLIDATION_RUN_LABEL,
     CONSOLIDATION_CONTROL_NODE_ID,
+    CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
+    CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
+    CONSOLIDATION_DECAY_INTERVAL_SECONDS,
+    CONSOLIDATION_FORGET_INTERVAL_SECONDS,
+    CONSOLIDATION_HISTORY_LIMIT,
+    CONSOLIDATION_RUN_LABEL,
     CONSOLIDATION_TASK_FIELDS,
+    CONSOLIDATION_TICK_SECONDS,
+    EMBEDDING_MODEL,
+    ENRICHMENT_ENABLE_SUMMARIES,
+    ENRICHMENT_FAILURE_BACKOFF_SECONDS,
+    ENRICHMENT_IDLE_SLEEP_SECONDS,
     ENRICHMENT_MAX_ATTEMPTS,
     ENRICHMENT_SIMILARITY_LIMIT,
     ENRICHMENT_SIMILARITY_THRESHOLD,
-    ENRICHMENT_IDLE_SLEEP_SECONDS,
-    ENRICHMENT_FAILURE_BACKOFF_SECONDS,
-    ENRICHMENT_ENABLE_SUMMARIES,
     ENRICHMENT_SPACY_MODEL,
-    EMBEDDING_MODEL,
-    CLASSIFICATION_MODEL,
-    RECALL_RELATION_LIMIT,
+    FALKORDB_PORT,
+    GRAPH_NAME,
     MEMORY_TYPES,
+    RECALL_EXPANSION_LIMIT,
+    RECALL_RELATION_LIMIT,
     RELATIONSHIP_TYPES,
-    ALLOWED_RELATIONS,
-    SEARCH_WEIGHT_VECTOR,
-    SEARCH_WEIGHT_KEYWORD,
-    SEARCH_WEIGHT_TAG,
-    SEARCH_WEIGHT_IMPORTANCE,
     SEARCH_WEIGHT_CONFIDENCE,
-    SEARCH_WEIGHT_RECENCY,
     SEARCH_WEIGHT_EXACT,
-    API_TOKEN,
-    ADMIN_TOKEN,
-    TYPE_ALIASES,
-    normalize_memory_type,
-    SYNC_CHECK_INTERVAL_SECONDS,
+    SEARCH_WEIGHT_IMPORTANCE,
+    SEARCH_WEIGHT_KEYWORD,
+    SEARCH_WEIGHT_RECENCY,
+    SEARCH_WEIGHT_TAG,
+    SEARCH_WEIGHT_VECTOR,
     SYNC_AUTO_REPAIR,
+    SYNC_CHECK_INTERVAL_SECONDS,
+    TYPE_ALIASES,
+    VECTOR_SIZE,
+    normalize_memory_type,
+)
+from automem.stores.graph_store import _build_graph_tag_predicate
+from automem.stores.vector_store import _build_qdrant_tag_filter
+from automem.utils.graph import _serialize_node, _summarize_relation_node
+from automem.utils.scoring import _compute_metadata_score, _parse_metadata_field
+from automem.utils.tags import (
+    _compute_tag_prefixes,
+    _expand_tag_prefixes,
+    _normalize_tag_list,
+    _prepare_tag_filters,
 )
 
 # Shared utils and helpers
 from automem.utils.time import (
-    utc_now,
-    _parse_iso_datetime,
     _normalize_timestamp,
+    _parse_iso_datetime,
     _parse_time_expression,
+    utc_now,
 )
-from automem.utils.tags import (
-    _normalize_tag_list,
-    _expand_tag_prefixes,
-    _compute_tag_prefixes,
-    _prepare_tag_filters,
-)
-from automem.utils.validation import validate_vector_dimensions, get_effective_vector_size
-from automem.utils.scoring import (
-    _compute_metadata_score,
-    _parse_metadata_field,
-)
-from automem.utils.graph import (
-    _serialize_node,
-    _summarize_relation_node,
-)
-from automem.stores.graph_store import _build_graph_tag_predicate
-from automem.stores.vector_store import _build_qdrant_tag_filter
+from automem.utils.validation import get_effective_vector_size, validate_vector_dimensions
 
 # Embedding batching configuration
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "20"))
@@ -191,15 +194,13 @@ RECALL_MAX_LIMIT = int(os.getenv("RECALL_MAX_LIMIT", "100"))
 
 # API tokens are imported from automem.config
 
- 
 
 try:
-    from automem.utils.text import (
-        SEARCH_STOPWORDS as _AM_SEARCH_STOPWORDS,
-        ENTITY_STOPWORDS as _AM_ENTITY_STOPWORDS,
-        ENTITY_BLOCKLIST as _AM_ENTITY_BLOCKLIST,
-        _extract_keywords as _AM_extract_keywords,
-    )
+    from automem.utils.text import ENTITY_BLOCKLIST as _AM_ENTITY_BLOCKLIST
+    from automem.utils.text import ENTITY_STOPWORDS as _AM_ENTITY_STOPWORDS
+    from automem.utils.text import SEARCH_STOPWORDS as _AM_SEARCH_STOPWORDS
+    from automem.utils.text import _extract_keywords as _AM_extract_keywords
+
     # Override local constants if package is available
     SEARCH_STOPWORDS = _AM_SEARCH_STOPWORDS
     ENTITY_STOPWORDS = _AM_ENTITY_STOPWORDS
@@ -226,23 +227,7 @@ except Exception:
         return keywords
 
 
- 
-
-
- 
-
-
 # Local scoring/metadata helpers (fallback if package not available)
- 
-
-
- 
-
-
-
-
-
-
 
 
 def _result_passes_filters(
@@ -514,8 +499,6 @@ def _graph_keyword_search(
 
     return matches
 
- 
-
 
 def _vector_filter_only_tag_search(
     qdrant_client: Optional[QdrantClient],
@@ -648,44 +631,80 @@ def _vector_search(
 
     return matches
 
+
 class MemoryClassifier:
     """Classifies memories into specific types based on content patterns."""
 
     PATTERNS = {
         "Decision": [
-            r"decided to", r"chose (\w+) over", r"going with", r"picked",
-            r"selected", r"will use", r"choosing", r"opted for"
+            r"decided to",
+            r"chose (\w+) over",
+            r"going with",
+            r"picked",
+            r"selected",
+            r"will use",
+            r"choosing",
+            r"opted for",
         ],
         "Pattern": [
-            r"usually", r"typically", r"tend to", r"pattern i noticed",
-            r"often", r"frequently", r"regularly", r"consistently"
+            r"usually",
+            r"typically",
+            r"tend to",
+            r"pattern i noticed",
+            r"often",
+            r"frequently",
+            r"regularly",
+            r"consistently",
         ],
         "Preference": [
-            r"prefer", r"like.*better", r"favorite", r"always use",
-            r"rather than", r"instead of", r"favor"
+            r"prefer",
+            r"like.*better",
+            r"favorite",
+            r"always use",
+            r"rather than",
+            r"instead of",
+            r"favor",
         ],
         "Style": [
-            r"wrote.*in.*style", r"communicated", r"responded to",
-            r"formatted as", r"using.*tone", r"expressed as"
+            r"wrote.*in.*style",
+            r"communicated",
+            r"responded to",
+            r"formatted as",
+            r"using.*tone",
+            r"expressed as",
         ],
         "Habit": [
-            r"always", r"every time", r"habitually", r"routine",
-            r"daily", r"weekly", r"monthly"
+            r"always",
+            r"every time",
+            r"habitually",
+            r"routine",
+            r"daily",
+            r"weekly",
+            r"monthly",
         ],
         "Insight": [
-            r"realized", r"discovered", r"learned that", r"understood",
-            r"figured out", r"insight", r"revelation"
+            r"realized",
+            r"discovered",
+            r"learned that",
+            r"understood",
+            r"figured out",
+            r"insight",
+            r"revelation",
         ],
         "Context": [
-            r"during", r"while working on", r"in the context of",
-            r"when", r"at the time", r"situation was"
+            r"during",
+            r"while working on",
+            r"in the context of",
+            r"when",
+            r"at the time",
+            r"situation was",
         ],
     }
 
     SYSTEM_PROMPT = """You are a memory classification system. Classify each memory into exactly ONE of these types:
 
 - **Decision**: Choices made, selected options, what was decided
-- **Pattern**: Recurring behaviors, typical approaches, consistent tendencies  
+- **Pattern**: Recurring behaviors, typical approaches, consistent tendencies
 - **Preference**: Likes/dislikes, favorites, personal tastes
 - **Style**: Communication approach, formatting, tone used
 - **Habit**: Regular routines, repeated actions, schedules
@@ -698,7 +717,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         """
         Classify memory type and return confidence score.
         Returns: (type, confidence)
-        
+
         Args:
             content: Memory content to classify
             use_llm: If True, falls back to LLM when regex patterns don't match
@@ -736,38 +755,38 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         # Reuse existing client if available
         if state.openai_client is None:
             init_openai()
-        
+
         if state.openai_client is None:
             return None
-        
+
         try:
             response = state.openai_client.chat.completions.create(
                 model=CLASSIFICATION_MODEL,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": content[:1000]}  # Limit to 1000 chars
+                    {"role": "user", "content": content[:1000]},  # Limit to 1000 chars
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
-                max_tokens=50
+                max_tokens=50,
             )
-            
+
             result = json.loads(response.choices[0].message.content)
             raw_type = result.get("type", "Memory")
             confidence = float(result.get("confidence", 0.7))
-            
+
             # Normalize type (handles aliases and case variations)
             memory_type, was_normalized = normalize_memory_type(raw_type)
             if not memory_type:
                 logger.warning("LLM returned unmappable type '%s', using Context", raw_type)
                 return "Context", 0.5
-            
+
             if was_normalized and memory_type != raw_type:
                 logger.debug("LLM type normalized '%s' -> '%s'", raw_type, memory_type)
-            
+
             logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
             return memory_type, confidence
-            
+
         except Exception as exc:
             logger.warning("LLM classification failed: %s", exc)
             return None
@@ -804,7 +823,9 @@ def _slugify(value: str) -> str:
     return cleaned.strip("-")
 
 
-def _is_valid_entity(value: str, *, allow_lower: bool = False, max_words: Optional[int] = None) -> bool:
+def _is_valid_entity(
+    value: str, *, allow_lower: bool = False, max_words: Optional[int] = None
+) -> bool:
     if not value:
         return False
 
@@ -819,7 +840,7 @@ def _is_valid_entity(value: str, *, allow_lower: bool = False, max_words: Option
     lowered = cleaned.lower()
     if lowered in SEARCH_STOPWORDS or lowered in ENTITY_STOPWORDS:
         return False
-    
+
     # Reject error codes and technical noise
     if lowered in ENTITY_BLOCKLIST:
         return False
@@ -829,29 +850,41 @@ def _is_valid_entity(value: str, *, allow_lower: bool = False, max_words: Option
 
     if not allow_lower and cleaned[0].islower() and not cleaned.isupper():
         return False
-    
+
     # Reject strings starting with markdown/formatting or code characters
-    if cleaned[0] in {'-', '*', '#', '>', '|', '[', ']', '{', '}', '(', ')', '_', "'", '"'}:
+    if cleaned[0] in {"-", "*", "#", ">", "|", "[", "]", "{", "}", "(", ")", "_", "'", '"'}:
         return False
-    
+
     # Reject common code artifacts (suffixes that indicate class names)
-    code_suffixes = ('Adapter', 'Handler', 'Manager', 'Service', 'Controller', 
-                     'Provider', 'Factory', 'Builder', 'Helper', 'Util')
+    code_suffixes = (
+        "Adapter",
+        "Handler",
+        "Manager",
+        "Service",
+        "Controller",
+        "Provider",
+        "Factory",
+        "Builder",
+        "Helper",
+        "Util",
+    )
     if any(cleaned.endswith(suffix) for suffix in code_suffixes):
         return False
-    
+
     # Reject boolean/null literals and common JSON noise
-    if lowered in {'true', 'false', 'null', 'none', 'undefined'}:
+    if lowered in {"true", "false", "null", "none", "undefined"}:
         return False
-    
+
     # Reject environment variables (all caps with underscores) and text fragments ending with colons
-    if ('_' in cleaned and cleaned.isupper()) or cleaned.endswith(':'):
+    if ("_" in cleaned and cleaned.isupper()) or cleaned.endswith(":"):
         return False
 
     return True
 
 
-def generate_summary(content: str, fallback: Optional[str] = None, *, max_length: int = 240) -> Optional[str]:
+def generate_summary(
+    content: str, fallback: Optional[str] = None, *, max_length: int = 240
+) -> Optional[str]:
     text = (content or "").strip()
     if not text:
         return fallback
@@ -907,7 +940,10 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
             logger.exception("spaCy entity extraction failed")
 
     # Regex-based fallbacks to capture simple patterns
-    for match in re.findall(r"(?:with|met with|meeting with|talked to|spoke with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", text):
+    for match in re.findall(
+        r"(?:with|met with|meeting with|talked to|spoke with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
+        text,
+    ):
         result["people"].add(match.strip())
 
     tool_patterns = [
@@ -920,13 +956,15 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
             if _is_valid_entity(cleaned):
                 result["tools"].add(cleaned)
 
-    for match in re.findall(r'`([^`]+)`', text):
+    for match in re.findall(r"`([^`]+)`", text):
         cleaned = match.strip()
         if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
             result["projects"].add(cleaned)
 
     # Extract project names from "project called/named 'X'" pattern
-    for match in re.findall(r'(?:project|repo|repository)\s+(?:called|named)\s+"([^"]+)"', text, re.IGNORECASE):
+    for match in re.findall(
+        r'(?:project|repo|repository)\s+(?:called|named)\s+"([^"]+)"', text, re.IGNORECASE
+    ):
         cleaned = match.strip()
         if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
             result["projects"].add(cleaned)
@@ -941,7 +979,7 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
         cleaned = match.strip()
         if _is_valid_entity(cleaned):
             result["projects"].add(cleaned)
-    
+
     # Extract project names from "project: project-name" pattern (common in session starts)
     for match in re.findall(r"(?:in |on )?project:\s+([a-z][a-z0-9\-]+)", text, re.IGNORECASE):
         cleaned = match.strip()
@@ -1000,7 +1038,9 @@ class ServiceState:
     falkordb: Optional[FalkorDB] = None
     memory_graph: Any = None
     qdrant: Optional[QdrantClient] = None
-    openai_client: Optional[OpenAI] = None  # Keep for backward compatibility (e.g., memory type classification)
+    openai_client: Optional[OpenAI] = (
+        None  # Keep for backward compatibility (e.g., memory type classification)
+    )
     embedding_provider: Optional[EmbeddingProvider] = None  # New provider pattern for embeddings
     enrichment_queue: Optional[Queue] = None
     enrichment_thread: Optional[Thread] = None
@@ -1071,8 +1111,8 @@ def require_api_token() -> None:
         return
 
     # Allow unauthenticated health checks (supports blueprint endpoint names)
-    endpoint = request.endpoint or ''
-    if endpoint.endswith('health') or request.path == '/health':
+    endpoint = request.endpoint or ""
+    if endpoint.endswith("health") or request.path == "/health":
         return
 
     token = _extract_api_token()
@@ -1134,10 +1174,9 @@ def init_embedding_provider() -> None:
             raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
         try:
             from automem.embedding.openai import OpenAIEmbeddingProvider
+
             state.embedding_provider = OpenAIEmbeddingProvider(
-                api_key=api_key,
-                model=EMBEDDING_MODEL,
-                dimension=vector_size
+                api_key=api_key, model=EMBEDDING_MODEL, dimension=vector_size
             )
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
             return
@@ -1147,6 +1186,7 @@ def init_embedding_provider() -> None:
     elif provider_config == "local":
         try:
             from automem.embedding.fastembed import FastEmbedProvider
+
             state.embedding_provider = FastEmbedProvider(dimension=vector_size)
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
             return
@@ -1155,6 +1195,7 @@ def init_embedding_provider() -> None:
 
     elif provider_config == "placeholder":
         from automem.embedding.placeholder import PlaceholderEmbeddingProvider
+
         state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
         logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
         return
@@ -1166,33 +1207,43 @@ def init_embedding_provider() -> None:
         if api_key:
             try:
                 from automem.embedding.openai import OpenAIEmbeddingProvider
+
                 state.embedding_provider = OpenAIEmbeddingProvider(
-                    api_key=api_key,
-                    model=EMBEDDING_MODEL,
-                    dimension=vector_size
+                    api_key=api_key, model=EMBEDDING_MODEL, dimension=vector_size
                 )
-                logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
+                logger.info(
+                    "Embedding provider (auto-selected): %s",
+                    state.embedding_provider.provider_name(),
+                )
                 return
             except Exception as e:
-                logger.warning("Failed to initialize OpenAI provider, trying local model: %s", str(e))
+                logger.warning(
+                    "Failed to initialize OpenAI provider, trying local model: %s", str(e)
+                )
 
         # Try local fastembed
         try:
             from automem.embedding.fastembed import FastEmbedProvider
+
             state.embedding_provider = FastEmbedProvider(dimension=vector_size)
-            logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
+            logger.info(
+                "Embedding provider (auto-selected): %s", state.embedding_provider.provider_name()
+            )
             return
         except Exception as e:
             logger.warning("Failed to initialize fastembed provider, using placeholder: %s", str(e))
 
         # Fallback to placeholder
         from automem.embedding.placeholder import PlaceholderEmbeddingProvider
+
         state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
         logger.warning(
             "Using placeholder embeddings (no semantic search). "
             "Install fastembed or set OPENAI_API_KEY for semantic embeddings."
         )
-        logger.info("Embedding provider (auto-selected): %s", state.embedding_provider.provider_name())
+        logger.info(
+            "Embedding provider (auto-selected): %s", state.embedding_provider.provider_name()
+        )
         return
 
     # Invalid config
@@ -1217,7 +1268,7 @@ def init_falkordb() -> None:
 
     try:
         logger.info("Connecting to FalkorDB at %s:%s", host, FALKORDB_PORT)
-        
+
         # Only pass authentication if password is actually configured
         connection_params = {
             "host": host,
@@ -1226,10 +1277,12 @@ def init_falkordb() -> None:
         if password:
             connection_params["password"] = password
             connection_params["username"] = "default"
-        
+
         state.falkordb = FalkorDB(**connection_params)
         state.memory_graph = state.falkordb.select_graph(GRAPH_NAME)
-        logger.info("FalkorDB connection established (auth: %s)", "enabled" if password else "disabled")
+        logger.info(
+            "FalkorDB connection established (auth: %s)", "enabled" if password else "disabled"
+        )
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to initialize FalkorDB connection")
         state.falkordb = None
@@ -1272,11 +1325,12 @@ def _ensure_qdrant_collection() -> None:
         # This ensures users with 768d embeddings aren't broken by default change to 3072d
         effective_dim, source = get_effective_vector_size(state.qdrant)
         state.effective_vector_size = effective_dim
-        
+
         if source == "collection":
             logger.info(
                 "Using existing collection dimension: %dd (config default: %dd)",
-                effective_dim, VECTOR_SIZE
+                effective_dim,
+                VECTOR_SIZE,
             )
         else:
             logger.info("Using configured vector dimension: %dd", effective_dim)
@@ -1284,12 +1338,14 @@ def _ensure_qdrant_collection() -> None:
         collections = state.qdrant.get_collections()
         existing = {collection.name for collection in collections.collections}
         if COLLECTION_NAME not in existing:
-            logger.info("Creating Qdrant collection '%s' with %dd vectors", COLLECTION_NAME, effective_dim)
+            logger.info(
+                "Creating Qdrant collection '%s' with %dd vectors", COLLECTION_NAME, effective_dim
+            )
             state.qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
                 vectors_config=VectorParams(size=effective_dim, distance=Distance.COSINE),
             )
-        
+
         # Ensure payload indexes exist for tag filtering
         logger.info("Ensuring Qdrant payload indexes for collection '%s'", COLLECTION_NAME)
         if PayloadSchemaType:
@@ -1446,21 +1502,21 @@ def _load_recent_runs(graph: Any, limit: int) -> List[Dict[str, Any]]:
 def _apply_scheduler_overrides(scheduler: ConsolidationScheduler) -> None:
     """Override default scheduler intervals using configuration."""
     overrides = {
-        'decay': timedelta(seconds=CONSOLIDATION_DECAY_INTERVAL_SECONDS),
-        'creative': timedelta(seconds=CONSOLIDATION_CREATIVE_INTERVAL_SECONDS),
-        'cluster': timedelta(seconds=CONSOLIDATION_CLUSTER_INTERVAL_SECONDS),
-        'forget': timedelta(seconds=CONSOLIDATION_FORGET_INTERVAL_SECONDS),
+        "decay": timedelta(seconds=CONSOLIDATION_DECAY_INTERVAL_SECONDS),
+        "creative": timedelta(seconds=CONSOLIDATION_CREATIVE_INTERVAL_SECONDS),
+        "cluster": timedelta(seconds=CONSOLIDATION_CLUSTER_INTERVAL_SECONDS),
+        "forget": timedelta(seconds=CONSOLIDATION_FORGET_INTERVAL_SECONDS),
     }
 
     for task, interval in overrides.items():
         if task in scheduler.schedules:
-            scheduler.schedules[task]['interval'] = interval
+            scheduler.schedules[task]["interval"] = interval
 
 
 def _tasks_for_mode(mode: str) -> List[str]:
     """Map a consolidation mode to its task identifiers."""
-    if mode == 'full':
-        return ['decay', 'creative', 'cluster', 'forget', 'full']
+    if mode == "full":
+        return ["decay", "creative", "cluster", "forget", "full"]
     if mode in CONSOLIDATION_TASK_FIELDS:
         return [mode]
     return [mode]
@@ -1468,11 +1524,11 @@ def _tasks_for_mode(mode: str) -> List[str]:
 
 def _persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:
     """Record consolidation outcomes and update scheduler metadata."""
-    mode = result.get('mode', 'unknown')
-    completed_at = result.get('completed_at') or utc_now()
-    started_at = result.get('started_at') or completed_at
-    success = bool(result.get('success'))
-    dry_run = bool(result.get('dry_run'))
+    mode = result.get("mode", "unknown")
+    completed_at = result.get("completed_at") or utc_now()
+    started_at = result.get("started_at") or completed_at
+    success = bool(result.get("success"))
+    dry_run = bool(result.get("dry_run"))
 
     try:
         graph.query(
@@ -1545,7 +1601,7 @@ def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
         iso_value = control.get(field)
         last_run = _parse_iso_datetime(iso_value)
         if last_run and task in scheduler.schedules:
-            scheduler.schedules[task]['last_run'] = last_run
+            scheduler.schedules[task]["last_run"] = last_run
 
     return scheduler
 
@@ -1572,7 +1628,9 @@ def _run_consolidation_tick() -> None:
 def consolidation_worker() -> None:
     """Background loop that triggers consolidation tasks."""
     logger.info("Consolidation scheduler thread started")
-    while state.consolidation_stop_event and not state.consolidation_stop_event.wait(CONSOLIDATION_TICK_SECONDS):
+    while state.consolidation_stop_event and not state.consolidation_stop_event.wait(
+        CONSOLIDATION_TICK_SECONDS
+    ):
         _run_consolidation_tick()
 
 
@@ -1593,6 +1651,7 @@ def init_consolidation_scheduler() -> None:
     _run_consolidation_tick()
     logger.info("Consolidation scheduler initialized")
 
+
 def enrichment_worker() -> None:
     """Background worker that processes memories for enrichment."""
     while True:
@@ -1602,7 +1661,9 @@ def enrichment_worker() -> None:
                 continue
 
             try:
-                job: EnrichmentJob = state.enrichment_queue.get(timeout=ENRICHMENT_IDLE_SLEEP_SECONDS)
+                job: EnrichmentJob = state.enrichment_queue.get(
+                    timeout=ENRICHMENT_IDLE_SLEEP_SECONDS
+                )
             except Empty:
                 continue
 
@@ -1655,7 +1716,7 @@ def enqueue_embedding(memory_id: str, content: str) -> None:
     with state.embedding_lock:
         if memory_id in state.embedding_pending or memory_id in state.embedding_inflight:
             return
-        
+
         state.embedding_pending.add(memory_id)
         state.embedding_queue.put((memory_id, content))
 
@@ -1664,7 +1725,7 @@ def embedding_worker() -> None:
     """Background worker that generates embeddings and stores them in Qdrant with batching."""
     batch: List[Tuple[str, str]] = []  # List of (memory_id, content) tuples
     batch_deadline = time.time() + EMBEDDING_BATCH_TIMEOUT_SECONDS
-    
+
     while True:
         try:
             if state.embedding_queue is None:
@@ -1673,17 +1734,17 @@ def embedding_worker() -> None:
 
             # Calculate remaining time until batch deadline
             timeout = max(0.1, batch_deadline - time.time())
-            
+
             try:
                 memory_id, content = state.embedding_queue.get(timeout=timeout)
                 batch.append((memory_id, content))
-                
+
                 # Process batch if full
                 if len(batch) >= EMBEDDING_BATCH_SIZE:
                     _process_embedding_batch(batch)
                     batch = []
                     batch_deadline = time.time() + EMBEDDING_BATCH_TIMEOUT_SECONDS
-                    
+
             except Empty:
                 # Timeout reached - process whatever we have
                 if batch:
@@ -1691,7 +1752,7 @@ def embedding_worker() -> None:
                     batch = []
                 batch_deadline = time.time() + EMBEDDING_BATCH_TIMEOUT_SECONDS
                 continue
-                
+
         except Exception:  # pragma: no cover - defensive catch-all
             logger.exception("Error in embedding worker loop")
             # Process any pending batch before sleeping
@@ -1709,20 +1770,20 @@ def _process_embedding_batch(batch: List[Tuple[str, str]]) -> None:
     """Process a batch of embeddings efficiently."""
     if not batch:
         return
-    
+
     memory_ids = [item[0] for item in batch]
     contents = [item[1] for item in batch]
-    
+
     # Mark all as inflight
     with state.embedding_lock:
         for memory_id in memory_ids:
             state.embedding_pending.discard(memory_id)
             state.embedding_inflight.add(memory_id)
-    
+
     try:
         # Generate embeddings in batch
         embeddings = _generate_real_embeddings_batch(contents)
-        
+
         # Store each embedding individually (Qdrant operations are fast)
         for memory_id, content, embedding in zip(memory_ids, contents, embeddings):
             try:
@@ -1737,7 +1798,7 @@ def _process_embedding_batch(batch: List[Tuple[str, str]]) -> None:
         with state.embedding_lock:
             for memory_id in memory_ids:
                 state.embedding_inflight.discard(memory_id)
-        
+
         # Mark all queue items as done
         for _ in batch:
             state.embedding_queue.task_done()
@@ -1748,20 +1809,20 @@ def _store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[flo
     qdrant_client = get_qdrant_client()
     if qdrant_client is None:
         return
-    
+
     graph = get_memory_graph()
     if graph is None:
         return
-    
+
     # Fetch latest memory data from FalkorDB for payload
     result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
     if not getattr(result, "result_set", None):
         logger.warning("Memory %s not found in FalkorDB, skipping Qdrant update", memory_id)
         return
-    
+
     node = result.result_set[0][0]
     properties = getattr(node, "properties", {})
-    
+
     # Store in Qdrant
     try:
         qdrant_client.upsert(
@@ -1886,15 +1947,14 @@ def _run_sync_check() -> None:
 
         logger.warning(
             "Sync drift detected: %d memories missing from Qdrant (will auto-repair)",
-            len(missing_ids)
+            len(missing_ids),
         )
 
         # Queue missing memories for embedding
         for memory_id in missing_ids:
             # Fetch content to queue
             mem_result = graph.query(
-                "MATCH (m:Memory {id: $id}) RETURN m.content",
-                {"id": memory_id}
+                "MATCH (m:Memory {id: $id}) RETURN m.content", {"id": memory_id}
             )
             if getattr(mem_result, "result_set", None):
                 content = mem_result.result_set[0][0]
@@ -1913,10 +1973,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     if graph is None:
         raise RuntimeError("FalkorDB unavailable for enrichment")
 
-    result = graph.query(
-        "MATCH (m:Memory {id: $id}) RETURN m",
-        {"id": memory_id}
-    )
+    result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
 
     if not result.result_set:
         logger.debug("Skipping enrichment for %s; memory not found", memory_id)
@@ -1979,8 +2036,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
             "temporal_links": temporal_links,
             "patterns_detected": pattern_info,
             "semantic_neighbors": [
-                {"id": neighbour_id, "score": score}
-                for neighbour_id, score in semantic_neighbors
+                {"id": neighbour_id, "score": score} for neighbour_id, score in semantic_neighbors
             ],
         }
     )
@@ -2034,11 +2090,11 @@ def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> i
             ORDER BY m2.timestamp DESC
             LIMIT $limit
             """,
-            {"id": memory_id, "limit": limit}
+            {"id": memory_id, "limit": limit},
         )
 
         timestamp = utc_now()
-        for related_id, in result.result_set:
+        for (related_id,) in result.result_set:
             if not related_id:
                 continue
             graph.query(
@@ -2073,7 +2129,7 @@ def detect_patterns(graph: Any, memory_id: str, content: str) -> List[Dict[str, 
             RETURN m.id, m.content
             LIMIT 10
             """,
-            {"type": memory_type, "id": memory_id}
+            {"type": memory_type, "id": memory_id},
         )
 
         similar_texts = [content]
@@ -2090,9 +2146,8 @@ def detect_patterns(graph: Any, memory_id: str, content: str) -> List[Dict[str, 
 
             top_terms = [term for term, _ in tokens.most_common(5)]
             pattern_id = f"pattern-{memory_type}-{uuid.uuid4().hex[:8]}"
-            description = (
-                f"Pattern across {similar_count + 1} {memory_type} memories"
-                + (f" highlighting {', '.join(top_terms)}" if top_terms else "")
+            description = f"Pattern across {similar_count + 1} {memory_type} memories" + (
+                f" highlighting {', '.join(top_terms)}" if top_terms else ""
             )
 
             graph.query(
@@ -2235,6 +2290,7 @@ def link_semantic_neighbors(graph: Any, memory_id: str) -> List[Tuple[str, float
 # NOTE: These are bound to unregistered "*_legacy" blueprints and are not active.
 # Active endpoints live in automem/api/* blueprints registered above.
 
+
 @admin_bp.route("/admin/reembed", methods=["POST"])
 def admin_reembed() -> Any:
     """Legacy admin handler; route now provided by automem.api.admin blueprint."""
@@ -2259,11 +2315,6 @@ def handle_exceptions(exc: Exception):
         "message": "Internal server error",
     }
     return jsonify(response), 500
-
- 
-
-
- 
 
 
 @memory_bp.route("/memory", methods=["POST"])
@@ -2295,11 +2346,11 @@ def store_memory() -> Any:
     # Accept explicit type/confidence or classify automatically
     raw_type = payload.get("type")
     type_confidence = payload.get("confidence")
-    
+
     if raw_type:
         # Normalize type (handles aliases and case variations)
         memory_type, was_normalized = normalize_memory_type(raw_type)
-        
+
         # Empty string means unknown type that couldn't be mapped
         if not memory_type:
             valid_types = sorted(MEMORY_TYPES)
@@ -2310,12 +2361,12 @@ def store_memory() -> Any:
                     f"Invalid memory type '{raw_type}'. "
                     f"Must be one of: {', '.join(valid_types)}, "
                     f"or aliases like {alias_examples}..."
-                )
+                ),
             )
-        
+
         if was_normalized and memory_type != raw_type:
             logger.debug("Normalized type '%s' -> '%s'", raw_type, memory_type)
-        
+
         # Use provided confidence or default
         if type_confidence is None:
             type_confidence = 0.9  # High confidence for explicit types
@@ -2420,7 +2471,7 @@ def store_memory() -> Any:
     # Queue for async embedding generation (if no embedding provided)
     embedding_status = "skipped"
     qdrant_client = get_qdrant_client()
-    
+
     if embedding is not None:
         # Sync path: User provided embedding, store immediately
         embedding_status = "provided"
@@ -2475,7 +2526,7 @@ def store_memory() -> Any:
         "last_accessed": last_accessed,
         "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
     }
-    
+
     # Structured logging for performance analysis
     logger.info(
         "memory_stored",
@@ -2489,9 +2540,9 @@ def store_memory() -> Any:
             "embedding_status": embedding_status,
             "qdrant_status": qdrant_result,
             "enrichment_queued": bool(state.enrichment_queue),
-        }
+        },
     )
-    
+
     return jsonify(response), 201
 
 
@@ -2636,7 +2687,7 @@ def delete_memory(memory_id: str) -> Any:
     qdrant_client = get_qdrant_client()
     if qdrant_client is not None:
         try:
-            if 'qdrant_models' in globals() and qdrant_models is not None:
+            if "qdrant_models" in globals() and qdrant_models is not None:
                 selector = qdrant_models.PointIdsList(points=[memory_id])
             else:
                 selector = {"points": [memory_id]}
@@ -2685,7 +2736,9 @@ def memories_by_tag() -> Any:
         data["metadata"] = _parse_metadata_field(data.get("metadata"))
         memories.append(data)
 
-    return jsonify({"status": "success", "tags": tags, "count": len(memories), "memories": memories})
+    return jsonify(
+        {"status": "success", "tags": tags, "count": len(memories), "memories": memories}
+    )
 
 
 @recall_bp.route("/recall", methods=["GET"])
@@ -2738,6 +2791,7 @@ def recall_memories() -> Any:
     vector_matches: List[Dict[str, Any]] = []
     # Delegate implementation to recall blueprint module (kept for backward-compatibility)
     from automem.api.recall import handle_recall  # local import to avoid cycles
+
     return handle_recall(
         get_memory_graph,
         get_qdrant_client,
@@ -2774,9 +2828,7 @@ def create_association() -> Any:
     if memory1_id == memory2_id:
         abort(400, description="Cannot associate a memory with itself")
     if relation_type not in ALLOWED_RELATIONS:
-        abort(
-            400, description=f"Relation type must be one of {sorted(ALLOWED_RELATIONS)}"
-        )
+        abort(400, description=f"Relation type must be one of {sorted(ALLOWED_RELATIONS)}")
 
     graph = get_memory_graph()
     if graph is None:
@@ -2842,8 +2894,8 @@ def create_association() -> Any:
 def consolidate_memories() -> Any:
     """Run memory consolidation."""
     data = request.get_json() or {}
-    mode = data.get('mode', 'full')
-    dry_run = data.get('dry_run', True)
+    mode = data.get("mode", "full")
+    dry_run = data.get("dry_run", True)
 
     graph = get_memory_graph()
     if graph is None:
@@ -2859,16 +2911,10 @@ def consolidate_memories() -> Any:
         if not dry_run:
             _persist_consolidation_run(graph, results)
 
-        return jsonify({
-            "status": "success",
-            "consolidation": results
-        }), 200
+        return jsonify({"status": "success", "consolidation": results}), 200
     except Exception as e:
         logger.error(f"Consolidation failed: {e}")
-        return jsonify({
-            "error": "Consolidation failed",
-            "details": str(e)
-        }), 500
+        return jsonify({"error": "Consolidation failed", "details": str(e)}), 500
 
 
 @consolidation_bp.route("/consolidate/status", methods=["GET"])
@@ -2884,19 +2930,23 @@ def consolidation_status() -> Any:
         history = _load_recent_runs(graph, CONSOLIDATION_HISTORY_LIMIT)
         next_runs = scheduler.get_next_runs() if scheduler else {}
 
-        return jsonify({
-            "status": "success",
-            "next_runs": next_runs,
-            "history": history,
-            "thread_alive": bool(state.consolidation_thread and state.consolidation_thread.is_alive()),
-            "tick_seconds": CONSOLIDATION_TICK_SECONDS,
-        }), 200
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "next_runs": next_runs,
+                    "history": history,
+                    "thread_alive": bool(
+                        state.consolidation_thread and state.consolidation_thread.is_alive()
+                    ),
+                    "tick_seconds": CONSOLIDATION_TICK_SECONDS,
+                }
+            ),
+            200,
+        )
     except Exception as e:
         logger.error(f"Failed to get consolidation status: {e}")
-        return jsonify({
-            "error": "Failed to get status",
-            "details": str(e)
-        }), 500
+        return jsonify({"error": "Failed to get status", "details": str(e)}), 500
 
 
 @recall_bp.route("/startup-recall", methods=["GET"])
@@ -2922,14 +2972,16 @@ def startup_recall() -> Any:
 
         if lesson_results.result_set:
             for row in lesson_results.result_set:
-                lessons.append({
-                    'id': row[0],
-                    'content': row[1],
-                    'tags': row[2] if row[2] else [],
-                    'importance': row[3] if row[3] else 0.5,
-                    'type': row[4] if row[4] else 'Context',
-                    'metadata': json.loads(row[5]) if row[5] else {}
-                })
+                lessons.append(
+                    {
+                        "id": row[0],
+                        "content": row[1],
+                        "tags": row[2] if row[2] else [],
+                        "importance": row[3] if row[3] else 0.5,
+                        "type": row[4] if row[4] else "Context",
+                        "metadata": json.loads(row[5]) if row[5] else {},
+                    }
+                )
 
         # Get system rules
         system_query = """
@@ -2944,29 +2996,24 @@ def startup_recall() -> Any:
 
         if system_results.result_set:
             for row in system_results.result_set:
-                system_rules.append({
-                    'id': row[0],
-                    'content': row[1],
-                    'tags': row[2] if row[2] else []
-                })
+                system_rules.append(
+                    {"id": row[0], "content": row[1], "tags": row[2] if row[2] else []}
+                )
 
         response = {
-            'status': 'success',
-            'critical_lessons': lessons,
-            'system_rules': system_rules,
-            'lesson_count': len(lessons),
-            'has_critical': any(l.get('importance', 0) >= 0.9 for l in lessons),
-            'summary': f"Recalled {len(lessons)} lesson(s) and {len(system_rules)} system rule(s)"
+            "status": "success",
+            "critical_lessons": lessons,
+            "system_rules": system_rules,
+            "lesson_count": len(lessons),
+            "has_critical": any(l.get("importance", 0) >= 0.9 for l in lessons),
+            "summary": f"Recalled {len(lessons)} lesson(s) and {len(system_rules)} system rule(s)",
         }
 
         return jsonify(response), 200
 
     except Exception as e:
         logger.error(f"Startup recall failed: {e}")
-        return jsonify({
-            "error": "Startup recall failed",
-            "details": str(e)
-        }), 500
+        return jsonify({"error": "Startup recall failed", "details": str(e)}), 500
 
 
 @recall_bp.route("/analyze", methods=["GET"])
@@ -3015,12 +3062,14 @@ def analyze_memories() -> Any:
         )
 
         for p_type, content, confidence, observations in pattern_result.result_set:
-            analytics["patterns"].append({
-                "type": p_type,
-                "description": content,
-                "confidence": round(confidence, 3) if confidence else 0,
-                "observations": observations or 0,
-            })
+            analytics["patterns"].append(
+                {
+                    "type": p_type,
+                    "description": content,
+                    "confidence": round(confidence, 3) if confidence else 0,
+                    "observations": observations or 0,
+                }
+            )
 
         # Find preferences (PREFERS_OVER relationships)
         pref_result = graph.query(
@@ -3033,12 +3082,14 @@ def analyze_memories() -> Any:
         )
 
         for preferred, over, context, strength in pref_result.result_set:
-            analytics["preferences"].append({
-                "prefers": preferred,
-                "over": over,
-                "context": context,
-                "strength": round(strength, 3) if strength else 0,
-            })
+            analytics["preferences"].append(
+                {
+                    "prefers": preferred,
+                    "over": over,
+                    "context": context,
+                    "strength": round(strength, 3) if strength else 0,
+                }
+            )
 
         # Temporal insights - simplified for FalkorDB compatibility
         try:
@@ -3053,6 +3104,7 @@ def analyze_memories() -> Any:
 
             # Process temporal data in Python
             from collections import defaultdict
+
             hour_data = defaultdict(lambda: {"count": 0, "total_importance": 0})
 
             for timestamp, importance in temporal_result.result_set:
@@ -3069,7 +3121,7 @@ def analyze_memories() -> Any:
                 if data["count"] > 0:
                     analytics["temporal_insights"][f"hour_{hour:02d}"] = {
                         "count": data["count"],
-                        "avg_importance": round(data["total_importance"] / data["count"], 3)
+                        "avg_importance": round(data["total_importance"] / data["count"], 3),
                     }
         except Exception:
             # Skip temporal insights if query fails
@@ -3127,12 +3179,14 @@ def analyze_memories() -> Any:
         logger.exception("Failed to generate analytics")
         abort(500, description="Failed to generate analytics")
 
-    return jsonify({
-        "status": "success",
-        "analytics": analytics,
-        "generated_at": utc_now(),
-        "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
-    })
+    return jsonify(
+        {
+            "status": "success",
+            "analytics": analytics,
+            "generated_at": utc_now(),
+            "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
+        }
+    )
 
 
 def _normalize_tags(value: Any) -> List[str]:
@@ -3166,9 +3220,7 @@ def _coerce_embedding(value: Any) -> Optional[List[float]]:
     elif isinstance(value, str):
         vector = [part.strip() for part in value.split(",") if part.strip()]
     else:
-        raise ValueError(
-            "Embedding must be a list of floats or a comma-separated string"
-        )
+        raise ValueError("Embedding must be a list of floats or a comma-separated string")
 
     # Use effective dimension (auto-detected or config)
     expected_dim = state.effective_vector_size
@@ -3239,9 +3291,6 @@ def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
     except Exception as e:
         logger.warning("Failed to generate batch embeddings: %s", str(e))
         return [_generate_placeholder_embedding(c) for c in contents]
-
-
- 
 
 
 def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
@@ -3359,23 +3408,27 @@ def get_related_memories(memory_id: str) -> Any:
         if data.get("id") != memory_id:
             related.append(data)
 
-    return jsonify({
-        "status": "success",
-        "memory_id": memory_id,
-        "count": len(related),
-        "related_memories": related,
-        "relationship_types": rel_types,
-        "max_depth": max_depth,
-        "limit": limit,
-    })
+    return jsonify(
+        {
+            "status": "success",
+            "memory_id": memory_id,
+            "count": len(related),
+            "related_memories": related,
+            "relationship_types": rel_types,
+            "max_depth": max_depth,
+            "limit": limit,
+        }
+    )
+
+
+from automem.api.admin import create_admin_blueprint_full
+from automem.api.consolidation import create_consolidation_blueprint_full
+from automem.api.enrichment import create_enrichment_blueprint
 
 # Register blueprints after all routes are defined
 from automem.api.health import create_health_blueprint
-from automem.api.enrichment import create_enrichment_blueprint
-from automem.api.recall import create_recall_blueprint
 from automem.api.memory import create_memory_blueprint_full
-from automem.api.admin import create_admin_blueprint_full
-from automem.api.consolidation import create_consolidation_blueprint_full
+from automem.api.recall import create_recall_blueprint
 
 health_bp = create_health_blueprint(
     get_memory_graph,

@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # LoCoMo Benchmark Runner for AutoMem
-# 
+#
 # Evaluates AutoMem against the LoCoMo benchmark (ACL 2024)
 # to measure long-term conversational memory performance.
 #
@@ -102,45 +102,45 @@ if [ "$RUN_LIVE" = true ]; then
         echo -e "${YELLOW}Cancelled.${NC}"
         exit 0
     fi
-    
+
     # Check Railway CLI
     if ! command -v railway &> /dev/null; then
         echo -e "${RED}❌ Railway CLI not found${NC}"
         echo -e "${YELLOW}Install with: npm i -g @railway/cli${NC}"
         exit 1
     fi
-    
+
     # Get Railway credentials
     echo -e "${BLUE}📡 Fetching Railway credentials...${NC}"
-    
+
     export AUTOMEM_TEST_BASE_URL=$(railway variables get PUBLIC_URL 2>/dev/null || echo "")
     if [ -z "$AUTOMEM_TEST_BASE_URL" ]; then
         echo -e "${RED}❌ Could not fetch PUBLIC_URL from Railway${NC}"
         echo -e "${YELLOW}Make sure you're linked to the project: railway link${NC}"
         exit 1
     fi
-    
+
     export AUTOMEM_TEST_API_TOKEN=$(railway variables get AUTOMEM_API_TOKEN 2>/dev/null || echo "")
     if [ -z "$AUTOMEM_TEST_API_TOKEN" ]; then
         echo -e "${RED}❌ Could not fetch AUTOMEM_API_TOKEN from Railway${NC}"
         exit 1
     fi
-    
+
     echo -e "${GREEN}✅ Connected to Railway: $AUTOMEM_TEST_BASE_URL${NC}"
-    
+
     # Enable live testing
     export AUTOMEM_ALLOW_LIVE=1
-    
+
 else
     echo -e "${BLUE}🐳 Running against local Docker${NC}"
-    
+
     # Check if Docker is running
     if ! docker info > /dev/null 2>&1; then
         echo -e "${RED}❌ Docker is not running${NC}"
         echo -e "${YELLOW}Please start Docker and try again${NC}"
         exit 1
     fi
-    
+
     # Check if services are running
     if ! docker compose ps | grep -q "flask-api.*running"; then
         echo -e "${YELLOW}⚠️  AutoMem services not running${NC}"
@@ -149,10 +149,10 @@ else
         echo -e "${BLUE}Waiting for services to be ready...${NC}"
         sleep 10
     fi
-    
+
     export AUTOMEM_TEST_BASE_URL="http://localhost:8001"
     export AUTOMEM_TEST_API_TOKEN="test-token"
-    
+
     echo -e "${GREEN}✅ Docker services ready${NC}"
 fi
 
@@ -188,4 +188,3 @@ else
     echo -e "${RED}============================================${NC}"
     exit 1
 fi
-

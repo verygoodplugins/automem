@@ -42,7 +42,7 @@ class FakeGraph:
 
         if "ORDER BY rand()" in query and "LIMIT $limit" in query:
             limit = params.get("limit")
-            rows = self.sample_rows if limit is None else self.sample_rows[: limit]
+            rows = self.sample_rows if limit is None else self.sample_rows[:limit]
             return FakeResult(rows)
 
         if "WHERE m.embeddings IS NOT NULL" in query:
