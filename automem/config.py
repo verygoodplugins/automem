@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load environment variables before configuring the application.
@@ -19,9 +20,15 @@ CONSOLIDATION_TICK_SECONDS = int(os.getenv("CONSOLIDATION_TICK_SECONDS", "60"))
 CONSOLIDATION_DECAY_INTERVAL_SECONDS = int(
     os.getenv("CONSOLIDATION_DECAY_INTERVAL_SECONDS", str(3600))
 )
-CONSOLIDATION_CREATIVE_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_CREATIVE_INTERVAL_SECONDS", str(3600)))
-CONSOLIDATION_CLUSTER_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(21600)))
-CONSOLIDATION_FORGET_INTERVAL_SECONDS = int(os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(86400)))
+CONSOLIDATION_CREATIVE_INTERVAL_SECONDS = int(
+    os.getenv("CONSOLIDATION_CREATIVE_INTERVAL_SECONDS", str(3600))
+)
+CONSOLIDATION_CLUSTER_INTERVAL_SECONDS = int(
+    os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(21600))
+)
+CONSOLIDATION_FORGET_INTERVAL_SECONDS = int(
+    os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(86400))
+)
 _DECAY_THRESHOLD_RAW = os.getenv("CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD", "0.3").strip()
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD = (
     float(_DECAY_THRESHOLD_RAW) if _DECAY_THRESHOLD_RAW else None
@@ -48,7 +55,11 @@ ENRICHMENT_SIMILARITY_LIMIT = int(os.getenv("ENRICHMENT_SIMILARITY_LIMIT", "5"))
 ENRICHMENT_SIMILARITY_THRESHOLD = float(os.getenv("ENRICHMENT_SIMILARITY_THRESHOLD", "0.8"))
 ENRICHMENT_IDLE_SLEEP_SECONDS = float(os.getenv("ENRICHMENT_IDLE_SLEEP_SECONDS", "2"))
 ENRICHMENT_FAILURE_BACKOFF_SECONDS = float(os.getenv("ENRICHMENT_FAILURE_BACKOFF_SECONDS", "5"))
-ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").lower() not in {"0", "false", "no"}
+ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 ENRICHMENT_SPACY_MODEL = os.getenv("ENRICHMENT_SPACY_MODEL", "en_core_web_sm")
 
 # Model configuration
@@ -61,10 +72,7 @@ RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
 
 # Memory types for classification
-MEMORY_TYPES = {
-    "Decision", "Pattern", "Preference", "Style",
-    "Habit", "Insight", "Context"
-}
+MEMORY_TYPES = {"Decision", "Pattern", "Preference", "Style", "Habit", "Insight", "Context"}
 
 # Type aliases for normalization (lowercase and legacy types → canonical)
 # Non-canonical types are auto-mapped to canonical types on store
@@ -124,6 +132,7 @@ def normalize_memory_type(raw_type: str | None) -> tuple[str, bool]:
     # Unknown type - reject by returning None marker
     return "", True  # Empty string signals rejection
 
+
 # Enhanced relationship types with their properties
 RELATIONSHIP_TYPES = {
     # Original relationships
@@ -133,21 +142,46 @@ RELATIONSHIP_TYPES = {
     # Frequently created by enrichment/temporal linking
     "SIMILAR_TO": {"description": "Semantic similarity", "properties": ["score", "updated_at"]},
     "PRECEDED_BY": {"description": "Prior in time", "properties": ["count", "updated_at"]},
-
     # New PKG relationships
-    "PREFERS_OVER": {"description": "Preference relationship", "properties": ["context", "strength", "reason"]},
+    "PREFERS_OVER": {
+        "description": "Preference relationship",
+        "properties": ["context", "strength", "reason"],
+    },
     "EXEMPLIFIES": {"description": "Pattern example", "properties": ["pattern_type", "confidence"]},
-    "CONTRADICTS": {"description": "Conflicting information", "properties": ["resolution", "reason"]},
-    "REINFORCES": {"description": "Strengthens pattern", "properties": ["strength", "observations"]},
-    "INVALIDATED_BY": {"description": "Superseded information", "properties": ["reason", "timestamp"]},
-    "EVOLVED_INTO": {"description": "Evolution of knowledge", "properties": ["confidence", "reason"]},
-    "DERIVED_FROM": {"description": "Derived knowledge", "properties": ["transformation", "confidence"]},
+    "CONTRADICTS": {
+        "description": "Conflicting information",
+        "properties": ["resolution", "reason"],
+    },
+    "REINFORCES": {
+        "description": "Strengthens pattern",
+        "properties": ["strength", "observations"],
+    },
+    "INVALIDATED_BY": {
+        "description": "Superseded information",
+        "properties": ["reason", "timestamp"],
+    },
+    "EVOLVED_INTO": {
+        "description": "Evolution of knowledge",
+        "properties": ["confidence", "reason"],
+    },
+    "DERIVED_FROM": {
+        "description": "Derived knowledge",
+        "properties": ["transformation", "confidence"],
+    },
     "PART_OF": {"description": "Hierarchical relationship", "properties": ["role", "context"]},
-
     # Discovered/creative connections used by consolidator/analysis
-    "EXPLAINS": {"description": "Provides explanation for another memory", "properties": ["confidence", "updated_at"]},
-    "SHARES_THEME": {"description": "Shares a common theme", "properties": ["similarity", "updated_at"]},
-    "PARALLEL_CONTEXT": {"description": "Parallel events or contexts", "properties": ["confidence", "updated_at"]},
+    "EXPLAINS": {
+        "description": "Provides explanation for another memory",
+        "properties": ["confidence", "updated_at"],
+    },
+    "SHARES_THEME": {
+        "description": "Shares a common theme",
+        "properties": ["similarity", "updated_at"],
+    },
+    "PARALLEL_CONTEXT": {
+        "description": "Parallel events or contexts",
+        "properties": ["confidence", "updated_at"],
+    },
 }
 
 ALLOWED_RELATIONS = set(RELATIONSHIP_TYPES.keys())

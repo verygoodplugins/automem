@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import re
 import json
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from automem.utils.time import _parse_iso_datetime
 from automem.config import (
-    SEARCH_WEIGHT_VECTOR,
-    SEARCH_WEIGHT_KEYWORD,
-    SEARCH_WEIGHT_TAG,
-    SEARCH_WEIGHT_IMPORTANCE,
     SEARCH_WEIGHT_CONFIDENCE,
-    SEARCH_WEIGHT_RECENCY,
     SEARCH_WEIGHT_EXACT,
+    SEARCH_WEIGHT_IMPORTANCE,
+    SEARCH_WEIGHT_KEYWORD,
+    SEARCH_WEIGHT_RECENCY,
     SEARCH_WEIGHT_RELATION,
+    SEARCH_WEIGHT_TAG,
+    SEARCH_WEIGHT_VECTOR,
 )
+from automem.utils.time import _parse_iso_datetime
 
 
 def _parse_metadata_field(value: Any) -> Any:
@@ -150,16 +150,26 @@ def _compute_metadata_score(
 
     tag_score = token_hits / max(len(tokens), 1) if tokens else 0.0
 
-    vector_component = result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
-    keyword_component = result.get("match_score", 0.0) if result.get("match_type") in {"keyword", "trending"} else 0.0
+    vector_component = (
+        result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
+    )
+    keyword_component = (
+        result.get("match_score", 0.0)
+        if result.get("match_type") in {"keyword", "trending"}
+        else 0.0
+    )
 
     relation_component = 0.0
     if result.get("match_type") == "relation":
-        relation_component = float(result.get("relation_score", result.get("match_score", 0.0)) or 0.0)
+        relation_component = float(
+            result.get("relation_score", result.get("match_score", 0.0)) or 0.0
+        )
     elif "relation_score" in result:
         relation_component = float(result.get("relation_score") or 0.0)
 
-    context_bonus = _compute_context_bonus(result, memory, tag_terms, metadata_terms, context_profile)
+    context_bonus = _compute_context_bonus(
+        result, memory, tag_terms, metadata_terms, context_profile
+    )
 
     final = (
         SEARCH_WEIGHT_VECTOR * vector_component

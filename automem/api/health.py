@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Optional
+
 from flask import Blueprint, jsonify
 
 
@@ -19,7 +20,9 @@ def create_health_blueprint(
         graph_available = get_memory_graph() is not None
         qdrant_available = get_qdrant_client() is not None
 
-        enrichment_thread_alive = bool(state.enrichment_thread and state.enrichment_thread.is_alive())
+        enrichment_thread_alive = bool(
+            state.enrichment_thread and state.enrichment_thread.is_alive()
+        )
         with state.enrichment_lock:
             enrichment_pending = len(state.enrichment_pending)
             enrichment_inflight = len(state.enrichment_inflight)
@@ -87,4 +90,3 @@ def create_health_blueprint(
         return jsonify(health_data)
 
     return bp
-

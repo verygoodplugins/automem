@@ -56,15 +56,15 @@ class FastEmbedProvider(EmbeddingProvider):
         # Set cache directory; allow env override for portability across users/containers
         if cache_dir is None:
             env_dir = os.getenv("AUTOMEM_MODELS_DIR")
-            cache_dir = Path(env_dir) if env_dir else (Path.home() / ".config" / "automem" / "models")
+            cache_dir = (
+                Path(env_dir) if env_dir else (Path.home() / ".config" / "automem" / "models")
+            )
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Check if model is cached
         model_dir_name = model_name.replace("/", "--").replace(":", "--")
         model_cached = any(
-            d.name.startswith(model_dir_name)
-            for d in cache_dir.iterdir()
-            if d.is_dir()
+            d.name.startswith(model_dir_name) for d in cache_dir.iterdir() if d.is_dir()
         )
 
         if model_cached:
@@ -102,7 +102,9 @@ class FastEmbedProvider(EmbeddingProvider):
             logger.warning(
                 "fastembed actual dimension %d != configured %d for model %s. "
                 "Using actual dimension; ensure your VECTOR_SIZE/Qdrant collection matches.",
-                actual_dim, dimension, model_name
+                actual_dim,
+                dimension,
+                model_name,
             )
         self._dimension = actual_dim
 

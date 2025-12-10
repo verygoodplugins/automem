@@ -104,9 +104,7 @@ class AutoMemBackup:
                     nodes.append({"id": row[0], "labels": row[1], "properties": row[2]})
                     batch_count += 1
 
-                logger.info(
-                    f"   Exported batch: {batch_count} nodes (total: {len(nodes)})"
-                )
+                logger.info(f"   Exported batch: {batch_count} nodes (total: {len(nodes)})")
 
                 if batch_count < batch_size:
                     break  # Last batch
@@ -169,16 +167,12 @@ class AutoMemBackup:
             }
 
             # Write to compressed file
-            backup_file = (
-                self.backup_dir / "falkordb" / f"falkordb_{self.timestamp}.json.gz"
-            )
+            backup_file = self.backup_dir / "falkordb" / f"falkordb_{self.timestamp}.json.gz"
             with gzip.open(backup_file, "wt", encoding="utf-8") as f:
                 json.dump(backup_data, f, indent=2, default=str)
 
             size_mb = backup_file.stat().st_size / 1024 / 1024
-            logger.info(
-                f"✅ FalkorDB backup saved: {backup_file.name} ({size_mb:.2f} MB)"
-            )
+            logger.info(f"✅ FalkorDB backup saved: {backup_file.name} ({size_mb:.2f} MB)")
             logger.info(f"   Nodes: {len(nodes)}, Relationships: {len(relationships)}")
 
             return backup_file
@@ -236,16 +230,12 @@ class AutoMemBackup:
             }
 
             # Write to compressed file
-            backup_file = (
-                self.backup_dir / "qdrant" / f"qdrant_{self.timestamp}.json.gz"
-            )
+            backup_file = self.backup_dir / "qdrant" / f"qdrant_{self.timestamp}.json.gz"
             with gzip.open(backup_file, "wt", encoding="utf-8") as f:
                 json.dump(backup_data, f, indent=2, default=str)
 
             size_mb = backup_file.stat().st_size / 1024 / 1024
-            logger.info(
-                f"✅ Qdrant backup saved: {backup_file.name} ({size_mb:.2f} MB)"
-            )
+            logger.info(f"✅ Qdrant backup saved: {backup_file.name} ({size_mb:.2f} MB)")
             logger.info(f"   Points: {len(all_points)}")
 
             return backup_file

@@ -104,7 +104,7 @@ python scripts/health_monitor.py --interval 300
 python scripts/health_monitor.py \
   --webhook https://hooks.slack.com/services/T00/B00/XXXX
 
-# Discord  
+# Discord
 python scripts/health_monitor.py \
   --webhook https://discord.com/api/webhooks/XXXX/YYYY
 ```

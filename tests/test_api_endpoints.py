@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from flask import Flask
@@ -12,7 +12,7 @@ from flask.testing import FlaskClient
 from qdrant_client import models as qdrant_models
 
 import app
-from app import utc_now, _normalize_timestamp
+from app import _normalize_timestamp, utc_now
 from automem import config
 from automem.api.recall import _expand_related_memories
 
@@ -52,12 +52,16 @@ class MockGraph:
         if "MATCH (m:Memory {id:" in query and "SET m.content" in query:
             memory_id = params["id"]
             if memory_id in self.memories:
-                self.memories[memory_id].update({
-                    "content": params.get("content", self.memories[memory_id]["content"]),
-                    "tags": params.get("tags", self.memories[memory_id]["tags"]),
-                    "importance": params.get("importance", self.memories[memory_id]["importance"]),
-                    "updated_at": params.get("updated_at", utc_now()),
-                })
+                self.memories[memory_id].update(
+                    {
+                        "content": params.get("content", self.memories[memory_id]["content"]),
+                        "tags": params.get("tags", self.memories[memory_id]["tags"]),
+                        "importance": params.get(
+                            "importance", self.memories[memory_id]["importance"]
+                        ),
+                        "updated_at": params.get("updated_at", utc_now()),
+                    }
+                )
                 node = SimpleNamespace(properties=self.memories[memory_id])
                 return SimpleNamespace(result_set=[[node]])
             return SimpleNamespace(result_set=[])
@@ -96,22 +100,28 @@ class MockGraph:
             return SimpleNamespace(result_set=results)
 
         # Get all memories for reembedding (new full format with all fields)
-        if "MATCH (m:Memory)" in query and "RETURN m.id AS id" in query and "m.content AS content" in query:
+        if (
+            "MATCH (m:Memory)" in query
+            and "RETURN m.id AS id" in query
+            and "m.content AS content" in query
+        ):
             results = []
             for mem_id, mem in self.memories.items():
                 if mem.get("content"):
-                    results.append([
-                        mem_id,
-                        mem.get("content", ""),
-                        mem.get("tags", []),
-                        mem.get("importance", 0.5),
-                        mem.get("timestamp"),
-                        mem.get("type", "Context"),
-                        mem.get("confidence", 0.6),
-                        mem.get("metadata", "{}"),
-                        mem.get("updated_at"),
-                        mem.get("last_accessed"),
-                    ])
+                    results.append(
+                        [
+                            mem_id,
+                            mem.get("content", ""),
+                            mem.get("tags", []),
+                            mem.get("importance", 0.5),
+                            mem.get("timestamp"),
+                            mem.get("type", "Context"),
+                            mem.get("confidence", 0.6),
+                            mem.get("metadata", "{}"),
+                            mem.get("updated_at"),
+                            mem.get("last_accessed"),
+                        ]
+                    )
             return SimpleNamespace(result_set=results)
 
         # Handle association creation - check both memories exist
@@ -125,11 +135,7 @@ class MockGraph:
             return SimpleNamespace(result_set=[])
 
         return_m_line = "RETURN m\n" in query or "RETURN m\r" in query
-        if (
-            "MATCH (m:Memory)" in query
-            and return_m_line
-            and "ORDER BY m.importance DESC" in query
-        ):
+        if "MATCH (m:Memory)" in query and return_m_line and "ORDER BY m.importance DESC" in query:
             results = list(self.memories.values())
             tag_filters = [tag.lower() for tag in params.get("tag_filters", [])]
             if tag_filters:
@@ -156,9 +162,7 @@ class MockGraph:
             limit = params.get("limit", len(results))
             limited = results[:limit]
             return SimpleNamespace(
-                result_set=[
-                    [SimpleNamespace(properties=mem)] for mem in limited
-                ]
+                result_set=[[SimpleNamespace(properties=mem)] for mem in limited]
             )
 
         # Default empty result
@@ -178,18 +182,13 @@ class MockQdrantClient:
         """Mock upsert operation."""
         self.upsert_calls.append((collection_name, points))
         for point in points:
-            self.points[point.id] = {
-                "vector": point.vector,
-                "payload": point.payload
-            }
+            self.points[point.id] = {"vector": point.vector, "payload": point.payload}
 
     def search(self, collection_name, query_vector, limit=5, with_payload=True, with_vectors=False):
         """Mock search operation."""
-        self.search_calls.append({
-            "collection": collection_name,
-            "vector": query_vector,
-            "limit": limit
-        })
+        self.search_calls.append(
+            {"collection": collection_name, "vector": query_vector, "limit": limit}
+        )
         # Return mock search results
         return []
 
@@ -292,13 +291,11 @@ def auth_headers():
 @pytest.fixture
 def admin_headers():
     """Provide admin authorization headers for testing."""
-    return {
-        "Authorization": "Bearer test-token",
-        "X-Admin-Token": "test-admin-token"
-    }
+    return {"Authorization": "Bearer test-token", "X-Admin-Token": "test-admin-token"}
 
 
 # ==================== Test Health Endpoint ====================
+
 
 def test_health_endpoint_all_services_up(client, mock_state):
     """Test health endpoint when all services are available."""
@@ -336,20 +333,21 @@ def test_health_endpoint_falkordb_down(client, mock_state):
 
 # ==================== Test Memory Recall ====================
 
+
 def test_recall_with_query(client, mock_state, auth_headers):
     """Test memory recall with text query."""
     # Store a memory first
     memory_data = {
         "content": "Test memory about Python programming",
         "tags": ["python", "programming"],
-        "importance": 0.8
+        "importance": 0.8,
     }
     mock_state.memory_graph.memories["test-id"] = {
         "id": "test-id",
         "content": memory_data["content"],
         "tags": memory_data["tags"],
         "importance": memory_data["importance"],
-        "timestamp": utc_now()
+        "timestamp": utc_now(),
     }
 
     response = client.get("/recall?query=Python&limit=10", headers=auth_headers)
@@ -398,7 +396,9 @@ def test_recall_with_high_limit(client, mock_state, auth_headers):
     # API clamps limit to 50 instead of returning error
 
 
-def _store_memory(mock_state, memory_id, content, tags, importance, mem_type="Context", timestamp=None):
+def _store_memory(
+    mock_state, memory_id, content, tags, importance, mem_type="Context", timestamp=None
+):
     mock_state.memory_graph.memories[memory_id] = {
         "id": memory_id,
         "content": content,
@@ -472,6 +472,7 @@ def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers)
 
 # ==================== Test Memory Update ====================
 
+
 def test_update_memory_success(client, mock_state, auth_headers):
     """Test successful memory update."""
     memory_id = "test-memory-123"
@@ -482,18 +483,12 @@ def test_update_memory_success(client, mock_state, auth_headers):
         "content": "Original content",
         "tags": ["original"],
         "importance": 0.5,
-        "timestamp": utc_now()
+        "timestamp": utc_now(),
     }
 
-    update_data = {
-        "content": "Updated content",
-        "tags": ["updated", "modified"],
-        "importance": 0.9
-    }
+    update_data = {"content": "Updated content", "tags": ["updated", "modified"], "importance": 0.9}
 
-    response = client.patch(f"/memory/{memory_id}",
-                           json=update_data,
-                           headers=auth_headers)
+    response = client.patch(f"/memory/{memory_id}", json=update_data, headers=auth_headers)
 
     assert response.status_code == 200
     data = response.get_json()
@@ -503,9 +498,9 @@ def test_update_memory_success(client, mock_state, auth_headers):
 
 def test_update_memory_not_found(client, mock_state, auth_headers):
     """Test updating non-existent memory."""
-    response = client.patch("/memory/non-existent-id",
-                           json={"content": "New content"},
-                           headers=auth_headers)
+    response = client.patch(
+        "/memory/non-existent-id", json={"content": "New content"}, headers=auth_headers
+    )
     assert response.status_code == 404
 
 
@@ -519,13 +514,13 @@ def test_update_memory_partial_fields(client, mock_state, auth_headers):
         "content": "Original content",
         "tags": ["original"],
         "importance": 0.5,
-        "metadata": json.dumps({"source": "test"})
+        "metadata": json.dumps({"source": "test"}),
     }
 
     # Update only tags
-    response = client.patch(f"/memory/{memory_id}",
-                           json={"tags": ["new", "tags"]},
-                           headers=auth_headers)
+    response = client.patch(
+        f"/memory/{memory_id}", json={"tags": ["new", "tags"]}, headers=auth_headers
+    )
 
     assert response.status_code == 200
     data = response.get_json()
@@ -533,6 +528,7 @@ def test_update_memory_partial_fields(client, mock_state, auth_headers):
 
 
 # ==================== Test Memory Delete ====================
+
 
 def test_delete_memory_success(client, mock_state, auth_headers):
     """Test successful memory deletion."""
@@ -542,13 +538,13 @@ def test_delete_memory_success(client, mock_state, auth_headers):
     mock_state.memory_graph.memories[memory_id] = {
         "id": memory_id,
         "content": "To be deleted",
-        "timestamp": utc_now()
+        "timestamp": utc_now(),
     }
 
     # Also add to Qdrant
     mock_state.qdrant.points[memory_id] = {
         "vector": [0.1] * 768,
-        "payload": {"content": "To be deleted"}
+        "payload": {"content": "To be deleted"},
     }
 
     response = client.delete(f"/memory/{memory_id}", headers=auth_headers)
@@ -568,6 +564,7 @@ def test_delete_memory_not_found(client, mock_state, auth_headers):
 
 # ==================== Test Memory By Tag ====================
 
+
 def test_memory_by_tag_single(client, mock_state, auth_headers):
     """Test retrieving memories by a single tag."""
     # Add some memories with tags
@@ -576,7 +573,7 @@ def test_memory_by_tag_single(client, mock_state, auth_headers):
         "content": "Python tutorial",
         "tags": ["python", "tutorial"],
         "importance": 0.8,
-        "timestamp": utc_now()
+        "timestamp": utc_now(),
     }
 
     response = client.get("/memory/by-tag?tags=python", headers=auth_headers)
@@ -588,8 +585,7 @@ def test_memory_by_tag_single(client, mock_state, auth_headers):
 
 def test_memory_by_tag_multiple(client, mock_state, auth_headers):
     """Test retrieving memories by multiple tags."""
-    response = client.get("/memory/by-tag?tags=python&tags=ai&tags=ml",
-                         headers=auth_headers)
+    response = client.get("/memory/by-tag?tags=python&tags=ai&tags=ml", headers=auth_headers)
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
@@ -603,6 +599,7 @@ def test_memory_by_tag_no_tags(client, mock_state, auth_headers):
 
 # ==================== Test Admin Reembed ====================
 
+
 def test_admin_reembed_success(client, mock_state, admin_headers):
     """Test successful re-embedding of memories."""
     # Add memories to reembed
@@ -610,13 +607,13 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
         "id": "mem1",
         "content": "First memory to reembed",
         "tags": ["test"],
-        "importance": 0.7
+        "importance": 0.7,
     }
     mock_state.memory_graph.memories["mem2"] = {
         "id": "mem2",
         "content": "Second memory to reembed",
         "tags": ["test"],
-        "importance": 0.8
+        "importance": 0.8,
     }
 
     # Mock OpenAI client - return one embedding per input (batch processing)
@@ -625,9 +622,9 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
         data=[Mock(embedding=[0.2] * 768), Mock(embedding=[0.3] * 768)]
     )
 
-    response = client.post("/admin/reembed",
-                          json={"batch_size": 10, "limit": 2},
-                          headers=admin_headers)
+    response = client.post(
+        "/admin/reembed", json={"batch_size": 10, "limit": 2}, headers=admin_headers
+    )
 
     assert response.status_code == 200
     data = response.get_json()
@@ -644,12 +641,12 @@ def test_admin_reembed_no_openai(client, mock_state, admin_headers):
     mock_state.memory_graph.memories["mem1"] = {
         "id": "mem1",
         "content": "Memory to reembed with fallback",
-        "tags": ["test"]
+        "tags": ["test"],
     }
 
-    response = client.post("/admin/reembed",
-                          json={"batch_size": 10, "limit": 1},
-                          headers=admin_headers)
+    response = client.post(
+        "/admin/reembed", json={"batch_size": 10, "limit": 1}, headers=admin_headers
+    )
 
     # Should return 503 when OpenAI is not available (reembed requires OpenAI)
     assert response.status_code == 503
@@ -661,9 +658,7 @@ def test_admin_reembed_no_qdrant(client, mock_state, admin_headers):
     """Test reembed fails when Qdrant not available."""
     mock_state.qdrant = None
 
-    response = client.post("/admin/reembed",
-                          json={"batch_size": 10},
-                          headers=admin_headers)
+    response = client.post("/admin/reembed", json={"batch_size": 10}, headers=admin_headers)
 
     assert response.status_code == 503
     data = response.get_json()
@@ -672,9 +667,9 @@ def test_admin_reembed_no_qdrant(client, mock_state, admin_headers):
 
 def test_admin_reembed_no_admin_token(client, mock_state, auth_headers):
     """Test reembed requires admin token."""
-    response = client.post("/admin/reembed",
-                          json={"batch_size": 10},
-                          headers=auth_headers)  # Regular auth, not admin
+    response = client.post(
+        "/admin/reembed", json={"batch_size": 10}, headers=auth_headers
+    )  # Regular auth, not admin
 
     assert response.status_code in [401, 403]
 
@@ -685,7 +680,7 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
     mock_state.memory_graph.memories["mem1"] = {
         "id": "mem1",
         "content": "Memory with existing embedding",
-        "tags": ["test"]
+        "tags": ["test"],
     }
 
     # Mock OpenAI - return one embedding per input (batch processing)
@@ -694,9 +689,9 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
         data=[Mock(embedding=[0.3] * 768)]  # One memory = one embedding
     )
 
-    response = client.post("/admin/reembed",
-                          json={"force": True, "limit": 1},
-                          headers=admin_headers)
+    response = client.post(
+        "/admin/reembed", json={"force": True, "limit": 1}, headers=admin_headers
+    )
 
     assert response.status_code == 200
     data = response.get_json()
@@ -705,11 +700,12 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
 
 # ==================== Test Consolidation ====================
 
+
 def test_consolidate_trigger(client, mock_state, auth_headers):
     """Test triggering consolidation tasks."""
-    response = client.post("/consolidate",
-                          json={"mode": "full"},  # API uses 'mode' not 'task'
-                          headers=auth_headers)
+    response = client.post(
+        "/consolidate", json={"mode": "full"}, headers=auth_headers  # API uses 'mode' not 'task'
+    )
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"  # API returns 'success' not 'triggered'
@@ -718,9 +714,7 @@ def test_consolidate_trigger(client, mock_state, auth_headers):
 
 def test_consolidate_invalid_task(client, mock_state, auth_headers):
     """Test consolidation with invalid task name - API accepts any task."""
-    response = client.post("/consolidate",
-                          json={"task": "invalid_task"},
-                          headers=auth_headers)
+    response = client.post("/consolidate", json={"task": "invalid_task"}, headers=auth_headers)
     assert response.status_code == 200  # API doesn't validate task names
 
 
@@ -735,6 +729,7 @@ def test_consolidate_status(client, mock_state, auth_headers):
 
 # ==================== Test Enrichment ====================
 
+
 def test_enrichment_status(client, mock_state, auth_headers):
     """Test enrichment status endpoint."""
     response = client.get("/enrichment/status", headers=auth_headers)
@@ -747,9 +742,9 @@ def test_enrichment_status(client, mock_state, auth_headers):
 
 def test_enrichment_reprocess(client, mock_state, admin_headers):
     """Test reprocessing memories for enrichment."""
-    response = client.post("/enrichment/reprocess",
-                          json={"ids": ["mem1", "mem2", "mem3"]},
-                          headers=admin_headers)
+    response = client.post(
+        "/enrichment/reprocess", json={"ids": ["mem1", "mem2", "mem3"]}, headers=admin_headers
+    )
 
     assert response.status_code == 202
     data = response.get_json()
@@ -759,13 +754,12 @@ def test_enrichment_reprocess(client, mock_state, admin_headers):
 
 def test_enrichment_reprocess_no_ids(client, mock_state, admin_headers):
     """Test reprocess with no IDs provided."""
-    response = client.post("/enrichment/reprocess",
-                          json={},
-                          headers=admin_headers)
+    response = client.post("/enrichment/reprocess", json={}, headers=admin_headers)
     assert response.status_code == 400
 
 
 # ==================== Test Association Creation ====================
+
 
 def test_create_association_all_relationship_types(client, mock_state, auth_headers):
     """Test creating associations with all new relationship types."""
@@ -774,21 +768,25 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
     mock_state.memory_graph.memories["mem2"] = {"id": "mem2", "content": "Memory 2"}
 
     relationship_types = [
-        "RELATES_TO", "LEADS_TO", "OCCURRED_BEFORE",
-        "PREFERS_OVER", "EXEMPLIFIES", "CONTRADICTS",
-        "REINFORCES", "INVALIDATED_BY", "EVOLVED_INTO",
-        "DERIVED_FROM", "PART_OF"
+        "RELATES_TO",
+        "LEADS_TO",
+        "OCCURRED_BEFORE",
+        "PREFERS_OVER",
+        "EXEMPLIFIES",
+        "CONTRADICTS",
+        "REINFORCES",
+        "INVALIDATED_BY",
+        "EVOLVED_INTO",
+        "DERIVED_FROM",
+        "PART_OF",
     ]
 
     for rel_type in relationship_types:
-        response = client.post("/associate",
-                              json={
-                                  "memory1_id": "mem1",
-                                  "memory2_id": "mem2",
-                                  "type": rel_type,
-                                  "strength": 0.8
-                              },
-                              headers=auth_headers)
+        response = client.post(
+            "/associate",
+            json={"memory1_id": "mem1", "memory2_id": "mem2", "type": rel_type, "strength": 0.8},
+            headers=auth_headers,
+        )
         assert response.status_code == 201, f"Failed for relationship type: {rel_type}"
         data = response.get_json()
         assert data["status"] == "success"
@@ -799,18 +797,17 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
     mock_state.memory_graph.memories["mem1"] = {"id": "mem1", "content": "Preferred method"}
     mock_state.memory_graph.memories["mem2"] = {"id": "mem2", "content": "Alternative method"}
 
-    response = client.post("/associate",
-                          json={
-                              "memory1_id": "mem1",
-                              "memory2_id": "mem2",
-                              "type": "PREFERS_OVER",
-                              "strength": 0.9,
-                              "properties": {
-                                  "reason": "Better performance",
-                                  "context": "Production environment"
-                              }
-                          },
-                          headers=auth_headers)
+    response = client.post(
+        "/associate",
+        json={
+            "memory1_id": "mem1",
+            "memory2_id": "mem2",
+            "type": "PREFERS_OVER",
+            "strength": 0.9,
+            "properties": {"reason": "Better performance", "context": "Production environment"},
+        },
+        headers=auth_headers,
+    )
 
     assert response.status_code == 201
     data = response.get_json()
@@ -818,6 +815,7 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
 
 
 # ==================== Test Startup Recall ====================
+
 
 def test_startup_recall(client, mock_state, auth_headers):
     """Test startup recall endpoint."""
@@ -828,7 +826,7 @@ def test_startup_recall(client, mock_state, auth_headers):
         "content": "Critical information",
         "importance": 0.95,
         "timestamp": now,
-        "tags": ["critical"]
+        "tags": ["critical"],
     }
 
     response = client.get("/startup-recall", headers=auth_headers)
@@ -841,6 +839,7 @@ def test_startup_recall(client, mock_state, auth_headers):
 
 # ==================== Test Analyze Endpoint ====================
 
+
 def test_analyze_endpoint(client, mock_state, auth_headers):
     """Test analytics endpoint."""
     # Add varied memories for analytics
@@ -849,14 +848,14 @@ def test_analyze_endpoint(client, mock_state, auth_headers):
         "content": "Architectural decision",
         "type": "Decision",
         "confidence": 0.9,
-        "importance": 0.85
+        "importance": 0.85,
     }
     mock_state.memory_graph.memories["pattern1"] = {
         "id": "pattern1",
         "content": "Common pattern",
         "type": "Pattern",
         "confidence": 0.7,
-        "importance": 0.6
+        "importance": 0.6,
     }
 
     response = client.get("/analyze", headers=auth_headers)
@@ -871,13 +870,12 @@ def test_analyze_endpoint(client, mock_state, auth_headers):
 
 # ==================== Test Error Handling ====================
 
+
 def test_falkordb_unavailable(client, mock_state, auth_headers):
     """Test graceful handling when FalkorDB is unavailable."""
     mock_state.memory_graph = None
 
-    response = client.post("/memory",
-                          json={"content": "Test memory"},
-                          headers=auth_headers)
+    response = client.post("/memory", json={"content": "Test memory"}, headers=auth_headers)
     assert response.status_code == 503
     data = response.get_json()
     assert "FalkorDB is unavailable" in data["message"]
@@ -885,19 +883,16 @@ def test_falkordb_unavailable(client, mock_state, auth_headers):
 
 def test_invalid_json_payload(client, mock_state, auth_headers):
     """Test handling of invalid JSON payload."""
-    response = client.post("/memory",
-                          data="This is not JSON",
-                          headers=auth_headers,
-                          content_type="application/json")
+    response = client.post(
+        "/memory", data="This is not JSON", headers=auth_headers, content_type="application/json"
+    )
     assert response.status_code == 400
 
 
 def test_missing_required_fields(client, mock_state, auth_headers):
     """Test validation of required fields."""
     # Missing content field
-    response = client.post("/memory",
-                          json={"tags": ["test"]},
-                          headers=auth_headers)
+    response = client.post("/memory", json={"tags": ["test"]}, headers=auth_headers)
     assert response.status_code == 400
     data = response.get_json()
     assert "'content' is required" in data["message"]
@@ -914,12 +909,11 @@ def test_authorization_required(client, mock_state):
 
 def test_invalid_timestamp_format(client, mock_state, auth_headers):
     """Test handling of invalid timestamp formats."""
-    response = client.post("/memory",
-                          json={
-                              "content": "Test memory",
-                              "timestamp": "not-a-valid-timestamp"
-                          },
-                          headers=auth_headers)
+    response = client.post(
+        "/memory",
+        json={"content": "Test memory", "timestamp": "not-a-valid-timestamp"},
+        headers=auth_headers,
+    )
     assert response.status_code == 400
     data = response.get_json()
     assert "timestamp" in data["message"].lower()
@@ -927,12 +921,11 @@ def test_invalid_timestamp_format(client, mock_state, auth_headers):
 
 def test_embedding_dimension_validation(client, mock_state, auth_headers):
     """Test validation of embedding dimensions."""
-    response = client.post("/memory",
-                          json={
-                              "content": "Test memory",
-                              "embedding": [0.1, 0.2]  # Wrong dimension
-                          },
-                          headers=auth_headers)
+    response = client.post(
+        "/memory",
+        json={"content": "Test memory", "embedding": [0.1, 0.2]},  # Wrong dimension
+        headers=auth_headers,
+    )
     assert response.status_code == 400
     data = response.get_json()
     assert str(config.VECTOR_SIZE) in data["message"]
@@ -989,6 +982,7 @@ def test_expand_related_memories_filters_strength_and_importance():
 
 
 # ==================== Test Rate Limiting (if implemented) ====================
+
 
 @pytest.mark.skip(reason="Rate limiting not yet implemented")
 def test_rate_limiting(client, mock_state, auth_headers):

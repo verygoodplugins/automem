@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from typing import Any, Callable, Dict, List, Set
-from flask import Blueprint, request, abort, jsonify
+
+from flask import Blueprint, abort, jsonify, request
 
 
 def _parse_metadata(raw: Any) -> Dict[str, Any]:
@@ -79,7 +80,9 @@ def create_admin_blueprint_full(
         # Ensure OpenAI and Qdrant are available
         openai_client = get_openai_client()
         if openai_client is None:
-            abort(503, description="OpenAI API key not configured - cannot generate real embeddings")
+            abort(
+                503, description="OpenAI API key not configured - cannot generate real embeddings"
+            )
 
         qdrant_client = get_qdrant_client()
         if qdrant_client is None:
@@ -140,26 +143,30 @@ def create_admin_blueprint_full(
             memory_id = row[0]
             content = row[1]
             if content:
-                to_process.append({
-                    "id": memory_id,
-                    "content": content,
-                    "tags": _parse_tags(row[2]),
-                    "importance": row[3] if row[3] is not None else 0.5,
-                    "timestamp": row[4],
-                    "type": row[5] or "Context",
-                    "confidence": row[6] if row[6] is not None else 0.6,
-                    "metadata": _parse_metadata(row[7]),
-                    "updated_at": row[8],
-                    "last_accessed": row[9],
-                })
+                to_process.append(
+                    {
+                        "id": memory_id,
+                        "content": content,
+                        "tags": _parse_tags(row[2]),
+                        "importance": row[3] if row[3] is not None else 0.5,
+                        "timestamp": row[4],
+                        "type": row[5] or "Context",
+                        "confidence": row[6] if row[6] is not None else 0.6,
+                        "metadata": _parse_metadata(row[7]),
+                        "updated_at": row[8],
+                        "last_accessed": row[9],
+                    }
+                )
 
         if not to_process:
-            return jsonify({
-                "status": "complete",
-                "message": "No memories found to reembed",
-                "processed": 0,
-                "total": 0
-            })
+            return jsonify(
+                {
+                    "status": "complete",
+                    "message": "No memories found to reembed",
+                    "processed": 0,
+                    "total": 0,
+                }
+            )
 
         processed = 0
         failed = 0
@@ -169,7 +176,7 @@ def create_admin_blueprint_full(
         for i in range(0, len(to_process), batch_size):
             batch = to_process[i : i + batch_size]
             texts = [mem["content"] for mem in batch]
-            
+
             try:
                 # Batch embedding request
                 resp = openai_client.embeddings.create(
@@ -177,7 +184,7 @@ def create_admin_blueprint_full(
                     model=embedding_model,
                     dimensions=get_vector_size(),
                 )
-                
+
                 points = []
                 for mem, data in zip(batch, resp.data):
                     embedding = data.embedding
@@ -193,13 +200,17 @@ def create_admin_blueprint_full(
                         "updated_at": mem["updated_at"],
                         "last_accessed": mem["last_accessed"],
                     }
-                    points.append(point_struct(id=mem["id"], vector=embedding, payload=payload_data))
-                
+                    points.append(
+                        point_struct(id=mem["id"], vector=embedding, payload=payload_data)
+                    )
+
                 if points:
                     qdrant_client.upsert(collection_name=collection_name, points=points)
                     processed += len(points)
-                    logger.info(f"Successfully reembedded batch of {len(points)} memories (preserving metadata)")
-                    
+                    logger.info(
+                        f"Successfully reembedded batch of {len(points)} memories (preserving metadata)"
+                    )
+
             except Exception as e:
                 logger.error(f"Failed to process batch starting at index {i}: {e}")
                 failed += len(batch)
@@ -266,24 +277,28 @@ def create_admin_blueprint_full(
         orphaned_ids = qdrant_ids - falkor_ids  # In Qdrant but not FalkorDB
 
         if dry_run:
-            return jsonify({
-                "status": "dry_run",
-                "falkordb_count": len(falkor_ids),
-                "qdrant_count": len(qdrant_ids),
-                "missing_count": len(missing_ids),
-                "orphaned_count": len(orphaned_ids),
-                "missing_sample": list(missing_ids)[:10],
-                "orphaned_sample": list(orphaned_ids)[:10],
-            })
+            return jsonify(
+                {
+                    "status": "dry_run",
+                    "falkordb_count": len(falkor_ids),
+                    "qdrant_count": len(qdrant_ids),
+                    "missing_count": len(missing_ids),
+                    "orphaned_count": len(orphaned_ids),
+                    "missing_sample": list(missing_ids)[:10],
+                    "orphaned_sample": list(orphaned_ids)[:10],
+                }
+            )
 
         if not missing_ids:
-            return jsonify({
-                "status": "already_synced",
-                "falkordb_count": len(falkor_ids),
-                "qdrant_count": len(qdrant_ids),
-                "synced": 0,
-                "orphaned_count": len(orphaned_ids),
-            })
+            return jsonify(
+                {
+                    "status": "already_synced",
+                    "falkordb_count": len(falkor_ids),
+                    "qdrant_count": len(qdrant_ids),
+                    "synced": 0,
+                    "orphaned_count": len(orphaned_ids),
+                }
+            )
 
         # Ensure OpenAI is available for embedding
         openai_client = get_openai_client()
@@ -316,18 +331,20 @@ def create_admin_blueprint_full(
                 memory_id = row[0]
                 content = row[1]
                 if content:
-                    to_process.append({
-                        "id": memory_id,
-                        "content": content,
-                        "tags": _parse_tags(row[2]),
-                        "importance": row[3] if row[3] is not None else 0.5,
-                        "timestamp": row[4],
-                        "type": row[5] or "Context",
-                        "confidence": row[6] if row[6] is not None else 0.6,
-                        "metadata": _parse_metadata(row[7]),
-                        "updated_at": row[8],
-                        "last_accessed": row[9],
-                    })
+                    to_process.append(
+                        {
+                            "id": memory_id,
+                            "content": content,
+                            "tags": _parse_tags(row[2]),
+                            "importance": row[3] if row[3] is not None else 0.5,
+                            "timestamp": row[4],
+                            "type": row[5] or "Context",
+                            "confidence": row[6] if row[6] is not None else 0.6,
+                            "metadata": _parse_metadata(row[7]),
+                            "updated_at": row[8],
+                            "last_accessed": row[9],
+                        }
+                    )
 
         # Generate embeddings and upsert to Qdrant
         synced = 0
@@ -359,7 +376,9 @@ def create_admin_blueprint_full(
                         "updated_at": mem["updated_at"],
                         "last_accessed": mem["last_accessed"],
                     }
-                    points.append(point_struct(id=mem["id"], vector=embedding, payload=payload_data))
+                    points.append(
+                        point_struct(id=mem["id"], vector=embedding, payload=payload_data)
+                    )
 
                 if points:
                     qdrant_client.upsert(collection_name=collection_name, points=points)

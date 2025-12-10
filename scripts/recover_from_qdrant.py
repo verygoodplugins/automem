@@ -13,8 +13,8 @@ from typing import Any, Dict, List
 
 import requests
 from dotenv import load_dotenv
-from qdrant_client import QdrantClient
 from falkordb import FalkorDB
+from qdrant_client import QdrantClient
 
 # Load environment
 load_dotenv()
@@ -33,10 +33,10 @@ def get_all_memories() -> List[Dict[str, Any]]:
     """Fetch all memories from Qdrant."""
     print(f"🔍 Connecting to Qdrant at {QDRANT_URL}")
     client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-    
+
     memories = []
     offset = None
-    
+
     while True:
         print(f"📥 Fetching batch (offset: {offset})...")
         result = client.scroll(
@@ -46,12 +46,12 @@ def get_all_memories() -> List[Dict[str, Any]]:
             with_payload=True,
             with_vectors=True,
         )
-        
+
         points, next_offset = result
-        
+
         if not points:
             break
-            
+
         for point in points:
             memory = {
                 "id": point.id,
@@ -59,15 +59,15 @@ def get_all_memories() -> List[Dict[str, Any]]:
                 "vector": point.vector,
             }
             memories.append(memory)
-        
+
         print(f"   Got {len(points)} memories (total: {len(memories)})")
-        
+
         if next_offset is None:
             break
-            
+
         offset = next_offset
         time.sleep(0.1)  # Rate limiting
-    
+
     print(f"✅ Fetched {len(memories)} total memories from Qdrant\n")
     return memories
 
@@ -76,11 +76,11 @@ def restore_memory_to_graph_only(memory: Dict[str, Any], client) -> bool:
     """Restore a single memory directly to FalkorDB (skip Qdrant to avoid duplicates)."""
     payload = memory["payload"]
     memory_id = memory["id"]
-    
+
     try:
         # Store directly to FalkorDB graph
         g = client.select_graph("memories")
-        
+
         # Build metadata string (exclude reserved fields to prevent overwriting)
         RESERVED_FIELDS = {"type", "confidence", "content", "timestamp", "importance", "tags", "id"}
         metadata_items = []
@@ -95,13 +95,13 @@ def restore_memory_to_graph_only(memory: Dict[str, Any], client) -> bool:
                 else:
                     value_str = str(value).replace("'", "\\'")
                 metadata_items.append(f"{key}: '{value_str}'")
-        
+
         metadata_str = ", ".join(metadata_items) if metadata_items else ""
-        
+
         # Build tags string
         tags = payload.get("tags", [])
         tags_str = ", ".join([f"'{tag}'" for tag in tags]) if tags else ""
-        
+
         # Create memory node
         query = f"""
         CREATE (m:Memory {{
@@ -115,10 +115,10 @@ def restore_memory_to_graph_only(memory: Dict[str, Any], client) -> bool:
             {', ' + metadata_str if metadata_str else ''}
         }})
         """
-        
+
         g.query(query, {"content": payload.get("content", "")})
         return True
-        
+
     except Exception as e:
         print(f"   ❌ Error: {e}")
         return False
@@ -130,7 +130,7 @@ def main():
     print("🔧 AutoMem Recovery Tool - Rebuild FalkorDB from Qdrant")
     print("=" * 60)
     print()
-    
+
     # Initialize FalkorDB client
     print(f"🔌 Connecting to FalkorDB at {FALKORDB_HOST}:{FALKORDB_PORT}")
     try:
@@ -138,13 +138,13 @@ def main():
             host=FALKORDB_HOST,
             port=FALKORDB_PORT,
             password=FALKORDB_PASSWORD,
-            username="default" if FALKORDB_PASSWORD else None
+            username="default" if FALKORDB_PASSWORD else None,
         )
         print("✅ Connected to FalkorDB\n")
     except Exception as e:
         print(f"❌ Failed to connect to FalkorDB: {e}")
         sys.exit(1)
-    
+
     # Clear existing graph
     print("🗑️  Clearing existing graph data...")
     try:
@@ -153,35 +153,35 @@ def main():
         print("✅ Graph cleared\n")
     except Exception as e:
         print(f"⚠️  Could not clear graph: {e}\n")
-    
+
     # Fetch all memories from Qdrant
     memories = get_all_memories()
-    
+
     if not memories:
         print("❌ No memories found in Qdrant!")
         sys.exit(1)
-    
+
     # Restore to FalkorDB (skip Qdrant to avoid duplicates)
     print(f"🔄 Restoring {len(memories)} memories to FalkorDB (without duplicating in Qdrant)...")
     print()
-    
+
     success_count = 0
     failed_count = 0
-    
+
     for i, memory in enumerate(memories, 1):
         content_preview = memory["payload"].get("content", "")[:60]
         print(f"[{i}/{len(memories)}] {content_preview}...")
-        
+
         if restore_memory_to_graph_only(memory, client):
             success_count += 1
             print(f"   ✅ Restored")
         else:
             failed_count += 1
-        
+
         # Progress update
         if i % 10 == 0:
             print(f"\n💤 Progress: {success_count} ✅ / {failed_count} ❌\n")
-    
+
     print()
     print("=" * 60)
     print(f"✅ Recovery Complete!")

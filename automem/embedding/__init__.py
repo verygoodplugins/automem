@@ -7,6 +7,7 @@ Provides abstraction over different embedding backends:
 """
 
 from .provider import EmbeddingProvider
+
 # Optional backends: guard imports to avoid hard dependencies at import time
 try:
     from .openai import OpenAIEmbeddingProvider  # type: ignore

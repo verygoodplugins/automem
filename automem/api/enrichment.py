@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-from flask import Blueprint, jsonify, request, abort
+
+from flask import Blueprint, abort, jsonify, request
 
 
 def create_enrichment_blueprint(
@@ -52,11 +53,15 @@ def create_enrichment_blueprint(
         for memory_id in ids:
             enqueue_enrichment(memory_id, forced=True)
 
-        return jsonify({
-            "status": "queued",
-            "count": len(ids),
-            "ids": sorted(ids),
-        }), 202
+        return (
+            jsonify(
+                {
+                    "status": "queued",
+                    "count": len(ids),
+                    "ids": sorted(ids),
+                }
+            ),
+            202,
+        )
 
     return bp
-

@@ -4,7 +4,8 @@ import json
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Set
-from flask import Blueprint, request, abort, jsonify
+
+from flask import Blueprint, abort, jsonify, request
 
 
 def create_memory_blueprint(
@@ -427,6 +428,7 @@ def create_memory_blueprint_full(
                     # Try to use HTTP models selector if available
                     try:
                         from qdrant_client.http import models as http_models  # type: ignore
+
                         selector = http_models.PointIdsList(points=[memory_id])
                     except Exception as e:
                         logger.warning(f"Failed to import qdrant_client.http.models: {e}")
@@ -479,7 +481,9 @@ def create_memory_blueprint_full(
             if accessed_ids:
                 on_access(accessed_ids)
 
-        return jsonify({"status": "success", "tags": tags, "count": len(memories), "memories": memories})
+        return jsonify(
+            {"status": "success", "tags": tags, "count": len(memories), "memories": memories}
+        )
 
     @bp.route("/associate", methods=["POST"])
     def associate() -> Any:
@@ -545,4 +549,3 @@ def create_memory_blueprint_full(
         return jsonify(response), 201
 
     return bp
-

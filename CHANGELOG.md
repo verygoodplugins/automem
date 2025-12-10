@@ -337,7 +337,7 @@ All notable changes to AutoMem will be documented in this file.
   - Rewrote `embedding_worker()` to accumulate and batch-process memories
   - Added `_process_embedding_batch()` helper function
   - Extracted `_store_embedding_in_qdrant()` for reusability
-- **Impact**: 
+- **Impact**:
   - 40-50% reduction in API calls and overhead
   - Better throughput during high-memory periods
   - $8-15/year savings at 1000 memories/day
@@ -388,7 +388,7 @@ All notable changes to AutoMem will be documented in this file.
   - Added structured logging to `/recall` endpoint with query, latency, results, filters
   - Added structured logging to `/memory` (store) endpoint with type, size, latency, status
   - Logs include `extra={}` dict with machine-parseable fields
-- **Impact**: 
+- **Impact**:
   - Easy performance analysis via log aggregation
   - Better debugging for production issues
   - Foundation for metrics dashboards
@@ -469,7 +469,7 @@ All notable changes to AutoMem will be documented in this file.
 #### Fixed - Memory Type Pollution (Critical)
 - **Issue**: 490/773 memories (64%) had invalid types from recovery script bug
 - **Root Cause**: Recovery script flattened `metadata.type` as top-level property, overwriting actual memory type
-- **Fix**: 
+- **Fix**:
   - Added `RESERVED_FIELDS` filter in `scripts/recover_from_qdrant.py` to exclude type, confidence, content, etc.
   - Created `scripts/cleanup_memory_types.py` to reclassify all 490 polluted memories
   - 100% success rate - all memories reclassified to 7 valid types
@@ -496,12 +496,12 @@ All notable changes to AutoMem will be documented in this file.
 
 **Phase 3 - Project Name Extraction:**
 - **Issue**: Project extraction regex required `Project ProjectName` but memories use `project: project-name`
-- **Fix**: Added pattern `r"(?:in |on )?project:\s+([a-z][a-z0-9\-]+)"` 
+- **Fix**: Added pattern `r"(?:in |on )?project:\s+([a-z][a-z0-9\-]+)"`
 - **Impact**: Now correctly extracts claude-automation-hub, mcp-automem, autochat from session starts
 
 #### Added - LLM-Based Memory Classification
 - **Feature**: Hybrid classification system (regex first, LLM fallback)
-- **Implementation**: 
+- **Implementation**:
   - Enhanced `MemoryClassifier` with `_classify_with_llm()` method
   - Uses GPT-4o-mini for accurate, cost-effective classification
   - Falls back to LLM only when regex patterns don't match (~30% of cases)
@@ -512,7 +512,7 @@ All notable changes to AutoMem will be documented in this file.
 
 #### Added - Automated Backups
 - **GitHub Actions**: Workflow runs every 6 hours, backs up to S3
-- **Railway Volumes**: Built-in volume backups for redundancy  
+- **Railway Volumes**: Built-in volume backups for redundancy
 - **Dual Storage**: FalkorDB (primary) + Qdrant (backup) provides data resilience
 - **Documentation**: Consolidated all backup docs into `docs/MONITORING_AND_BACKUPS.md`
 

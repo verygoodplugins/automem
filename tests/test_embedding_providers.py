@@ -1,26 +1,26 @@
 """Comprehensive test suite for embedding providers."""
 
 import os
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
+
 import pytest
 
 # Test imports with fallback for missing packages
 try:
-    from automem.embedding.provider import EmbeddingProvider
     from automem.embedding.placeholder import PlaceholderEmbeddingProvider
+    from automem.embedding.provider import EmbeddingProvider
 except ImportError:
     pytest.skip("Embedding module not available", allow_module_level=True)
 
 
 # ==================== Fixtures ====================
 
+
 @pytest.fixture
 def mock_openai_client():
     """Mock OpenAI client for testing."""
     mock_client = Mock()
-    mock_client.embeddings.create.return_value = Mock(
-        data=[Mock(embedding=[0.1] * 768)]
-    )
+    mock_client.embeddings.create.return_value = Mock(data=[Mock(embedding=[0.1] * 768)])
     return mock_client
 
 
@@ -38,27 +38,31 @@ def reset_provider_state(monkeypatch):
     """Reset embedding provider state between tests."""
     # Reset any cached state
     import app
-    if hasattr(app.state, 'embedding_provider'):
+
+    if hasattr(app.state, "embedding_provider"):
         app.state.embedding_provider = None
     yield
     # Cleanup after test
-    if hasattr(app.state, 'embedding_provider'):
+    if hasattr(app.state, "embedding_provider"):
         app.state.embedding_provider = None
 
 
 @pytest.fixture
 def mock_env_vars(monkeypatch):
     """Helper to set environment variables."""
+
     def _set_vars(**kwargs):
         for key, value in kwargs.items():
             if value is None:
                 monkeypatch.delenv(key, raising=False)
             else:
                 monkeypatch.setenv(key, value)
+
     return _set_vars
 
 
 # ==================== PlaceholderEmbeddingProvider Tests ====================
+
 
 def test_placeholder_provider_deterministic():
     """Test that same text always produces same embedding."""
@@ -120,7 +124,8 @@ def test_placeholder_provider_name():
 
 # ==================== FastEmbedProvider Tests ====================
 
-@patch('automem.embedding.fastembed.TextEmbedding')
+
+@patch("automem.embedding.fastembed.TextEmbedding")
 def test_fastembed_provider_initialization(mock_text_embedding_class, mock_fastembed_model):
     """Test FastEmbed provider initialization."""
     # Mock the TextEmbedding class
@@ -133,11 +138,11 @@ def test_fastembed_provider_initialization(mock_text_embedding_class, mock_faste
     # Verify model was initialized with correct parameters
     mock_text_embedding_class.assert_called_once()
     call_kwargs = mock_text_embedding_class.call_args[1]
-    assert call_kwargs['model_name'] == 'BAAI/bge-base-en-v1.5'
-    assert 'cache_dir' in call_kwargs
+    assert call_kwargs["model_name"] == "BAAI/bge-base-en-v1.5"
+    assert "cache_dir" in call_kwargs
 
 
-@patch('automem.embedding.fastembed.TextEmbedding')
+@patch("automem.embedding.fastembed.TextEmbedding")
 def test_fastembed_provider_dimension_validation(mock_text_embedding_class, mock_fastembed_model):
     """Test dimension mismatch warning."""
     import numpy as np
@@ -151,7 +156,7 @@ def test_fastembed_provider_dimension_validation(mock_text_embedding_class, mock
     from automem.embedding.fastembed import FastEmbedProvider
 
     # Request 768 but model actually returns 384
-    with patch('automem.embedding.fastembed.logger') as mock_logger:
+    with patch("automem.embedding.fastembed.logger") as mock_logger:
         provider = FastEmbedProvider(dimension=768)
 
         # Should log warning about mismatch
@@ -170,15 +175,16 @@ def test_fastembed_provider_dimension_validation(mock_text_embedding_class, mock
     assert provider.dimension() == 384
 
 
-@patch('automem.embedding.fastembed.TextEmbedding')
+@patch("automem.embedding.fastembed.TextEmbedding")
 def test_fastembed_provider_batch_processing(mock_text_embedding_class, mock_fastembed_model):
     """Test batch embedding with FastEmbed."""
     # Mock numpy arrays that have tolist() method
     import numpy as np
+
     mock_fastembed_model.embed.return_value = [
         np.array([0.1] * 768),
         np.array([0.2] * 768),
-        np.array([0.3] * 768)
+        np.array([0.3] * 768),
     ]
     mock_fastembed_model.dimension = 768
     mock_text_embedding_class.return_value = mock_fastembed_model
@@ -197,7 +203,7 @@ def test_fastembed_provider_batch_processing(mock_text_embedding_class, mock_fas
     assert actual_call == texts
 
 
-@patch('automem.embedding.fastembed.TextEmbedding')
+@patch("automem.embedding.fastembed.TextEmbedding")
 def test_fastembed_provider_model_selection(mock_text_embedding_class):
     """Test automatic model selection based on dimension."""
     from automem.embedding.fastembed import FastEmbedProvider
@@ -205,13 +211,13 @@ def test_fastembed_provider_model_selection(mock_text_embedding_class):
     # Test 384 dimension
     provider = FastEmbedProvider(dimension=384)
     call_kwargs = mock_text_embedding_class.call_args[1]
-    assert 'bge-small' in call_kwargs['model_name'] or 'MiniLM' in call_kwargs['model_name']
+    assert "bge-small" in call_kwargs["model_name"] or "MiniLM" in call_kwargs["model_name"]
 
     # Test 1024 dimension
     mock_text_embedding_class.reset_mock()
     provider = FastEmbedProvider(dimension=1024)
     call_kwargs = mock_text_embedding_class.call_args[1]
-    assert 'bge-large' in call_kwargs['model_name']
+    assert "bge-large" in call_kwargs["model_name"]
 
 
 def test_fastembed_provider_import_failure():
@@ -219,6 +225,7 @@ def test_fastembed_provider_import_failure():
     # The module might be available, so we just test that it exists or doesn't
     try:
         from automem.embedding.fastembed import FastEmbedProvider
+
         assert FastEmbedProvider is not None
     except ImportError:
         # If import fails, that's also fine - it means fastembed not installed
@@ -227,34 +234,31 @@ def test_fastembed_provider_import_failure():
 
 # ==================== OpenAIEmbeddingProvider Tests ====================
 
+
 def test_openai_provider_initialization(mock_openai_client):
     """Test OpenAI provider initialization."""
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
 
         from automem.embedding.openai import OpenAIEmbeddingProvider
 
         provider = OpenAIEmbeddingProvider(
-            api_key="test-key",
-            model="text-embedding-3-small",
-            dimension=768
+            api_key="test-key", model="text-embedding-3-small", dimension=768
         )
 
         # Verify client was created with timeout and retry
         mock_openai_class.assert_called_once()
         call_kwargs = mock_openai_class.call_args[1]
-        assert call_kwargs['api_key'] == "test-key"
-        assert 'timeout' in call_kwargs
-        assert 'max_retries' in call_kwargs
+        assert call_kwargs["api_key"] == "test-key"
+        assert "timeout" in call_kwargs
+        assert "max_retries" in call_kwargs
 
 
 def test_openai_provider_single_embedding(mock_openai_client):
     """Test single text embedding with OpenAI."""
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
-        mock_openai_client.embeddings.create.return_value = Mock(
-            data=[Mock(embedding=[0.5] * 768)]
-        )
+        mock_openai_client.embeddings.create.return_value = Mock(data=[Mock(embedding=[0.5] * 768)])
 
         from automem.embedding.openai import OpenAIEmbeddingProvider
 
@@ -266,15 +270,13 @@ def test_openai_provider_single_embedding(mock_openai_client):
 
         # Verify API call
         mock_openai_client.embeddings.create.assert_called_once_with(
-            model="text-embedding-3-small",
-            input="test text",
-            dimensions=768
+            model="text-embedding-3-small", input="test text", dimensions=768
         )
 
 
 def test_openai_provider_batch_embedding(mock_openai_client):
     """Test batch embedding with OpenAI."""
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
 
         # Mock batch response
@@ -282,7 +284,7 @@ def test_openai_provider_batch_embedding(mock_openai_client):
             data=[
                 Mock(embedding=[0.1] * 768),
                 Mock(embedding=[0.2] * 768),
-                Mock(embedding=[0.3] * 768)
+                Mock(embedding=[0.3] * 768),
             ]
         )
 
@@ -300,7 +302,7 @@ def test_openai_provider_batch_embedding(mock_openai_client):
 
 def test_openai_provider_dimension_validation(mock_openai_client):
     """Test dimension validation in OpenAI provider."""
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
 
         # Mock response with wrong dimension
@@ -313,7 +315,9 @@ def test_openai_provider_dimension_validation(mock_openai_client):
         provider = OpenAIEmbeddingProvider(api_key="test-key", dimension=768)
 
         # Should raise error for dimension mismatch
-        with pytest.raises(ValueError, match="OpenAI embedding length 1536 != configured dimension 768"):
+        with pytest.raises(
+            ValueError, match="OpenAI embedding length 1536 != configured dimension 768"
+        ):
             provider.generate_embedding("test")
 
 
@@ -322,6 +326,7 @@ def test_openai_provider_import_failure():
     # The module might be available, so we just test that it exists or doesn't
     try:
         from automem.embedding.openai import OpenAIEmbeddingProvider
+
         assert OpenAIEmbeddingProvider is not None
     except ImportError:
         # If import fails, that's also fine - it means openai not installed
@@ -330,12 +335,13 @@ def test_openai_provider_import_failure():
 
 # ==================== Provider Selection Logic Tests ====================
 
+
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "EMBEDDING_PROVIDER": "auto"})
 def test_provider_selection_auto_with_openai(mock_openai_client):
     """Test auto-selection prefers OpenAI when API key is available."""
     import app
 
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
 
         app.init_embedding_provider()
@@ -345,22 +351,24 @@ def test_provider_selection_auto_with_openai(mock_openai_client):
 
 
 @patch.dict(os.environ, {"EMBEDDING_PROVIDER": "auto"}, clear=True)
-@patch('automem.embedding.fastembed.TextEmbedding')
+@patch("automem.embedding.fastembed.TextEmbedding")
 def test_provider_selection_auto_without_openai(mock_text_embedding_class, mock_fastembed_model):
     """Test auto-selection falls back to FastEmbed without API key."""
     import app
 
     # Remove any existing OpenAI key
-    if 'OPENAI_API_KEY' in os.environ:
-        del os.environ['OPENAI_API_KEY']
+    if "OPENAI_API_KEY" in os.environ:
+        del os.environ["OPENAI_API_KEY"]
 
     mock_text_embedding_class.return_value = mock_fastembed_model
 
     app.init_embedding_provider()
 
     assert app.state.embedding_provider is not None
-    assert "fastembed" in app.state.embedding_provider.provider_name() or \
-           "placeholder" in app.state.embedding_provider.provider_name()
+    assert (
+        "fastembed" in app.state.embedding_provider.provider_name()
+        or "placeholder" in app.state.embedding_provider.provider_name()
+    )
 
 
 @patch.dict(os.environ, {"EMBEDDING_PROVIDER": "auto"}, clear=True)
@@ -369,11 +377,13 @@ def test_provider_selection_auto_placeholder_fallback():
     import app
 
     # Clear OPENAI_API_KEY to ensure OpenAI isn't selected
-    if 'OPENAI_API_KEY' in os.environ:
-        del os.environ['OPENAI_API_KEY']
+    if "OPENAI_API_KEY" in os.environ:
+        del os.environ["OPENAI_API_KEY"]
 
     # Mock fastembed to fail
-    with patch('automem.embedding.fastembed.TextEmbedding', side_effect=ImportError("Mock failure")):
+    with patch(
+        "automem.embedding.fastembed.TextEmbedding", side_effect=ImportError("Mock failure")
+    ):
         app.state.embedding_provider = None  # Reset state
         app.init_embedding_provider()
 
@@ -387,7 +397,7 @@ def test_provider_selection_explicit_openai(mock_openai_client):
     """Test explicit OpenAI provider selection."""
     import app
 
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
 
         app.init_embedding_provider()
@@ -401,15 +411,15 @@ def test_provider_selection_openai_no_key():
     import app
 
     # Remove API key
-    if 'OPENAI_API_KEY' in os.environ:
-        del os.environ['OPENAI_API_KEY']
+    if "OPENAI_API_KEY" in os.environ:
+        del os.environ["OPENAI_API_KEY"]
 
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY not set"):
         app.init_embedding_provider()
 
 
 @patch.dict(os.environ, {"EMBEDDING_PROVIDER": "local"})
-@patch('automem.embedding.fastembed.TextEmbedding')
+@patch("automem.embedding.fastembed.TextEmbedding")
 def test_provider_selection_explicit_local(mock_text_embedding_class, mock_fastembed_model):
     """Test explicit local provider selection."""
     import app
@@ -432,6 +442,7 @@ def test_provider_selection_explicit_placeholder():
 
 
 # ==================== Integration Tests with app.py ====================
+
 
 def test_init_embedding_provider_caching():
     """Test that provider is only initialized once."""
@@ -496,9 +507,10 @@ def test_generate_embedding_fallback():
 
 # ==================== Error Handling Tests ====================
 
+
 def test_provider_network_error_handling(mock_openai_client):
     """Test handling of network errors in provider."""
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
 
         # Simulate network error
@@ -544,7 +556,7 @@ def test_provider_initialization_failure_recovery(monkeypatch):
 
     # Mock environment to ensure no OpenAI key is available
     with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
-        with patch('automem.embedding.fastembed.TextEmbedding', side_effect=failing_init):
+        with patch("automem.embedding.fastembed.TextEmbedding", side_effect=failing_init):
             # Should fall back to placeholder when both OpenAI and FastEmbed fail
             app.state.embedding_provider = None
             app.init_embedding_provider()
@@ -555,6 +567,7 @@ def test_provider_initialization_failure_recovery(monkeypatch):
 
 
 # ==================== Provider Feature Tests ====================
+
 
 def test_placeholder_hash_stability():
     """Test that placeholder uses stable hashing."""
@@ -575,7 +588,7 @@ def test_placeholder_hash_stability():
         assert emb == embeddings[0], "Hash-based embedding should be stable"
 
 
-@patch('automem.embedding.fastembed.TextEmbedding')
+@patch("automem.embedding.fastembed.TextEmbedding")
 def test_fastembed_model_caching(mock_text_embedding_class, mock_fastembed_model):
     """Test that FastEmbed uses model caching."""
     from automem.embedding.fastembed import FastEmbedProvider
@@ -586,37 +599,37 @@ def test_fastembed_model_caching(mock_text_embedding_class, mock_fastembed_model
 
     # Check cache_dir was set
     call_kwargs = mock_text_embedding_class.call_args[1]
-    assert 'cache_dir' in call_kwargs
-    assert 'automem/models' in call_kwargs['cache_dir'] or \
-           '.config/automem' in call_kwargs['cache_dir']
+    assert "cache_dir" in call_kwargs
+    assert (
+        "automem/models" in call_kwargs["cache_dir"]
+        or ".config/automem" in call_kwargs["cache_dir"]
+    )
 
 
 def test_openai_retry_configuration(mock_openai_client):
     """Test OpenAI client retry configuration."""
-    with patch('automem.embedding.openai.OpenAI') as mock_openai_class:
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
 
         from automem.embedding.openai import OpenAIEmbeddingProvider
 
-        provider = OpenAIEmbeddingProvider(
-            api_key="test-key",
-            timeout=30.0,
-            max_retries=5
-        )
+        provider = OpenAIEmbeddingProvider(api_key="test-key", timeout=30.0, max_retries=5)
 
         # Verify timeout and retry settings
         call_kwargs = mock_openai_class.call_args[1]
-        assert call_kwargs['timeout'] == 30.0
-        assert call_kwargs['max_retries'] == 5
+        assert call_kwargs["timeout"] == 30.0
+        assert call_kwargs["max_retries"] == 5
 
 
 # ==================== End-to-End Tests ====================
 
+
 @patch.dict(os.environ, {"EMBEDDING_PROVIDER": "placeholder", "API_TOKEN": "", "ADMIN_TOKEN": ""})
 def test_end_to_end_memory_storage_with_provider(monkeypatch):
     """Test complete flow of storing memory with embedding provider."""
-    import app
     import json
+
+    import app
 
     # Reset state
     app.state = app.ServiceState()
@@ -637,7 +650,7 @@ def test_end_to_end_memory_storage_with_provider(monkeypatch):
     response = client.post(
         "/memory",
         data=json.dumps({"content": "Test memory with provider"}),
-        content_type="application/json"
+        content_type="application/json",
     )
 
     assert response.status_code == 201

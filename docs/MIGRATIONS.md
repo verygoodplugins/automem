@@ -200,7 +200,7 @@ python scripts/reembed_embeddings.py
 1. **Check batch size**: Script uses batches of 100 by default
 2. **Parallel processing**: Use `--workers` flag (if implemented)
 3. **Spot check first**: Test on a subset before full migration
-4. **Use cheaper model for testing**: 
+4. **Use cheaper model for testing**:
    ```bash
    export EMBEDDING_MODEL=text-embedding-3-small
    python scripts/reembed_embeddings.py --dry-run
@@ -219,7 +219,7 @@ python scripts/reembed_embeddings.py
    ```bash
    # FalkorDB
    docker exec automem-falkordb-1 redis-cli --rdb /data/dump.rdb
-   
+
    # Qdrant
    curl -X POST http://localhost:6333/collections/memories/snapshots
    ```

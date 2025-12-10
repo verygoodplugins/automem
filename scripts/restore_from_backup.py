@@ -84,9 +84,7 @@ class AutoMemRestore:
 
     def find_backup_by_timestamp(self, backup_type: str, timestamp: str) -> Path:
         """Find backup file by timestamp."""
-        backup_file = (
-            self.backup_dir / backup_type / f"{backup_type}_{timestamp}.json.gz"
-        )
+        backup_file = self.backup_dir / backup_type / f"{backup_type}_{timestamp}.json.gz"
         if not backup_file.exists():
             raise FileNotFoundError(f"Backup not found: {backup_file}")
         return backup_file
@@ -123,9 +121,7 @@ class AutoMemRestore:
 
         # Warning about existing data
         existing_count = graph.query("MATCH (n) RETURN count(*) as count")
-        existing_nodes = (
-            existing_count.result_set[0][0] if existing_count.result_set else 0
-        )
+        existing_nodes = existing_count.result_set[0][0] if existing_count.result_set else 0
 
         if existing_nodes > 0:
             if self.merge:
@@ -187,10 +183,7 @@ class AutoMemRestore:
 
                 # Set initial relevance_score based on importance, or default to 0.5
                 # This prevents old memories from being immediately deleted
-                if (
-                    "relevance_score" not in props
-                    or props.get("relevance_score") is None
-                ):
+                if "relevance_score" not in props or props.get("relevance_score") is None:
                     importance = props.get("importance", 0.5) or 0.5
                     # Base relevance on importance, but ensure minimum of 0.3 to prevent deletion
                     props["relevance_score"] = max(0.3, float(importance))
@@ -223,9 +216,7 @@ class AutoMemRestore:
         )
 
         # Restore relationships using UUID matching
-        logger.info(
-            f"   📥 Restoring {len(backup_data['relationships'])} relationships..."
-        )
+        logger.info(f"   📥 Restoring {len(backup_data['relationships'])} relationships...")
         rel_created = 0
         rel_skipped = 0
 
@@ -256,9 +247,7 @@ class AutoMemRestore:
                 source_backup_id not in node_backup_id_to_props
                 or target_backup_id not in node_backup_id_to_props
             ):
-                logger.warning(
-                    f"      Skipping relationship {rel['type']} - missing node IDs"
-                )
+                logger.warning(f"      Skipping relationship {rel['type']} - missing node IDs")
                 continue
 
             source_labels, source_props = node_backup_id_to_props[source_backup_id]
@@ -404,13 +393,11 @@ class AutoMemRestore:
         batch_size = 100
 
         for i in range(0, len(backup_data["points"]), batch_size):
-            batch = backup_data["points"][i:i + batch_size]
+            batch = backup_data["points"][i : i + batch_size]
             logger.info(f"      Progress: {i}/{len(backup_data['points'])}")
 
             points = [
-                PointStruct(
-                    id=point["id"], vector=point["vector"], payload=point["payload"]
-                )
+                PointStruct(id=point["id"], vector=point["vector"], payload=point["payload"])
                 for point in batch
             ]
 

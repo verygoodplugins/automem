@@ -32,14 +32,15 @@ logger = logging.getLogger(__name__)
 class GraphLike(Protocol):
     """Protocol describing the single method we rely on from FalkorDB graphs."""
 
-    def query(self, query: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        ...
+    def query(self, query: str, params: Optional[Dict[str, Any]] = None) -> Any: ...
 
 
 class VectorStoreProtocol(Protocol):
     """Minimal protocol for the vector store client used by the consolidator."""
 
-    def delete(self, collection_name: str, points_selector: Any) -> Any:  # pragma: no cover - protocol definition
+    def delete(
+        self, collection_name: str, points_selector: Any
+    ) -> Any:  # pragma: no cover - protocol definition
         ...
 
 
@@ -124,7 +125,9 @@ class MemoryConsolidator:
         self.archive_threshold = 0.2  # Archive below this relevance
         self.delete_threshold = 0.05  # Delete below this (very old, unused)
 
-    def _query_graph(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Sequence[Any]]:
+    def _query_graph(
+        self, query: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Sequence[Any]]:
         """Execute graph query and return the raw result set from FalkorDB."""
 
         params = params or {}
@@ -141,7 +144,7 @@ class MemoryConsolidator:
     def _get_relationship_count_cached_impl(self, memory_id: str, hour_key: int) -> int:
         """
         Implementation of relationship count query with caching.
-        
+
         The hour_key parameter causes cache invalidation every hour,
         balancing freshness with performance (~80% query reduction).
         """
@@ -153,7 +156,7 @@ class MemoryConsolidator:
         if rel_result and len(rel_result[0]) > 0 and rel_result[0][0] is not None:
             return int(rel_result[0][0])
         return 0
-    
+
     def _get_relationship_count(self, memory_id: str) -> int:
         """Get relationship count for a memory with hourly cache invalidation."""
         hour_key = int(time.time() / 3600)  # Changes every hour
@@ -164,9 +167,7 @@ class MemoryConsolidator:
             return 0
 
     def calculate_relevance_score(
-        self,
-        memory: Dict[str, Any],
-        current_time: datetime = None
+        self, memory: Dict[str, Any], current_time: datetime = None
     ) -> float:
         """
         Calculate relevance score using exponential decay.
@@ -181,10 +182,10 @@ class MemoryConsolidator:
             current_time = datetime.now(timezone.utc)
 
         # Parse timestamps
-        created_at = _parse_iso_datetime(memory.get('timestamp')) or current_time
+        created_at = _parse_iso_datetime(memory.get("timestamp")) or current_time
         last_accessed = (
-            _parse_iso_datetime(memory.get('last_accessed'))
-            or _parse_iso_datetime(memory.get('timestamp'))
+            _parse_iso_datetime(memory.get("last_accessed"))
+            or _parse_iso_datetime(memory.get("timestamp"))
             or current_time
         )
 
@@ -197,30 +198,27 @@ class MemoryConsolidator:
         access_factor = 1.0 if access_recency_days < 1 else math.exp(-0.05 * access_recency_days)
 
         # Get relationship count for this memory (with caching for performance)
-        rel_count = float(self._get_relationship_count(memory['id']))
+        rel_count = float(self._get_relationship_count(memory["id"]))
         relationship_factor = 1.0 + (self.relationship_preservation * math.log1p(max(rel_count, 0)))
 
         # Importance factor (user-defined priority)
-        importance = float(memory.get('importance', 0.5) or 0.0)
+        importance = float(memory.get("importance", 0.5) or 0.0)
 
         # Confidence factor (well-classified memories are preserved)
-        confidence = float(memory.get('confidence', 0.5) or 0.0)
+        confidence = float(memory.get("confidence", 0.5) or 0.0)
 
         # Combined relevance score
         relevance = (
-            decay_factor *
-            (0.3 + 0.3 * access_factor) *  # Access contributes 30%
-            relationship_factor *
-            (0.5 + importance) *  # Importance scales from 0.5 to 1.5
-            (0.7 + 0.3 * confidence)  # Confidence adds up to 30%
+            decay_factor
+            * (0.3 + 0.3 * access_factor)  # Access contributes 30%
+            * relationship_factor
+            * (0.5 + importance)  # Importance scales from 0.5 to 1.5
+            * (0.7 + 0.3 * confidence)  # Confidence adds up to 30%
         )
 
         return min(1.0, relevance)  # Cap at 1.0
 
-    def discover_creative_associations(
-        self,
-        sample_size: int = 20
-    ) -> List[Dict[str, Any]]:
+    def discover_creative_associations(self, sample_size: int = 20) -> List[Dict[str, Any]]:
         """
         Discover non-obvious connections between memories.
 
@@ -391,7 +389,7 @@ class MemoryConsolidator:
 
         for cluster_mems in components:
             # Calculate cluster theme
-            types = [m.type or 'Memory' for m in cluster_mems]
+            types = [m.type or "Memory" for m in cluster_mems]
             dominant_type = max(set(types), key=types.count)
 
             # Find temporal range
@@ -406,33 +404,27 @@ class MemoryConsolidator:
             else:
                 time_span_days = 0
 
-            clusters.append({
-                'cluster_id': str(uuid4()),
-                'memory_ids': [m.id for m in cluster_mems],
-                'size': len(cluster_mems),
-                'dominant_type': dominant_type,
-                'time_span_days': time_span_days,
-                'sample_content': cluster_mems[0].content[:100],
-                'created_at': datetime.now(timezone.utc).isoformat()
-            })
+            clusters.append(
+                {
+                    "cluster_id": str(uuid4()),
+                    "memory_ids": [m.id for m in cluster_mems],
+                    "size": len(cluster_mems),
+                    "dominant_type": dominant_type,
+                    "time_span_days": time_span_days,
+                    "sample_content": cluster_mems[0].content[:100],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
 
         return clusters
 
-    def apply_controlled_forgetting(
-        self,
-        dry_run: bool = True
-    ) -> Dict[str, Any]:
+    def apply_controlled_forgetting(self, dry_run: bool = True) -> Dict[str, Any]:
         """
         Archive or delete low-relevance memories.
 
         Returns statistics about what was archived/deleted.
         """
-        stats = {
-            'examined': 0,
-            'archived': [],
-            'deleted': [],
-            'preserved': 0
-        }
+        stats = {"examined": 0, "archived": [], "deleted": [], "preserved": 0}
 
         # Get all memories with scores
         all_memories_query = """
@@ -447,17 +439,17 @@ class MemoryConsolidator:
         current_time = datetime.now(timezone.utc)
 
         for row in result:
-            stats['examined'] += 1
+            stats["examined"] += 1
 
             # Result row order: id, content, score, timestamp, type, importance, last_accessed
             memory = {
-                'id': row[0],
-                'content': row[1],
-                'relevance_score': row[2],
-                'timestamp': row[3],
-                'type': row[4],
-                'importance': row[5],
-                'last_accessed': row[6] if len(row) > 6 else None
+                "id": row[0],
+                "content": row[1],
+                "relevance_score": row[2],
+                "timestamp": row[3],
+                "type": row[4],
+                "importance": row[5],
+                "last_accessed": row[6] if len(row) > 6 else None,
             }
 
             # Calculate current relevance
@@ -465,12 +457,14 @@ class MemoryConsolidator:
 
             # Determine fate
             if relevance < self.delete_threshold:
-                stats['deleted'].append({
-                    'id': memory['id'],
-                    'content_preview': memory['content'][:50],
-                    'relevance': relevance,
-                    'type': memory.get('type', 'Memory')
-                })
+                stats["deleted"].append(
+                    {
+                        "id": memory["id"],
+                        "content_preview": memory["content"][:50],
+                        "relevance": relevance,
+                        "type": memory.get("type", "Memory"),
+                    }
+                )
 
                 if not dry_run:
                     # Delete from graph
@@ -478,30 +472,32 @@ class MemoryConsolidator:
                         MATCH (m:Memory {id: $id})
                         DETACH DELETE m
                     """
-                    self._query_graph(delete_query, {"id": memory['id']})
+                    self._query_graph(delete_query, {"id": memory["id"]})
 
                     # Delete from vector store if present
                     if self.vector_store:
                         try:
                             if qdrant_models is not None:
-                                selector = qdrant_models.PointIdsList(points=[memory['id']])
+                                selector = qdrant_models.PointIdsList(points=[memory["id"]])
                             else:  # Fallback for dummy clients during tests
-                                selector = {"points": [memory['id']]}
+                                selector = {"points": [memory["id"]]}
 
                             self.vector_store.delete(
                                 collection_name="memories",
                                 points_selector=selector,
                             )
                         except Exception:
-                            logger.exception("Vector store deletion failed for %s", memory['id'])
+                            logger.exception("Vector store deletion failed for %s", memory["id"])
 
             elif relevance < self.archive_threshold:
-                stats['archived'].append({
-                    'id': memory['id'],
-                    'content_preview': memory['content'][:50],
-                    'relevance': relevance,
-                    'type': memory.get('type', 'Memory')
-                })
+                stats["archived"].append(
+                    {
+                        "id": memory["id"],
+                        "content_preview": memory["content"][:50],
+                        "relevance": relevance,
+                        "type": memory.get("type", "Memory"),
+                    }
+                )
 
                 if not dry_run:
                     # Mark as archived (keep in graph but flag it)
@@ -511,13 +507,16 @@ class MemoryConsolidator:
                             m.archived_at = $archived_at,
                             m.relevance_score = $score
                     """
-                    self._query_graph(archive_query, {
-                        "id": memory['id'],
-                        "archived_at": current_time.isoformat(),
-                        "score": relevance
-                    })
+                    self._query_graph(
+                        archive_query,
+                        {
+                            "id": memory["id"],
+                            "archived_at": current_time.isoformat(),
+                            "score": relevance,
+                        },
+                    )
             else:
-                stats['preserved'] += 1
+                stats["preserved"] += 1
 
                 if not dry_run:
                     # Update relevance score
@@ -525,18 +524,12 @@ class MemoryConsolidator:
                         MATCH (m:Memory {id: $id})
                         SET m.relevance_score = $score
                     """
-                    self._query_graph(update_query, {
-                        "id": memory['id'],
-                        "score": relevance
-                    })
+                    self._query_graph(update_query, {"id": memory["id"], "score": relevance})
 
         return stats
 
     def consolidate(
-        self,
-        mode: str = 'full',
-        dry_run: bool = True,
-        decay_threshold: Optional[float] = None
+        self, mode: str = "full", dry_run: bool = True, decay_threshold: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Run full consolidation cycle.
@@ -549,22 +542,22 @@ class MemoryConsolidator:
         - 'forget': Just archive/delete
         """
         results = {
-            'mode': mode,
-            'dry_run': dry_run,
-            'started_at': datetime.now(timezone.utc).isoformat(),
-            'steps': {}
+            "mode": mode,
+            "dry_run": dry_run,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "steps": {},
         }
 
         try:
             # Step 1: Update relevance scores (decay)
-            if mode in ['full', 'decay']:
+            if mode in ["full", "decay"]:
                 logger.info("Applying exponential decay to memories...")
-                threshold = decay_threshold if mode == 'decay' else None
+                threshold = decay_threshold if mode == "decay" else None
                 decay_stats = self._apply_decay(importance_threshold=threshold)
-                results['steps']['decay'] = decay_stats
+                results["steps"]["decay"] = decay_stats
 
             # Step 2: Discover creative associations
-            if mode in ['full', 'creative']:
+            if mode in ["full", "creative"]:
                 logger.info("Discovering creative associations...")
                 associations = self.discover_creative_associations(sample_size=30)
 
@@ -573,32 +566,39 @@ class MemoryConsolidator:
                 for assoc in associations:
                     if not dry_run:
                         # Map discovery types to first-class relationship labels
-                        rel_type = str(assoc.get('type') or 'RELATES_TO').upper()
-                        if rel_type == 'CONTRASTS_WITH':
-                            rel_type = 'CONTRADICTS'
+                        rel_type = str(assoc.get("type") or "RELATES_TO").upper()
+                        if rel_type == "CONTRASTS_WITH":
+                            rel_type = "CONTRADICTS"
                         allowed_labels = {
-                            'EXPLAINS', 'SHARES_THEME', 'PARALLEL_CONTEXT',
-                            'CONTRADICTS', 'RELATES_TO', 'SIMILAR_TO', 'PRECEDED_BY', 'DERIVED_FROM', 'PART_OF'
+                            "EXPLAINS",
+                            "SHARES_THEME",
+                            "PARALLEL_CONTEXT",
+                            "CONTRADICTS",
+                            "RELATES_TO",
+                            "SIMILAR_TO",
+                            "PRECEDED_BY",
+                            "DERIVED_FROM",
+                            "PART_OF",
                         }
                         if rel_type not in allowed_labels:
-                            rel_type = 'RELATES_TO'
+                            rel_type = "RELATES_TO"
 
                         # Build a typed MERGE with standard properties
                         set_clauses = [
                             "r.updated_at = $updated_at",
                         ]
                         params = {
-                            'id1': assoc['memory1_id'],
-                            'id2': assoc['memory2_id'],
-                            'updated_at': assoc.get('discovered_at'),
+                            "id1": assoc["memory1_id"],
+                            "id2": assoc["memory2_id"],
+                            "updated_at": assoc.get("discovered_at"),
                         }
                         # Attach confidence/similarity when applicable
-                        if assoc.get('confidence') is not None:
+                        if assoc.get("confidence") is not None:
                             set_clauses.append("r.confidence = $confidence")
-                            params['confidence'] = float(assoc.get('confidence') or 0.0)
-                        if assoc.get('similarity') is not None:
+                            params["confidence"] = float(assoc.get("confidence") or 0.0)
+                        if assoc.get("similarity") is not None:
                             set_clauses.append("r.similarity = $similarity")
-                            params['similarity'] = float(assoc.get('similarity') or 0.0)
+                            params["similarity"] = float(assoc.get("similarity") or 0.0)
 
                         query = f"""
                             MATCH (m1:Memory {{id: $id1}})
@@ -611,23 +611,28 @@ class MemoryConsolidator:
                             created += 1
                         except Exception:
                             # Log at debug level; non-fatal for consolidation run
-                            logger.debug("Failed to create %s edge between %s and %s", rel_type, params.get('id1'), params.get('id2'))
+                            logger.debug(
+                                "Failed to create %s edge between %s and %s",
+                                rel_type,
+                                params.get("id1"),
+                                params.get("id2"),
+                            )
 
-                results['steps']['creative'] = {
-                    'discovered': len(associations),
-                    'created': created,
-                    'sample_associations': associations[:3] if associations else []
+                results["steps"]["creative"] = {
+                    "discovered": len(associations),
+                    "created": created,
+                    "sample_associations": associations[:3] if associations else [],
                 }
 
             # Step 3: Cluster similar memories
-            if mode in ['full', 'cluster']:
+            if mode in ["full", "cluster"]:
                 logger.info("Clustering similar memories...")
                 clusters = self.cluster_similar_memories()
 
                 # Create cluster meta-memories if significant
                 meta_created = 0
                 for cluster in clusters:
-                    if cluster['size'] >= 5 and not dry_run:
+                    if cluster["size"] >= 5 and not dry_run:
                         # Create a meta-memory representing the cluster
                         meta_content = f"Meta-pattern: {cluster['dominant_type']} cluster with {cluster['size']} memories over {cluster['time_span_days']} days. Theme: {cluster['sample_content']}"
 
@@ -643,64 +648,66 @@ class MemoryConsolidator:
                             })
                         """
 
-                        self.graph.query(meta_query, {
-                            "id": cluster['cluster_id'],
-                            "content": meta_content,
-                            "size": cluster['size'],
-                            "timestamp": cluster['created_at']
-                        })
+                        self.graph.query(
+                            meta_query,
+                            {
+                                "id": cluster["cluster_id"],
+                                "content": meta_content,
+                                "size": cluster["size"],
+                                "timestamp": cluster["created_at"],
+                            },
+                        )
 
                         # Link meta-memory to cluster members
-                        for mem_id in cluster['memory_ids']:
+                        for mem_id in cluster["memory_ids"]:
                             link_query = """
                                 MATCH (meta:MetaMemory {id: $meta_id})
                                 MATCH (m:Memory {id: $mem_id})
                                 CREATE (meta)-[:SUMMARIZES]->(m)
                             """
                             try:
-                                self.graph.query(link_query, {
-                                    "meta_id": cluster['cluster_id'],
-                                    "mem_id": mem_id
-                                })
+                                self.graph.query(
+                                    link_query, {"meta_id": cluster["cluster_id"], "mem_id": mem_id}
+                                )
                             except:
                                 pass
 
                         meta_created += 1
 
-                results['steps']['cluster'] = {
-                    'clusters_found': len(clusters),
-                    'meta_memories_created': meta_created,
-                    'sample_clusters': clusters[:2] if clusters else []
+                results["steps"]["cluster"] = {
+                    "clusters_found": len(clusters),
+                    "meta_memories_created": meta_created,
+                    "sample_clusters": clusters[:2] if clusters else [],
                 }
 
             # Step 4: Controlled forgetting
-            if mode in ['full', 'forget']:
+            if mode in ["full", "forget"]:
                 logger.info("Applying controlled forgetting...")
                 forget_stats = self.apply_controlled_forgetting(dry_run=dry_run)
-                results['steps']['forget'] = forget_stats
+                results["steps"]["forget"] = forget_stats
 
-            results['completed_at'] = datetime.now(timezone.utc).isoformat()
-            results['success'] = True
+            results["completed_at"] = datetime.now(timezone.utc).isoformat()
+            results["success"] = True
 
         except Exception as e:
             logger.error(f"Consolidation error: {e}")
-            results['error'] = str(e)
-            results['success'] = False
+            results["error"] = str(e)
+            results["success"] = False
 
         return results
 
     def _apply_decay(self, importance_threshold: Optional[float] = None) -> Dict[str, Any]:
         """Apply decay to all memories and return statistics."""
         stats = {
-            'processed': 0,
-            'avg_relevance_before': 0,
-            'avg_relevance_after': 0,
-            'distribution': {
-                'high': 0,      # > 0.7
-                'medium': 0,    # 0.3 - 0.7
-                'low': 0,       # 0.1 - 0.3
-                'archive': 0    # < 0.1
-            }
+            "processed": 0,
+            "avg_relevance_before": 0,
+            "avg_relevance_after": 0,
+            "distribution": {
+                "high": 0,  # > 0.7
+                "medium": 0,  # 0.3 - 0.7
+                "low": 0,  # 0.1 - 0.3
+                "archive": 0,  # < 0.1
+            },
         }
 
         filters = ["(m.archived IS NULL OR m.archived = false)"]
@@ -728,21 +735,21 @@ class MemoryConsolidator:
         total_after = 0
 
         for row in memories:
-            stats['processed'] += 1
+            stats["processed"] += 1
 
             # Result set contains lists where each row is a list of values
             # Order matches the RETURN clause: id, content, timestamp, importance, last_accessed, old_score
             memory = {
-                'id': row[0] if len(row) > 0 else None,
-                'content': row[1] if len(row) > 1 else None,
-                'timestamp': row[2] if len(row) > 2 else None,
-                'importance': row[3] if len(row) > 3 else None,
-                'last_accessed': row[4] if len(row) > 4 else None,
-                'old_score': row[5] if len(row) > 5 else None
+                "id": row[0] if len(row) > 0 else None,
+                "content": row[1] if len(row) > 1 else None,
+                "timestamp": row[2] if len(row) > 2 else None,
+                "importance": row[3] if len(row) > 3 else None,
+                "last_accessed": row[4] if len(row) > 4 else None,
+                "old_score": row[5] if len(row) > 5 else None,
             }
 
             # Previous score
-            old_score = float(memory.get('old_score', 0.5)) if memory.get('old_score') else 0.5
+            old_score = float(memory.get("old_score", 0.5)) if memory.get("old_score") else 0.5
             total_before += old_score
 
             # Calculate new score
@@ -751,27 +758,24 @@ class MemoryConsolidator:
 
             # Categorize
             if new_score > 0.7:
-                stats['distribution']['high'] += 1
+                stats["distribution"]["high"] += 1
             elif new_score > 0.3:
-                stats['distribution']['medium'] += 1
+                stats["distribution"]["medium"] += 1
             elif new_score > 0.1:
-                stats['distribution']['low'] += 1
+                stats["distribution"]["low"] += 1
             else:
-                stats['distribution']['archive'] += 1
+                stats["distribution"]["archive"] += 1
 
             # Update in graph
             update_query = """
                 MATCH (m:Memory {id: $id})
                 SET m.relevance_score = $score
             """
-            self._query_graph(update_query, {
-                "id": memory['id'],
-                "score": new_score
-            })
+            self._query_graph(update_query, {"id": memory["id"], "score": new_score})
 
-        if stats['processed'] > 0:
-            stats['avg_relevance_before'] = total_before / stats['processed']
-            stats['avg_relevance_after'] = total_after / stats['processed']
+        if stats["processed"] > 0:
+            stats["avg_relevance_before"] = total_before / stats["processed"]
+            stats["avg_relevance_after"] = total_after / stats["processed"]
 
         return stats
 
@@ -790,10 +794,10 @@ class ConsolidationScheduler:
     def __init__(self, consolidator: MemoryConsolidator):
         self.consolidator = consolidator
         self.schedules = {
-            'decay': {'interval': timedelta(days=1), 'last_run': None},
-            'creative': {'interval': timedelta(days=7), 'last_run': None},
-            'cluster': {'interval': timedelta(days=30), 'last_run': None},
-            'forget': {'interval': timedelta(days=90), 'last_run': None}
+            "decay": {"interval": timedelta(days=1), "last_run": None},
+            "creative": {"interval": timedelta(days=7), "last_run": None},
+            "cluster": {"interval": timedelta(days=30), "last_run": None},
+            "forget": {"interval": timedelta(days=90), "last_run": None},
         }
         self.history = []
 
@@ -803,13 +807,15 @@ class ConsolidationScheduler:
             return False
 
         schedule = self.schedules[task_type]
-        if schedule['last_run'] is None:
+        if schedule["last_run"] is None:
             return True
 
-        time_since = datetime.now(timezone.utc) - schedule['last_run']
-        return time_since >= schedule['interval']
+        time_since = datetime.now(timezone.utc) - schedule["last_run"]
+        return time_since >= schedule["interval"]
 
-    def run_scheduled_tasks(self, force: Optional[str] = None, decay_threshold: Optional[float] = None) -> List[Dict]:
+    def run_scheduled_tasks(
+        self, force: Optional[str] = None, decay_threshold: Optional[float] = None
+    ) -> List[Dict]:
         """
         Run scheduled consolidation tasks.
 
@@ -829,27 +835,26 @@ class ConsolidationScheduler:
             logger.info(f"Running scheduled {task_type} consolidation...")
 
             # Run with appropriate mode
-            if task_type == 'decay':
+            if task_type == "decay":
                 result = self.consolidator.consolidate(
                     mode=task_type,
                     dry_run=False,
                     decay_threshold=decay_threshold,
                 )
             else:
-                result = self.consolidator.consolidate(
-                    mode=task_type,
-                    dry_run=False
-                )
+                result = self.consolidator.consolidate(mode=task_type, dry_run=False)
 
             # Update schedule
-            self.schedules[task_type]['last_run'] = datetime.now(timezone.utc)
+            self.schedules[task_type]["last_run"] = datetime.now(timezone.utc)
 
             # Record in history
-            self.history.append({
-                'task': task_type,
-                'run_at': datetime.now(timezone.utc).isoformat(),
-                'result': result
-            })
+            self.history.append(
+                {
+                    "task": task_type,
+                    "run_at": datetime.now(timezone.utc).isoformat(),
+                    "result": result,
+                }
+            )
 
             results.append(result)
 
@@ -860,10 +865,10 @@ class ConsolidationScheduler:
         next_runs = {}
 
         for task_type, schedule in self.schedules.items():
-            if schedule['last_run'] is None:
+            if schedule["last_run"] is None:
                 next_runs[task_type] = "Due now"
             else:
-                next_run = schedule['last_run'] + schedule['interval']
+                next_run = schedule["last_run"] + schedule["interval"]
                 if next_run <= datetime.now(timezone.utc):
                     next_runs[task_type] = "Due now"
                 else:

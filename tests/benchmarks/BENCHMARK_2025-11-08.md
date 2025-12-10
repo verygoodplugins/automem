@@ -2,8 +2,8 @@
 
 ## LoCoMo Benchmark (Long-term Conversational Memory)
 
-**Benchmark Version**: LoCoMo-10 (1,986 questions across 10 conversations)  
-**Date**: November 8, 2025  
+**Benchmark Version**: LoCoMo-10 (1,986 questions across 10 conversations)
+**Date**: November 8, 2025
 **AutoMem Version**: Latest (as of benchmark)
 
 ============================================================

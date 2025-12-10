@@ -19,10 +19,10 @@ redis-cli SAVE
 if [ -f /data/dump.rdb ]; then
     cp /data/dump.rdb "$BACKUP_DIR/dump_${TIMESTAMP}.rdb"
     echo "✅ Backup created: dump_${TIMESTAMP}.rdb"
-    
+
     # Compress old backups
     find "$BACKUP_DIR" -name "dump_*.rdb" -mtime +1 -exec gzip {} \;
-    
+
     # Clean old backups
     find "$BACKUP_DIR" -name "dump_*.rdb.gz" -mtime +${RETENTION_DAYS} -delete
     echo "🧹 Cleaned backups older than ${RETENTION_DAYS} days"

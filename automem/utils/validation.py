@@ -21,25 +21,30 @@ def get_effective_vector_size(qdrant_client=None):
         tuple: (effective_dimension: int, source: str)
             - source is "collection" if detected from existing, "config" otherwise
     """
-    from automem.config import VECTOR_SIZE, COLLECTION_NAME
-    
+    from automem.config import COLLECTION_NAME, VECTOR_SIZE
+
     if qdrant_client is None:
         return VECTOR_SIZE, "config"
-    
+
     try:
         collection_info = qdrant_client.get_collection(COLLECTION_NAME)
         collection_dim = collection_info.config.params.vectors.size
-        
+
         if collection_dim != VECTOR_SIZE:
             allow_autodetect = os.getenv("VECTOR_SIZE_AUTODETECT", "false").lower() in {
-                "1", "true", "yes", "on"
+                "1",
+                "true",
+                "yes",
+                "on",
             }
             if allow_autodetect:
                 logger.info(
                     "Auto-detected existing collection dimension: %dd (config default: %dd). "
                     "Using %dd because VECTOR_SIZE_AUTODETECT=true. "
                     "To migrate, run: python scripts/reembed_embeddings.py",
-                    collection_dim, VECTOR_SIZE, collection_dim
+                    collection_dim,
+                    VECTOR_SIZE,
+                    collection_dim,
                 )
                 return collection_dim, "collection"
 
@@ -68,16 +73,18 @@ def get_effective_vector_size(qdrant_client=None):
 def validate_vector_dimensions(qdrant_client=None):
     """
     Legacy validation function - now just logs info about dimension detection.
-    
+
     Kept for backwards compatibility but no longer raises on mismatch.
     Use get_effective_vector_size() to get the actual dimension to use.
     """
     effective_dim, source = get_effective_vector_size(qdrant_client)
     if source == "collection":
         from automem.config import VECTOR_SIZE
+
         if effective_dim != VECTOR_SIZE:
             logger.info(
                 "Vector dimension: %dd (from existing collection, config says %dd)",
-                effective_dim, VECTOR_SIZE
+                effective_dim,
+                VECTOR_SIZE,
             )
     return effective_dim

@@ -35,4 +35,3 @@ def _build_graph_tag_predicate(tag_mode: str, tag_match: str) -> str:
         f"((size({prefixes_expr}) > 0 AND {prefix_any}) "
         f"OR (size({prefixes_expr}) = 0 AND {fallback_any}))"
     )
-

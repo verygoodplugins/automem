@@ -189,7 +189,7 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
    curl https://your-automem.up.railway.app/health
    ```
 
-   Expected: `{"status": "healthy"}`  
+   Expected: `{"status": "healthy"}`
    `503` = FalkorDB connection issue (check host/port/password)
 
 #### Get Your AutoMem URL
@@ -269,7 +269,7 @@ curl -X POST https://your-automem.railway.app/memory \
 
 3. **Set up monitoring** (optional): See [Health Monitoring Guide](docs/HEALTH_MONITORING.md)
 
-👉 **[Full Railway Guide](docs/RAILWAY_DEPLOYMENT.md)** - Advanced configuration, monitoring, troubleshooting  
+👉 **[Full Railway Guide](docs/RAILWAY_DEPLOYMENT.md)** - Advanced configuration, monitoring, troubleshooting
 👉 **[Deployment Checklist](docs/DEPLOYMENT_CHECKLIST.md)** - Step-by-step verification
 
 ---

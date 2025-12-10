@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Tuple
 
 
@@ -87,7 +87,9 @@ def _parse_time_expression(expression: Optional[str]) -> Tuple[Optional[str], Op
     elif expr in {"last month", "past month"}:
         current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         if current_month_start.month == 1:
-            previous_month_start = current_month_start.replace(year=current_month_start.year - 1, month=12)
+            previous_month_start = current_month_start.replace(
+                year=current_month_start.year - 1, month=12
+            )
         else:
             previous_month_start = current_month_start.replace(month=current_month_start.month - 1)
         start = previous_month_start
@@ -113,4 +115,3 @@ def _parse_time_expression(expression: Optional[str]) -> Tuple[Optional[str], Op
         return None, None
 
     return start.isoformat(), end.isoformat()
-
