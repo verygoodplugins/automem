@@ -98,7 +98,7 @@ function Scene({
   performanceMode,
 }: SceneProps) {
   const { nodes: layoutNodes, isSimulating } = useForceLayout({ nodes, edges })
-  const [autoRotate, setAutoRotate] = useState(true)
+  const [autoRotate, setAutoRotate] = useState(false) // Start still, not rotating
   const groupRef = useRef<THREE.Group>(null)
   const controlsRef = useRef<OrbitControlsImpl>(null)
 

@@ -1,4 +1,7 @@
 import { useState, useCallback } from 'react'
+
+// Build version - update this when making significant changes
+const BUILD_VERSION = '2024-12-11-perf-v2'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { useGraphSnapshot } from './hooks/useGraphData'
 import { useAuth } from './hooks/useAuth'
@@ -146,6 +149,11 @@ export default function App() {
         />
 
         <StatsBar stats={data?.stats} isLoading={isLoading} />
+
+        {/* Version indicator - helps verify deployment */}
+        <span className="text-xs text-slate-500 hidden lg:inline" title="Build version">
+          {BUILD_VERSION}
+        </span>
 
         {/* Performance Mode Toggle */}
         <button
