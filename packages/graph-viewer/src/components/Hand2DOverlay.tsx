@@ -230,9 +230,9 @@ export function Hand2DOverlay({ gestureState, enabled = true, showLaser = true }
         {/* Connection line between hands when both gripping */}
         {bothGripping && gestureState.leftPinchRay && gestureState.rightPinchRay && (
           <line
-            x1={gestureState.leftPinchRay.origin.x * 100}
+            x1={(1 - gestureState.leftPinchRay.origin.x) * 100}
             y1={gestureState.leftPinchRay.origin.y * 100}
-            x2={gestureState.rightPinchRay.origin.x * 100}
+            x2={(1 - gestureState.rightPinchRay.origin.x) * 100}
             y2={gestureState.rightPinchRay.origin.y * 100}
             stroke="#ffffff"
             strokeWidth={0.3}
@@ -284,8 +284,9 @@ function GhostHand({ landmarks, color, gradientId, isGhost = false }: GhostHandP
   const depthScale = 1 + wristZ * 5
   const clampedScale = Math.max(0.3, Math.min(1.5, depthScale))
 
+  // Un-mirror the X coordinate (webcam is mirrored, so flip it back)
   const toSvg = (lm: { x: number; y: number }) => ({
-    x: lm.x * 100,
+    x: (1 - lm.x) * 100, // Flip X to un-mirror
     y: lm.y * 100,
   })
 
@@ -449,7 +450,8 @@ interface LaserBeamProps {
 }
 
 function LaserBeam({ ray, color, isGripped }: LaserBeamProps) {
-  const originX = ray.origin.x * 100
+  // Un-mirror the X coordinate (webcam is mirrored, so flip it back)
+  const originX = (1 - ray.origin.x) * 100
   const originY = ray.origin.y * 100
 
   // Center of screen (the nexus)
