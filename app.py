@@ -3424,6 +3424,7 @@ def get_related_memories(memory_id: str) -> Any:
 from automem.api.admin import create_admin_blueprint_full
 from automem.api.consolidation import create_consolidation_blueprint_full
 from automem.api.enrichment import create_enrichment_blueprint
+from automem.api.graph import create_graph_blueprint
 
 # Register blueprints after all routes are defined
 from automem.api.health import create_health_blueprint
@@ -3519,12 +3520,21 @@ consolidation_bp = create_consolidation_blueprint_full(
     logger,
 )
 
+graph_bp = create_graph_blueprint(
+    get_memory_graph,
+    get_qdrant_client,
+    _serialize_node,
+    COLLECTION_NAME,
+    logger,
+)
+
 app.register_blueprint(health_bp)
 app.register_blueprint(enrichment_bp)
 app.register_blueprint(memory_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
+app.register_blueprint(graph_bp)
 
 
 if __name__ == "__main__":
