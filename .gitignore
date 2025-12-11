@@ -24,3 +24,6 @@ tests/benchmarks/locomo/
 node_modules/
 # Experiment results (promote notable runs to tests/benchmarks/results/)
 /tests/benchmarks/experiments/results_*/
+packages/graph-viewer/dist/
+packages/graph-viewer/node_modules/
+automem/static/viewer/

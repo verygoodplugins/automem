@@ -3432,6 +3432,7 @@ from automem.api.graph import create_graph_blueprint
 from automem.api.health import create_health_blueprint
 from automem.api.memory import create_memory_blueprint_full
 from automem.api.recall import create_recall_blueprint
+from automem.api.viewer import create_viewer_blueprint, is_viewer_enabled
 
 health_bp = create_health_blueprint(
     get_memory_graph,
@@ -3537,6 +3538,12 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
 app.register_blueprint(graph_bp)
+
+# Register optional viewer blueprint (serves the Graph Viewer SPA)
+if is_viewer_enabled():
+    viewer_bp = create_viewer_blueprint()
+    app.register_blueprint(viewer_bp)
+    logger.info("Graph Viewer enabled at /viewer/")
 
 
 if __name__ == "__main__":
