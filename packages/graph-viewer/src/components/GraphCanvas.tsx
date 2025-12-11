@@ -24,11 +24,31 @@ import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
 import { useHandGestures, GestureState } from '../hooks/useHandGestures'
+import { useIPhoneHandTracking } from '../hooks/useIPhoneHandTracking'
 import { useHandInteraction } from '../hooks/useHandInteraction'
 import { LaserPointer } from './LaserPointer'
 import { ExpandedNodeView } from './ExpandedNodeView'
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+
+// Check if we should use iPhone tracking (based on URL param or env)
+function useTrackingSource() {
+  const [source, setSource] = useState<'mediapipe' | 'iphone'>('mediapipe')
+  const [iphoneUrl, setIphoneUrl] = useState('ws://localhost:8765')
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('iphone') === 'true') {
+      setSource('iphone')
+    }
+    const url = params.get('iphone_url')
+    if (url) {
+      setIphoneUrl(url)
+    }
+  }, [])
+
+  return { source, iphoneUrl, setSource }
+}
 
 // Performance constants
 const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
@@ -66,11 +86,25 @@ export function GraphCanvas({
   onGestureStateChange,
   performanceMode = false,
 }: GraphCanvasProps) {
-  // Hand gesture tracking
-  const { gestureState, isEnabled: gesturesActive } = useHandGestures({
-    enabled: gestureControlEnabled,
-    onGestureChange: onGestureStateChange,
+  // Determine tracking source
+  const { source, iphoneUrl } = useTrackingSource()
+
+  // MediaPipe hand tracking (webcam)
+  const { gestureState: mediapipeState, isEnabled: mediapipeActive } = useHandGestures({
+    enabled: gestureControlEnabled && source === 'mediapipe',
+    onGestureChange: source === 'mediapipe' ? onGestureStateChange : undefined,
   })
+
+  // iPhone hand tracking (WebSocket)
+  const { gestureState: iphoneState, isConnected: iphoneConnected } = useIPhoneHandTracking({
+    enabled: gestureControlEnabled && source === 'iphone',
+    serverUrl: iphoneUrl,
+    onGestureChange: source === 'iphone' ? onGestureStateChange : undefined,
+  })
+
+  // Use whichever source is active
+  const gestureState = source === 'iphone' ? iphoneState : mediapipeState
+  const gesturesActive = source === 'iphone' ? iphoneConnected : mediapipeActive
 
   return (
     <Canvas
