@@ -118,44 +118,158 @@ function Scene({
     setAutoRotate(false)
   }, [])
 
+  // Track previous pinch state for delta calculations
+  const prevPinchStateRef = useRef<{
+    leftOrigin: { x: number; y: number; z: number } | null
+    rightOrigin: { x: number; y: number; z: number } | null
+    distance: number
+    rotation: number
+    center: { x: number; y: number }
+  }>({
+    leftOrigin: null,
+    rightOrigin: null,
+    distance: 0,
+    rotation: 0,
+    center: { x: 0.5, y: 0.5 },
+  })
+
   // Apply gesture controls to camera
   useEffect(() => {
     if (!gestureControlEnabled || !controlsRef.current) return
-    if (!gestureState.isTracking || gestureState.handsDetected < 2) return
+    if (!gestureState.isTracking) return
 
     const controls = controlsRef.current
+    const leftRay = gestureState.leftPinchRay
+    const rightRay = gestureState.rightPinchRay
 
-    // Two-hand zoom: spread = zoom in, pinch = zoom out
-    if (Math.abs(gestureState.zoomDelta) > 0.001) {
-      // Dolly in/out based on hand spread
-      const zoomFactor = 1 - gestureState.zoomDelta * 0.5
-      controls.object.position.multiplyScalar(zoomFactor)
-      setAutoRotate(false)
+    // Two-hand pinch manipulation: Both hands must be gripping
+    const bothGripping = leftRay?.isValid && rightRay?.isValid
+
+    if (bothGripping && leftRay && rightRay) {
+      const prev = prevPinchStateRef.current
+
+      // Calculate current pinch positions
+      const leftOrigin = leftRay.origin
+      const rightOrigin = rightRay.origin
+
+      // Distance between pinch points
+      const dx = rightOrigin.x - leftOrigin.x
+      const dy = rightOrigin.y - leftOrigin.y
+      const currentDistance = Math.sqrt(dx * dx + dy * dy)
+
+      // Rotation angle between pinch points
+      const currentRotation = Math.atan2(dy, dx)
+
+      // Center point between pinch origins
+      const currentCenter = {
+        x: (leftOrigin.x + rightOrigin.x) / 2,
+        y: (leftOrigin.y + rightOrigin.y) / 2,
+      }
+
+      // Average Z depth (for pull gesture)
+      const currentZ = (leftOrigin.z + rightOrigin.z) / 2
+
+      // Only apply deltas if we have valid previous state
+      if (prev.leftOrigin && prev.rightOrigin) {
+        // ZOOM: Spread hands apart = zoom in, pinch together = zoom out
+        const distanceDelta = currentDistance - prev.distance
+        if (Math.abs(distanceDelta) > 0.002) {
+          // Spread = positive = zoom in (move camera closer)
+          const zoomFactor = 1 - distanceDelta * 3
+          controls.object.position.multiplyScalar(zoomFactor)
+          setAutoRotate(false)
+        }
+
+        // ROTATE: Rotate hands around each other = orbit camera
+        let rotationDelta = currentRotation - prev.rotation
+        // Normalize angle
+        while (rotationDelta > Math.PI) rotationDelta -= 2 * Math.PI
+        while (rotationDelta < -Math.PI) rotationDelta += 2 * Math.PI
+
+        if (Math.abs(rotationDelta) > 0.01) {
+          const rotateSpeed = 2
+          controls.object.position.applyAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            rotationDelta * rotateSpeed
+          )
+          setAutoRotate(false)
+        }
+
+        // PAN: Move both hands together = pan the view
+        const panDeltaX = currentCenter.x - prev.center.x
+        const panDeltaY = currentCenter.y - prev.center.y
+        if (Math.abs(panDeltaX) > 0.002 || Math.abs(panDeltaY) > 0.002) {
+          const panSpeed = 100
+          controls.target.x -= panDeltaX * panSpeed
+          controls.target.y += panDeltaY * panSpeed
+          setAutoRotate(false)
+        }
+
+        // PULL: Move both hands toward/away from camera = dolly
+        const prevZ = (prev.leftOrigin.z + prev.rightOrigin.z) / 2
+        const zDelta = currentZ - prevZ
+        if (Math.abs(zDelta) > 0.005) {
+          // Negative Z = toward camera = pull graph closer (zoom in)
+          // Positive Z = away from camera = push graph away (zoom out)
+          const pullFactor = 1 + zDelta * 5
+          controls.object.position.multiplyScalar(pullFactor)
+          setAutoRotate(false)
+        }
+      }
+
+      // Update previous state
+      prevPinchStateRef.current = {
+        leftOrigin,
+        rightOrigin,
+        distance: currentDistance,
+        rotation: currentRotation,
+        center: currentCenter,
+      }
+
+      controls.update()
+    } else {
+      // Reset previous state when not both gripping
+      prevPinchStateRef.current = {
+        leftOrigin: null,
+        rightOrigin: null,
+        distance: 0,
+        rotation: 0,
+        center: { x: 0.5, y: 0.5 },
+      }
+
+      // Fallback to wrist-based gestures when two hands detected but not both gripping
+      if (gestureState.handsDetected >= 2) {
+        // Two-hand zoom: spread = zoom in, pinch = zoom out
+        if (Math.abs(gestureState.zoomDelta) > 0.001) {
+          const zoomFactor = 1 - gestureState.zoomDelta * 0.5
+          controls.object.position.multiplyScalar(zoomFactor)
+          setAutoRotate(false)
+        }
+
+        // Two-hand rotation
+        if (Math.abs(gestureState.rotateDelta) > 0.01) {
+          const rotateSpeed = 2
+          controls.object.position.applyAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            gestureState.rotateDelta * rotateSpeed
+          )
+          setAutoRotate(false)
+        }
+
+        // Two-hand pan
+        if (
+          Math.abs(gestureState.panDelta.x) > 0.001 ||
+          Math.abs(gestureState.panDelta.y) > 0.001
+        ) {
+          const panSpeed = 50
+          controls.target.x -= gestureState.panDelta.x * panSpeed
+          controls.target.y += gestureState.panDelta.y * panSpeed
+          setAutoRotate(false)
+        }
+
+        controls.update()
+      }
     }
-
-    // Two-hand rotation: rotate the camera around the target
-    if (Math.abs(gestureState.rotateDelta) > 0.01) {
-      // Convert rotation delta to camera orbit
-      const rotateSpeed = 2
-      controls.object.position.applyAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        gestureState.rotateDelta * rotateSpeed
-      )
-      setAutoRotate(false)
-    }
-
-    // Two-hand pan: move target based on center movement
-    if (
-      Math.abs(gestureState.panDelta.x) > 0.001 ||
-      Math.abs(gestureState.panDelta.y) > 0.001
-    ) {
-      const panSpeed = 50
-      controls.target.x -= gestureState.panDelta.x * panSpeed
-      controls.target.y += gestureState.panDelta.y * panSpeed
-      setAutoRotate(false)
-    }
-
-    controls.update()
   }, [gestureControlEnabled, gestureState])
 
   return (
