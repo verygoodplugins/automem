@@ -18,6 +18,7 @@ interface GraphCanvasProps {
   onNodeSelect: (node: GraphNode | null) => void
   onNodeHover: (node: GraphNode | null) => void
   gestureControlEnabled?: boolean
+  onGestureStateChange?: (state: GestureState) => void
 }
 
 export function GraphCanvas({
@@ -29,10 +30,12 @@ export function GraphCanvas({
   onNodeSelect,
   onNodeHover,
   gestureControlEnabled = false,
+  onGestureStateChange,
 }: GraphCanvasProps) {
   // Hand gesture tracking
   const { gestureState, isEnabled: gesturesActive } = useHandGestures({
     enabled: gestureControlEnabled,
+    onGestureChange: onGestureStateChange,
   })
 
   return (

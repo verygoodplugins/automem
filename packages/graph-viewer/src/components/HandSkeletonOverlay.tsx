@@ -7,7 +7,7 @@
 
 import { useMemo } from 'react'
 import { Line } from '@react-three/drei'
-import type { HandLandmarks, GestureState } from '../hooks/useHandGestures'
+import type { HandLandmarks, GestureState, PinchRay } from '../hooks/useHandGestures'
 
 // Hand skeleton connections (pairs of landmark indices)
 const HAND_CONNECTIONS = [
@@ -93,59 +93,112 @@ function HandSkeleton({ hand, color, opacity = 0.8, scale = 10 }: HandSkeletonPr
   )
 }
 
+// Convert pinch ray origin (normalized 0-1 coords) to Three.js world coords
+function pinchRayToWorld(
+  ray: PinchRay,
+  scale: number = 10
+): { origin: [number, number, number]; end: [number, number, number] } {
+  // Origin in 3D space
+  const origin: [number, number, number] = [
+    (ray.origin.x - 0.5) * scale,
+    -(ray.origin.y - 0.5) * scale, // Flip Y
+    -ray.origin.z * scale * 2,
+  ]
+
+  // Ray extends in the direction, scaled by ray length
+  const rayLength = 100 // How far the laser extends
+  const end: [number, number, number] = [
+    origin[0] + ray.direction.x * rayLength,
+    origin[1] - ray.direction.y * rayLength, // Flip Y for direction too
+    origin[2] - ray.direction.z * rayLength,
+  ]
+
+  return { origin, end }
+}
+
+interface PinchRayBeamProps {
+  ray: PinchRay
+  color: string
+  scale?: number
+}
+
+function PinchRayBeam({ ray, color, scale = 10 }: PinchRayBeamProps) {
+  const { origin, end } = useMemo(() => pinchRayToWorld(ray, scale), [ray, scale])
+
+  // Calculate visual properties based on pinch strength
+  const lineWidth = 1 + ray.strength * 3 // Thicker when pinching harder
+  const opacity = 0.3 + ray.strength * 0.5 // More visible when pinching
+
+  // Glow sphere size at origin
+  const sphereSize = 0.1 + ray.strength * 0.15
+
+  return (
+    <group>
+      {/* Main laser beam */}
+      <Line
+        points={[origin, end]}
+        color={color}
+        lineWidth={lineWidth}
+        transparent
+        opacity={opacity}
+        dashed={!ray.isValid} // Dashed when not fully pinched
+        dashSize={ray.isValid ? 0 : 0.5}
+        gapSize={ray.isValid ? 0 : 0.3}
+      />
+
+      {/* Origin glow sphere (where thumb meets index) */}
+      <mesh position={origin}>
+        <sphereGeometry args={[sphereSize, 16, 16]} />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={ray.isValid ? 0.9 : 0.5}
+        />
+      </mesh>
+
+      {/* Secondary glow ring when pinch is active */}
+      {ray.isValid && (
+        <mesh position={origin} rotation={[Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[sphereSize * 1.2, sphereSize * 1.5, 32]} />
+          <meshBasicMaterial color={color} transparent opacity={0.4} />
+        </mesh>
+      )}
+    </group>
+  )
+}
+
 interface GestureIndicatorProps {
   gestureState: GestureState
 }
 
 function GestureIndicator({ gestureState }: GestureIndicatorProps) {
-  const { handsDetected, zoomDelta, pointDirection } = gestureState
+  const { handsDetected, zoomDelta, leftPinchRay, rightPinchRay } = gestureState
 
-  // Pointing ray
-  if (pointDirection && handsDetected === 1) {
-    const rayStart: [number, number, number] = [
-      (pointDirection.x - 0.5) * 10,
-      (pointDirection.y - 0.5) * 10,
-      0,
-    ]
-    const rayEnd: [number, number, number] = [
-      (pointDirection.x - 0.5) * 10,
-      (pointDirection.y - 0.5) * 10,
-      -50, // Ray extends into the scene
-    ]
+  return (
+    <group>
+      {/* Left hand pinch ray - cyan */}
+      {leftPinchRay && leftPinchRay.strength > 0.3 && (
+        <PinchRayBeam ray={leftPinchRay} color="#4ecdc4" />
+      )}
 
-    return (
-      <group>
-        <Line
-          points={[rayStart, rayEnd]}
-          color="#4ecdc4"
-          lineWidth={2}
-          transparent
-          opacity={0.5}
-          dashed
-          dashSize={0.5}
-          gapSize={0.3}
-        />
-        {/* Pointer dot */}
-        <mesh position={rayStart}>
-          <sphereGeometry args={[0.1, 16, 16]} />
-          <meshBasicMaterial color="#4ecdc4" />
+      {/* Right hand pinch ray - magenta */}
+      {rightPinchRay && rightPinchRay.strength > 0.3 && (
+        <PinchRayBeam ray={rightPinchRay} color="#f72585" />
+      )}
+
+      {/* Two-hand zoom indicator */}
+      {handsDetected === 2 && Math.abs(zoomDelta) > 0.01 && (
+        <mesh position={[0, 4, 0]}>
+          <torusGeometry args={[0.5 + Math.abs(zoomDelta) * 5, 0.1, 8, 32]} />
+          <meshBasicMaterial
+            color={zoomDelta > 0 ? '#4ecdc4' : '#ff6b6b'}
+            transparent
+            opacity={0.6}
+          />
         </mesh>
-      </group>
-    )
-  }
-
-  // Two-hand zoom indicator
-  if (handsDetected === 2 && Math.abs(zoomDelta) > 0.01) {
-    const zoomColor = zoomDelta > 0 ? '#4ecdc4' : '#ff6b6b'
-    return (
-      <mesh position={[0, 4, 0]}>
-        <torusGeometry args={[0.5 + Math.abs(zoomDelta) * 5, 0.1, 8, 32]} />
-        <meshBasicMaterial color={zoomColor} transparent opacity={0.6} />
-      </mesh>
-    )
-  }
-
-  return null
+      )}
+    </group>
+  )
 }
 
 interface HandSkeletonOverlayProps {
