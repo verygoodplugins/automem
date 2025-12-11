@@ -65,6 +65,15 @@ function BugIcon({ className }: { className?: string }) {
   )
 }
 
+// Bolt/Performance icon SVG component
+function BoltIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+    </svg>
+  )
+}
+
 export default function App() {
   const { setToken, isAuthenticated } = useAuth()
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
@@ -72,6 +81,7 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('')
   const [gestureControlEnabled, setGestureControlEnabled] = useState(false)
   const [debugOverlayVisible, setDebugOverlayVisible] = useState(false)
+  const [performanceMode, setPerformanceMode] = useState(false)
   const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
   const [filters, setFilters] = useState<FilterState>({
     types: [],
@@ -136,6 +146,24 @@ export default function App() {
         />
 
         <StatsBar stats={data?.stats} isLoading={isLoading} />
+
+        {/* Performance Mode Toggle */}
+        <button
+          onClick={() => setPerformanceMode(!performanceMode)}
+          className={`
+            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
+            ${performanceMode
+              ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg shadow-yellow-500/25'
+              : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+            }
+          `}
+          title={performanceMode ? 'Disable performance mode (enable effects)' : 'Enable performance mode (disable bloom/vignette for faster rendering)'}
+        >
+          <BoltIcon className="w-5 h-5" />
+          <span className="text-sm font-medium hidden sm:inline">
+            {performanceMode ? 'Perf ON' : 'Perf'}
+          </span>
+        </button>
 
         {/* Gesture Control Toggle */}
         <button
@@ -215,6 +243,7 @@ export default function App() {
               onNodeHover={handleNodeHover}
               gestureControlEnabled={gestureControlEnabled}
               onGestureStateChange={handleGestureStateChange}
+              performanceMode={performanceMode}
             />
 
             {/* 2D Hand Overlay (on top of canvas, life-size) */}

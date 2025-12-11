@@ -1,13 +1,29 @@
+/**
+ * GraphCanvas - High-performance 3D memory visualization
+ *
+ * Performance optimizations:
+ * - Instanced mesh rendering for nodes (1 draw call for all nodes)
+ * - Batched LineSegments for edges (1 draw call for all edges)
+ * - Reduced geometry complexity (12x12 segments vs 32x32)
+ * - LOD for labels (only show labels for nearby/selected nodes)
+ * - Optional post-processing (performance mode toggle)
+ * - Single useFrame callback for all animations
+ */
+
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls, Text, Billboard, Line } from '@react-three/drei'
+import { Canvas, useFrame, useThree, ThreeEvent } from '@react-three/fiber'
+import { OrbitControls, Text, Billboard } from '@react-three/drei'
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
 import { useHandGestures, GestureState } from '../hooks/useHandGestures'
-// import { HandSkeletonOverlay } from './HandSkeletonOverlay' // Using 2D overlay instead
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+
+// Performance constants
+const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
+const LABEL_DISTANCE_THRESHOLD = 80 // Only show labels for nodes within this distance
+const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -19,6 +35,7 @@ interface GraphCanvasProps {
   onNodeHover: (node: GraphNode | null) => void
   gestureControlEnabled?: boolean
   onGestureStateChange?: (state: GestureState) => void
+  performanceMode?: boolean // New prop for disabling post-processing
 }
 
 export function GraphCanvas({
@@ -31,6 +48,7 @@ export function GraphCanvas({
   onNodeHover,
   gestureControlEnabled = false,
   onGestureStateChange,
+  performanceMode = false,
 }: GraphCanvasProps) {
   // Hand gesture tracking
   const { gestureState, isEnabled: gesturesActive } = useHandGestures({
@@ -41,8 +59,9 @@ export function GraphCanvas({
   return (
     <Canvas
       camera={{ position: [0, 0, 150], fov: 60 }}
-      gl={{ antialias: true, alpha: true }}
+      gl={{ antialias: !performanceMode, alpha: true, powerPreference: 'high-performance' }}
       style={{ background: 'linear-gradient(to bottom, #0a0a0f 0%, #0f0f18 100%)' }}
+      frameloop={performanceMode ? 'demand' : 'always'}
     >
       <Scene
         nodes={nodes}
@@ -54,14 +73,16 @@ export function GraphCanvas({
         onNodeHover={onNodeHover}
         gestureState={gestureState}
         gestureControlEnabled={gestureControlEnabled && gesturesActive}
+        performanceMode={performanceMode}
       />
     </Canvas>
   )
 }
 
-interface SceneProps extends GraphCanvasProps {
+interface SceneProps extends Omit<GraphCanvasProps, 'onGestureStateChange'> {
   gestureState: GestureState
   gestureControlEnabled: boolean
+  performanceMode: boolean
 }
 
 function Scene({
@@ -74,6 +95,7 @@ function Scene({
   onNodeHover,
   gestureState,
   gestureControlEnabled,
+  performanceMode,
 }: SceneProps) {
   const { nodes: layoutNodes, isSimulating } = useForceLayout({ nodes, edges })
   const [autoRotate, setAutoRotate] = useState(true)
@@ -174,7 +196,6 @@ function Scene({
         // ZOOM: Spread hands apart = zoom in, pinch together = zoom out
         const distanceDelta = currentDistance - prev.distance
         if (Math.abs(distanceDelta) > 0.002) {
-          // Spread = positive = zoom in (move camera closer)
           const zoomFactor = 1 - distanceDelta * 3
           controls.object.position.multiplyScalar(zoomFactor)
           setAutoRotate(false)
@@ -182,7 +203,6 @@ function Scene({
 
         // ROTATE: Rotate hands around each other = orbit camera
         let rotationDelta = currentRotation - prev.rotation
-        // Normalize angle
         while (rotationDelta > Math.PI) rotationDelta -= 2 * Math.PI
         while (rotationDelta < -Math.PI) rotationDelta += 2 * Math.PI
 
@@ -209,8 +229,6 @@ function Scene({
         const prevZ = (prev.leftOrigin.z + prev.rightOrigin.z) / 2
         const zDelta = currentZ - prevZ
         if (Math.abs(zDelta) > 0.005) {
-          // Negative Z = toward camera = pull graph closer (zoom in)
-          // Positive Z = away from camera = push graph away (zoom out)
           const pullFactor = 1 + zDelta * 5
           controls.object.position.multiplyScalar(pullFactor)
           setAutoRotate(false)
@@ -239,14 +257,12 @@ function Scene({
 
       // Fallback to wrist-based gestures when two hands detected but not both gripping
       if (gestureState.handsDetected >= 2) {
-        // Two-hand zoom: spread = zoom in, pinch = zoom out
         if (Math.abs(gestureState.zoomDelta) > 0.001) {
           const zoomFactor = 1 - gestureState.zoomDelta * 0.5
           controls.object.position.multiplyScalar(zoomFactor)
           setAutoRotate(false)
         }
 
-        // Two-hand rotation
         if (Math.abs(gestureState.rotateDelta) > 0.01) {
           const rotateSpeed = 2
           controls.object.position.applyAxisAngle(
@@ -256,7 +272,6 @@ function Scene({
           setAutoRotate(false)
         }
 
-        // Two-hand pan
         if (
           Math.abs(gestureState.panDelta.x) > 0.001 ||
           Math.abs(gestureState.panDelta.y) > 0.001
@@ -291,123 +306,383 @@ function Scene({
         maxDistance={500}
       />
 
-      {/* 3D Hand skeleton overlay - disabled, using 2D overlay instead */}
-      {/* {gestureControlEnabled && (
-        <HandSkeletonOverlay gestureState={gestureState} enabled={true} />
-      )} */}
-
       {/* Graph content */}
       <group ref={groupRef}>
-        {/* Edges */}
-        {edges.map((edge) => {
-          const sourceNode = nodeById.get(edge.source)
-          const targetNode = nodeById.get(edge.target)
-          if (!sourceNode || !targetNode) return null
+        {/* Batched edges - single draw call for all edges */}
+        <BatchedEdges
+          edges={edges}
+          nodeById={nodeById}
+          selectedNode={selectedNode}
+          connectedIds={connectedIds}
+        />
 
-          const isHighlighted =
-            selectedNode &&
-            (edge.source === selectedNode.id || edge.target === selectedNode.id)
+        {/* Instanced nodes - single draw call for all nodes */}
+        <InstancedNodes
+          nodes={layoutNodes}
+          selectedNode={selectedNode}
+          hoveredNode={hoveredNode}
+          searchTerm={searchTerm}
+          matchingIds={matchingIds}
+          connectedIds={connectedIds}
+          onNodeSelect={onNodeSelect}
+          onNodeHover={onNodeHover}
+        />
 
-          const isDimmed =
-            selectedNode &&
-            !connectedIds.has(edge.source) &&
-            !connectedIds.has(edge.target)
-
-          return (
-            <EdgeLine
-              key={edge.id}
-              source={sourceNode}
-              target={targetNode}
-              color={edge.color}
-              strength={edge.strength}
-              isHighlighted={!!isHighlighted}
-              isDimmed={!!isDimmed}
-            />
-          )
-        })}
-
-        {/* Nodes */}
-        {layoutNodes.map((node) => {
-          const isSelected = selectedNode?.id === node.id
-          const isHovered = hoveredNode?.id === node.id
-          const isSearchMatch = !!searchTerm && matchingIds.has(node.id)
-          const isDimmed = !!(
-            (selectedNode && !connectedIds.has(node.id)) ||
-            (searchTerm && !matchingIds.has(node.id))
-          )
-
-          return (
-            <NodeSphere
-              key={node.id}
-              node={node}
-              isSelected={isSelected}
-              isHovered={isHovered}
-              isSearchMatch={isSearchMatch}
-              isDimmed={isDimmed}
-              onSelect={() => onNodeSelect(isSelected ? null : node)}
-              onHover={(hovered) => onNodeHover(hovered ? node : null)}
-            />
-          )
-        })}
+        {/* LOD Labels - only for selected/hovered/nearby nodes */}
+        <LODLabels
+          nodes={layoutNodes}
+          selectedNode={selectedNode}
+          hoveredNode={hoveredNode}
+          searchTerm={searchTerm}
+          matchingIds={matchingIds}
+        />
       </group>
 
-      {/* Post-processing effects */}
-      <EffectComposer>
-        <Bloom
-          luminanceThreshold={0.2}
-          luminanceSmoothing={0.9}
-          intensity={0.8}
-          radius={0.8}
-        />
-        <Vignette eskil={false} offset={0.1} darkness={0.8} />
-      </EffectComposer>
+      {/* Post-processing effects - conditional based on performance mode */}
+      {!performanceMode && (
+        <EffectComposer>
+          <Bloom
+            luminanceThreshold={0.2}
+            luminanceSmoothing={0.9}
+            intensity={0.8}
+            radius={0.8}
+          />
+          <Vignette eskil={false} offset={0.1} darkness={0.8} />
+        </EffectComposer>
+      )}
     </>
   )
 }
 
-interface NodeSphereProps {
-  node: SimulationNode
-  isSelected: boolean
-  isHovered: boolean
-  isSearchMatch: boolean
-  isDimmed: boolean
-  onSelect: () => void
-  onHover: (hovered: boolean) => void
+/**
+ * Batched edge rendering using LineSegments
+ * All edges rendered in a single draw call
+ */
+interface BatchedEdgesProps {
+  edges: GraphEdge[]
+  nodeById: Map<string, SimulationNode>
+  selectedNode: GraphNode | null
+  connectedIds: Set<string>
 }
 
-function NodeSphere({
-  node,
-  isSelected,
-  isHovered,
-  isSearchMatch,
-  isDimmed,
-  onSelect,
-  onHover,
-}: NodeSphereProps) {
-  const meshRef = useRef<THREE.Mesh>(null)
-  const [scale, setScale] = useState(1)
+function BatchedEdges({ edges, nodeById, selectedNode, connectedIds }: BatchedEdgesProps) {
+  const lineRef = useRef<THREE.LineSegments>(null)
 
-  // Animate scale on hover/select
+  // Create geometry with all edge vertices
+  const { positions, colors } = useMemo(() => {
+    const positions: number[] = []
+    const colors: number[] = []
+
+    edges.forEach((edge) => {
+      const sourceNode = nodeById.get(edge.source)
+      const targetNode = nodeById.get(edge.target)
+      if (!sourceNode || !targetNode) return
+
+      const isHighlighted =
+        selectedNode &&
+        (edge.source === selectedNode.id || edge.target === selectedNode.id)
+
+      const isDimmed =
+        selectedNode &&
+        !connectedIds.has(edge.source) &&
+        !connectedIds.has(edge.target)
+
+      // Source vertex
+      positions.push(sourceNode.x ?? 0, sourceNode.y ?? 0, sourceNode.z ?? 0)
+      // Target vertex
+      positions.push(targetNode.x ?? 0, targetNode.y ?? 0, targetNode.z ?? 0)
+
+      // Parse edge color
+      const color = new THREE.Color(edge.color)
+      const alpha = isDimmed ? 0.05 : isHighlighted ? 0.8 : 0.3
+
+      // Apply alpha to color (approximate, since LineBasicMaterial doesn't support per-vertex alpha)
+      const r = color.r * alpha
+      const g = color.g * alpha
+      const b = color.b * alpha
+
+      // Color for source and target vertices
+      colors.push(r, g, b, r, g, b)
+    })
+
+    return {
+      positions: new Float32Array(positions),
+      colors: new Float32Array(colors),
+    }
+  }, [edges, nodeById, selectedNode, connectedIds])
+
+  // Update geometry when positions/colors change
+  useEffect(() => {
+    if (!lineRef.current) return
+
+    const geometry = lineRef.current.geometry
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    geometry.attributes.position.needsUpdate = true
+    geometry.attributes.color.needsUpdate = true
+    geometry.computeBoundingSphere()
+  }, [positions, colors])
+
+  return (
+    <lineSegments ref={lineRef}>
+      <bufferGeometry />
+      <lineBasicMaterial vertexColors transparent opacity={0.6} />
+    </lineSegments>
+  )
+}
+
+/**
+ * Instanced node rendering
+ * All nodes rendered in a single draw call using InstancedMesh
+ */
+interface InstancedNodesProps {
+  nodes: SimulationNode[]
+  selectedNode: GraphNode | null
+  hoveredNode: GraphNode | null
+  searchTerm: string
+  matchingIds: Set<string>
+  connectedIds: Set<string>
+  onNodeSelect: (node: GraphNode | null) => void
+  onNodeHover: (node: GraphNode | null) => void
+}
+
+function InstancedNodes({
+  nodes,
+  selectedNode,
+  hoveredNode,
+  searchTerm,
+  matchingIds,
+  connectedIds,
+  onNodeSelect,
+  onNodeHover,
+}: InstancedNodesProps) {
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const { camera, raycaster, pointer } = useThree()
+
+  // Shared geometry and material - created once
+  const geometry = useMemo(() => new THREE.SphereGeometry(1, SPHERE_SEGMENTS, SPHERE_SEGMENTS), [])
+  const material = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        roughness: 0.3,
+        metalness: 0.1,
+        transparent: true,
+      }),
+    []
+  )
+
+  // Node lookup for raycasting
+  const nodeIndexMap = useMemo(() => {
+    const map = new Map<number, SimulationNode>()
+    nodes.forEach((node, index) => {
+      map.set(index, node)
+    })
+    return map
+  }, [nodes])
+
+  // Animation state
+  const scalesRef = useRef<Float32Array>(new Float32Array(nodes.length))
+  const targetScalesRef = useRef<Float32Array>(new Float32Array(nodes.length))
+
+  // Temp objects for matrix calculations (reused to avoid GC)
+  const tempMatrix = useMemo(() => new THREE.Matrix4(), [])
+  const tempColor = useMemo(() => new THREE.Color(), [])
+  const tempPosition = useMemo(() => new THREE.Vector3(), [])
+  const tempQuaternion = useMemo(() => new THREE.Quaternion(), [])
+  const tempScale = useMemo(() => new THREE.Vector3(), [])
+
+  // Update instance matrices and colors each frame
   useFrame((_, delta) => {
     if (!meshRef.current) return
 
-    const targetScale = isSelected ? 1.5 : isHovered ? 1.2 : 1
-    const newScale = THREE.MathUtils.lerp(scale, targetScale, delta * 10)
-    setScale(newScale)
-    meshRef.current.scale.setScalar(newScale)
+    const mesh = meshRef.current
+
+    nodes.forEach((node, i) => {
+      const isSelected = selectedNode?.id === node.id
+      const isHovered = hoveredNode?.id === node.id
+      const isSearchMatch = !!searchTerm && matchingIds.has(node.id)
+      const isDimmed = !!(
+        (selectedNode && !connectedIds.has(node.id)) ||
+        (searchTerm && !matchingIds.has(node.id))
+      )
+
+      // Target scale based on state
+      const targetScale = isSelected ? 1.5 : isHovered ? 1.2 : 1
+      targetScalesRef.current[i] = targetScale
+
+      // Smooth scale animation
+      const currentScale = scalesRef.current[i] || 1
+      const newScale = THREE.MathUtils.lerp(currentScale, targetScale, delta * 10)
+      scalesRef.current[i] = newScale
+
+      // Apply pulsing for search matches
+      let finalScale = newScale
+      if (isSearchMatch) {
+        const pulse = 1 + Math.sin(performance.now() * 0.004) * 0.15
+        finalScale *= pulse
+      }
+
+      // Set position and scale
+      tempPosition.set(node.x ?? 0, node.y ?? 0, node.z ?? 0)
+      tempScale.setScalar(node.radius * finalScale)
+      tempMatrix.compose(tempPosition, tempQuaternion, tempScale)
+      mesh.setMatrixAt(i, tempMatrix)
+
+      // Set color with dimming
+      tempColor.set(node.color)
+      if (isDimmed) {
+        tempColor.multiplyScalar(0.15)
+      } else if (isSelected || isHovered || isSearchMatch) {
+        // Brighten selected/hovered nodes
+        tempColor.multiplyScalar(1.2)
+      }
+      mesh.setColorAt(i, tempColor)
+    })
+
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
   })
 
-  // Pulsing animation for search matches
-  useFrame(({ clock }) => {
-    if (!meshRef.current || !isSearchMatch) return
-    const pulse = 1 + Math.sin(clock.elapsedTime * 4) * 0.15
-    meshRef.current.scale.setScalar(scale * pulse)
+  // Handle click/hover via raycasting
+  const handlePointerMove = useCallback(
+    (_event: ThreeEvent<PointerEvent>) => {
+      if (!meshRef.current) return
+
+      raycaster.setFromCamera(pointer, camera)
+      const intersects = raycaster.intersectObject(meshRef.current)
+
+      if (intersects.length > 0) {
+        const instanceId = intersects[0].instanceId
+        if (instanceId !== undefined) {
+          const node = nodeIndexMap.get(instanceId)
+          if (node) {
+            onNodeHover(node)
+            document.body.style.cursor = 'pointer'
+            return
+          }
+        }
+      }
+
+      onNodeHover(null)
+      document.body.style.cursor = 'default'
+    },
+    [camera, pointer, raycaster, nodeIndexMap, onNodeHover]
+  )
+
+  const handleClick = useCallback(
+    (event: ThreeEvent<MouseEvent>) => {
+      if (!meshRef.current) return
+
+      raycaster.setFromCamera(pointer, camera)
+      const intersects = raycaster.intersectObject(meshRef.current)
+
+      if (intersects.length > 0) {
+        const instanceId = intersects[0].instanceId
+        if (instanceId !== undefined) {
+          const node = nodeIndexMap.get(instanceId)
+          if (node) {
+            event.stopPropagation()
+            onNodeSelect(selectedNode?.id === node.id ? null : node)
+          }
+        }
+      }
+    },
+    [camera, pointer, raycaster, nodeIndexMap, onNodeSelect, selectedNode]
+  )
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, nodes.length]}
+      onPointerMove={handlePointerMove}
+      onClick={handleClick}
+      frustumCulled={true}
+    />
+  )
+}
+
+/**
+ * LOD Labels - Only render labels for nearby/selected/hovered nodes
+ * Uses distance-based culling and limits max visible labels
+ */
+interface LODLabelsProps {
+  nodes: SimulationNode[]
+  selectedNode: GraphNode | null
+  hoveredNode: GraphNode | null
+  searchTerm: string
+  matchingIds: Set<string>
+}
+
+function LODLabels({
+  nodes,
+  selectedNode,
+  hoveredNode,
+  searchTerm,
+  matchingIds,
+}: LODLabelsProps) {
+  const { camera } = useThree()
+  const [visibleNodes, setVisibleNodes] = useState<SimulationNode[]>([])
+
+  // Update visible labels based on camera distance
+  useFrame(() => {
+    const cameraPos = camera.position
+
+    // Always show selected and hovered nodes
+    const priorityNodes: SimulationNode[] = []
+    const nearbyNodes: { node: SimulationNode; distance: number }[] = []
+
+    nodes.forEach((node) => {
+      const isSelected = selectedNode?.id === node.id
+      const isHovered = hoveredNode?.id === node.id
+      const isSearchMatch = !!searchTerm && matchingIds.has(node.id)
+
+      if (isSelected || isHovered) {
+        priorityNodes.push(node)
+        return
+      }
+
+      // Calculate distance to camera
+      const dx = (node.x ?? 0) - cameraPos.x
+      const dy = (node.y ?? 0) - cameraPos.y
+      const dz = (node.z ?? 0) - cameraPos.z
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+
+      // Include search matches and nearby nodes
+      if (distance < LABEL_DISTANCE_THRESHOLD || isSearchMatch) {
+        nearbyNodes.push({ node, distance })
+      }
+    })
+
+    // Sort by distance and limit
+    nearbyNodes.sort((a, b) => a.distance - b.distance)
+    const nearbyToShow = nearbyNodes
+      .slice(0, MAX_VISIBLE_LABELS - priorityNodes.length)
+      .map((n) => n.node)
+
+    setVisibleNodes([...priorityNodes, ...nearbyToShow])
   })
 
-  const color = useMemo(() => new THREE.Color(node.color), [node.color])
-  const emissiveIntensity = isSelected ? 0.8 : isHovered ? 0.5 : isSearchMatch ? 0.6 : 0.2
-  const opacity = isDimmed ? 0.15 : node.opacity
+  return (
+    <>
+      {visibleNodes.map((node) => (
+        <NodeLabel
+          key={node.id}
+          node={node}
+          isSelected={selectedNode?.id === node.id}
+          isHovered={hoveredNode?.id === node.id}
+        />
+      ))}
+    </>
+  )
+}
 
+interface NodeLabelProps {
+  node: SimulationNode
+  isSelected: boolean
+  isHovered: boolean
+}
+
+function NodeLabel({ node, isSelected, isHovered }: NodeLabelProps) {
   // Truncate content for label
   const label = useMemo(() => {
     const text = node.content.slice(0, 40)
@@ -415,113 +690,28 @@ function NodeSphere({
   }, [node.content])
 
   return (
-    <group position={[node.x ?? 0, node.y ?? 0, node.z ?? 0]}>
-      {/* Node sphere */}
-      <mesh
-        ref={meshRef}
-        onClick={(e) => {
-          e.stopPropagation()
-          onSelect()
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation()
-          onHover(true)
-          document.body.style.cursor = 'pointer'
-        }}
-        onPointerOut={() => {
-          onHover(false)
-          document.body.style.cursor = 'default'
-        }}
+    <Billboard position={[node.x ?? 0, (node.y ?? 0) + node.radius * 2 + 2, node.z ?? 0]}>
+      <Text
+        fontSize={2.5}
+        color="#f1f5f9"
+        anchorX="center"
+        anchorY="bottom"
+        outlineWidth={0.1}
+        outlineColor="#000000"
       >
-        <sphereGeometry args={[node.radius, 32, 32]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={emissiveIntensity}
-          transparent
-          opacity={opacity}
-          roughness={0.3}
-          metalness={0.1}
-        />
-      </mesh>
-
-      {/* Outer glow ring for selected/hovered */}
+        {label}
+      </Text>
       {(isSelected || isHovered) && (
-        <mesh>
-          <ringGeometry args={[node.radius * 1.3, node.radius * 1.5, 32]} />
-          <meshBasicMaterial
-            color={color}
-            transparent
-            opacity={0.3}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
+        <Text
+          position={[0, -1.5, 0]}
+          fontSize={1.5}
+          color="#94a3b8"
+          anchorX="center"
+          anchorY="top"
+        >
+          {node.type}
+        </Text>
       )}
-
-      {/* Label (only show when hovered or selected) */}
-      {(isHovered || isSelected) && (
-        <Billboard>
-          <Text
-            position={[0, node.radius * 2 + 2, 0]}
-            fontSize={2.5}
-            color="#f1f5f9"
-            anchorX="center"
-            anchorY="bottom"
-            outlineWidth={0.1}
-            outlineColor="#000000"
-          >
-            {label}
-          </Text>
-          <Text
-            position={[0, node.radius * 2, 0]}
-            fontSize={1.5}
-            color="#94a3b8"
-            anchorX="center"
-            anchorY="top"
-          >
-            {node.type}
-          </Text>
-        </Billboard>
-      )}
-    </group>
-  )
-}
-
-interface EdgeLineProps {
-  source: SimulationNode
-  target: SimulationNode
-  color: string
-  strength: number
-  isHighlighted: boolean
-  isDimmed: boolean
-}
-
-function EdgeLine({
-  source,
-  target,
-  color,
-  strength,
-  isHighlighted,
-  isDimmed,
-}: EdgeLineProps) {
-  const points = useMemo(
-    () => [
-      new THREE.Vector3(source.x ?? 0, source.y ?? 0, source.z ?? 0),
-      new THREE.Vector3(target.x ?? 0, target.y ?? 0, target.z ?? 0),
-    ],
-    [source.x, source.y, source.z, target.x, target.y, target.z]
-  )
-
-  const lineWidth = isHighlighted ? 2 : Math.max(0.5, strength * 1.5)
-  const opacity = isDimmed ? 0.05 : isHighlighted ? 0.8 : 0.3
-
-  return (
-    <Line
-      points={points}
-      color={color}
-      lineWidth={lineWidth}
-      transparent
-      opacity={opacity}
-    />
+    </Billboard>
   )
 }
