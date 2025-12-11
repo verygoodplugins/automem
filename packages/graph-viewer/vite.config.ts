@@ -4,6 +4,8 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  // Base path for embedded mode - assets served from /viewer/static/
+  base: '/viewer/static/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
