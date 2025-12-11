@@ -2,6 +2,13 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.10.0](https://github.com/verygoodplugins/automem/compare/v0.9.3...v0.10.0) (2025-12-11)
+
+
+### Features
+
+* **api:** add graph visualization API endpoints ([#26](https://github.com/verygoodplugins/automem/issues/26)) ([a0d0dd3](https://github.com/verygoodplugins/automem/commit/a0d0dd3719ac9dad7c4e24e78f290c9364d2b2e1))
+
 ## [0.9.3] - 2025-12-10
 
 ### Fixed
