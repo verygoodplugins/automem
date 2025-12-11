@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 
 // Build version - update this when making significant changes
-const BUILD_VERSION = '2024-12-11-glove-v6'
+const BUILD_VERSION = '2024-12-11-masterhand-v7'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { useGraphSnapshot } from './hooks/useGraphData'
 import { useAuth } from './hooks/useAuth'
