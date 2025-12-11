@@ -1117,6 +1117,11 @@ def require_api_token() -> None:
     if endpoint.endswith("health") or request.path == "/health":
         return
 
+    # Allow unauthenticated access to the graph viewer (static files)
+    # Token is passed via URL hash fragment (client-side only)
+    if request.path.startswith("/viewer"):
+        return
+
     token = _extract_api_token()
     if token != API_TOKEN:
         abort(401, description="Unauthorized")
