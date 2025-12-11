@@ -73,12 +73,12 @@ interface HandSkeletonProps {
 
 function HandSkeleton({ landmarks, color }: HandSkeletonProps) {
   // Calculate scale based on hand depth (z of wrist)
-  // Closer to camera = larger scale
+  // Closer to camera = SMALLER (further into scene), far from camera = LARGER (closer to viewer)
   const wristZ = landmarks[0].z || 0
-  // Z typically ranges from -0.1 (close) to 0.1 (far)
-  // Map to scale: close = 1.5x, far = 0.5x
-  const depthScale = 1 - wristZ * 3
-  const clampedScale = Math.max(0.5, Math.min(2, depthScale))
+  // Z typically ranges from -0.1 (close to camera) to 0.1 (far from camera)
+  // Invert: close to camera = smaller (going into screen), far = larger
+  const depthScale = 1 + wristZ * 5
+  const clampedScale = Math.max(0.3, Math.min(1.5, depthScale))
 
   // Base stroke width that scales with depth
   const baseStroke = 0.3 * clampedScale
@@ -86,9 +86,9 @@ function HandSkeleton({ landmarks, color }: HandSkeletonProps) {
   const fingertipRadius = 0.6 * clampedScale
 
   // Convert normalized coords (0-1) to viewBox coords (0-100)
-  // Mirror X because webcam is mirrored
+  // NOT mirrored - hand points same direction as yours
   const toSvg = (lm: { x: number; y: number }) => ({
-    x: (1 - lm.x) * 100,
+    x: lm.x * 100,
     y: lm.y * 100,
   })
 
@@ -155,16 +155,25 @@ interface LaserBeamProps {
 }
 
 function LaserBeam({ ray, color }: LaserBeamProps) {
-  // Origin in screen coords (mirror X)
-  const originX = (1 - ray.origin.x) * 100
+  // Origin in screen coords (NOT mirrored)
+  const originX = ray.origin.x * 100
   const originY = ray.origin.y * 100
 
-  // Calculate end point - laser extends in direction
-  // The direction needs to be projected into screen space
-  // For now, extend toward center-bottom of screen (into the graph)
+  // Calculate end point - laser extends toward center of graph (into the nexus)
+  // Direction points from hand toward center of screen
+  const centerX = 50
+  const centerY = 50
   const laserLength = 150 // Extend beyond viewport
-  const endX = originX + (1 - ray.direction.x) * laserLength
-  const endY = originY + ray.direction.y * laserLength
+
+  // Direction toward center
+  const toCenterX = centerX - originX
+  const toCenterY = centerY - originY
+  const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY)
+  const normX = dist > 0 ? toCenterX / dist : 0
+  const normY = dist > 0 ? toCenterY / dist : 0
+
+  const endX = originX + normX * laserLength
+  const endY = originY + normY * laserLength
 
   // Visual properties based on pinch strength
   const strokeWidth = 0.2 + ray.strength * 0.5
