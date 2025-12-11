@@ -12,19 +12,16 @@
  * By estimating the elbow and placing the pivot further back, we reduce jitter.
  */
 
-import { useRef, useCallback, useMemo } from 'react'
+import { useRef, useCallback } from 'react'
 import { PointerRayFilter, type PointerRay } from '../lib/OneEuroFilter'
 import type { NormalizedLandmarkList } from '@mediapipe/hands'
 
 // MediaPipe landmark indices
 const WRIST = 0
 const THUMB_TIP = 4
-const THUMB_CMC = 1 // Base of thumb
 const INDEX_TIP = 8
 const INDEX_MCP = 5 // Knuckle
 const MIDDLE_MCP = 9
-const RING_MCP = 13
-const PINKY_MCP = 17
 
 export interface Vec3 {
   x: number
@@ -76,10 +73,6 @@ function sub(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }
 }
 
-function add(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }
-}
-
 function scale(v: Vec3, s: number): Vec3 {
   return { x: v.x * s, y: v.y * s, z: v.z * s }
 }
@@ -93,13 +86,6 @@ function normalize(v: Vec3): Vec3 {
   return len > 0 ? scale(v, 1 / len) : { x: 0, y: 0, z: -1 }
 }
 
-function lerp3(a: Vec3, b: Vec3, t: number): Vec3 {
-  return {
-    x: a.x + (b.x - a.x) * t,
-    y: a.y + (b.y - a.y) * t,
-    z: a.z + (b.z - a.z) * t,
-  }
-}
 
 function distance(a: Vec3, b: Vec3): number {
   return length(sub(a, b))
@@ -140,14 +126,6 @@ function estimateArmPose(landmarks: NormalizedLandmarkList, handedness: 'left' |
     y: (thumbTip.y + indexTip.y) / 2,
     z: ((thumbTip.z || 0) + (indexTip.z || 0)) / 2,
   }
-
-  // Calculate palm orientation from MCP joints
-  const indexMcp = landmarks[INDEX_MCP]
-  const pinkyMcp = landmarks[PINKY_MCP]
-  const palmWidth = distance(
-    { x: indexMcp.x, y: indexMcp.y, z: indexMcp.z || 0 },
-    { x: pinkyMcp.x, y: pinkyMcp.y, z: pinkyMcp.z || 0 }
-  )
 
   // Estimate shoulder position - fixed relative to screen
   // Shoulder is off-screen, on the same side as the hand

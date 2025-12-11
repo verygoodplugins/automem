@@ -38,5 +38,18 @@
 - Never commit secrets. Configure via env vars: `AUTOMEM_API_TOKEN`, `ADMIN_API_TOKEN`, `OPENAI_API_KEY`, `FALKORDB_PASSWORD`, `QDRANT_API_KEY`.
 - Local dev uses Docker defaults; see `docs/ENVIRONMENT_VARIABLES.md` and `docker-compose.yml` for ports and credentials.
 
+## Task Completion Checklist
+**CRITICAL**: Before declaring any coding task complete, ALWAYS:
+1. **Run the build**: `make build` (Python) or `npm run build` (graph-viewer)
+2. **Run lints**: `make lint` (Python) or `npm run tsc` (TypeScript)
+3. **Run tests** (if applicable): `make test` or `npm test`
+4. **If any fail**: Iterate and fix until all pass
+5. **Never commit or deploy** code that doesn't build
+
+For graph-viewer specifically:
+```bash
+cd packages/graph-viewer && npm run build
+```
+
 ## Agent Memory Protocol
 Follow rules in `.cursor/rules/automem.mdc` for memory operations.

@@ -13,7 +13,7 @@ import { useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { Line } from '@react-three/drei'
 import * as THREE from 'three'
-import type { StableRay, NodeHit, Vec3 } from '../hooks/useStablePointerRay'
+import type { StableRay, NodeHit } from '../hooks/useStablePointerRay'
 
 interface LaserPointerProps {
   ray: StableRay

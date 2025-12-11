@@ -16,10 +16,10 @@
  */
 
 import { useRef, useMemo, useEffect, useState } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { useFrame } from '@react-three/fiber'
 import { Text, Billboard, Html } from '@react-three/drei'
 import * as THREE from 'three'
-import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
+import type { GraphEdge, SimulationNode } from '../lib/types'
 
 // Animation timing
 const EXPAND_DURATION = 0.6 // seconds
@@ -62,7 +62,6 @@ export function ExpandedNodeView({
   const groupRef = useRef<THREE.Group>(null)
   const rippleRef = useRef<THREE.Mesh>(null)
   const glowRef = useRef<THREE.Mesh>(null)
-  const { camera } = useThree()
 
   // Animation state
   const [animationProgress, setAnimationProgress] = useState(0)
