@@ -44,6 +44,8 @@ interface UseHandInteractionOptions {
   onNodeSelect?: (nodeId: string | null) => void
   /** Callback when node hover changes */
   onNodeHover?: (nodeId: string | null) => void
+  /** Disable pinch-to-select behavior (useful when using fist-grab controls) */
+  enableSelection?: boolean
 }
 
 // Sensitivity settings
@@ -51,7 +53,12 @@ const DRAG_Z_SENSITIVITY = 80
 const ROTATION_SENSITIVITY = 2
 const ZOOM_SENSITIVITY = 150
 
-export function useHandInteraction({ nodes, onNodeSelect, onNodeHover }: UseHandInteractionOptions) {
+export function useHandInteraction({
+  nodes,
+  onNodeSelect,
+  onNodeHover,
+  enableSelection = true,
+}: UseHandInteractionOptions) {
   // Stable pointer ray processors for each hand
   const leftRayProcessor = useStablePointerRay({ handedness: 'left' })
   const rightRayProcessor = useStablePointerRay({ handedness: 'right' })
@@ -134,7 +141,7 @@ export function useHandInteraction({ nodes, onNodeSelect, onNodeHover }: UseHand
     let isDragging = false
     let dragDeltaZ = 0
 
-    if (primaryRay?.isActive) {
+    if (enableSelection && primaryRay?.isActive) {
       if (hoveredNode && !prev.selectedNodeId) {
         // Start selection
         selectedNodeId = hoveredNode.nodeId
@@ -156,7 +163,7 @@ export function useHandInteraction({ nodes, onNodeSelect, onNodeHover }: UseHand
       }
     } else {
       // Released - clear selection
-      if (prev.selectedNodeId) {
+      if (enableSelection && prev.selectedNodeId) {
         selectedNodeId = null
         onNodeSelect?.(null)
       }
