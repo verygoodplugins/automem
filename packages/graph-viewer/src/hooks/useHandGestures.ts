@@ -28,6 +28,17 @@ export interface HandLandmarks {
   handedness: 'Left' | 'Right'
 }
 
+export interface PinchRay {
+  // Origin point (midpoint between thumb and index tips)
+  origin: { x: number; y: number; z: number }
+  // Direction vector (from wrist toward pinch point)
+  direction: { x: number; y: number; z: number }
+  // Is the ray valid for interaction?
+  isValid: boolean
+  // Current pinch strength (0-1)
+  strength: number
+}
+
 export interface GestureState {
   // Are we tracking hands?
   isTracking: boolean
@@ -47,6 +58,11 @@ export interface GestureState {
   pointDirection: { x: number; y: number } | null // Normalized screen coords
   pinchStrength: number // 0-1, how pinched is the pointing hand
   grabStrength: number // 0-1, how closed is the fist
+
+  // Pinch ray for laser pointer (Meta Quest style)
+  leftPinchRay: PinchRay | null
+  rightPinchRay: PinchRay | null
+  activePinchRay: PinchRay | null // The one currently being used for interaction
 
   // Derived control signals
   zoomDelta: number // Positive = zoom in, negative = zoom out
@@ -72,6 +88,9 @@ const DEFAULT_STATE: GestureState = {
   pointDirection: null,
   pinchStrength: 0,
   grabStrength: 0,
+  leftPinchRay: null,
+  rightPinchRay: null,
+  activePinchRay: null,
   zoomDelta: 0,
   rotateDelta: 0,
   panDelta: { x: 0, y: 0 },
@@ -133,6 +152,42 @@ function getPointDirection(landmarks: NormalizedLandmarkList): { x: number; y: n
   return { x: indexTip.x, y: 1 - indexTip.y }
 }
 
+// Calculate pinch ray (Meta Quest style - ray from pinch midpoint)
+function calculatePinchRay(landmarks: NormalizedLandmarkList): PinchRay {
+  const thumbTip = landmarks[THUMB_TIP]
+  const indexTip = landmarks[INDEX_TIP]
+  const wrist = landmarks[WRIST]
+
+  // Origin is the midpoint between thumb and index tips (Meta Quest PointerPose)
+  const origin = {
+    x: (thumbTip.x + indexTip.x) / 2,
+    y: (thumbTip.y + indexTip.y) / 2,
+    z: ((thumbTip.z || 0) + (indexTip.z || 0)) / 2,
+  }
+
+  // Direction vector from wrist toward the pinch point
+  const rawDir = {
+    x: origin.x - wrist.x,
+    y: origin.y - wrist.y,
+    z: (origin.z || 0) - (wrist.z || 0),
+  }
+
+  // Normalize the direction vector
+  const length = Math.sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z)
+  const direction = length > 0
+    ? { x: rawDir.x / length, y: rawDir.y / length, z: rawDir.z / length }
+    : { x: 0, y: 0, z: -1 } // Default pointing into screen
+
+  // Calculate pinch strength for this hand
+  const pinchDist = distance(thumbTip, indexTip)
+  const strength = 1 - Math.min(1, Math.max(0, (pinchDist - 0.02) / 0.13))
+
+  // Ray is valid when pinch strength is above threshold
+  const isValid = strength > 0.5
+
+  return { origin, direction, isValid, strength }
+}
+
 export function useHandGestures(options: UseHandGesturesOptions = {}) {
   const { enabled = true, smoothing = 0.3, onGestureChange } = options
 
@@ -167,9 +222,20 @@ export function useHandGestures(options: UseHandGesturesOptions = {}) {
 
         if (handData.handedness === 'Left') {
           newState.leftHand = handData
+          // Compute left pinch ray
+          newState.leftPinchRay = calculatePinchRay(landmarks)
         } else {
           newState.rightHand = handData
+          // Compute right pinch ray
+          newState.rightPinchRay = calculatePinchRay(landmarks)
         }
+      }
+
+      // Determine active pinch ray (prefer right hand, use strongest pinch)
+      if (newState.rightPinchRay && newState.rightPinchRay.isValid) {
+        newState.activePinchRay = newState.rightPinchRay
+      } else if (newState.leftPinchRay && newState.leftPinchRay.isValid) {
+        newState.activePinchRay = newState.leftPinchRay
       }
 
       // Two-hand gestures

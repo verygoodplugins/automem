@@ -8,7 +8,30 @@ import { SearchBar } from './components/SearchBar'
 import { FilterPanel } from './components/FilterPanel'
 import { TokenPrompt } from './components/TokenPrompt'
 import { StatsBar } from './components/StatsBar'
+import { GestureDebugOverlay } from './components/GestureDebugOverlay'
 import type { GraphNode, FilterState } from './lib/types'
+import type { GestureState } from './hooks/useHandGestures'
+
+// Default gesture state for when not tracking
+const DEFAULT_GESTURE_STATE: GestureState = {
+  isTracking: false,
+  handsDetected: 0,
+  leftHand: null,
+  rightHand: null,
+  twoHandDistance: 0.5,
+  twoHandRotation: 0,
+  twoHandCenter: { x: 0.5, y: 0.5 },
+  pointingHand: null,
+  pointDirection: null,
+  pinchStrength: 0,
+  grabStrength: 0,
+  leftPinchRay: null,
+  rightPinchRay: null,
+  activePinchRay: null,
+  zoomDelta: 0,
+  rotateDelta: 0,
+  panDelta: { x: 0, y: 0 },
+}
 
 // Hand icon SVG component
 function HandIcon({ className }: { className?: string }) {
@@ -22,17 +45,42 @@ function HandIcon({ className }: { className?: string }) {
   )
 }
 
+// Bug/Debug icon SVG component
+function BugIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M8 2l1.88 1.88" />
+      <path d="M14.12 3.88L16 2" />
+      <path d="M9 7.13v-1a3.003 3.003 0 116 0v1" />
+      <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 014-4h4a4 4 0 014 4v3c0 3.3-2.7 6-6 6" />
+      <path d="M12 20v-9" />
+      <path d="M6.53 9C4.6 8.8 3 7.1 3 5" />
+      <path d="M6 13H2" />
+      <path d="M3 21c0-2.1 1.7-3.9 3.8-4" />
+      <path d="M20.97 5c0 2.1-1.6 3.8-3.5 4" />
+      <path d="M22 13h-4" />
+      <path d="M17.2 17c2.1.1 3.8 1.9 3.8 4" />
+    </svg>
+  )
+}
+
 export default function App() {
   const { setToken, isAuthenticated } = useAuth()
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [gestureControlEnabled, setGestureControlEnabled] = useState(false)
+  const [debugOverlayVisible, setDebugOverlayVisible] = useState(false)
+  const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
   const [filters, setFilters] = useState<FilterState>({
     types: [],
     minImportance: 0,
     maxNodes: 500,
   })
+
+  const handleGestureStateChange = useCallback((state: GestureState) => {
+    setGestureState(state)
+  }, [])
 
   const { data, isLoading, error, refetch } = useGraphSnapshot({
     limit: filters.maxNodes,
@@ -105,6 +153,26 @@ export default function App() {
             {gestureControlEnabled ? 'Gestures ON' : 'Gestures'}
           </span>
         </button>
+
+        {/* Debug Overlay Toggle (only show when gestures enabled) */}
+        {gestureControlEnabled && (
+          <button
+            onClick={() => setDebugOverlayVisible(!debugOverlayVisible)}
+            className={`
+              flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
+              ${debugOverlayVisible
+                ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/25'
+                : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+              }
+            `}
+            title={debugOverlayVisible ? 'Hide debug overlay' : 'Show gesture debug overlay'}
+          >
+            <BugIcon className="w-5 h-5" />
+            <span className="text-sm font-medium hidden sm:inline">
+              {debugOverlayVisible ? 'Debug ON' : 'Debug'}
+            </span>
+          </button>
+        )}
       </header>
 
       {/* Main Content */}
@@ -145,6 +213,13 @@ export default function App() {
               onNodeSelect={handleNodeSelect}
               onNodeHover={handleNodeHover}
               gestureControlEnabled={gestureControlEnabled}
+              onGestureStateChange={handleGestureStateChange}
+            />
+
+            {/* Gesture Debug Overlay */}
+            <GestureDebugOverlay
+              gestureState={gestureState}
+              visible={debugOverlayVisible && gestureControlEnabled}
             />
           </div>
         </Panel>
