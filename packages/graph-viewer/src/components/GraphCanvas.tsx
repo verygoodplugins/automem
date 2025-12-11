@@ -1,10 +1,13 @@
-import { useRef, useMemo, useState, useCallback } from 'react'
+import { useRef, useMemo, useState, useCallback, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Text, Billboard, Line } from '@react-three/drei'
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
+import { useHandGestures, GestureState } from '../hooks/useHandGestures'
+import { HandSkeletonOverlay } from './HandSkeletonOverlay'
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -14,6 +17,7 @@ interface GraphCanvasProps {
   searchTerm: string
   onNodeSelect: (node: GraphNode | null) => void
   onNodeHover: (node: GraphNode | null) => void
+  gestureControlEnabled?: boolean
 }
 
 export function GraphCanvas({
@@ -24,7 +28,13 @@ export function GraphCanvas({
   searchTerm,
   onNodeSelect,
   onNodeHover,
+  gestureControlEnabled = false,
 }: GraphCanvasProps) {
+  // Hand gesture tracking
+  const { gestureState, isEnabled: gesturesActive } = useHandGestures({
+    enabled: gestureControlEnabled,
+  })
+
   return (
     <Canvas
       camera={{ position: [0, 0, 150], fov: 60 }}
@@ -39,9 +49,16 @@ export function GraphCanvas({
         searchTerm={searchTerm}
         onNodeSelect={onNodeSelect}
         onNodeHover={onNodeHover}
+        gestureState={gestureState}
+        gestureControlEnabled={gestureControlEnabled && gesturesActive}
       />
     </Canvas>
   )
+}
+
+interface SceneProps extends GraphCanvasProps {
+  gestureState: GestureState
+  gestureControlEnabled: boolean
 }
 
 function Scene({
@@ -52,10 +69,13 @@ function Scene({
   searchTerm,
   onNodeSelect,
   onNodeHover,
-}: GraphCanvasProps) {
+  gestureState,
+  gestureControlEnabled,
+}: SceneProps) {
   const { nodes: layoutNodes, isSimulating } = useForceLayout({ nodes, edges })
   const [autoRotate, setAutoRotate] = useState(true)
   const groupRef = useRef<THREE.Group>(null)
+  const controlsRef = useRef<OrbitControlsImpl>(null)
 
   // Create node lookup for edges
   const nodeById = useMemo(
@@ -95,6 +115,46 @@ function Scene({
     setAutoRotate(false)
   }, [])
 
+  // Apply gesture controls to camera
+  useEffect(() => {
+    if (!gestureControlEnabled || !controlsRef.current) return
+    if (!gestureState.isTracking || gestureState.handsDetected < 2) return
+
+    const controls = controlsRef.current
+
+    // Two-hand zoom: spread = zoom in, pinch = zoom out
+    if (Math.abs(gestureState.zoomDelta) > 0.001) {
+      // Dolly in/out based on hand spread
+      const zoomFactor = 1 - gestureState.zoomDelta * 0.5
+      controls.object.position.multiplyScalar(zoomFactor)
+      setAutoRotate(false)
+    }
+
+    // Two-hand rotation: rotate the camera around the target
+    if (Math.abs(gestureState.rotateDelta) > 0.01) {
+      // Convert rotation delta to camera orbit
+      const rotateSpeed = 2
+      controls.object.position.applyAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        gestureState.rotateDelta * rotateSpeed
+      )
+      setAutoRotate(false)
+    }
+
+    // Two-hand pan: move target based on center movement
+    if (
+      Math.abs(gestureState.panDelta.x) > 0.001 ||
+      Math.abs(gestureState.panDelta.y) > 0.001
+    ) {
+      const panSpeed = 50
+      controls.target.x -= gestureState.panDelta.x * panSpeed
+      controls.target.y += gestureState.panDelta.y * panSpeed
+      setAutoRotate(false)
+    }
+
+    controls.update()
+  }, [gestureControlEnabled, gestureState])
+
   return (
     <>
       {/* Ambient lighting */}
@@ -104,14 +164,20 @@ function Scene({
 
       {/* Camera controls */}
       <OrbitControls
+        ref={controlsRef}
         enableDamping
         dampingFactor={0.05}
-        autoRotate={autoRotate && !isSimulating}
+        autoRotate={autoRotate && !isSimulating && !gestureControlEnabled}
         autoRotateSpeed={0.5}
         onStart={handleInteractionStart}
         minDistance={20}
         maxDistance={500}
       />
+
+      {/* Hand skeleton overlay */}
+      {gestureControlEnabled && (
+        <HandSkeletonOverlay gestureState={gestureState} enabled={true} />
+      )}
 
       {/* Graph content */}
       <group ref={groupRef}>
