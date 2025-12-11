@@ -2,8 +2,9 @@
  * Hand 2D Overlay
  *
  * Renders hands as a 2D overlay on top of the canvas with:
- * - Smoothing/interpolation (ghost effect when hand disappears)
- * - Laser beams pointing toward the memory nexus center
+ * - Ghost 3D hand effect (translucent, glowing)
+ * - Smoothing/interpolation (ghost persists when hand disappears)
+ * - Laser beams that default toward center with slight deviation
  * - Pinch grip indicator (lights up when gripped)
  * - Support for two-hand manipulation
  */
@@ -23,17 +24,27 @@ const HAND_CONNECTIONS = [
   [0, 13], [13, 14], [14, 15], [15, 16],
   // Pinky
   [0, 17], [17, 18], [18, 19], [19, 20],
-  // Palm
+  // Palm connections
   [5, 9], [9, 13], [13, 17], [0, 17],
 ]
 
-// Fingertip indices for larger dots
+// Finger groups for palm fill
+const PALM_OUTLINE = [0, 5, 9, 13, 17, 0] // Wrist and base of each finger
+
+// Fingertip indices
 const FINGERTIPS = [4, 8, 12, 16, 20]
 
+// Knuckle indices (base of fingers)
+const KNUCKLES = [5, 9, 13, 17]
+
 // Smoothing configuration
-const SMOOTHING_FACTOR = 0.15 // Lower = smoother but laggier
+const SMOOTHING_FACTOR = 0.2 // Lower = smoother but laggier
 const GHOST_FADE_DURATION = 500 // ms to fade out ghost hand
 const GHOST_PERSIST_DURATION = 300 // ms to keep ghost before fading
+
+// Laser configuration
+const LASER_CENTER_BIAS = 0.7 // How strongly laser aims at center (0 = follow hand, 1 = always center)
+const LASER_DEVIATION_SCALE = 0.3 // How much hand position affects laser direction
 
 interface SmoothedHand {
   landmarks: { x: number; y: number; z: number }[]
@@ -157,49 +168,60 @@ export function Hand2DOverlay({ gestureState, enabled = true, showLaser = true }
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
       >
-        {/* Define glow filter for grip effect */}
+        {/* Define filters and gradients */}
         <defs>
-          <filter id="glow-cyan" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="1" result="coloredBlur" />
+          {/* Ghost glow filter */}
+          <filter id="ghost-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="0.8" result="blur" />
             <feMerge>
-              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="blur" />
+              <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          <filter id="glow-magenta" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="1" result="coloredBlur" />
-            <feMerge>
-              <feMergeNode in="coloredBlur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
+
+          {/* Grip glow filter */}
           <filter id="grip-glow" x="-100%" y="-100%" width="300%" height="300%">
-            <feGaussianBlur stdDeviation="2" result="coloredBlur" />
+            <feGaussianBlur stdDeviation="1.5" result="blur" />
             <feMerge>
-              <feMergeNode in="coloredBlur" />
-              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="blur" />
+              <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+
+          {/* Gradient for 3D depth effect - cyan */}
+          <radialGradient id="hand-gradient-cyan" cx="50%" cy="30%" r="70%">
+            <stop offset="0%" stopColor="#4ecdc4" stopOpacity="0.6" />
+            <stop offset="100%" stopColor="#2a7a75" stopOpacity="0.2" />
+          </radialGradient>
+
+          {/* Gradient for 3D depth effect - magenta */}
+          <radialGradient id="hand-gradient-magenta" cx="50%" cy="30%" r="70%">
+            <stop offset="0%" stopColor="#f72585" stopOpacity="0.6" />
+            <stop offset="100%" stopColor="#a01850" stopOpacity="0.2" />
+          </radialGradient>
         </defs>
 
-        {/* Left hand - cyan */}
+        {/* Left hand - cyan ghost */}
         {leftSmoothed && (
-          <g opacity={leftSmoothed.opacity} filter={leftSmoothed.isGhost ? 'url(#glow-cyan)' : undefined}>
-            <HandSkeleton
+          <g opacity={leftSmoothed.opacity} filter="url(#ghost-glow)">
+            <GhostHand
               landmarks={leftSmoothed.landmarks}
               color="#4ecdc4"
+              gradientId="hand-gradient-cyan"
               isGhost={leftSmoothed.isGhost}
             />
           </g>
         )}
 
-        {/* Right hand - magenta */}
+        {/* Right hand - magenta ghost */}
         {rightSmoothed && (
-          <g opacity={rightSmoothed.opacity} filter={rightSmoothed.isGhost ? 'url(#glow-magenta)' : undefined}>
-            <HandSkeleton
+          <g opacity={rightSmoothed.opacity} filter="url(#ghost-glow)">
+            <GhostHand
               landmarks={rightSmoothed.landmarks}
               color="#f72585"
+              gradientId="hand-gradient-magenta"
               isGhost={rightSmoothed.isGhost}
             />
           </g>
@@ -225,7 +247,6 @@ export function Hand2DOverlay({ gestureState, enabled = true, showLaser = true }
             ray={gestureState.leftPinchRay}
             color="#4ecdc4"
             isGripped={leftGripping || false}
-            otherRay={bothGripping ? gestureState.rightPinchRay : undefined}
           />
         )}
 
@@ -235,7 +256,6 @@ export function Hand2DOverlay({ gestureState, enabled = true, showLaser = true }
             ray={gestureState.rightPinchRay}
             color="#f72585"
             isGripped={rightGripping || false}
-            otherRay={bothGripping ? gestureState.leftPinchRay : undefined}
           />
         )}
 
@@ -251,25 +271,18 @@ export function Hand2DOverlay({ gestureState, enabled = true, showLaser = true }
   )
 }
 
-interface HandSkeletonProps {
+interface GhostHandProps {
   landmarks: { x: number; y: number; z: number }[]
   color: string
+  gradientId: string
   isGhost?: boolean
 }
 
-function HandSkeleton({ landmarks, color, isGhost = false }: HandSkeletonProps) {
+function GhostHand({ landmarks, color, gradientId, isGhost = false }: GhostHandProps) {
   // Calculate scale based on hand depth (z of wrist)
   const wristZ = landmarks[0].z || 0
   const depthScale = 1 + wristZ * 5
   const clampedScale = Math.max(0.3, Math.min(1.5, depthScale))
-
-  // Base stroke width that scales with depth
-  const baseStroke = 0.3 * clampedScale
-  const jointRadius = 0.4 * clampedScale
-  const fingertipRadius = 0.6 * clampedScale
-
-  // Ghost hands are more transparent and have a blur effect
-  const baseOpacity = isGhost ? 0.4 : 0.8
 
   const toSvg = (lm: { x: number; y: number }) => ({
     x: lm.x * 100,
@@ -278,9 +291,52 @@ function HandSkeleton({ landmarks, color, isGhost = false }: HandSkeletonProps) 
 
   const points = landmarks.map(toSvg)
 
+  // Base properties scaled with depth
+  const strokeWidth = 0.25 * clampedScale
+  const jointRadius = 0.35 * clampedScale
+  const fingertipRadius = 0.5 * clampedScale
+  const palmOpacity = isGhost ? 0.15 : 0.25
+  const lineOpacity = isGhost ? 0.3 : 0.5
+
+  // Create palm fill path
+  const palmPath = PALM_OUTLINE.map((idx, i) => {
+    const p = points[idx]
+    return i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`
+  }).join(' ') + ' Z'
+
+  // Create finger fill paths for 3D effect
+  const createFingerPath = (base: number, _tip: number) => {
+    const indices = [base, base + 1, base + 2, base + 3]
+    const fingerPoints = indices.map(i => points[i])
+    // Create a rounded path along the finger
+    return `M ${fingerPoints[0].x} ${fingerPoints[0].y} ` +
+           `Q ${fingerPoints[1].x} ${fingerPoints[1].y} ${fingerPoints[2].x} ${fingerPoints[2].y} ` +
+           `Q ${fingerPoints[2].x} ${fingerPoints[2].y} ${fingerPoints[3].x} ${fingerPoints[3].y}`
+  }
+
   return (
     <g>
-      {/* Connection lines */}
+      {/* Palm fill - gives 3D depth appearance */}
+      <path
+        d={palmPath}
+        fill={`url(#${gradientId})`}
+        opacity={palmOpacity}
+      />
+
+      {/* Finger strokes with gradient for 3D effect */}
+      {[[1, 4], [5, 8], [9, 12], [13, 16], [17, 20]].map(([base], idx) => (
+        <path
+          key={`finger-fill-${idx}`}
+          d={createFingerPath(base === 1 ? 1 : base, base === 1 ? 4 : base + 3)}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth * 3}
+          strokeLinecap="round"
+          opacity={0.15}
+        />
+      ))}
+
+      {/* Skeleton lines - thin glowing */}
       {HAND_CONNECTIONS.map(([i, j], idx) => {
         const p1 = points[i]
         const p2 = points[j]
@@ -292,16 +348,42 @@ function HandSkeleton({ landmarks, color, isGhost = false }: HandSkeletonProps) 
             x2={p2.x}
             y2={p2.y}
             stroke={color}
-            strokeWidth={baseStroke}
+            strokeWidth={strokeWidth}
             strokeLinecap="round"
-            opacity={baseOpacity}
+            opacity={lineOpacity}
           />
+        )
+      })}
+
+      {/* Knuckle highlights - larger for 3D effect */}
+      {KNUCKLES.map((idx) => {
+        const p = points[idx]
+        return (
+          <g key={`knuckle-${idx}`}>
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={jointRadius * 1.5}
+              fill={color}
+              opacity={0.2}
+            />
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={jointRadius}
+              fill={color}
+              opacity={0.4}
+            />
+          </g>
         )
       })}
 
       {/* Joint dots */}
       {points.map((p, idx) => {
         const isFingertip = FINGERTIPS.includes(idx)
+        const isKnuckle = KNUCKLES.includes(idx)
+        if (isKnuckle) return null // Already rendered
+
         const radius = isFingertip ? fingertipRadius : jointRadius
         return (
           <circle
@@ -310,25 +392,52 @@ function HandSkeleton({ landmarks, color, isGhost = false }: HandSkeletonProps) 
             cy={p.y}
             r={radius}
             fill={color}
-            opacity={isFingertip ? baseOpacity + 0.2 : baseOpacity - 0.1}
+            opacity={isFingertip ? 0.7 : 0.4}
           />
         )
       })}
 
-      {/* Glow effect for fingertips */}
-      {!isGhost && FINGERTIPS.map((idx) => {
+      {/* Fingertip glow - the main "ghost" effect */}
+      {FINGERTIPS.map((idx) => {
         const p = points[idx]
         return (
-          <circle
-            key={`glow-${idx}`}
-            cx={p.x}
-            cy={p.y}
-            r={fingertipRadius * 2}
-            fill={color}
-            opacity={0.15}
-          />
+          <g key={`fingertip-glow-${idx}`}>
+            {/* Outer glow */}
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={fingertipRadius * 3}
+              fill={color}
+              opacity={0.1}
+            />
+            {/* Inner glow */}
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={fingertipRadius * 1.8}
+              fill={color}
+              opacity={0.2}
+            />
+            {/* Core */}
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={fingertipRadius}
+              fill="#ffffff"
+              opacity={0.5}
+            />
+          </g>
         )
       })}
+
+      {/* Wrist indicator */}
+      <circle
+        cx={points[0].x}
+        cy={points[0].y}
+        r={jointRadius * 2}
+        fill={color}
+        opacity={0.3}
+      />
     </g>
   )
 }
@@ -337,25 +446,33 @@ interface LaserBeamProps {
   ray: PinchRay
   color: string
   isGripped: boolean
-  otherRay?: PinchRay | null
 }
 
 function LaserBeam({ ray, color, isGripped }: LaserBeamProps) {
   const originX = ray.origin.x * 100
   const originY = ray.origin.y * 100
 
-  // Laser always points toward center of screen (the nexus)
+  // Center of screen (the nexus)
   const centerX = 50
   const centerY = 50
 
-  // Direction toward center
-  const toCenterX = centerX - originX
-  const toCenterY = centerY - originY
+  // Calculate direction: blend between center and hand-influenced direction
+  // Hand position deviation from center
+  const handDeviationX = (originX - 50) * LASER_DEVIATION_SCALE
+  const handDeviationY = (originY - 50) * LASER_DEVIATION_SCALE
+
+  // Target point: mostly center, slightly influenced by hand position
+  const targetX = centerX - handDeviationX * (1 - LASER_CENTER_BIAS)
+  const targetY = centerY - handDeviationY * (1 - LASER_CENTER_BIAS)
+
+  // Direction toward target
+  const toCenterX = targetX - originX
+  const toCenterY = targetY - originY
   const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY)
   const normX = dist > 0 ? toCenterX / dist : 0
   const normY = dist > 0 ? toCenterY / dist : 0
 
-  // Laser extends to center, not beyond (it "hits" the nexus)
+  // Laser extends to target (the nexus area)
   const laserLength = dist
   const endX = originX + normX * laserLength
   const endY = originY + normY * laserLength
