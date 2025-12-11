@@ -260,215 +260,244 @@ interface GhostHandProps {
 }
 
 /**
- * PuffyGlove - Mario-style white glove with puffy, rounded appearance
- * Semi-transparent with soft edges and volumetric feel
+ * MasterHand - Smash Bros Master Hand / Crazy Hand style
+ * Volumetric filled shapes with soft gradients and ambient occlusion
  */
 function GhostHand({ landmarks, color: _color, gradientId: _gradientId, isGhost = false }: GhostHandProps) {
   // INVERTED depth scaling: hand closer to camera (negative Z) = smaller (farther in 3D space)
-  // Hand pulled back (positive Z) = bigger (closer to viewer)
   const wristZ = landmarks[0].z || 0
-  // Invert: positive Z (hand far from camera) = bigger, negative Z (close to camera) = smaller
-  const depthScale = 1 - wristZ * 4 // Inverted from before
-  const clampedScale = Math.max(0.4, Math.min(1.8, depthScale))
+  const depthScale = 1 - wristZ * 4
+  const clampedScale = Math.max(0.5, Math.min(2.0, depthScale))
 
-  // Un-mirror the X coordinate (webcam is mirrored, so flip it back)
+  // Un-mirror the X coordinate
   const toSvg = (lm: { x: number; y: number }) => ({
-    x: (1 - lm.x) * 100, // Flip X to un-mirror
+    x: (1 - lm.x) * 100,
     y: lm.y * 100,
   })
 
   const points = landmarks.map(toSvg)
+  const gloveOpacity = isGhost ? 0.5 : 0.85
 
-  // Puffy glove sizing - everything is rounder and bigger
-  const baseFingerWidth = 1.2 * clampedScale
-  const fingertipRadius = 0.9 * clampedScale
-  const knuckleRadius = 0.7 * clampedScale
-  const gloveOpacity = isGhost ? 0.4 : 0.6
+  // Finger width based on scale - fatter fingers for Master Hand look
+  const fingerWidth = 1.8 * clampedScale
 
-  // Finger segment indices: [base, mid1, mid2, tip]
-  const FINGERS = [
-    [1, 2, 3, 4],     // Thumb
-    [5, 6, 7, 8],     // Index
-    [9, 10, 11, 12],  // Middle
-    [13, 14, 15, 16], // Ring
-    [17, 18, 19, 20], // Pinky
+  // Unique ID for this hand's gradients/filters
+  const handId = Math.round(points[0].x * 10)
+
+  // Helper: get perpendicular offset for finger width
+  const getPerpendicular = (p1: {x: number, y: number}, p2: {x: number, y: number}, width: number) => {
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const len = Math.sqrt(dx * dx + dy * dy) || 1
+    return { x: -dy / len * width, y: dx / len * width }
+  }
+
+  // Create filled finger shape (capsule/sausage shape)
+  const createFingerShape = (indices: number[], width: number) => {
+    const pts = indices.map(i => points[i])
+    if (pts.length < 2) return ''
+
+    // Build outline going down one side and back up the other
+    const leftSide: string[] = []
+    const rightSide: string[] = []
+
+    for (let i = 0; i < pts.length - 1; i++) {
+      const perp = getPerpendicular(pts[i], pts[i + 1], width)
+      leftSide.push(`${pts[i].x + perp.x},${pts[i].y + perp.y}`)
+      rightSide.unshift(`${pts[i].x - perp.x},${pts[i].y - perp.y}`)
+    }
+
+    // Add rounded tip
+    const lastPt = pts[pts.length - 1]
+    const prevPt = pts[pts.length - 2]
+    const tipPerp = getPerpendicular(prevPt, lastPt, width)
+
+    // Rounded end cap using arc
+    const tipLeft = `${lastPt.x + tipPerp.x},${lastPt.y + tipPerp.y}`
+    const tipRight = `${lastPt.x - tipPerp.x},${lastPt.y - tipPerp.y}`
+
+    return `M ${leftSide[0]} L ${leftSide.join(' L ')} L ${tipLeft} A ${width} ${width} 0 0 1 ${tipRight} L ${rightSide.join(' L ')} Z`
+  }
+
+  // Create palm shape connecting all finger bases
+  const createPalmShape = () => {
+    // Palm outline: wrist -> thumb base -> around finger bases -> back to wrist
+    const wrist = points[0]
+    const thumbBase = points[1]
+    const indexBase = points[5]
+    const middleBase = points[9]
+    const ringBase = points[13]
+    const pinkyBase = points[17]
+
+    // Offset points outward for palm width
+    const palmWidth = fingerWidth * 1.2
+
+    return `
+      M ${wrist.x} ${wrist.y + palmWidth}
+      Q ${thumbBase.x - palmWidth} ${thumbBase.y} ${thumbBase.x} ${thumbBase.y - palmWidth * 0.5}
+      L ${indexBase.x - palmWidth * 0.3} ${indexBase.y - palmWidth * 0.5}
+      Q ${(indexBase.x + middleBase.x) / 2} ${Math.min(indexBase.y, middleBase.y) - palmWidth * 0.8}
+        ${middleBase.x} ${middleBase.y - palmWidth * 0.5}
+      Q ${(middleBase.x + ringBase.x) / 2} ${Math.min(middleBase.y, ringBase.y) - palmWidth * 0.6}
+        ${ringBase.x} ${ringBase.y - palmWidth * 0.5}
+      Q ${(ringBase.x + pinkyBase.x) / 2} ${Math.min(ringBase.y, pinkyBase.y) - palmWidth * 0.5}
+        ${pinkyBase.x + palmWidth * 0.3} ${pinkyBase.y - palmWidth * 0.3}
+      L ${pinkyBase.x + palmWidth * 0.5} ${pinkyBase.y + palmWidth * 0.5}
+      Q ${wrist.x + palmWidth * 1.5} ${(wrist.y + pinkyBase.y) / 2}
+        ${wrist.x} ${wrist.y + palmWidth}
+      Z
+    `
+  }
+
+  // Finger definitions: [landmark indices]
+  const fingers = [
+    { indices: [1, 2, 3, 4], width: fingerWidth * 0.9 },      // Thumb (slightly thinner)
+    { indices: [5, 6, 7, 8], width: fingerWidth },            // Index
+    { indices: [9, 10, 11, 12], width: fingerWidth * 1.05 },  // Middle (slightly thicker)
+    { indices: [13, 14, 15, 16], width: fingerWidth * 0.95 }, // Ring
+    { indices: [17, 18, 19, 20], width: fingerWidth * 0.85 }, // Pinky (thinnest)
   ]
 
-  // Create puffy finger path with rounded capsule segments
-  const createPuffyFingerPath = (fingerIndices: number[]) => {
-    const fingerPoints = fingerIndices.map(i => points[i])
-    // Create a thick rounded path
-    let path = `M ${fingerPoints[0].x} ${fingerPoints[0].y}`
-    for (let i = 1; i < fingerPoints.length; i++) {
-      path += ` L ${fingerPoints[i].x} ${fingerPoints[i].y}`
-    }
-    return path
-  }
-
-  // Palm center for radial gradient
-  const palmCenter = {
-    x: (points[0].x + points[5].x + points[9].x + points[13].x + points[17].x) / 5,
-    y: (points[0].y + points[5].y + points[9].y + points[13].y + points[17].y) / 5,
-  }
-
-  // Create smooth palm outline
-  const palmPath = `
-    M ${points[0].x} ${points[0].y}
-    Q ${points[1].x} ${points[1].y} ${points[2].x} ${points[2].y}
-    L ${points[5].x} ${points[5].y}
-    Q ${(points[5].x + points[9].x) / 2} ${Math.min(points[5].y, points[9].y) - 1}
-      ${points[9].x} ${points[9].y}
-    Q ${(points[9].x + points[13].x) / 2} ${Math.min(points[9].y, points[13].y) - 0.5}
-      ${points[13].x} ${points[13].y}
-    Q ${(points[13].x + points[17].x) / 2} ${Math.min(points[13].y, points[17].y) - 0.5}
-      ${points[17].x} ${points[17].y}
-    L ${points[0].x} ${points[0].y}
-    Z
-  `
-
   return (
-    <g>
-      {/* Definitions for this hand */}
+    <g opacity={gloveOpacity}>
+      {/* Definitions */}
       <defs>
-        {/* Puffy white glove gradient */}
-        <radialGradient id={`glove-gradient-${palmCenter.x.toFixed(0)}`} cx="30%" cy="30%" r="70%">
-          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9" />
-          <stop offset="50%" stopColor="#f0f0f5" stopOpacity="0.7" />
-          <stop offset="100%" stopColor="#d0d0e0" stopOpacity="0.5" />
+        {/* Main hand gradient - white to soft lavender */}
+        <radialGradient id={`hand-fill-${handId}`} cx="30%" cy="25%" r="80%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="40%" stopColor="#f5f5fa" />
+          <stop offset="70%" stopColor="#e8e8f0" />
+          <stop offset="100%" stopColor="#d8d8e5" />
         </radialGradient>
 
-        {/* Soft shadow/depth filter */}
-        <filter id={`glove-shadow-${palmCenter.x.toFixed(0)}`} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur in="SourceAlpha" stdDeviation="0.8" result="blur" />
-          <feOffset in="blur" dx="0.3" dy="0.5" result="shadow" />
-          <feComposite in="SourceGraphic" in2="shadow" operator="over" />
-        </filter>
+        {/* Ambient occlusion gradient for creases */}
+        <radialGradient id={`ao-gradient-${handId}`} cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#000000" stopOpacity="0" />
+          <stop offset="70%" stopColor="#000000" stopOpacity="0.1" />
+          <stop offset="100%" stopColor="#000000" stopOpacity="0.25" />
+        </radialGradient>
 
-        {/* Soft glow for volumetric effect */}
-        <filter id={`glove-glow-${palmCenter.x.toFixed(0)}`} x="-100%" y="-100%" width="300%" height="300%">
-          <feGaussianBlur stdDeviation="1" result="glow" />
+        {/* Rim light gradient */}
+        <linearGradient id={`rim-light-${handId}`} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.8" />
+          <stop offset="50%" stopColor="#ffffff" stopOpacity="0.1" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0.4" />
+        </linearGradient>
+
+        {/* Soft blur for glow effect */}
+        <filter id={`hand-glow-${handId}`} x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="0.5" result="blur" />
           <feMerge>
-            <feMergeNode in="glow" />
+            <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
+
+        {/* Drop shadow */}
+        <filter id={`hand-shadow-${handId}`} x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0.3" dy="0.5" stdDeviation="0.8" floodColor="#000000" floodOpacity="0.3" />
+        </filter>
       </defs>
 
-      {/* Main glove group with shadow */}
-      <g filter={`url(#glove-shadow-${palmCenter.x.toFixed(0)})`} opacity={gloveOpacity}>
-
-        {/* Palm - puffy rounded shape */}
+      {/* Shadow layer */}
+      <g filter={`url(#hand-shadow-${handId})`}>
+        {/* Palm base shape */}
         <path
-          d={palmPath}
-          fill={`url(#glove-gradient-${palmCenter.x.toFixed(0)})`}
-          stroke="#ffffff"
-          strokeWidth={0.3 * clampedScale}
-          strokeOpacity={0.5}
+          d={createPalmShape()}
+          fill={`url(#hand-fill-${handId})`}
         />
 
-        {/* Fingers - thick puffy tubes */}
-        {FINGERS.map((fingerIndices, idx) => (
-          <g key={`finger-${idx}`}>
-            {/* Finger tube - thick white stroke for puffy look */}
-            <path
-              d={createPuffyFingerPath(fingerIndices)}
-              fill="none"
-              stroke="#ffffff"
-              strokeWidth={baseFingerWidth * 2.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeOpacity={0.5}
-            />
-            {/* Inner highlight */}
-            <path
-              d={createPuffyFingerPath(fingerIndices)}
-              fill="none"
-              stroke="#f8f8ff"
-              strokeWidth={baseFingerWidth * 1.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeOpacity={0.7}
-            />
-            {/* Core line for definition */}
-            <path
-              d={createPuffyFingerPath(fingerIndices)}
-              fill="none"
-              stroke="#ffffff"
-              strokeWidth={baseFingerWidth * 0.8}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeOpacity={0.9}
-            />
-          </g>
+        {/* Fingers - rendered back to front for proper overlapping */}
+        {[...fingers].reverse().map((finger, idx) => (
+          <path
+            key={`finger-base-${idx}`}
+            d={createFingerShape(finger.indices, finger.width)}
+            fill={`url(#hand-fill-${handId})`}
+          />
+        ))}
+      </g>
+
+      {/* Ambient occlusion in creases (between fingers) */}
+      {[5, 9, 13].map((baseIdx, idx) => {
+        const p1 = points[baseIdx]
+        const p2 = points[baseIdx + 4]
+        return (
+          <ellipse
+            key={`ao-${idx}`}
+            cx={(p1.x + p2.x) / 2}
+            cy={(p1.y + p2.y) / 2 - fingerWidth * 0.3}
+            rx={fingerWidth * 0.6}
+            ry={fingerWidth * 0.4}
+            fill={`url(#ao-gradient-${handId})`}
+            opacity={0.5}
+          />
+        )
+      })}
+
+      {/* Knuckle definition shadows */}
+      {KNUCKLES.map((idx) => {
+        const p = points[idx]
+        return (
+          <circle
+            key={`knuckle-shadow-${idx}`}
+            cx={p.x}
+            cy={p.y + fingerWidth * 0.2}
+            r={fingerWidth * 0.5}
+            fill="#000000"
+            opacity={0.08}
+          />
+        )
+      })}
+
+      {/* Highlight layer - rim lighting effect */}
+      <g filter={`url(#hand-glow-${handId})`}>
+        {/* Palm highlight */}
+        <path
+          d={createPalmShape()}
+          fill="none"
+          stroke={`url(#rim-light-${handId})`}
+          strokeWidth={0.3 * clampedScale}
+        />
+
+        {/* Finger highlights */}
+        {fingers.map((finger, idx) => (
+          <path
+            key={`finger-highlight-${idx}`}
+            d={createFingerShape(finger.indices, finger.width * 0.7)}
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth={0.2 * clampedScale}
+            strokeOpacity={0.4}
+          />
         ))}
 
-        {/* Fingertip puffs - round ball ends like Mario gloves */}
+        {/* Fingertip highlights - small specular dots */}
         {FINGERTIPS.map((idx) => {
           const p = points[idx]
           return (
-            <g key={`tip-${idx}`}>
-              {/* Outer soft glow */}
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={fingertipRadius * 2}
-                fill="#ffffff"
-                opacity={0.3}
-              />
-              {/* Main puff */}
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={fingertipRadius * 1.4}
-                fill="#f8f8ff"
-                opacity={0.7}
-              />
-              {/* Highlight dot */}
-              <circle
-                cx={p.x - fingertipRadius * 0.3}
-                cy={p.y - fingertipRadius * 0.3}
-                r={fingertipRadius * 0.5}
-                fill="#ffffff"
-                opacity={0.9}
-              />
-            </g>
+            <circle
+              key={`tip-highlight-${idx}`}
+              cx={p.x - fingerWidth * 0.15}
+              cy={p.y - fingerWidth * 0.15}
+              r={fingerWidth * 0.2}
+              fill="#ffffff"
+              opacity={0.7}
+            />
           )
         })}
-
-        {/* Knuckle bumps - subtle rounded protrusions */}
-        {KNUCKLES.map((idx) => {
-          const p = points[idx]
-          return (
-            <g key={`knuckle-${idx}`}>
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={knuckleRadius * 1.8}
-                fill="#f0f0f5"
-                opacity={0.5}
-              />
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={knuckleRadius}
-                fill="#ffffff"
-                opacity={0.7}
-              />
-            </g>
-          )
-        })}
-
-        {/* Wrist cuff - puffy ring */}
-        <circle
-          cx={points[0].x}
-          cy={points[0].y}
-          r={knuckleRadius * 2.5}
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth={knuckleRadius * 1.5}
-          opacity={0.4}
-        />
       </g>
+
+      {/* Wrist cuff */}
+      <ellipse
+        cx={points[0].x}
+        cy={points[0].y + fingerWidth * 0.5}
+        rx={fingerWidth * 1.5}
+        ry={fingerWidth * 0.8}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth={fingerWidth * 0.4}
+        opacity={0.3}
+      />
     </g>
   )
 }
