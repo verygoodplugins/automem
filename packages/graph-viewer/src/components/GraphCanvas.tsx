@@ -25,6 +25,14 @@ const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
 const LABEL_DISTANCE_THRESHOLD = 80 // Only show labels for nodes within this distance
 const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
 
+// Gesture smoothing constants - prevent sudden movements
+const GESTURE_SMOOTHING = 0.15 // Lower = smoother but laggier (0.1-0.3 recommended)
+const GESTURE_DEADZONE = 0.005 // Ignore tiny movements
+const MAX_ZOOM_SPEED = 0.05 // Cap zoom rate per frame
+const MAX_ROTATE_SPEED = 0.1 // Cap rotation rate per frame (radians)
+const MAX_PAN_SPEED = 2 // Cap pan rate per frame
+const RECENTER_STRENGTH = 0.02 // How strongly to pull view back to center
+
 interface GraphCanvasProps {
   nodes: GraphNode[]
   edges: GraphEdge[]
@@ -155,7 +163,19 @@ function Scene({
     center: { x: 0.5, y: 0.5 },
   })
 
-  // Apply gesture controls to camera
+  // Smoothed gesture values (to prevent sudden movements)
+  const smoothedGestureRef = useRef({
+    zoomDelta: 0,
+    rotateDelta: 0,
+    panDeltaX: 0,
+    panDeltaY: 0,
+    pullDelta: 0,
+  })
+
+  // Clamp helper
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+  // Apply gesture controls to camera with smoothing
   useEffect(() => {
     if (!gestureControlEnabled || !controlsRef.current) return
     if (!gestureState.isTracking) return
@@ -163,6 +183,7 @@ function Scene({
     const controls = controlsRef.current
     const leftRay = gestureState.leftPinchRay
     const rightRay = gestureState.rightPinchRay
+    const smoothed = smoothedGestureRef.current
 
     // Two-hand pinch manipulation: Both hands must be gripping
     const bothGripping = leftRay?.isValid && rightRay?.isValid
@@ -193,46 +214,59 @@ function Scene({
 
       // Only apply deltas if we have valid previous state
       if (prev.leftOrigin && prev.rightOrigin) {
+        // Calculate raw deltas
+        const rawZoomDelta = currentDistance - prev.distance
+        let rawRotateDelta = currentRotation - prev.rotation
+        while (rawRotateDelta > Math.PI) rawRotateDelta -= 2 * Math.PI
+        while (rawRotateDelta < -Math.PI) rawRotateDelta += 2 * Math.PI
+        const rawPanDeltaX = currentCenter.x - prev.center.x
+        const rawPanDeltaY = currentCenter.y - prev.center.y
+        const prevZ = (prev.leftOrigin.z + prev.rightOrigin.z) / 2
+        const rawPullDelta = currentZ - prevZ
+
+        // Apply smoothing (lerp toward target)
+        smoothed.zoomDelta += (rawZoomDelta - smoothed.zoomDelta) * GESTURE_SMOOTHING
+        smoothed.rotateDelta += (rawRotateDelta - smoothed.rotateDelta) * GESTURE_SMOOTHING
+        smoothed.panDeltaX += (rawPanDeltaX - smoothed.panDeltaX) * GESTURE_SMOOTHING
+        smoothed.panDeltaY += (rawPanDeltaY - smoothed.panDeltaY) * GESTURE_SMOOTHING
+        smoothed.pullDelta += (rawPullDelta - smoothed.pullDelta) * GESTURE_SMOOTHING
+
+        // Clamp to max speeds
+        const zoomDelta = clamp(smoothed.zoomDelta, -MAX_ZOOM_SPEED, MAX_ZOOM_SPEED)
+        const rotateDelta = clamp(smoothed.rotateDelta, -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED)
+        const panDeltaX = clamp(smoothed.panDeltaX, -MAX_PAN_SPEED / 100, MAX_PAN_SPEED / 100)
+        const panDeltaY = clamp(smoothed.panDeltaY, -MAX_PAN_SPEED / 100, MAX_PAN_SPEED / 100)
+        const pullDelta = clamp(smoothed.pullDelta, -MAX_ZOOM_SPEED, MAX_ZOOM_SPEED)
+
         // ZOOM: Spread hands apart = zoom in, pinch together = zoom out
-        const distanceDelta = currentDistance - prev.distance
-        if (Math.abs(distanceDelta) > 0.002) {
-          const zoomFactor = 1 - distanceDelta * 3
+        if (Math.abs(zoomDelta) > GESTURE_DEADZONE) {
+          const zoomFactor = 1 - zoomDelta * 2
           controls.object.position.multiplyScalar(zoomFactor)
-          setAutoRotate(false)
         }
 
         // ROTATE: Rotate hands around each other = orbit camera
-        let rotationDelta = currentRotation - prev.rotation
-        while (rotationDelta > Math.PI) rotationDelta -= 2 * Math.PI
-        while (rotationDelta < -Math.PI) rotationDelta += 2 * Math.PI
-
-        if (Math.abs(rotationDelta) > 0.01) {
-          const rotateSpeed = 2
+        if (Math.abs(rotateDelta) > GESTURE_DEADZONE) {
           controls.object.position.applyAxisAngle(
             new THREE.Vector3(0, 1, 0),
-            rotationDelta * rotateSpeed
+            rotateDelta
           )
-          setAutoRotate(false)
         }
 
-        // PAN: Move both hands together = pan the view
-        const panDeltaX = currentCenter.x - prev.center.x
-        const panDeltaY = currentCenter.y - prev.center.y
-        if (Math.abs(panDeltaX) > 0.002 || Math.abs(panDeltaY) > 0.002) {
-          const panSpeed = 100
-          controls.target.x -= panDeltaX * panSpeed
-          controls.target.y += panDeltaY * panSpeed
-          setAutoRotate(false)
+        // PAN: Move both hands together = pan the view (reduced sensitivity)
+        if (Math.abs(panDeltaX) > GESTURE_DEADZONE || Math.abs(panDeltaY) > GESTURE_DEADZONE) {
+          controls.target.x -= panDeltaX * 50
+          controls.target.y += panDeltaY * 50
         }
 
         // PULL: Move both hands toward/away from camera = dolly
-        const prevZ = (prev.leftOrigin.z + prev.rightOrigin.z) / 2
-        const zDelta = currentZ - prevZ
-        if (Math.abs(zDelta) > 0.005) {
-          const pullFactor = 1 + zDelta * 5
+        if (Math.abs(pullDelta) > GESTURE_DEADZONE) {
+          const pullFactor = 1 + pullDelta * 3
           controls.object.position.multiplyScalar(pullFactor)
-          setAutoRotate(false)
         }
+
+        // Gentle recenter: slowly pull target back toward origin
+        controls.target.x *= (1 - RECENTER_STRENGTH)
+        controls.target.y *= (1 - RECENTER_STRENGTH)
       }
 
       // Update previous state
@@ -255,33 +289,17 @@ function Scene({
         center: { x: 0.5, y: 0.5 },
       }
 
-      // Fallback to wrist-based gestures when two hands detected but not both gripping
-      if (gestureState.handsDetected >= 2) {
-        if (Math.abs(gestureState.zoomDelta) > 0.001) {
-          const zoomFactor = 1 - gestureState.zoomDelta * 0.5
-          controls.object.position.multiplyScalar(zoomFactor)
-          setAutoRotate(false)
-        }
+      // Decay smoothed values when not gripping
+      smoothed.zoomDelta *= 0.9
+      smoothed.rotateDelta *= 0.9
+      smoothed.panDeltaX *= 0.9
+      smoothed.panDeltaY *= 0.9
+      smoothed.pullDelta *= 0.9
 
-        if (Math.abs(gestureState.rotateDelta) > 0.01) {
-          const rotateSpeed = 2
-          controls.object.position.applyAxisAngle(
-            new THREE.Vector3(0, 1, 0),
-            gestureState.rotateDelta * rotateSpeed
-          )
-          setAutoRotate(false)
-        }
-
-        if (
-          Math.abs(gestureState.panDelta.x) > 0.001 ||
-          Math.abs(gestureState.panDelta.y) > 0.001
-        ) {
-          const panSpeed = 50
-          controls.target.x -= gestureState.panDelta.x * panSpeed
-          controls.target.y += gestureState.panDelta.y * panSpeed
-          setAutoRotate(false)
-        }
-
+      // Always gently recenter the view
+      if (controls.target.x !== 0 || controls.target.y !== 0) {
+        controls.target.x *= (1 - RECENTER_STRENGTH)
+        controls.target.y *= (1 - RECENTER_STRENGTH)
         controls.update()
       }
     }
