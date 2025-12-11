@@ -90,6 +90,21 @@ function calculatePinchStrength(landmarks: Record<string, IPhoneLandmark>): numb
   return Math.max(0, Math.min(1, 1 - (dist - 0.02) / 0.13))
 }
 
+// Closed fist strength from fingertip-to-wrist distances
+function calculateGrabStrength(landmarks: Record<string, IPhoneLandmark>): number {
+  const wrist = landmarks['VNHLKJWRIST']
+  if (!wrist) return 0
+
+  const tips = ['VNHLKJTHUMBTIP', 'VNHLKJINDEXTIP', 'VNHLKJMIDDLETIP', 'VNHLKJRINGTIP', 'VNHLKJLITTLETIP']
+    .map((k) => landmarks[k])
+    .filter(Boolean) as IPhoneLandmark[]
+  if (tips.length < 3) return 0
+
+  const avg = tips.reduce((sum, t) => sum + distance3D(t, wrist), 0) / tips.length
+  // Typical range (rough): ~0.08 fist .. ~0.25 open
+  return Math.max(0, Math.min(1, 1 - (avg - 0.08) / 0.17))
+}
+
 // Calculate pinch ray from iPhone landmarks (with REAL depth!)
 function calculatePinchRay(landmarks: Record<string, IPhoneLandmark>, hasLiDAR: boolean): PinchRay {
   const thumbTip = landmarks['VNHLKJTHUMBTIP']
@@ -173,7 +188,9 @@ const DEFAULT_STATE: GestureState = {
 
 export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}) {
   const {
-    serverUrl = 'ws://localhost:8765',
+    // Default to the local bridge's web client endpoint
+    // (iPhone connects to :8765; browser/web-app should connect to :8766/ws)
+    serverUrl = 'ws://localhost:8766/ws',
     enabled = true,
     onGestureChange
   } = options
@@ -264,15 +281,18 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
     // Pinch strength (smoothed)
     const primaryHand = newState.rightHand || newState.leftHand
     if (primaryHand) {
-      const strength = calculatePinchStrength(
-        Object.fromEntries(
-          Object.entries(LANDMARK_MAP).map(([name, idx]) => [
-            name,
-            { x: primaryHand.landmarks[idx].x, y: primaryHand.landmarks[idx].y, z: primaryHand.landmarks[idx].z || 0 }
-          ])
-        )
-      )
-      newState.pinchStrength = lerp(prev.pinchStrength, strength, 1 - SMOOTHING)
+      const reconstructed = Object.fromEntries(
+        Object.entries(LANDMARK_MAP).map(([name, idx]) => [
+          name,
+          { x: primaryHand.landmarks[idx].x, y: primaryHand.landmarks[idx].y, z: primaryHand.landmarks[idx].z || 0 },
+        ])
+      ) as Record<string, IPhoneLandmark>
+
+      const pinch = calculatePinchStrength(reconstructed)
+      const grab = calculateGrabStrength(reconstructed)
+
+      newState.pinchStrength = lerp(prev.pinchStrength, pinch, 1 - SMOOTHING)
+      newState.grabStrength = lerp(prev.grabStrength, grab, 1 - SMOOTHING)
     }
 
     prevStateRef.current = newState

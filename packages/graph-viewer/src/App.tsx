@@ -13,6 +13,8 @@ import { TokenPrompt } from './components/TokenPrompt'
 import { StatsBar } from './components/StatsBar'
 import { GestureDebugOverlay } from './components/GestureDebugOverlay'
 import { Hand2DOverlay } from './components/Hand2DOverlay'
+import { HandControlOverlay } from './components/HandControlOverlay'
+import { useHandLockAndGrab } from './hooks/useHandLockAndGrab'
 import type { GraphNode, FilterState } from './lib/types'
 import type { GestureState } from './hooks/useHandGestures'
 
@@ -95,6 +97,11 @@ export default function App() {
   const handleGestureStateChange = useCallback((state: GestureState) => {
     setGestureState(state)
   }, [])
+
+  const { lock: handLock } = useHandLockAndGrab(gestureState, gestureControlEnabled)
+  const trackingSource = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('iphone') === 'true'
+    ? 'iphone'
+    : 'mediapipe'
 
   const { data, isLoading, error, refetch } = useGraphSnapshot({
     limit: filters.maxNodes,
@@ -266,6 +273,9 @@ export default function App() {
               gestureState={gestureState}
               visible={debugOverlayVisible && gestureControlEnabled}
             />
+
+            {/* Hand Control Overlay (lock/grab metrics) */}
+            <HandControlOverlay enabled={gestureControlEnabled} lock={handLock} source={trackingSource} />
           </div>
         </Panel>
 

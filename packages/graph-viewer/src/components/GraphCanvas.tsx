@@ -26,6 +26,7 @@ import { useForceLayout } from '../hooks/useForceLayout'
 import { useHandGestures, GestureState } from '../hooks/useHandGestures'
 import { useIPhoneHandTracking } from '../hooks/useIPhoneHandTracking'
 import { useHandInteraction } from '../hooks/useHandInteraction'
+import { useHandLockAndGrab } from '../hooks/useHandLockAndGrab'
 import { LaserPointer } from './LaserPointer'
 import { ExpandedNodeView } from './ExpandedNodeView'
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
@@ -34,7 +35,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 // Check if we should use iPhone tracking (based on URL param or env)
 function useTrackingSource() {
   const [source, setSource] = useState<'mediapipe' | 'iphone'>('mediapipe')
-  const [iphoneUrl, setIphoneUrl] = useState('ws://localhost:8765')
+  const [iphoneUrl, setIphoneUrl] = useState('ws://localhost:8766/ws')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -160,6 +161,7 @@ function Scene({
   // Hand interaction with stable pointer ray
   const { interactionState, processGestures } = useHandInteraction({
     nodes: layoutNodes,
+    enableSelection: false,
     onNodeSelect: (nodeId) => {
       if (nodeId) {
         // Find the node and trigger expansion
@@ -192,6 +194,9 @@ function Scene({
       processGestures(gestureState)
     }
   }, [gestureControlEnabled, gestureState, processGestures])
+
+  // New UI: open-palm acquire/lock + fist grab controls (single-hand for now)
+  const { lock: handLock, deltas: grabDeltas } = useHandLockAndGrab(gestureState, gestureControlEnabled)
 
   // Create node lookup for edges
   const nodeById = useMemo(
@@ -276,21 +281,38 @@ function Scene({
     // Use the new interaction state for cloud manipulation
     const { rotationDelta, zoomDelta, dragDeltaZ, isDragging } = interactionState
 
-    // Apply zoom (two-hand spread/pinch)
-    if (Math.abs(zoomDelta) > GESTURE_DEADZONE) {
-      group.position.z += zoomDelta * 0.5
-    }
+    const usingGrabControls = handLock.mode === 'locked' && handLock.grabbed
 
-    // Apply rotation (two-hand rotation)
-    if (Math.abs(rotationDelta.x) > GESTURE_DEADZONE) {
-      group.rotation.z += rotationDelta.x
-    }
+    if (usingGrabControls) {
+      // Exponential zoom velocity already computed; smooth + clamp
+      smoothed.translateZ += (grabDeltas.zoom - smoothed.translateZ) * GESTURE_SMOOTHING
+      const zVel = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
+      if (Math.abs(zVel) > GESTURE_DEADZONE) {
+        group.position.z += zVel
+      }
 
-    // Apply Z drag (single hand push/pull when not selecting a node)
-    if (!isDragging && Math.abs(dragDeltaZ) > GESTURE_DEADZONE) {
-      smoothed.translateZ += (dragDeltaZ - smoothed.translateZ) * GESTURE_SMOOTHING
-      const clamped = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
-      group.position.z += clamped
+      // Rotation (pitch/yaw)
+      const rx = clamp(grabDeltas.rotateX, -0.08, 0.08)
+      const ry = clamp(grabDeltas.rotateY, -0.08, 0.08)
+      if (Math.abs(rx) > GESTURE_DEADZONE) group.rotation.x += rx
+      if (Math.abs(ry) > GESTURE_DEADZONE) group.rotation.y += ry
+    } else {
+      // Apply zoom (two-hand spread/pinch)
+      if (Math.abs(zoomDelta) > GESTURE_DEADZONE) {
+        group.position.z += zoomDelta * 0.5
+      }
+
+      // Apply rotation (two-hand rotation)
+      if (Math.abs(rotationDelta.x) > GESTURE_DEADZONE) {
+        group.rotation.z += rotationDelta.x
+      }
+
+      // Apply Z drag (single hand push/pull when not selecting a node)
+      if (!isDragging && Math.abs(dragDeltaZ) > GESTURE_DEADZONE) {
+        smoothed.translateZ += (dragDeltaZ - smoothed.translateZ) * GESTURE_SMOOTHING
+        const clamped = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
+        group.position.z += clamped
+      }
     }
 
     // Decay smoothed values
@@ -304,7 +326,7 @@ function Scene({
     group.position.z *= (1 - RECENTER_STRENGTH)
     group.rotation.x *= (1 - RECENTER_STRENGTH)
     group.rotation.y *= (1 - RECENTER_STRENGTH)
-  }, [gestureControlEnabled, gestureState, interactionState])
+  }, [gestureControlEnabled, gestureState, interactionState, handLock, grabDeltas])
 
   return (
     <>
