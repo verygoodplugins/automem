@@ -28,10 +28,10 @@ const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
 // Gesture smoothing constants - prevent sudden movements
 const GESTURE_SMOOTHING = 0.15 // Lower = smoother but laggier (0.1-0.3 recommended)
 const GESTURE_DEADZONE = 0.005 // Ignore tiny movements
-const MAX_ZOOM_SPEED = 0.05 // Cap zoom rate per frame
-const MAX_ROTATE_SPEED = 0.1 // Cap rotation rate per frame (radians)
-const MAX_PAN_SPEED = 2 // Cap pan rate per frame
-const RECENTER_STRENGTH = 0.02 // How strongly to pull view back to center
+const MAX_TRANSLATE_SPEED = 3 // Cap cloud translation per frame
+const MAX_ROTATE_SPEED = 0.08 // Cap rotation rate per frame (radians)
+const RECENTER_STRENGTH = 0.01 // How strongly to pull cloud back to center
+const PULL_SENSITIVITY = 150 // How much Z translation per unit of depth change
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -165,22 +165,23 @@ function Scene({
 
   // Smoothed gesture values (to prevent sudden movements)
   const smoothedGestureRef = useRef({
-    zoomDelta: 0,
     rotateDelta: 0,
-    panDeltaX: 0,
-    panDeltaY: 0,
-    pullDelta: 0,
+    translateX: 0,
+    translateY: 0,
+    translateZ: 0,
   })
 
   // Clamp helper
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
-  // Apply gesture controls to camera with smoothing
+  // Apply gesture controls to move the CLOUD (not camera) with smoothing
+  // Pinch + pull back = pull cloud closer (translate Z positive toward camera)
+  // Spread + push forward = push cloud away (translate Z negative away from camera)
   useEffect(() => {
-    if (!gestureControlEnabled || !controlsRef.current) return
+    if (!gestureControlEnabled || !groupRef.current) return
     if (!gestureState.isTracking) return
 
-    const controls = controlsRef.current
+    const group = groupRef.current
     const leftRay = gestureState.leftPinchRay
     const rightRay = gestureState.rightPinchRay
     const smoothed = smoothedGestureRef.current
@@ -195,7 +196,7 @@ function Scene({
       const leftOrigin = leftRay.origin
       const rightOrigin = rightRay.origin
 
-      // Distance between pinch points
+      // Distance between pinch points (for detecting pinch vs spread)
       const dx = rightOrigin.x - leftOrigin.x
       const dy = rightOrigin.y - leftOrigin.y
       const currentDistance = Math.sqrt(dx * dx + dy * dy)
@@ -209,64 +210,54 @@ function Scene({
         y: (leftOrigin.y + rightOrigin.y) / 2,
       }
 
-      // Average Z depth (for pull gesture)
+      // Average Z depth (hands moving toward/away from camera)
       const currentZ = (leftOrigin.z + rightOrigin.z) / 2
+
+      // Average pinch strength (how tightly fingers are pinched)
+      const avgPinchStrength = (leftRay.strength + rightRay.strength) / 2
 
       // Only apply deltas if we have valid previous state
       if (prev.leftOrigin && prev.rightOrigin) {
         // Calculate raw deltas
-        const rawZoomDelta = currentDistance - prev.distance
         let rawRotateDelta = currentRotation - prev.rotation
         while (rawRotateDelta > Math.PI) rawRotateDelta -= 2 * Math.PI
         while (rawRotateDelta < -Math.PI) rawRotateDelta += 2 * Math.PI
-        const rawPanDeltaX = currentCenter.x - prev.center.x
-        const rawPanDeltaY = currentCenter.y - prev.center.y
+
+        // Z depth change (positive = hands moving toward camera = pulling)
         const prevZ = (prev.leftOrigin.z + prev.rightOrigin.z) / 2
-        const rawPullDelta = currentZ - prevZ
+        const rawZDelta = currentZ - prevZ
+
+        // THE KEY GESTURE:
+        // Pinch (fingers together, avgPinchStrength high) + Pull back (Z increases) = bring cloud closer
+        // Spread (fingers apart) + Push forward (Z decreases) = push cloud away
+        // Combine pinch strength with Z movement for the pull/push gesture
+        // When pinched tight and pulling back: translate cloud toward camera (+Z in world)
+        // When spreading and pushing forward: translate cloud away (-Z in world)
+
+        const rawTranslateZ = -rawZDelta * PULL_SENSITIVITY * avgPinchStrength
 
         // Apply smoothing (lerp toward target)
-        smoothed.zoomDelta += (rawZoomDelta - smoothed.zoomDelta) * GESTURE_SMOOTHING
         smoothed.rotateDelta += (rawRotateDelta - smoothed.rotateDelta) * GESTURE_SMOOTHING
-        smoothed.panDeltaX += (rawPanDeltaX - smoothed.panDeltaX) * GESTURE_SMOOTHING
-        smoothed.panDeltaY += (rawPanDeltaY - smoothed.panDeltaY) * GESTURE_SMOOTHING
-        smoothed.pullDelta += (rawPullDelta - smoothed.pullDelta) * GESTURE_SMOOTHING
+        smoothed.translateZ += (rawTranslateZ - smoothed.translateZ) * GESTURE_SMOOTHING
 
         // Clamp to max speeds
-        const zoomDelta = clamp(smoothed.zoomDelta, -MAX_ZOOM_SPEED, MAX_ZOOM_SPEED)
         const rotateDelta = clamp(smoothed.rotateDelta, -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED)
-        const panDeltaX = clamp(smoothed.panDeltaX, -MAX_PAN_SPEED / 100, MAX_PAN_SPEED / 100)
-        const panDeltaY = clamp(smoothed.panDeltaY, -MAX_PAN_SPEED / 100, MAX_PAN_SPEED / 100)
-        const pullDelta = clamp(smoothed.pullDelta, -MAX_ZOOM_SPEED, MAX_ZOOM_SPEED)
+        const translateZ = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
 
-        // ZOOM: Spread hands apart = zoom in, pinch together = zoom out
-        if (Math.abs(zoomDelta) > GESTURE_DEADZONE) {
-          const zoomFactor = 1 - zoomDelta * 2
-          controls.object.position.multiplyScalar(zoomFactor)
-        }
-
-        // ROTATE: Rotate hands around each other = orbit camera
+        // ROTATE: Rotate hands around each other = rotate the cloud
         if (Math.abs(rotateDelta) > GESTURE_DEADZONE) {
-          controls.object.position.applyAxisAngle(
-            new THREE.Vector3(0, 1, 0),
-            rotateDelta
-          )
+          group.rotation.y += rotateDelta
         }
 
-        // PAN: Move both hands together = pan the view (reduced sensitivity)
-        if (Math.abs(panDeltaX) > GESTURE_DEADZONE || Math.abs(panDeltaY) > GESTURE_DEADZONE) {
-          controls.target.x -= panDeltaX * 50
-          controls.target.y += panDeltaY * 50
+        // PULL/PUSH: Move hands toward/away from camera = translate cloud in Z
+        if (Math.abs(translateZ) > GESTURE_DEADZONE) {
+          group.position.z += translateZ
         }
 
-        // PULL: Move both hands toward/away from camera = dolly
-        if (Math.abs(pullDelta) > GESTURE_DEADZONE) {
-          const pullFactor = 1 + pullDelta * 3
-          controls.object.position.multiplyScalar(pullFactor)
-        }
-
-        // Gentle recenter: slowly pull target back toward origin
-        controls.target.x *= (1 - RECENTER_STRENGTH)
-        controls.target.y *= (1 - RECENTER_STRENGTH)
+        // Gentle recenter: slowly pull cloud back toward origin
+        group.position.x *= (1 - RECENTER_STRENGTH)
+        group.position.y *= (1 - RECENTER_STRENGTH)
+        group.position.z *= (1 - RECENTER_STRENGTH)
       }
 
       // Update previous state
@@ -277,8 +268,6 @@ function Scene({
         rotation: currentRotation,
         center: currentCenter,
       }
-
-      controls.update()
     } else {
       // Reset previous state when not both gripping
       prevPinchStateRef.current = {
@@ -290,17 +279,21 @@ function Scene({
       }
 
       // Decay smoothed values when not gripping
-      smoothed.zoomDelta *= 0.9
       smoothed.rotateDelta *= 0.9
-      smoothed.panDeltaX *= 0.9
-      smoothed.panDeltaY *= 0.9
-      smoothed.pullDelta *= 0.9
+      smoothed.translateX *= 0.9
+      smoothed.translateY *= 0.9
+      smoothed.translateZ *= 0.9
 
-      // Always gently recenter the view
-      if (controls.target.x !== 0 || controls.target.y !== 0) {
-        controls.target.x *= (1 - RECENTER_STRENGTH)
-        controls.target.y *= (1 - RECENTER_STRENGTH)
-        controls.update()
+      // Always gently recenter the cloud when not gripping
+      if (groupRef.current) {
+        const group = groupRef.current
+        if (group.position.x !== 0 || group.position.y !== 0 || group.position.z !== 0) {
+          group.position.x *= (1 - RECENTER_STRENGTH)
+          group.position.y *= (1 - RECENTER_STRENGTH)
+          group.position.z *= (1 - RECENTER_STRENGTH)
+        }
+        // Also slowly reset rotation
+        group.rotation.y *= (1 - RECENTER_STRENGTH)
       }
     }
   }, [gestureControlEnabled, gestureState])
