@@ -4,13 +4,15 @@
  * Renders hands as a 2D overlay on top of the canvas with:
  * - Ghost 3D hand effect (translucent, glowing)
  * - Smoothing/interpolation (ghost persists when hand disappears)
- * - Laser beams that default toward center with slight deviation
+ * - Accurate laser beams using stable pointer ray with arm model
+ * - Hit indicator when pointing at a node
  * - Pinch grip indicator (lights up when gripped)
  * - Support for two-hand manipulation
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import type { GestureState, PinchRay } from '../hooks/useHandGestures'
+import type { StableRay, NodeHit } from '../hooks/useStablePointerRay'
 
 // Fingertip indices
 const FINGERTIPS = [4, 8, 12, 16, 20]
@@ -38,9 +40,22 @@ interface Hand2DOverlayProps {
   gestureState: GestureState
   enabled?: boolean
   showLaser?: boolean
+  /** Stable left ray from arm model + One Euro Filter */
+  leftStableRay?: StableRay | null
+  /** Stable right ray from arm model + One Euro Filter */
+  rightStableRay?: StableRay | null
+  /** Current node hit (if any) */
+  hoveredNode?: NodeHit | null
 }
 
-export function Hand2DOverlay({ gestureState, enabled = true, showLaser = true }: Hand2DOverlayProps) {
+export function Hand2DOverlay({
+  gestureState,
+  enabled = true,
+  showLaser = true,
+  leftStableRay,
+  rightStableRay,
+  hoveredNode,
+}: Hand2DOverlayProps) {
   // Track smoothed hand positions with ghost effect
   const [leftSmoothed, setLeftSmoothed] = useState<SmoothedHand | null>(null)
   const [rightSmoothed, setRightSmoothed] = useState<SmoothedHand | null>(null)
@@ -222,21 +237,27 @@ export function Hand2DOverlay({ gestureState, enabled = true, showLaser = true }
           />
         )}
 
-        {/* Left laser */}
+        {/* Left laser - use stable ray if available, otherwise fall back to basic ray */}
         {showLaser && gestureState.leftPinchRay && gestureState.leftPinchRay.strength > 0.3 && (
           <LaserBeam
             ray={gestureState.leftPinchRay}
+            stableRay={leftStableRay}
             color="#4ecdc4"
             isGripped={leftGripping || false}
+            hasHit={hoveredNode !== null && leftStableRay !== null &&
+              (leftStableRay?.confidence ?? 0) >= (rightStableRay?.confidence ?? 0)}
           />
         )}
 
-        {/* Right laser */}
+        {/* Right laser - use stable ray if available */}
         {showLaser && gestureState.rightPinchRay && gestureState.rightPinchRay.strength > 0.3 && (
           <LaserBeam
             ray={gestureState.rightPinchRay}
+            stableRay={rightStableRay}
             color="#f72585"
             isGripped={rightGripping || false}
+            hasHit={hoveredNode !== null && rightStableRay !== null &&
+              (rightStableRay?.confidence ?? 0) > (leftStableRay?.confidence ?? 0)}
           />
         )}
 
@@ -504,49 +525,63 @@ function GhostHand({ landmarks, color: _color, gradientId: _gradientId, isGhost 
 
 interface LaserBeamProps {
   ray: PinchRay
+  stableRay?: StableRay | null
   color: string
   isGripped: boolean
+  hasHit?: boolean
 }
 
-function LaserBeam({ ray, color, isGripped }: LaserBeamProps) {
-  // Un-mirror the X coordinate (webcam is mirrored, so flip it back)
-  const originX = (1 - ray.origin.x) * 100
-  const originY = ray.origin.y * 100
+function LaserBeam({ ray, stableRay, color, isGripped, hasHit = false }: LaserBeamProps) {
+  // Use stable ray screen hit if available, otherwise fall back to basic calculation
+  let originX: number, originY: number, endX: number, endY: number
 
-  // Center of screen (the nexus)
-  const centerX = 50
-  const centerY = 50
+  if (stableRay?.screenHit) {
+    // Use the stable ray (arm model + One Euro Filter)
+    // Un-mirror the X coordinate (webcam is mirrored)
+    originX = (1 - stableRay.pinchPoint.x) * 100
+    originY = stableRay.pinchPoint.y * 100
 
-  // Calculate direction: blend between center and hand-influenced direction
-  // Hand position deviation from center
-  const handDeviationX = (originX - 50) * LASER_DEVIATION_SCALE
-  const handDeviationY = (originY - 50) * LASER_DEVIATION_SCALE
+    // End point from ray intersection with screen plane
+    endX = (1 - stableRay.screenHit.x) * 100
+    endY = stableRay.screenHit.y * 100
 
-  // Target point: mostly center, slightly influenced by hand position
-  const targetX = centerX - handDeviationX * (1 - LASER_CENTER_BIAS)
-  const targetY = centerY - handDeviationY * (1 - LASER_CENTER_BIAS)
+    // Clamp to viewport
+    endX = Math.max(0, Math.min(100, endX))
+    endY = Math.max(0, Math.min(100, endY))
+  } else {
+    // Fallback: original basic ray calculation
+    originX = (1 - ray.origin.x) * 100
+    originY = ray.origin.y * 100
 
-  // Direction toward target
-  const toCenterX = targetX - originX
-  const toCenterY = targetY - originY
-  const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY)
-  const normX = dist > 0 ? toCenterX / dist : 0
-  const normY = dist > 0 ? toCenterY / dist : 0
+    const centerX = 50
+    const centerY = 50
+    const handDeviationX = (originX - 50) * LASER_DEVIATION_SCALE
+    const handDeviationY = (originY - 50) * LASER_DEVIATION_SCALE
+    const targetX = centerX - handDeviationX * (1 - LASER_CENTER_BIAS)
+    const targetY = centerY - handDeviationY * (1 - LASER_CENTER_BIAS)
 
-  // Laser extends to target (the nexus area)
-  const laserLength = dist
-  const endX = originX + normX * laserLength
-  const endY = originY + normY * laserLength
+    const toCenterX = targetX - originX
+    const toCenterY = targetY - originY
+    const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY)
+    const normX = dist > 0 ? toCenterX / dist : 0
+    const normY = dist > 0 ? toCenterY / dist : 0
+    const laserLength = dist
 
-  // Visual properties - much more intense when gripped
-  const baseStrokeWidth = 0.2 + ray.strength * 0.3
-  const strokeWidth = isGripped ? baseStrokeWidth * 2.5 : baseStrokeWidth
-  const baseOpacity = 0.3 + ray.strength * 0.4
-  const opacity = isGripped ? Math.min(1, baseOpacity * 1.8) : baseOpacity
-  const glowRadius = isGripped ? 2 + ray.strength * 2 : 0.8 + ray.strength * 0.8
+    endX = originX + normX * laserLength
+    endY = originY + normY * laserLength
+  }
 
-  // Grip indicator color - brighter white-ish when gripped
-  const gripColor = isGripped ? '#ffffff' : color
+  // Visual properties - intensify based on state
+  const pinchStrength = stableRay?.pinchStrength ?? ray.strength
+  const baseStrokeWidth = 0.2 + pinchStrength * 0.3
+  const strokeWidth = isGripped ? baseStrokeWidth * 2.5 : hasHit ? baseStrokeWidth * 1.5 : baseStrokeWidth
+  const baseOpacity = 0.3 + pinchStrength * 0.4
+  const opacity = isGripped ? Math.min(1, baseOpacity * 1.8) : hasHit ? baseOpacity * 1.3 : baseOpacity
+  const glowRadius = isGripped ? 2 + pinchStrength * 2 : hasHit ? 1.5 + pinchStrength : 0.8 + pinchStrength * 0.8
+
+  // Color changes based on state
+  const activeColor = isGripped ? '#ffffff' : hasHit ? '#fbbf24' : color // Golden when hitting
+  const confidence = stableRay?.confidence ?? 0.8
 
   return (
     <g filter={isGripped ? 'url(#grip-glow)' : undefined}>
@@ -582,10 +617,10 @@ function LaserBeam({ ray, color, isGripped }: LaserBeamProps) {
         y1={originY}
         x2={endX}
         y2={endY}
-        stroke={gripColor}
+        stroke={activeColor}
         strokeWidth={strokeWidth}
         strokeLinecap="round"
-        opacity={opacity}
+        opacity={opacity * confidence}
       />
 
       {/* Origin glow sphere */}
@@ -600,9 +635,38 @@ function LaserBeam({ ray, color, isGripped }: LaserBeamProps) {
         cx={originX}
         cy={originY}
         r={glowRadius}
-        fill={gripColor}
-        opacity={isGripped ? 1 : 0.7}
+        fill={activeColor}
+        opacity={isGripped ? 1 : hasHit ? 0.9 : 0.7}
       />
+
+      {/* Hit indicator - pulsing crosshair when pointing at a node */}
+      {hasHit && (
+        <g className="animate-pulse">
+          {/* Outer ring */}
+          <circle
+            cx={endX}
+            cy={endY}
+            r={3}
+            fill="none"
+            stroke="#fbbf24"
+            strokeWidth={0.3}
+            opacity={0.8}
+          />
+          {/* Inner target */}
+          <circle
+            cx={endX}
+            cy={endY}
+            r={1.5}
+            fill="#fbbf24"
+            opacity={0.6}
+          />
+          {/* Crosshair lines */}
+          <line x1={endX - 4} y1={endY} x2={endX - 2} y2={endY} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
+          <line x1={endX + 2} y1={endY} x2={endX + 4} y2={endY} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
+          <line x1={endX} y1={endY - 4} x2={endX} y2={endY - 2} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
+          <line x1={endX} y1={endY + 2} x2={endX} y2={endY + 4} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
+        </g>
+      )}
 
       {/* Impact point at center - "warm spot" where laser hits the nexus */}
       <circle

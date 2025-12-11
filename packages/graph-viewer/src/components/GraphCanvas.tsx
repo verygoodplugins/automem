@@ -8,6 +8,13 @@
  * - LOD for labels (only show labels for nearby/selected nodes)
  * - Optional post-processing (performance mode toggle)
  * - Single useFrame callback for all animations
+ *
+ * Hand interaction features:
+ * - Stable pointer ray with arm model + One Euro Filter
+ * - Accurate ray-sphere intersection for node selection
+ * - Pinch-to-select with expansion animation
+ * - Pull/push gestures for Z manipulation
+ * - Two-hand rotation and zoom
  */
 
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react'
@@ -17,8 +24,12 @@ import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
 import { useHandGestures, GestureState } from '../hooks/useHandGestures'
+import { useHandInteraction } from '../hooks/useHandInteraction'
+import { LaserPointer } from './LaserPointer'
+import { ExpandedNodeView } from './ExpandedNodeView'
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+import type { StableRay, NodeHit } from '../hooks/useStablePointerRay'
 
 // Performance constants
 const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
@@ -106,9 +117,50 @@ function Scene({
   performanceMode,
 }: SceneProps) {
   const { nodes: layoutNodes, isSimulating } = useForceLayout({ nodes, edges })
-  const [autoRotate, setAutoRotate] = useState(false) // Start still, not rotating
+  const [autoRotate, setAutoRotate] = useState(false)
   const groupRef = useRef<THREE.Group>(null)
   const controlsRef = useRef<OrbitControlsImpl>(null)
+
+  // Expanded node state (for the bloom animation)
+  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
+  const [hitPoint, setHitPoint] = useState<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0 })
+  const [isExpanding, setIsExpanding] = useState(false)
+
+  // Hand interaction with stable pointer ray
+  const { interactionState, processGestures } = useHandInteraction({
+    nodes: layoutNodes,
+    onNodeSelect: (nodeId) => {
+      if (nodeId) {
+        // Find the node and trigger expansion
+        const node = layoutNodes.find(n => n.id === nodeId)
+        if (node) {
+          setExpandedNodeId(nodeId)
+          setHitPoint({
+            x: interactionState.hoveredNode?.point.x ?? node.x ?? 0,
+            y: interactionState.hoveredNode?.point.y ?? node.y ?? 0,
+            z: interactionState.hoveredNode?.point.z ?? node.z ?? 0,
+          })
+          setIsExpanding(true)
+        }
+        onNodeSelect(node ?? null)
+      } else {
+        setExpandedNodeId(null)
+        setIsExpanding(false)
+        onNodeSelect(null)
+      }
+    },
+    onNodeHover: (nodeId) => {
+      const node = nodeId ? layoutNodes.find(n => n.id === nodeId) ?? null : null
+      onNodeHover(node)
+    },
+  })
+
+  // Process gestures each frame
+  useEffect(() => {
+    if (gestureControlEnabled && gestureState.isTracking) {
+      processGestures(gestureState)
+    }
+  }, [gestureControlEnabled, gestureState, processGestures])
 
   // Create node lookup for edges
   const nodeById = useMemo(
@@ -143,10 +195,33 @@ function Scene({
     return ids
   }, [selectedNode, edges])
 
+  // Get expanded node and its connections
+  const expandedNode = useMemo(() => {
+    if (!expandedNodeId) return null
+    return layoutNodes.find(n => n.id === expandedNodeId) ?? null
+  }, [expandedNodeId, layoutNodes])
+
+  const connectedToExpanded = useMemo(() => {
+    if (!expandedNodeId) return []
+    const connectedNodeIds = new Set<string>()
+    edges.forEach(e => {
+      if (e.source === expandedNodeId) connectedNodeIds.add(e.target)
+      if (e.target === expandedNodeId) connectedNodeIds.add(e.source)
+    })
+    return layoutNodes.filter(n => connectedNodeIds.has(n.id))
+  }, [expandedNodeId, edges, layoutNodes])
+
   // Stop auto-rotate on user interaction
   const handleInteractionStart = useCallback(() => {
     setAutoRotate(false)
   }, [])
+
+  // Close expanded node
+  const handleCloseExpanded = useCallback(() => {
+    setExpandedNodeId(null)
+    setIsExpanding(false)
+    onNodeSelect(null)
+  }, [onNodeSelect])
 
   // Track previous pinch state for delta calculations (per hand)
   const prevPinchStateRef = useRef<{
@@ -168,108 +243,38 @@ function Scene({
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
   // Apply gesture controls to move the CLOUD (not camera) with smoothing
-  // Single hand: Pinch + pull/push = translate cloud in Z
-  // Two hands: Compound forces at intersection = 3D rotation
+  // Now also uses the new interaction state for more precise control
   useEffect(() => {
     if (!gestureControlEnabled || !groupRef.current) return
     if (!gestureState.isTracking) return
 
     const group = groupRef.current
-    const leftRay = gestureState.leftPinchRay
-    const rightRay = gestureState.rightPinchRay
     const smoothed = smoothedGestureRef.current
-    const prev = prevPinchStateRef.current
 
-    const leftGripping = leftRay?.isValid
-    const rightGripping = rightRay?.isValid
-    const bothGripping = leftGripping && rightGripping
+    // Use the new interaction state for cloud manipulation
+    const { rotationDelta, zoomDelta, dragDeltaZ, isDragging } = interactionState
 
-    let totalTranslateZ = 0
-    let totalRotateX = 0
-    let totalRotateY = 0
-
-    // Process left hand
-    if (leftGripping && leftRay) {
-      const currentOrigin = leftRay.origin
-      const currentStrength = leftRay.strength
-
-      if (prev.left) {
-        const zDelta = currentOrigin.z - prev.left.origin.z
-        // Pull back (Z increases) = bring cloud closer (positive Z)
-        totalTranslateZ += -zDelta * PULL_SENSITIVITY * currentStrength
-
-        if (bothGripping) {
-          // For two-hand mode: left hand contributes to rotation
-          // Movement in X affects Y rotation, movement in Y affects X rotation
-          const xDelta = currentOrigin.x - prev.left.origin.x
-          const yDelta = currentOrigin.y - prev.left.origin.y
-          totalRotateY += xDelta * 2 * currentStrength
-          totalRotateX += -yDelta * 2 * currentStrength
-        }
-      }
-
-      prev.left = { origin: { ...currentOrigin }, strength: currentStrength }
-    } else {
-      prev.left = null
+    // Apply zoom (two-hand spread/pinch)
+    if (Math.abs(zoomDelta) > GESTURE_DEADZONE) {
+      group.position.z += zoomDelta * 0.5
     }
 
-    // Process right hand
-    if (rightGripping && rightRay) {
-      const currentOrigin = rightRay.origin
-      const currentStrength = rightRay.strength
-
-      if (prev.right) {
-        const zDelta = currentOrigin.z - prev.right.origin.z
-        // Pull back (Z increases) = bring cloud closer (positive Z)
-        totalTranslateZ += -zDelta * PULL_SENSITIVITY * currentStrength
-
-        if (bothGripping) {
-          // For two-hand mode: right hand contributes to rotation (opposite direction)
-          // This creates compound rotation at the intersection point
-          const xDelta = currentOrigin.x - prev.right.origin.x
-          const yDelta = currentOrigin.y - prev.right.origin.y
-          // Right hand rotates opposite to left - creates torque effect
-          totalRotateY -= xDelta * 2 * currentStrength
-          totalRotateX += -yDelta * 2 * currentStrength
-        }
-      }
-
-      prev.right = { origin: { ...currentOrigin }, strength: currentStrength }
-    } else {
-      prev.right = null
+    // Apply rotation (two-hand rotation)
+    if (Math.abs(rotationDelta.x) > GESTURE_DEADZONE) {
+      group.rotation.z += rotationDelta.x
     }
 
-    // Apply smoothing
-    smoothed.translateZ += (totalTranslateZ - smoothed.translateZ) * GESTURE_SMOOTHING
-    smoothed.rotateX += (totalRotateX - smoothed.rotateX) * GESTURE_SMOOTHING
-    smoothed.rotateY += (totalRotateY - smoothed.rotateY) * GESTURE_SMOOTHING
-
-    // Clamp to max speeds
-    const translateZ = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
-    const rotateX = clamp(smoothed.rotateX, -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED)
-    const rotateY = clamp(smoothed.rotateY, -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED)
-
-    // Apply translation (single or both hands)
-    if (Math.abs(translateZ) > GESTURE_DEADZONE) {
-      group.position.z += translateZ
+    // Apply Z drag (single hand push/pull when not selecting a node)
+    if (!isDragging && Math.abs(dragDeltaZ) > GESTURE_DEADZONE) {
+      smoothed.translateZ += (dragDeltaZ - smoothed.translateZ) * GESTURE_SMOOTHING
+      const clamped = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
+      group.position.z += clamped
     }
 
-    // Apply rotation (only with two hands - compound effect)
-    if (bothGripping) {
-      if (Math.abs(rotateX) > GESTURE_DEADZONE) {
-        group.rotation.x += rotateX
-      }
-      if (Math.abs(rotateY) > GESTURE_DEADZONE) {
-        group.rotation.y += rotateY
-      }
-    }
-
-    // Decay smoothed values when no hands gripping
-    if (!leftGripping && !rightGripping) {
-      smoothed.translateZ *= 0.9
-      smoothed.rotateX *= 0.9
-      smoothed.rotateY *= 0.9
-    }
+    // Decay smoothed values
+    smoothed.translateZ *= 0.9
+    smoothed.rotateX *= 0.9
+    smoothed.rotateY *= 0.9
 
     // Gentle recenter: slowly pull cloud back toward origin
     group.position.x *= (1 - RECENTER_STRENGTH)
@@ -277,7 +282,7 @@ function Scene({
     group.position.z *= (1 - RECENTER_STRENGTH)
     group.rotation.x *= (1 - RECENTER_STRENGTH)
     group.rotation.y *= (1 - RECENTER_STRENGTH)
-  }, [gestureControlEnabled, gestureState])
+  }, [gestureControlEnabled, gestureState, interactionState])
 
   return (
     <>
@@ -328,7 +333,41 @@ function Scene({
           searchTerm={searchTerm}
           matchingIds={matchingIds}
         />
+
+        {/* Expanded Node View - shows when a node is selected via hand */}
+        {expandedNode && (
+          <ExpandedNodeView
+            node={expandedNode}
+            connectedNodes={connectedToExpanded}
+            edges={edges}
+            hitPoint={hitPoint}
+            onClose={handleCloseExpanded}
+            isExpanding={isExpanding}
+          />
+        )}
       </group>
+
+      {/* Laser pointers - rendered in world space for accurate targeting */}
+      {gestureControlEnabled && interactionState.leftRay && (
+        <LaserPointer
+          ray={interactionState.leftRay}
+          hit={interactionState.leftRay === (interactionState.rightRay?.confidence ?? 0) > (interactionState.leftRay.confidence ?? 0)
+            ? null
+            : interactionState.hoveredNode}
+          color="#4ecdc4"
+          showArmModel={false}
+        />
+      )}
+      {gestureControlEnabled && interactionState.rightRay && (
+        <LaserPointer
+          ray={interactionState.rightRay}
+          hit={interactionState.rightRay.confidence >= (interactionState.leftRay?.confidence ?? 0)
+            ? interactionState.hoveredNode
+            : null}
+          color="#f72585"
+          showArmModel={false}
+        />
+      )}
 
       {/* Post-processing effects - conditional based on performance mode */}
       {!performanceMode && (
