@@ -9,6 +9,7 @@ import { FilterPanel } from './components/FilterPanel'
 import { TokenPrompt } from './components/TokenPrompt'
 import { StatsBar } from './components/StatsBar'
 import { GestureDebugOverlay } from './components/GestureDebugOverlay'
+import { Hand2DOverlay } from './components/Hand2DOverlay'
 import type { GraphNode, FilterState } from './lib/types'
 import type { GestureState } from './hooks/useHandGestures'
 
@@ -214,6 +215,13 @@ export default function App() {
               onNodeHover={handleNodeHover}
               gestureControlEnabled={gestureControlEnabled}
               onGestureStateChange={handleGestureStateChange}
+            />
+
+            {/* 2D Hand Overlay (on top of canvas, life-size) */}
+            <Hand2DOverlay
+              gestureState={gestureState}
+              enabled={gestureControlEnabled}
+              showLaser={true}
             />
 
             {/* Gesture Debug Overlay */}

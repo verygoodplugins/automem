@@ -5,7 +5,7 @@ import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
 import { useHandGestures, GestureState } from '../hooks/useHandGestures'
-import { HandSkeletonOverlay } from './HandSkeletonOverlay'
+// import { HandSkeletonOverlay } from './HandSkeletonOverlay' // Using 2D overlay instead
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
@@ -177,10 +177,10 @@ function Scene({
         maxDistance={500}
       />
 
-      {/* Hand skeleton overlay */}
-      {gestureControlEnabled && (
+      {/* 3D Hand skeleton overlay - disabled, using 2D overlay instead */}
+      {/* {gestureControlEnabled && (
         <HandSkeletonOverlay gestureState={gestureState} enabled={true} />
-      )}
+      )} */}
 
       {/* Graph content */}
       <group ref={groupRef}>
