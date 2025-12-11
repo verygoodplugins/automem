@@ -13,9 +13,9 @@
  * This is the main entry point for hand-based graph interaction.
  */
 
-import { useRef, useCallback, useEffect, useState } from 'react'
+import { useRef, useCallback, useState } from 'react'
 import { useStablePointerRay, findNodeHit, type StableRay, type NodeHit, type NodeSphere } from './useStablePointerRay'
-import type { GestureState, HandLandmarks } from './useHandGestures'
+import type { GestureState } from './useHandGestures'
 import type { SimulationNode } from '../lib/types'
 
 export interface InteractionState {
@@ -107,7 +107,7 @@ export function useHandInteraction({ nodes, onNodeSelect, onNodeHover }: UseHand
       : null
 
     // Determine primary ray (prefer right hand)
-    const primaryRay = rightRay?.confidence > (leftRay?.confidence ?? 0) ? rightRay : leftRay
+    const primaryRay = (rightRay?.confidence ?? 0) > (leftRay?.confidence ?? 0) ? rightRay : leftRay
 
     // Find node hit
     let hoveredNode: NodeHit | null = null
@@ -146,7 +146,8 @@ export function useHandInteraction({ nodes, onNodeSelect, onNodeHover }: UseHand
 
         // Calculate Z drag from hand movement
         const currentZ = primaryRay.origin.z
-        const prevZ = primaryRay === leftRay ? prev.leftZ : prev.rightZ
+        const isLeftPrimary = leftRay && primaryRay.pinchPoint.x === leftRay.pinchPoint.x
+        const prevZ = isLeftPrimary ? prev.leftZ : prev.rightZ
 
         if (prevZ !== null) {
           // Negative Z movement (hand toward camera) = push node away

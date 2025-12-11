@@ -29,7 +29,6 @@ import { LaserPointer } from './LaserPointer'
 import { ExpandedNodeView } from './ExpandedNodeView'
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import type { StableRay, NodeHit } from '../hooks/useStablePointerRay'
 
 // Performance constants
 const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
@@ -40,9 +39,7 @@ const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
 const GESTURE_SMOOTHING = 0.15 // Lower = smoother but laggier (0.1-0.3 recommended)
 const GESTURE_DEADZONE = 0.005 // Ignore tiny movements
 const MAX_TRANSLATE_SPEED = 3 // Cap cloud translation per frame
-const MAX_ROTATE_SPEED = 0.08 // Cap rotation rate per frame (radians)
 const RECENTER_STRENGTH = 0.01 // How strongly to pull cloud back to center
-const PULL_SENSITIVITY = 150 // How much Z translation per unit of depth change
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -223,15 +220,6 @@ function Scene({
     onNodeSelect(null)
   }, [onNodeSelect])
 
-  // Track previous pinch state for delta calculations (per hand)
-  const prevPinchStateRef = useRef<{
-    left: { origin: { x: number; y: number; z: number }; strength: number } | null
-    right: { origin: { x: number; y: number; z: number }; strength: number } | null
-  }>({
-    left: null,
-    right: null,
-  })
-
   // Smoothed gesture values (to prevent sudden movements)
   const smoothedGestureRef = useRef({
     translateZ: 0,
@@ -351,9 +339,9 @@ function Scene({
       {gestureControlEnabled && interactionState.leftRay && (
         <LaserPointer
           ray={interactionState.leftRay}
-          hit={interactionState.leftRay === (interactionState.rightRay?.confidence ?? 0) > (interactionState.leftRay.confidence ?? 0)
-            ? null
-            : interactionState.hoveredNode}
+          hit={(interactionState.leftRay.confidence ?? 0) >= (interactionState.rightRay?.confidence ?? 0)
+            ? interactionState.hoveredNode
+            : null}
           color="#4ecdc4"
           showArmModel={false}
         />
@@ -361,7 +349,7 @@ function Scene({
       {gestureControlEnabled && interactionState.rightRay && (
         <LaserPointer
           ray={interactionState.rightRay}
-          hit={interactionState.rightRay.confidence >= (interactionState.leftRay?.confidence ?? 0)
+          hit={(interactionState.rightRay.confidence ?? 0) > (interactionState.leftRay?.confidence ?? 0)
             ? interactionState.hoveredNode
             : null}
           color="#f72585"

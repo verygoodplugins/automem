@@ -10,7 +10,7 @@
  * - Support for two-hand manipulation
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { GestureState, PinchRay } from '../hooks/useHandGestures'
 import type { StableRay, NodeHit } from '../hooks/useStablePointerRay'
 
@@ -702,7 +702,7 @@ function LaserBeam({ ray, stableRay, color, isGripped, hasHit = false }: LaserBe
           cy={originY}
           r={glowRadius * 2}
           fill="none"
-          stroke={gripColor}
+          stroke={activeColor}
           strokeWidth={0.3}
           opacity={0.7}
           className="animate-ping"
