@@ -148,35 +148,28 @@ function Scene({
     setAutoRotate(false)
   }, [])
 
-  // Track previous pinch state for delta calculations
+  // Track previous pinch state for delta calculations (per hand)
   const prevPinchStateRef = useRef<{
-    leftOrigin: { x: number; y: number; z: number } | null
-    rightOrigin: { x: number; y: number; z: number } | null
-    distance: number
-    rotation: number
-    center: { x: number; y: number }
+    left: { origin: { x: number; y: number; z: number }; strength: number } | null
+    right: { origin: { x: number; y: number; z: number }; strength: number } | null
   }>({
-    leftOrigin: null,
-    rightOrigin: null,
-    distance: 0,
-    rotation: 0,
-    center: { x: 0.5, y: 0.5 },
+    left: null,
+    right: null,
   })
 
   // Smoothed gesture values (to prevent sudden movements)
   const smoothedGestureRef = useRef({
-    rotateDelta: 0,
-    translateX: 0,
-    translateY: 0,
     translateZ: 0,
+    rotateX: 0,
+    rotateY: 0,
   })
 
   // Clamp helper
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
   // Apply gesture controls to move the CLOUD (not camera) with smoothing
-  // Pinch + pull back = pull cloud closer (translate Z positive toward camera)
-  // Spread + push forward = push cloud away (translate Z negative away from camera)
+  // Single hand: Pinch + pull/push = translate cloud in Z
+  // Two hands: Compound forces at intersection = 3D rotation
   useEffect(() => {
     if (!gestureControlEnabled || !groupRef.current) return
     if (!gestureState.isTracking) return
@@ -185,117 +178,105 @@ function Scene({
     const leftRay = gestureState.leftPinchRay
     const rightRay = gestureState.rightPinchRay
     const smoothed = smoothedGestureRef.current
+    const prev = prevPinchStateRef.current
 
-    // Two-hand pinch manipulation: Both hands must be gripping
-    const bothGripping = leftRay?.isValid && rightRay?.isValid
+    const leftGripping = leftRay?.isValid
+    const rightGripping = rightRay?.isValid
+    const bothGripping = leftGripping && rightGripping
 
-    if (bothGripping && leftRay && rightRay) {
-      const prev = prevPinchStateRef.current
+    let totalTranslateZ = 0
+    let totalRotateX = 0
+    let totalRotateY = 0
 
-      // Calculate current pinch positions
-      const leftOrigin = leftRay.origin
-      const rightOrigin = rightRay.origin
+    // Process left hand
+    if (leftGripping && leftRay) {
+      const currentOrigin = leftRay.origin
+      const currentStrength = leftRay.strength
 
-      // Distance between pinch points (for detecting pinch vs spread)
-      const dx = rightOrigin.x - leftOrigin.x
-      const dy = rightOrigin.y - leftOrigin.y
-      const currentDistance = Math.sqrt(dx * dx + dy * dy)
+      if (prev.left) {
+        const zDelta = currentOrigin.z - prev.left.origin.z
+        // Pull back (Z increases) = bring cloud closer (positive Z)
+        totalTranslateZ += -zDelta * PULL_SENSITIVITY * currentStrength
 
-      // Rotation angle between pinch points
-      const currentRotation = Math.atan2(dy, dx)
-
-      // Center point between pinch origins
-      const currentCenter = {
-        x: (leftOrigin.x + rightOrigin.x) / 2,
-        y: (leftOrigin.y + rightOrigin.y) / 2,
-      }
-
-      // Average Z depth (hands moving toward/away from camera)
-      const currentZ = (leftOrigin.z + rightOrigin.z) / 2
-
-      // Average pinch strength (how tightly fingers are pinched)
-      const avgPinchStrength = (leftRay.strength + rightRay.strength) / 2
-
-      // Only apply deltas if we have valid previous state
-      if (prev.leftOrigin && prev.rightOrigin) {
-        // Calculate raw deltas
-        let rawRotateDelta = currentRotation - prev.rotation
-        while (rawRotateDelta > Math.PI) rawRotateDelta -= 2 * Math.PI
-        while (rawRotateDelta < -Math.PI) rawRotateDelta += 2 * Math.PI
-
-        // Z depth change (positive = hands moving toward camera = pulling)
-        const prevZ = (prev.leftOrigin.z + prev.rightOrigin.z) / 2
-        const rawZDelta = currentZ - prevZ
-
-        // THE KEY GESTURE:
-        // Pinch (fingers together, avgPinchStrength high) + Pull back (Z increases) = bring cloud closer
-        // Spread (fingers apart) + Push forward (Z decreases) = push cloud away
-        // Combine pinch strength with Z movement for the pull/push gesture
-        // When pinched tight and pulling back: translate cloud toward camera (+Z in world)
-        // When spreading and pushing forward: translate cloud away (-Z in world)
-
-        const rawTranslateZ = -rawZDelta * PULL_SENSITIVITY * avgPinchStrength
-
-        // Apply smoothing (lerp toward target)
-        smoothed.rotateDelta += (rawRotateDelta - smoothed.rotateDelta) * GESTURE_SMOOTHING
-        smoothed.translateZ += (rawTranslateZ - smoothed.translateZ) * GESTURE_SMOOTHING
-
-        // Clamp to max speeds
-        const rotateDelta = clamp(smoothed.rotateDelta, -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED)
-        const translateZ = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
-
-        // ROTATE: Rotate hands around each other = rotate the cloud
-        if (Math.abs(rotateDelta) > GESTURE_DEADZONE) {
-          group.rotation.y += rotateDelta
+        if (bothGripping) {
+          // For two-hand mode: left hand contributes to rotation
+          // Movement in X affects Y rotation, movement in Y affects X rotation
+          const xDelta = currentOrigin.x - prev.left.origin.x
+          const yDelta = currentOrigin.y - prev.left.origin.y
+          totalRotateY += xDelta * 2 * currentStrength
+          totalRotateX += -yDelta * 2 * currentStrength
         }
-
-        // PULL/PUSH: Move hands toward/away from camera = translate cloud in Z
-        if (Math.abs(translateZ) > GESTURE_DEADZONE) {
-          group.position.z += translateZ
-        }
-
-        // Gentle recenter: slowly pull cloud back toward origin
-        group.position.x *= (1 - RECENTER_STRENGTH)
-        group.position.y *= (1 - RECENTER_STRENGTH)
-        group.position.z *= (1 - RECENTER_STRENGTH)
       }
 
-      // Update previous state
-      prevPinchStateRef.current = {
-        leftOrigin,
-        rightOrigin,
-        distance: currentDistance,
-        rotation: currentRotation,
-        center: currentCenter,
-      }
+      prev.left = { origin: { ...currentOrigin }, strength: currentStrength }
     } else {
-      // Reset previous state when not both gripping
-      prevPinchStateRef.current = {
-        leftOrigin: null,
-        rightOrigin: null,
-        distance: 0,
-        rotation: 0,
-        center: { x: 0.5, y: 0.5 },
+      prev.left = null
+    }
+
+    // Process right hand
+    if (rightGripping && rightRay) {
+      const currentOrigin = rightRay.origin
+      const currentStrength = rightRay.strength
+
+      if (prev.right) {
+        const zDelta = currentOrigin.z - prev.right.origin.z
+        // Pull back (Z increases) = bring cloud closer (positive Z)
+        totalTranslateZ += -zDelta * PULL_SENSITIVITY * currentStrength
+
+        if (bothGripping) {
+          // For two-hand mode: right hand contributes to rotation (opposite direction)
+          // This creates compound rotation at the intersection point
+          const xDelta = currentOrigin.x - prev.right.origin.x
+          const yDelta = currentOrigin.y - prev.right.origin.y
+          // Right hand rotates opposite to left - creates torque effect
+          totalRotateY -= xDelta * 2 * currentStrength
+          totalRotateX += -yDelta * 2 * currentStrength
+        }
       }
 
-      // Decay smoothed values when not gripping
-      smoothed.rotateDelta *= 0.9
-      smoothed.translateX *= 0.9
-      smoothed.translateY *= 0.9
-      smoothed.translateZ *= 0.9
+      prev.right = { origin: { ...currentOrigin }, strength: currentStrength }
+    } else {
+      prev.right = null
+    }
 
-      // Always gently recenter the cloud when not gripping
-      if (groupRef.current) {
-        const group = groupRef.current
-        if (group.position.x !== 0 || group.position.y !== 0 || group.position.z !== 0) {
-          group.position.x *= (1 - RECENTER_STRENGTH)
-          group.position.y *= (1 - RECENTER_STRENGTH)
-          group.position.z *= (1 - RECENTER_STRENGTH)
-        }
-        // Also slowly reset rotation
-        group.rotation.y *= (1 - RECENTER_STRENGTH)
+    // Apply smoothing
+    smoothed.translateZ += (totalTranslateZ - smoothed.translateZ) * GESTURE_SMOOTHING
+    smoothed.rotateX += (totalRotateX - smoothed.rotateX) * GESTURE_SMOOTHING
+    smoothed.rotateY += (totalRotateY - smoothed.rotateY) * GESTURE_SMOOTHING
+
+    // Clamp to max speeds
+    const translateZ = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
+    const rotateX = clamp(smoothed.rotateX, -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED)
+    const rotateY = clamp(smoothed.rotateY, -MAX_ROTATE_SPEED, MAX_ROTATE_SPEED)
+
+    // Apply translation (single or both hands)
+    if (Math.abs(translateZ) > GESTURE_DEADZONE) {
+      group.position.z += translateZ
+    }
+
+    // Apply rotation (only with two hands - compound effect)
+    if (bothGripping) {
+      if (Math.abs(rotateX) > GESTURE_DEADZONE) {
+        group.rotation.x += rotateX
+      }
+      if (Math.abs(rotateY) > GESTURE_DEADZONE) {
+        group.rotation.y += rotateY
       }
     }
+
+    // Decay smoothed values when no hands gripping
+    if (!leftGripping && !rightGripping) {
+      smoothed.translateZ *= 0.9
+      smoothed.rotateX *= 0.9
+      smoothed.rotateY *= 0.9
+    }
+
+    // Gentle recenter: slowly pull cloud back toward origin
+    group.position.x *= (1 - RECENTER_STRENGTH)
+    group.position.y *= (1 - RECENTER_STRENGTH)
+    group.position.z *= (1 - RECENTER_STRENGTH)
+    group.rotation.x *= (1 - RECENTER_STRENGTH)
+    group.rotation.y *= (1 - RECENTER_STRENGTH)
   }, [gestureControlEnabled, gestureState])
 
   return (
