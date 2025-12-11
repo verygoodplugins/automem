@@ -28,6 +28,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from falkordb import FalkorDB
 from flask import Blueprint, Flask, abort, jsonify, request
+from flask_cors import CORS
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
@@ -103,6 +104,7 @@ except Exception:
         sys.path.insert(0, str(root))
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes (graph viewer needs cross-origin access)
 
 # Legacy blueprint placeholders for deprecated route definitions below.
 # These are not registered with the app and are safe to keep until full removal.
