@@ -1067,6 +1067,52 @@ class ServiceState:
 
 state = ServiceState()
 
+# Connection caches for per-request isolation
+_graph_cache: Dict[str, Any] = {}
+_collection_cache: Dict[str, str] = {}
+
+
+def _get_graph_name() -> str:
+    """Extract and validate X-Graph-Name header for per-request graph isolation.
+
+    Returns:
+        Graph name from header if valid, otherwise environment default.
+
+    Raises:
+        400: If header format is invalid (regex or length check fails)
+        403: If graph name is not in ALLOWED_GRAPHS whitelist
+    """
+    value = request.headers.get("X-Graph-Name", "").strip()
+    if value:
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value) or len(value) > 64:
+            abort(400, description=f"Invalid X-Graph-Name: {value}")
+        allowed = os.getenv("ALLOWED_GRAPHS", "")
+        if allowed and value not in [g.strip() for g in allowed.split(",")]:
+            abort(403, description=f"Graph '{value}' not allowed")
+        return value
+    return GRAPH_NAME
+
+
+def _get_collection_name() -> str:
+    """Extract and validate X-Collection-Name header for per-request collection isolation.
+
+    Returns:
+        Collection name from header if valid, otherwise environment default.
+
+    Raises:
+        400: If header format is invalid (regex or length check fails)
+        403: If collection name is not in ALLOWED_COLLECTIONS whitelist
+    """
+    value = request.headers.get("X-Collection-Name", "").strip()
+    if value:
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value) or len(value) > 64:
+            abort(400, description=f"Invalid X-Collection-Name: {value}")
+        allowed = os.getenv("ALLOWED_COLLECTIONS", "")
+        if allowed and value not in [c.strip() for c in allowed.split(",")]:
+            abort(403, description=f"Collection '{value}' not allowed")
+        return value
+    return COLLECTION_NAME
+
 
 def _extract_api_token() -> Optional[str]:
     if not API_TOKEN:
@@ -1380,9 +1426,39 @@ def _ensure_qdrant_collection() -> None:
         state.qdrant = None
 
 
-def get_memory_graph() -> Any:
+def get_memory_graph(graph_name: Optional[str] = None) -> Any:
+    """Get FalkorDB graph instance with optional per-request isolation.
+
+    Args:
+        graph_name: Optional graph name override. If None, tries request headers,
+                   then falls back to environment default.
+
+    Returns:
+        Graph instance for the specified graph name.
+    """
     init_falkordb()
-    return state.memory_graph
+
+    # If no graph_name provided and no FalkorDB connection, return default graph for backward compatibility
+    if graph_name is None and state.falkordb is None:
+        return state.memory_graph
+
+    if state.falkordb is None:
+        return None
+
+    # Determine graph name: explicit parameter > request header > environment default
+    if graph_name is None:
+        # Only check headers if we're in a request context
+        try:
+            graph_name = _get_graph_name()
+        except RuntimeError:
+            # Not in request context, use default
+            graph_name = GRAPH_NAME
+
+    # Cache graph instances per name
+    if graph_name not in _graph_cache:
+        _graph_cache[graph_name] = state.falkordb.select_graph(graph_name)
+
+    return _graph_cache[graph_name]
 
 
 def get_qdrant_client() -> Optional[QdrantClient]:
@@ -2395,7 +2471,11 @@ def store_memory() -> Any:
     except ValueError as exc:
         abort(400, description=str(exc))
 
-    graph = get_memory_graph()
+    # Extract per-request isolation headers
+    graph_name = _get_graph_name()
+    collection_name = _get_collection_name()
+
+    graph = get_memory_graph(graph_name)
     if graph is None:
         abort(503, description="FalkorDB is unavailable")
 
@@ -2479,7 +2559,7 @@ def store_memory() -> Any:
         if qdrant_client is not None:
             try:
                 qdrant_client.upsert(
-                    collection_name=COLLECTION_NAME,
+                    collection_name=collection_name,
                     points=[
                         PointStruct(
                             id=memory_id,
@@ -2552,7 +2632,11 @@ def update_memory(memory_id: str) -> Any:
     if not isinstance(payload, dict):
         abort(400, description="JSON body is required")
 
-    graph = get_memory_graph()
+    # Extract per-request isolation headers
+    graph_name = _get_graph_name()
+    collection_name = _get_collection_name()
+
+    graph = get_memory_graph(graph_name)
     if graph is None:
         abort(503, description="FalkorDB is unavailable")
 
@@ -2641,7 +2725,7 @@ def update_memory(memory_id: str) -> Any:
         else:
             try:
                 existing = qdrant_client.retrieve(
-                    collection_name=COLLECTION_NAME,
+                    collection_name=collection_name,
                     ids=[memory_id],
                     with_vectors=True,
                 )
@@ -2665,7 +2749,7 @@ def update_memory(memory_id: str) -> Any:
                 "metadata": metadata,
             }
             qdrant_client.upsert(
-                collection_name=COLLECTION_NAME,
+                collection_name=collection_name,
                 points=[PointStruct(id=memory_id, vector=vector, payload=payload)],
             )
 
@@ -2674,7 +2758,11 @@ def update_memory(memory_id: str) -> Any:
 
 @memory_bp.route("/memory/<memory_id>", methods=["DELETE"])
 def delete_memory(memory_id: str) -> Any:
-    graph = get_memory_graph()
+    # Extract per-request isolation headers
+    graph_name = _get_graph_name()
+    collection_name = _get_collection_name()
+
+    graph = get_memory_graph(graph_name)
     if graph is None:
         abort(503, description="FalkorDB is unavailable")
 
@@ -2691,7 +2779,7 @@ def delete_memory(memory_id: str) -> Any:
                 selector = qdrant_models.PointIdsList(points=[memory_id])
             else:
                 selector = {"points": [memory_id]}
-            qdrant_client.delete(collection_name=COLLECTION_NAME, points_selector=selector)
+            qdrant_client.delete(collection_name=collection_name, points_selector=selector)
         except Exception:
             logger.exception("Failed to delete vector for memory %s", memory_id)
 
@@ -2783,8 +2871,12 @@ def recall_memories() -> Any:
 
     tag_filters = _normalize_tag_list(tags_param)
 
+    # Extract per-request isolation headers
+    graph_name = _get_graph_name()
+    collection_name = _get_collection_name()
+
     seen_ids: set[str] = set()
-    graph = get_memory_graph()
+    graph = get_memory_graph(graph_name)
     qdrant_client = get_qdrant_client()
 
     results: List[Dict[str, Any]] = []
