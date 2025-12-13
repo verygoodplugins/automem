@@ -265,7 +265,8 @@ export default function App() {
             <Hand2DOverlay
               gestureState={gestureState}
               enabled={gestureControlEnabled}
-              showLaser={true}
+              showLaser={false}
+              handLock={handLock}
             />
 
             {/* Gesture Debug Overlay */}

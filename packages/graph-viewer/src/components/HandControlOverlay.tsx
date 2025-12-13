@@ -44,6 +44,14 @@ export function HandControlOverlay({ enabled, lock, source }: HandControlOverlay
               <span>{m.palmFacing.toFixed(2)}</span>
             </div>
             <div className="flex justify-between">
+              <span className="text-slate-400">point</span>
+              <span>{m.point.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">pinch</span>
+              <span>{m.pinch.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
               <span className="text-slate-400">grab</span>
               <span>{m.grab.toFixed(2)}</span>
             </div>
@@ -59,7 +67,10 @@ export function HandControlOverlay({ enabled, lock, source }: HandControlOverlay
             <span className="text-slate-300">Acquire:</span> raise open palm + spread fingers
           </div>
           <div>
-            <span className="text-slate-300">Manipulate:</span> make fist; pull/push to zoom; move to rotate
+            <span className="text-slate-300">Navigate:</span> make fist; pull/push to zoom; move to rotate
+          </div>
+          <div>
+            <span className="text-slate-300">Select:</span> point (index out) + pinch thumb/index to click
           </div>
         </div>
       </div>

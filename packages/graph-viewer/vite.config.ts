@@ -14,21 +14,26 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Proxy to Railway backend (or override via VITE_API_TARGET env var)
       '/graph': {
-        target: 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'https://automem.up.railway.app',
         changeOrigin: true,
+        secure: true,
       },
       '/recall': {
-        target: 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'https://automem.up.railway.app',
         changeOrigin: true,
+        secure: true,
       },
       '/memory': {
-        target: 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'https://automem.up.railway.app',
         changeOrigin: true,
+        secure: true,
       },
       '/health': {
-        target: 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'https://automem.up.railway.app',
         changeOrigin: true,
+        secure: true,
       },
     },
   },

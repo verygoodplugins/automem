@@ -13,6 +13,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { GestureState, PinchRay } from '../hooks/useHandGestures'
 import type { StableRay, NodeHit } from '../hooks/useStablePointerRay'
+import type { HandLockState } from '../hooks/useHandLockAndGrab'
 
 // Fingertip indices
 const FINGERTIPS = [4, 8, 12, 16, 20]
@@ -46,6 +47,8 @@ interface Hand2DOverlayProps {
   rightStableRay?: StableRay | null
   /** Current node hit (if any) */
   hoveredNode?: NodeHit | null
+  /** Optional lock/grab state for nicer visuals */
+  handLock?: HandLockState
 }
 
 export function Hand2DOverlay({
@@ -55,6 +58,7 @@ export function Hand2DOverlay({
   leftStableRay,
   rightStableRay,
   hoveredNode,
+  handLock,
 }: Hand2DOverlayProps) {
   // Track smoothed hand positions with ghost effect
   const [leftSmoothed, setLeftSmoothed] = useState<SmoothedHand | null>(null)
@@ -152,6 +156,19 @@ export function Hand2DOverlay({
 
   if (!enabled || !gestureState.isTracking) return null
 
+  // Visual state: ghosty until locked; solid when actively grabbing/pinching
+  const lockMode = handLock?.mode
+  const isLocked = lockMode === 'locked'
+  const isActive =
+    isLocked && (((handLock as any).grabbed as boolean) || (((handLock as any).metrics?.pinch as number) ?? 0) > 0.75)
+  const opacityMultiplier = !handLock
+    ? 1
+    : lockMode === 'candidate'
+      ? 0.55
+      : isLocked
+        ? (isActive ? 1.1 : 0.8)
+        : 0.6
+
   // Check if both hands are gripping (for two-hand manipulation)
   const leftGripping = gestureState.leftPinchRay?.isValid
   const rightGripping = gestureState.rightPinchRay?.isValid
@@ -207,6 +224,7 @@ export function Hand2DOverlay({
               color="#4ecdc4"
               gradientId="hand-gradient-cyan"
               isGhost={leftSmoothed.isGhost}
+              opacityMultiplier={opacityMultiplier}
             />
           </g>
         )}
@@ -219,6 +237,7 @@ export function Hand2DOverlay({
               color="#f72585"
               gradientId="hand-gradient-magenta"
               isGhost={rightSmoothed.isGhost}
+              opacityMultiplier={opacityMultiplier}
             />
           </g>
         )}
@@ -237,8 +256,8 @@ export function Hand2DOverlay({
           />
         )}
 
-        {/* Left laser - use stable ray if available, otherwise fall back to basic ray */}
-        {showLaser && gestureState.leftPinchRay && gestureState.leftPinchRay.strength > 0.3 && (
+        {/* Left laser - require stable ray to avoid misleading "center-biased" fallback */}
+        {showLaser && leftStableRay?.screenHit && gestureState.leftPinchRay && gestureState.leftPinchRay.strength > 0.3 && (
           <LaserBeam
             ray={gestureState.leftPinchRay}
             stableRay={leftStableRay}
@@ -250,7 +269,7 @@ export function Hand2DOverlay({
         )}
 
         {/* Right laser - use stable ray if available */}
-        {showLaser && gestureState.rightPinchRay && gestureState.rightPinchRay.strength > 0.3 && (
+        {showLaser && rightStableRay?.screenHit && gestureState.rightPinchRay && gestureState.rightPinchRay.strength > 0.3 && (
           <LaserBeam
             ray={gestureState.rightPinchRay}
             stableRay={rightStableRay}
@@ -278,17 +297,28 @@ interface GhostHandProps {
   color: string
   gradientId: string
   isGhost?: boolean
+  opacityMultiplier?: number
 }
 
 /**
  * MasterHand - Smash Bros Master Hand / Crazy Hand style
  * Volumetric filled shapes with soft gradients and ambient occlusion
  */
-function GhostHand({ landmarks, color: _color, gradientId: _gradientId, isGhost = false }: GhostHandProps) {
-  // INVERTED depth scaling: hand closer to camera (negative Z) = smaller (farther in 3D space)
+function GhostHand({
+  landmarks,
+  color: _color,
+  gradientId: _gradientId,
+  isGhost = false,
+  opacityMultiplier = 1,
+}: GhostHandProps) {
+  // "Portal" depth feel: pushing toward the camera/screen should feel like going *into* the graph,
+  // so we render the hand smaller when it's closer to the camera, larger when it's farther away.
+  // Note: MediaPipe z is small (~[-0.3..0.3]) while iPhone LiDAR z is meters (0..~3).
   const wristZ = landmarks[0].z || 0
-  const depthScale = 1 - wristZ * 4
-  const clampedScale = Math.max(0.5, Math.min(2.0, depthScale))
+  const isMeters = Math.abs(wristZ) > 0.5
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+  const t = isMeters ? clamp01((wristZ - 0.25) / 1.75) : clamp01((wristZ + 0.2) / 0.4)
+  const clampedScale = 0.6 + t * 1.1 // 0.6 .. 1.7
 
   // Un-mirror the X coordinate
   const toSvg = (lm: { x: number; y: number }) => ({
@@ -297,7 +327,7 @@ function GhostHand({ landmarks, color: _color, gradientId: _gradientId, isGhost 
   })
 
   const points = landmarks.map(toSvg)
-  const gloveOpacity = isGhost ? 0.5 : 0.85
+  const gloveOpacity = (isGhost ? 0.5 : 0.85) * opacityMultiplier
 
   // Finger width based on scale - fatter fingers for Master Hand look
   const fingerWidth = 1.8 * clampedScale

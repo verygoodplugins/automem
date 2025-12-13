@@ -27,10 +27,10 @@ import { useHandGestures, GestureState } from '../hooks/useHandGestures'
 import { useIPhoneHandTracking } from '../hooks/useIPhoneHandTracking'
 import { useHandInteraction } from '../hooks/useHandInteraction'
 import { useHandLockAndGrab } from '../hooks/useHandLockAndGrab'
-import { LaserPointer } from './LaserPointer'
 import { ExpandedNodeView } from './ExpandedNodeView'
 import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
 
 // Check if we should use iPhone tracking (based on URL param or env)
 function useTrackingSource() {
@@ -152,13 +152,14 @@ function Scene({
   const [autoRotate, setAutoRotate] = useState(false)
   const groupRef = useRef<THREE.Group>(null)
   const controlsRef = useRef<OrbitControlsImpl>(null)
+  const { camera } = useThree()
 
   // Expanded node state (for the bloom animation)
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
   const [hitPoint, setHitPoint] = useState<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0 })
   const [isExpanding, setIsExpanding] = useState(false)
 
-  // Hand interaction with stable pointer ray
+  // Hand interaction (stable rays) - used for future two-hand gestures and internal metrics
   const { interactionState, processGestures } = useHandInteraction({
     nodes: layoutNodes,
     enableSelection: false,
@@ -182,10 +183,8 @@ function Scene({
         onNodeSelect(null)
       }
     },
-    onNodeHover: (nodeId) => {
-      const node = nodeId ? layoutNodes.find(n => n.id === nodeId) ?? null : null
-      onNodeHover(node)
-    },
+    // We'll drive hover from the explicit pointing ray (below)
+    onNodeHover: undefined,
   })
 
   // Process gestures each frame
@@ -198,11 +197,168 @@ function Scene({
   // New UI: open-palm acquire/lock + fist grab controls (single-hand for now)
   const { lock: handLock, deltas: grabDeltas } = useHandLockAndGrab(gestureState, gestureControlEnabled)
 
+  // Pointing ray + pinch-click
+  const [aimHit, setAimHit] = useState<NodeHit | null>(null)
+  const [aimWorldPoint, setAimWorldPoint] = useState<{ x: number; y: number; z: number } | null>(null)
+  const aimRayRef = useRef<{ origin: THREE.Vector3; direction: THREE.Vector3 } | null>(null)
+  const pinchDownRef = useRef(false)
+  const pressedNodeRef = useRef<string | null>(null)
+
+  const nodeSpheres: NodeSphere[] = useMemo(() => {
+    return layoutNodes.map((n) => ({
+      id: n.id,
+      x: n.x ?? 0,
+      y: n.y ?? 0,
+      z: n.z ?? 0,
+      radius: (n.radius ?? 1) * 1.5,
+    }))
+  }, [layoutNodes])
+
+  // Helper: select a node by id and animate expansion
+  const selectNodeById = useCallback(
+    (nodeId: string | null, hit?: { x: number; y: number; z: number }) => {
+      if (nodeId) {
+        const node = layoutNodes.find((n) => n.id === nodeId) ?? null
+        if (node) {
+          setExpandedNodeId(nodeId)
+          setHitPoint({
+            x: hit?.x ?? node.x ?? 0,
+            y: hit?.y ?? node.y ?? 0,
+            z: hit?.z ?? node.z ?? 0,
+          })
+          setIsExpanding(true)
+        }
+        onNodeSelect(node)
+      } else {
+        setExpandedNodeId(null)
+        setIsExpanding(false)
+        onNodeSelect(null)
+      }
+    },
+    [layoutNodes, onNodeSelect]
+  )
+
   // Create node lookup for edges
   const nodeById = useMemo(
     () => new Map(layoutNodes.map((n) => [n.id, n])),
     [layoutNodes]
   )
+
+  // Pointing + pinch click (Meta-style: index points, pinch clicks; fist grabs)
+  useEffect(() => {
+    if (!gestureControlEnabled) return
+
+    if (handLock.mode !== 'locked') {
+      setAimHit(null)
+      setAimWorldPoint(null)
+      aimRayRef.current = null
+      pinchDownRef.current = false
+      pressedNodeRef.current = null
+      onNodeHover(null)
+      return
+    }
+
+    const m = handLock.metrics
+    const isAimPose = !handLock.grabbed && m.point > 0.55
+    if (!isAimPose) {
+      setAimHit(null)
+      setAimWorldPoint(null)
+      aimRayRef.current = null
+      pinchDownRef.current = false
+      pressedNodeRef.current = null
+      onNodeHover(null)
+      return
+    }
+
+    const handData = handLock.hand === 'right' ? gestureState.rightHand : gestureState.leftHand
+    if (!handData) return
+
+    const indexTip = handData.landmarks[8]
+
+    // Convert to screen-space (0..1, origin bottom-left)
+    // Both MediaPipe and iPhone are in "camera image" coords (x left->right, y top->bottom).
+    // For intuitive interaction, mirror X like a selfie preview, and invert Y to bottom-left origin.
+    const screenX = 1 - indexTip.x
+    const screenY = 1 - indexTip.y
+
+    // Build a ray from the camera through the screen point
+    const ndcX = screenX * 2 - 1
+    const ndcY = screenY * 2 - 1
+    const worldPoint = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera)
+    const direction = worldPoint.sub(camera.position).normalize()
+    const origin = camera.position.clone()
+    aimRayRef.current = { origin, direction: direction.clone() }
+
+    // Hit test against spheres in graph GROUP local coordinates
+    const group = groupRef.current
+    let hit: NodeHit | null = null
+    if (group) {
+      const inv = group.matrixWorld.clone().invert()
+      const localOrigin = origin.clone().applyMatrix4(inv)
+      const localDir = direction.clone().transformDirection(inv)
+      hit = findNodeHit(
+        {
+          origin: { x: localOrigin.x, y: localOrigin.y, z: localOrigin.z },
+          direction: { x: localDir.x, y: localDir.y, z: localDir.z },
+        },
+        nodeSpheres,
+        4000
+      )
+    }
+
+    setAimHit(hit)
+
+    // World-space aim point for rendering (hit point if present; otherwise plane intersection near graph center)
+    let aimPointWorld: THREE.Vector3 | null = null
+    if (group && hit) {
+      aimPointWorld = new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z).applyMatrix4(group.matrixWorld)
+    } else if (group) {
+      const center = group.getWorldPosition(new THREE.Vector3())
+      const normal = camera.getWorldDirection(new THREE.Vector3()).normalize()
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, center)
+      const ray = new THREE.Ray(origin, direction)
+      aimPointWorld = ray.intersectPlane(plane, new THREE.Vector3()) || null
+    }
+    if (!aimPointWorld) {
+      aimPointWorld = origin.clone().add(direction.clone().multiplyScalar(250))
+    }
+    setAimWorldPoint({ x: aimPointWorld.x, y: aimPointWorld.y, z: aimPointWorld.z })
+
+    // Hover highlight
+    const hoverNode = hit ? (nodeById.get(hit.nodeId) ?? null) : null
+    onNodeHover(hoverNode as GraphNode | null)
+
+    // Pinch click (only when aiming). Trigger on release to allow cancel.
+    const pinchActive = m.pinch > 0.75
+    if (pinchActive && !pinchDownRef.current) {
+      pinchDownRef.current = true
+      pressedNodeRef.current = hit?.nodeId ?? null
+      return
+    }
+
+    if (!pinchActive && pinchDownRef.current) {
+      pinchDownRef.current = false
+      const pressed = pressedNodeRef.current
+      pressedNodeRef.current = null
+      if (pressed && hit?.nodeId === pressed) {
+        selectNodeById(pressed, hit.point)
+      }
+    }
+  }, [
+    gestureControlEnabled,
+    camera,
+    nodeSpheres,
+    nodeById,
+    onNodeHover,
+    selectNodeById,
+    gestureState.leftHand,
+    gestureState.rightHand,
+    handLock.mode,
+    (handLock as any).hand,
+    (handLock as any).grabbed,
+    (handLock as any).metrics?.point,
+    (handLock as any).metrics?.pinch,
+  ])
 
   // Filter nodes based on search
   const searchLower = searchTerm.toLowerCase()
@@ -391,27 +547,49 @@ function Scene({
         )}
       </group>
 
-      {/* Laser pointers - rendered in world space for accurate targeting */}
-      {gestureControlEnabled && interactionState.leftRay && (
-        <LaserPointer
-          ray={interactionState.leftRay}
-          hit={(interactionState.leftRay.confidence ?? 0) >= (interactionState.rightRay?.confidence ?? 0)
-            ? interactionState.hoveredNode
-            : null}
-          color="#4ecdc4"
-          showArmModel={false}
-        />
-      )}
-      {gestureControlEnabled && interactionState.rightRay && (
-        <LaserPointer
-          ray={interactionState.rightRay}
-          hit={(interactionState.rightRay.confidence ?? 0) > (interactionState.leftRay?.confidence ?? 0)
-            ? interactionState.hoveredNode
-            : null}
-          color="#f72585"
-          showArmModel={false}
-        />
-      )}
+      {/* Aim cursor + laser (Meta-style: index aims, pinch clicks). Laser only appears while pinching. */}
+      {gestureControlEnabled &&
+        handLock.mode === 'locked' &&
+        !handLock.grabbed &&
+        handLock.metrics.point > 0.55 &&
+        aimWorldPoint && (
+          <>
+            {/* Cursor at aim point (hit point when hovering a node; otherwise a plane in front of the cloud) */}
+            <mesh position={[aimWorldPoint.x, aimWorldPoint.y, aimWorldPoint.z]}>
+              <sphereGeometry args={[handLock.metrics.pinch > 0.75 ? (aimHit ? 0.9 : 0.7) : (aimHit ? 0.55 : 0.4), 16, 16]} />
+              <meshBasicMaterial
+                color={handLock.metrics.pinch > 0.75 ? '#ffffff' : aimHit ? '#fbbf24' : '#94a3b8'}
+                transparent
+                opacity={0.9}
+              />
+            </mesh>
+
+            {/* Laser beam only while pinching */}
+            {handLock.metrics.pinch > 0.75 && aimRayRef.current && (
+              <line>
+                <bufferGeometry>
+                  <bufferAttribute
+                    attach="attributes-position"
+                    args={[
+                      new Float32Array([
+                        // start a bit in front of camera along the aim ray
+                        aimRayRef.current.origin.x + aimRayRef.current.direction.x * 20,
+                        aimRayRef.current.origin.y + aimRayRef.current.direction.y * 20,
+                        aimRayRef.current.origin.z + aimRayRef.current.direction.z * 20,
+                        // end at aim point
+                        aimWorldPoint.x,
+                        aimWorldPoint.y,
+                        aimWorldPoint.z,
+                      ]),
+                      3,
+                    ]}
+                  />
+                </bufferGeometry>
+                <lineBasicMaterial color="#ffffff" transparent opacity={0.85} />
+              </line>
+            )}
+          </>
+        )}
 
       {/* Post-processing effects - conditional based on performance mode */}
       {!performanceMode && (

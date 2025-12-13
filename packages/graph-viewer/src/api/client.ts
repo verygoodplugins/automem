@@ -20,6 +20,13 @@ function getTokenFromHash(): string | null {
 }
 
 function getApiBase(): string {
+  // Allow override via URL param for local dev against remote backend
+  const urlParams = new URLSearchParams(window.location.search)
+  const serverOverride = urlParams.get('server')
+  if (serverOverride) {
+    return serverOverride
+  }
+
   if (isEmbeddedMode()) {
     // In embedded mode, use relative URL (same origin)
     return ''
@@ -27,9 +34,14 @@ function getApiBase(): string {
   return localStorage.getItem('automem_server') || 'http://localhost:8001'
 }
 
+function getTokenFromQuery(): string | null {
+  const urlParams = new URLSearchParams(window.location.search)
+  return urlParams.get('token')
+}
+
 function getToken(): string | null {
-  // Priority: URL hash > localStorage
-  return getTokenFromHash() || localStorage.getItem('automem_token')
+  // Priority: URL query param > URL hash > localStorage
+  return getTokenFromQuery() || getTokenFromHash() || localStorage.getItem('automem_token')
 }
 
 function getAuthHeaders(): HeadersInit {
@@ -49,6 +61,14 @@ export function setServerConfig(serverUrl: string, token: string): void {
 }
 
 export function getServerConfig(): { serverUrl: string; token: string } | null {
+  // Check URL params first (for local dev against remote backend)
+  const urlParams = new URLSearchParams(window.location.search)
+  const serverOverride = urlParams.get('server')
+  const tokenOverride = urlParams.get('token')
+  if (serverOverride && tokenOverride) {
+    return { serverUrl: serverOverride, token: tokenOverride }
+  }
+
   // In embedded mode, check for hash token
   if (isEmbeddedMode()) {
     const hashToken = getTokenFromHash()

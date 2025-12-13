@@ -22,6 +22,10 @@ export interface HandLockMetrics {
   spread: number
   /** -1..1: palm facing camera confidence-ish (1 = facing camera) */
   palmFacing: number
+  /** 0..1: pointing pose score (index extended, others curled) */
+  point: number
+  /** 0..1: pinch strength (thumb-index) */
+  pinch: number
   /** 0..1: fist/grab strength (1 = closed fist) */
   grab: number
   /** depth signal (meters for iPhone LiDAR when available, otherwise MediaPipe-relative) */
@@ -86,6 +90,17 @@ function safeDiv(a: number, b: number, fallback = 0) {
   return b !== 0 ? a / b : fallback
 }
 
+function fingerExtensionScore(
+  wrist: { x: number; y: number },
+  mcp: { x: number; y: number },
+  tip: { x: number; y: number }
+) {
+  // Extension proxy: tip should be noticeably farther from wrist than MCP when finger is extended.
+  const dTip = length2(tip.x - wrist.x, tip.y - wrist.y)
+  const dMcp = length2(mcp.x - wrist.x, mcp.y - wrist.y)
+  return clamp(safeDiv(dTip - dMcp - 0.02, 0.10), 0, 1)
+}
+
 /**
  * Compute simple metrics from landmarks (MediaPipe-style normalized 0..1)
  * Works for both sources because iPhone data is mapped into GestureState landmarks.
@@ -99,8 +114,11 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
   const wrist = lm[0]
   const indexMcp = lm[5]
   const middleMcp = lm[9]
+  const ringMcp = lm[13]
+  const pinkyMcp = lm[17]
 
   // Fingertips
+  const thumbTip = lm[4]
   const indexTip = lm[8]
   const middleTip = lm[12]
   const ringTip = lm[16]
@@ -121,6 +139,20 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
   // In image space, if wrist is "below" MCPs, palm likely faces camera.
   // (This is crude but works for the acquisition gesture.)
   const palmFacing = clamp(safeDiv((wrist.y - (indexMcp.y + middleMcp.y) / 2) - 0.02, 0.12), 0, 1) * 2 - 1
+
+  // Pinch (thumb-index)
+  const pinchDist = length2(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y)
+  const pinch = clamp(1 - safeDiv(pinchDist - 0.02, 0.13), 0, 1)
+
+  // Pointing pose score:
+  // index extended while the other 3 fingers are relatively curled.
+  const idxExt = fingerExtensionScore(wrist, indexMcp, indexTip)
+  const midExt = fingerExtensionScore(wrist, middleMcp, middleTip)
+  const ringExt = fingerExtensionScore(wrist, ringMcp, ringTip)
+  const pinkyExt = fingerExtensionScore(wrist, pinkyMcp, pinkyTip)
+  const others = clamp((midExt + ringExt + pinkyExt) / 3, 0, 1)
+  const palmForward = clamp((palmFacing + 1) / 2, 0, 1)
+  const point = clamp(idxExt * (1 - others) * palmForward, 0, 1)
 
   // Grab: use state.grabStrength only if it's meaningful (computed by source);
   // otherwise approximate from fingertip distances to wrist (closed fist => smaller)
@@ -147,7 +179,7 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
   const vis = (wrist as any).visibility
   const confidence = typeof vis === 'number' ? clamp(vis, 0, 1) : DEFAULT_CONFIDENCE
 
-  return { spread, palmFacing, grab, depth, confidence }
+  return { spread, palmFacing, point, pinch, grab, depth, confidence }
 }
 
 function isAcquirePose(m: HandLockMetrics) {
@@ -265,6 +297,7 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
         }
 
         // Depth -> zoom (exponential)
+        // User mental model: pull fist toward body (farther from camera) zooms IN; push toward screen/camera zooms OUT.
         const dz = metrics.depth - anchor.depth
         if (Math.abs(dz) > DEPTH_DEADZONE) {
           deltas.zoom = expResponse(dz, DEPTH_GAIN)
@@ -293,6 +326,8 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
     // metrics is a new object each render; depend on its fields instead
     metrics?.spread,
     metrics?.palmFacing,
+    metrics?.point,
+    metrics?.pinch,
     metrics?.grab,
     metrics?.depth,
     metrics?.confidence,
