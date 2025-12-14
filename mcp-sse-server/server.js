@@ -402,14 +402,15 @@ export function buildMcpServer(client) {
   return server;
 }
 
-const app = express();
-app.use(express.json({ limit: '4mb' }));
+export function createApp() {
+  const app = express();
+  app.use(express.json({ limit: '4mb' }));
 
-// Basic health
-app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', timestamp: new Date().toISOString() }));
+  // In-memory session store: sessionId -> { transport, server, res, heartbeat }
+  const sessions = new Map();
 
-// In-memory session store: sessionId -> { transport, server, res, heartbeat }
-const sessions = new Map();
+  // Basic health
+  app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', timestamp: new Date().toISOString() }));
 
 // Helper: validate and extract token from multiple sources
 /**
@@ -478,7 +479,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 }
 
 // Alexa skill endpoint (remember/recall via AutoMem)
-app.post('/alexa', async (req, res) => {
+  app.post('/alexa', async (req, res) => {
   const body = req.body || {};
   const endpoint =
     body?.endpoint ||
@@ -555,10 +556,10 @@ app.post('/alexa', async (req, res) => {
   }
 
   return res.json(speech("I'm not sure how to handle that intent.", { endSession: false }));
-});
+  });
 
 // SSE endpoint
-app.get('/mcp/sse', async (req, res) => {
+  app.get('/mcp/sse', async (req, res) => {
   try {
     const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
     const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
@@ -589,10 +590,10 @@ app.get('/mcp/sse', async (req, res) => {
   } catch (e) {
     try { res.status(500).json({ error: String(e) }); } catch (_) { /* ignore */ }
   }
-});
+  });
 
 // Message POST endpoint
-app.post('/mcp/messages', async (req, res) => {
+  app.post('/mcp/messages', async (req, res) => {
   const sessionId = req.query.sessionId;
   if (!sessionId || typeof sessionId !== 'string') return res.status(400).send('Missing sessionId');
   const s = sessions.get(sessionId);
@@ -606,12 +607,16 @@ app.post('/mcp/messages', async (req, res) => {
     console.error(`[MCP] Error handling message for session ${sessionId}:`, e);
     try { res.status(400).send(String(e)); } catch (_) { /* ignore */ }
   }
-});
+  });
+
+  return app;
+}
 
 const port = process.env.PORT || 8080;
 
 // Avoid side effects on import (tests/tools may import this module).
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const app = createApp();
   app.listen(port, () => {
     console.log(`AutoMem MCP SSE server listening on :${port}`);
   });

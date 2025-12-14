@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AutoMemClient, formatRecallAsItems } from '../server.js';
+import { AutoMemClient, createApp, formatRecallAsItems } from '../server.js';
 
 test('AutoMemClient.recallMemory passes through advanced /recall params', async () => {
   const client = new AutoMemClient({ endpoint: 'http://example.test', apiKey: 'k' });
@@ -97,4 +97,55 @@ test('formatRecallAsItems supports detailed output including relations', () => {
   const compact = formatRecallAsItems(results, { detailed: false })[0].text;
   assert.ok(compact.includes('score=0.123'));
   assert.ok(compact.includes('ID: mem-1'));
+});
+
+test('GET /mcp/sse returns an SSE stream and endpoint event', async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_ENDPOINT;
+  process.env.AUTOMEM_API_TOKEN = 'test-token';
+  process.env.AUTOMEM_ENDPOINT = 'http://127.0.0.1:8001';
+
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const port = address.port;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+
+    const res = await fetch(`http://127.0.0.1:${port}/mcp/sse`, {
+      signal: controller.signal,
+      headers: { 'Accept': 'text/event-stream' },
+    });
+
+    assert.equal(res.status, 200);
+    const ct = res.headers.get('content-type') || '';
+    assert.ok(ct.includes('text/event-stream'));
+    assert.ok(res.body);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (buf.length < 8192) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) buf += decoder.decode(value, { stream: true });
+      if (buf.includes('event: endpoint')) break;
+    }
+
+    clearTimeout(timeout);
+    await reader.cancel();
+
+    assert.ok(buf.includes('event: endpoint'), `missing endpoint event; got:\n${buf}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_ENDPOINT = prevEndpoint;
+  }
 });
