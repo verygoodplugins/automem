@@ -43,6 +43,10 @@ dev:
 # Run tests
 test:
 	@echo "🧪 Running unit tests..."
+	@if [ ! -x "./venv/bin/pytest" ]; then \
+		echo "🔧 ./venv/bin/pytest not found; bootstrapping with 'make install'..."; \
+		$(MAKE) install; \
+	fi
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs
 
 # Format code

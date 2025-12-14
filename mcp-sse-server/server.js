@@ -8,9 +8,10 @@ import express from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { fileURLToPath } from 'node:url';
 
 // Simple AutoMem HTTP client (mirrors the npm package behavior but inline to avoid version conflicts)
-class AutoMemClient {
+export class AutoMemClient {
   constructor(config) {
     this.config = config;
   }
@@ -71,6 +72,23 @@ class AutoMemClient {
     if (Array.isArray(args.tags)) args.tags.forEach(t => p.append('tags', t));
     if (args.tag_mode) p.set('tag_mode', args.tag_mode);
     if (args.tag_match) p.set('tag_match', args.tag_match);
+
+    // Advanced recall options (pass-through to AutoMem /recall)
+    if (args.expand_relations !== undefined) p.set('expand_relations', String(!!args.expand_relations));
+    if (args.expand_entities !== undefined) p.set('expand_entities', String(!!args.expand_entities));
+    if (args.auto_decompose !== undefined) p.set('auto_decompose', String(!!args.auto_decompose));
+    if (args.expansion_limit !== undefined) p.set('expansion_limit', String(args.expansion_limit));
+    if (args.relation_limit !== undefined) p.set('relation_limit', String(args.relation_limit));
+    if (args.expand_min_importance !== undefined) p.set('expand_min_importance', String(args.expand_min_importance));
+    if (args.expand_min_strength !== undefined) p.set('expand_min_strength', String(args.expand_min_strength));
+
+    if (args.context) p.set('context', args.context);
+    if (args.language) p.set('language', args.language);
+    if (args.active_path) p.set('active_path', args.active_path);
+    if (Array.isArray(args.context_tags)) args.context_tags.forEach(t => { if (t) p.append('context_tags', t); });
+    if (Array.isArray(args.context_types)) args.context_types.forEach(t => { if (t) p.append('context_types', t); });
+    if (Array.isArray(args.priority_ids)) args.priority_ids.forEach(t => { if (t) p.append('priority_ids', t); });
+
     const path = p.toString() ? `recall?${p.toString()}` : 'recall';
     const r = await this._request('GET', path);
     return r;
@@ -103,8 +121,64 @@ class AutoMemClient {
   }
 }
 
+export function formatRecallAsItems(results, { detailed = false } = {}) {
+  return (results || []).map((it, i) => {
+    const mem = it?.memory || it || {};
+    const id = mem.id || mem.memory_id || it?.id || it?.memory_id || '';
+    const content = mem.content ?? mem.text ?? '';
+
+    const tags = Array.isArray(mem.tags) ? mem.tags.filter(t => typeof t === 'string' && t.trim()) : [];
+    const score = it?.final_score !== undefined ? Number(it.final_score) : undefined;
+    const dedupCount = Array.isArray(it?.deduped_from) ? it.deduped_from.length : 0;
+
+    if (!detailed) {
+      const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
+      const scoreSuffix = score !== undefined ? ` score=${score.toFixed(3)}` : '';
+      const dedupNote = dedupCount ? ` (deduped x${dedupCount})` : '';
+      return {
+        type: 'text',
+        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}\nID: ${id}`,
+      };
+    }
+
+    const lines = [];
+    lines.push(`${i + 1}. ${String(content)}`);
+    if (id) lines.push(`ID: ${id}`);
+    if (mem.type) lines.push(`Type: ${String(mem.type)}`);
+    if (mem.timestamp) lines.push(`Timestamp: ${String(mem.timestamp)}`);
+    if (mem.last_accessed) lines.push(`Last accessed: ${String(mem.last_accessed)}`);
+    if (mem.importance !== undefined) {
+      const imp = Number(mem.importance);
+      lines.push(`Importance: ${Number.isFinite(imp) ? imp.toFixed(3) : String(mem.importance)}`);
+    }
+    if (mem.confidence !== undefined) {
+      const conf = Number(mem.confidence);
+      lines.push(`Confidence: ${Number.isFinite(conf) ? conf.toFixed(3) : String(mem.confidence)}`);
+    }
+    if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
+    if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
+    if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
+    if (it?.source) lines.push(`Source: ${String(it.source)}`);
+
+    // Associations (only present on relation-expanded results)
+    const rels = Array.isArray(it?.relations) ? it.relations : [];
+    if (rels.length) {
+      const summarized = rels.slice(0, 5).map(r => {
+        const t = r?.type ? String(r.type) : 'REL';
+        const s = r?.strength !== undefined ? Number(r.strength) : undefined;
+        const from = r?.from ? String(r.from) : '';
+        const ss = s !== undefined && Number.isFinite(s) ? `(${s.toFixed(2)})` : '';
+        return `${t}${ss}${from ? ` from ${from}` : ''}`;
+      });
+      lines.push(`Relations: ${summarized.join('; ')}${rels.length > 5 ? ` (+${rels.length - 5} more)` : ''}`);
+    }
+
+    return { type: 'text', text: lines.join('\n') };
+  });
+}
+
 // Build a new MCP Server instance with AutoMem tool handlers
-function buildMcpServer(client) {
+export function buildMcpServer(client) {
   const server = new Server({ name: 'automem-mcp-sse', version: '0.1.0' }, { capabilities: { tools: {} } });
 
   const tools = [
@@ -141,12 +215,35 @@ function buildMcpServer(client) {
           queries: { type: 'array', items: { type: 'string' }, description: 'Multiple queries (server-side deduplication)' },
           embedding: { type: 'array', items: { type: 'number' }, description: 'Embedding vector for semantic similarity search' },
           limit: { type: 'integer', minimum: 1, maximum: 50, default: 5, description: 'Maximum number of memories to return' },
+          per_query_limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Per-query limit when using queries[]' },
           time_query: { type: 'string', description: 'Natural language time window (e.g. "today", "last week")' },
           start: { type: 'string', description: 'Explicit ISO timestamp lower bound' },
           end: { type: 'string', description: 'Explicit ISO timestamp upper bound' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
           tag_mode: { type: 'string', enum: ['any', 'all'], description: 'How to combine multiple tags' },
-          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags' }
+          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags' },
+
+          // Advanced AutoMem /recall options
+          expand_relations: { type: 'boolean', description: 'Enable graph relation expansion' },
+          expand_entities: { type: 'boolean', description: 'Enable entity-based multi-hop expansion' },
+          auto_decompose: { type: 'boolean', description: 'Auto-generate supplementary queries from query text' },
+          expansion_limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Max number of expanded results' },
+          relation_limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Max relations to expand per seed memory' },
+          expand_min_importance: { type: 'number', minimum: 0, maximum: 1, description: 'Filter expanded results by min importance' },
+          expand_min_strength: { type: 'number', minimum: 0, maximum: 1, description: 'Filter expanded results by min relation strength' },
+          context: { type: 'string', description: 'Context label (e.g. coding-style, architecture)' },
+          language: { type: 'string', description: 'Programming language hint (e.g. python, typescript)' },
+          active_path: { type: 'string', description: 'Active file path hint (e.g. src/auth.ts)' },
+          context_tags: { type: 'array', items: { type: 'string' }, description: 'Priority tags to boost in results' },
+          context_types: { type: 'array', items: { type: 'string' }, description: 'Priority memory types to boost (Decision, Pattern, ...)' },
+          priority_ids: { type: 'array', items: { type: 'string' }, description: 'Specific memory IDs to include/boost' },
+
+          format: {
+            type: 'string',
+            enum: ['text', 'items', 'detailed', 'json'],
+            default: 'text',
+            description: 'Output formatting: text (single block), items (one memory per content item), detailed (per-item with timestamps/relations), json (raw response JSON as text)',
+          }
         }
       }
     },
@@ -218,34 +315,63 @@ function buildMcpServer(client) {
             query: args?.query,
             queries: isMulti ? queries : undefined,
             limit: args?.limit || (isMulti ? queries.length * 5 : 5),
-            per_query_limit: isMulti ? Math.min(args?.limit || 5, 50) : undefined,
+            per_query_limit: isMulti ? Math.min(args?.per_query_limit || args?.limit || 5, 50) : undefined,
             embedding: args?.embedding,
             time_query: args?.time_query,
             start: args?.start,
             end: args?.end,
             tags: Array.isArray(args?.tags) ? args.tags : undefined,
             tag_mode: args?.tag_mode,
-            tag_match: args?.tag_match
+            tag_match: args?.tag_match,
+
+            expand_relations: args?.expand_relations,
+            expand_entities: args?.expand_entities,
+            auto_decompose: args?.auto_decompose,
+            expansion_limit: args?.expansion_limit,
+            relation_limit: args?.relation_limit,
+            expand_min_importance: args?.expand_min_importance,
+            expand_min_strength: args?.expand_min_strength,
+            context: args?.context,
+            language: args?.language,
+            active_path: args?.active_path,
+            context_tags: Array.isArray(args?.context_tags) ? args.context_tags : undefined,
+            context_types: Array.isArray(args?.context_types) ? args.context_types : undefined,
+            priority_ids: Array.isArray(args?.priority_ids) ? args.priority_ids : undefined,
           };
 
           const r = await client.recallMemory(recallArgs);
           const results = r.results || r.memories || [];
 
-          const items = results.map((it, i) => {
-            const mem = it.memory || it;
-            const tags = mem.tags?.length ? ` [${mem.tags.join(', ')}]` : '';
-            const score = it.final_score !== undefined ? ` score=${Number(it.final_score).toFixed(3)}` : '';
-            const dedupNote = it.deduped_from?.length ? ` (deduped x${it.deduped_from.length})` : '';
-            return `${i + 1}. ${mem.content}${tags}${score}${dedupNote}\n   ID: ${mem.id || mem.memory_id || ''}`;
-          }).join('\n\n');
-
           const count = r.count ?? results.length;
           const dedupInfo = r.dedup_removed ? ` (${r.dedup_removed} duplicates removed)` : '';
 
+          const format = (args?.format || 'text').toLowerCase();
+          if (format === 'json') {
+            return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] };
+          }
+
+          if (format === 'items') {
+            return {
+              content: count
+                ? [{ type: 'text', text: `Found ${count} memories${dedupInfo}:` }, ...formatRecallAsItems(results)]
+                : [{ type: 'text', text: 'No memories found.' }],
+            };
+          }
+
+          if (format === 'detailed') {
+            return {
+              content: count
+                ? [{ type: 'text', text: `Found ${count} memories${dedupInfo}:` }, ...formatRecallAsItems(results, { detailed: true })]
+                : [{ type: 'text', text: 'No memories found.' }],
+            };
+          }
+
+          // Back-compat: preserve the old single-block text format as default.
+          const itemsText = formatRecallAsItems(results).map(x => x.text.replace('\nID: ', '\n   ID: ')).join('\n\n');
           return {
             content: [{
               type: 'text',
-              text: count ? `Found ${count} memories${dedupInfo}:\n\n${items}` : 'No memories found.'
+              text: count ? `Found ${count} memories${dedupInfo}:\n\n${itemsText}` : 'No memories found.'
             }]
           };
         }
@@ -276,14 +402,15 @@ function buildMcpServer(client) {
   return server;
 }
 
-const app = express();
-app.use(express.json({ limit: '4mb' }));
+export function createApp() {
+  const app = express();
+  app.use(express.json({ limit: '4mb' }));
 
-// Basic health
-app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', timestamp: new Date().toISOString() }));
+  // In-memory session store: sessionId -> { transport, server, res, heartbeat }
+  const sessions = new Map();
 
-// In-memory session store: sessionId -> { transport, server, res, heartbeat }
-const sessions = new Map();
+  // Basic health
+  app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', timestamp: new Date().toISOString() }));
 
 // Helper: validate and extract token from multiple sources
 /**
@@ -352,7 +479,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 }
 
 // Alexa skill endpoint (remember/recall via AutoMem)
-app.post('/alexa', async (req, res) => {
+  app.post('/alexa', async (req, res) => {
   const body = req.body || {};
   const endpoint =
     body?.endpoint ||
@@ -429,10 +556,10 @@ app.post('/alexa', async (req, res) => {
   }
 
   return res.json(speech("I'm not sure how to handle that intent.", { endSession: false }));
-});
+  });
 
 // SSE endpoint
-app.get('/mcp/sse', async (req, res) => {
+  app.get('/mcp/sse', async (req, res) => {
   try {
     const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
     const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
@@ -463,10 +590,10 @@ app.get('/mcp/sse', async (req, res) => {
   } catch (e) {
     try { res.status(500).json({ error: String(e) }); } catch (_) { /* ignore */ }
   }
-});
+  });
 
 // Message POST endpoint
-app.post('/mcp/messages', async (req, res) => {
+  app.post('/mcp/messages', async (req, res) => {
   const sessionId = req.query.sessionId;
   if (!sessionId || typeof sessionId !== 'string') return res.status(400).send('Missing sessionId');
   const s = sessions.get(sessionId);
@@ -480,9 +607,17 @@ app.post('/mcp/messages', async (req, res) => {
     console.error(`[MCP] Error handling message for session ${sessionId}:`, e);
     try { res.status(400).send(String(e)); } catch (_) { /* ignore */ }
   }
-});
+  });
+
+  return app;
+}
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log(`AutoMem MCP SSE server listening on :${port}`);
-});
+
+// Avoid side effects on import (tests/tools may import this module).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const app = createApp();
+  app.listen(port, () => {
+    console.log(`AutoMem MCP SSE server listening on :${port}`);
+  });
+}
