@@ -8,9 +8,10 @@ import express from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { fileURLToPath } from 'node:url';
 
 // Simple AutoMem HTTP client (mirrors the npm package behavior but inline to avoid version conflicts)
-class AutoMemClient {
+export class AutoMemClient {
   constructor(config) {
     this.config = config;
   }
@@ -120,65 +121,65 @@ class AutoMemClient {
   }
 }
 
+export function formatRecallAsItems(results, { detailed = false } = {}) {
+  return (results || []).map((it, i) => {
+    const mem = it?.memory || it || {};
+    const id = mem.id || mem.memory_id || it?.id || it?.memory_id || '';
+    const content = mem.content ?? mem.text ?? '';
+
+    const tags = Array.isArray(mem.tags) ? mem.tags.filter(t => typeof t === 'string' && t.trim()) : [];
+    const score = it?.final_score !== undefined ? Number(it.final_score) : undefined;
+    const dedupCount = Array.isArray(it?.deduped_from) ? it.deduped_from.length : 0;
+
+    if (!detailed) {
+      const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
+      const scoreSuffix = score !== undefined ? ` score=${score.toFixed(3)}` : '';
+      const dedupNote = dedupCount ? ` (deduped x${dedupCount})` : '';
+      return {
+        type: 'text',
+        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}\nID: ${id}`,
+      };
+    }
+
+    const lines = [];
+    lines.push(`${i + 1}. ${String(content)}`);
+    if (id) lines.push(`ID: ${id}`);
+    if (mem.type) lines.push(`Type: ${String(mem.type)}`);
+    if (mem.timestamp) lines.push(`Timestamp: ${String(mem.timestamp)}`);
+    if (mem.last_accessed) lines.push(`Last accessed: ${String(mem.last_accessed)}`);
+    if (mem.importance !== undefined) {
+      const imp = Number(mem.importance);
+      lines.push(`Importance: ${Number.isFinite(imp) ? imp.toFixed(3) : String(mem.importance)}`);
+    }
+    if (mem.confidence !== undefined) {
+      const conf = Number(mem.confidence);
+      lines.push(`Confidence: ${Number.isFinite(conf) ? conf.toFixed(3) : String(mem.confidence)}`);
+    }
+    if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
+    if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
+    if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
+    if (it?.source) lines.push(`Source: ${String(it.source)}`);
+
+    // Associations (only present on relation-expanded results)
+    const rels = Array.isArray(it?.relations) ? it.relations : [];
+    if (rels.length) {
+      const summarized = rels.slice(0, 5).map(r => {
+        const t = r?.type ? String(r.type) : 'REL';
+        const s = r?.strength !== undefined ? Number(r.strength) : undefined;
+        const from = r?.from ? String(r.from) : '';
+        const ss = s !== undefined && Number.isFinite(s) ? `(${s.toFixed(2)})` : '';
+        return `${t}${ss}${from ? ` from ${from}` : ''}`;
+      });
+      lines.push(`Relations: ${summarized.join('; ')}${rels.length > 5 ? ` (+${rels.length - 5} more)` : ''}`);
+    }
+
+    return { type: 'text', text: lines.join('\n') };
+  });
+}
+
 // Build a new MCP Server instance with AutoMem tool handlers
-function buildMcpServer(client) {
+export function buildMcpServer(client) {
   const server = new Server({ name: 'automem-mcp-sse', version: '0.1.0' }, { capabilities: { tools: {} } });
-
-  function formatRecallAsItems(results, { detailed = false } = {}) {
-    return (results || []).map((it, i) => {
-      const mem = it?.memory || it || {};
-      const id = mem.id || mem.memory_id || it?.id || it?.memory_id || '';
-      const content = mem.content ?? mem.text ?? '';
-
-      const tags = Array.isArray(mem.tags) ? mem.tags.filter(t => typeof t === 'string' && t.trim()) : [];
-      const score = it?.final_score !== undefined ? Number(it.final_score) : undefined;
-      const dedupCount = Array.isArray(it?.deduped_from) ? it.deduped_from.length : 0;
-
-      if (!detailed) {
-        const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
-        const scoreSuffix = score !== undefined ? ` score=${score.toFixed(3)}` : '';
-        const dedupNote = dedupCount ? ` (deduped x${dedupCount})` : '';
-        return {
-          type: 'text',
-          text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}\nID: ${id}`,
-        };
-      }
-
-      const lines = [];
-      lines.push(`${i + 1}. ${String(content)}`);
-      if (id) lines.push(`ID: ${id}`);
-      if (mem.type) lines.push(`Type: ${String(mem.type)}`);
-      if (mem.timestamp) lines.push(`Timestamp: ${String(mem.timestamp)}`);
-      if (mem.last_accessed) lines.push(`Last accessed: ${String(mem.last_accessed)}`);
-      if (mem.importance !== undefined) {
-        const imp = Number(mem.importance);
-        lines.push(`Importance: ${Number.isFinite(imp) ? imp.toFixed(3) : String(mem.importance)}`);
-      }
-      if (mem.confidence !== undefined) {
-        const conf = Number(mem.confidence);
-        lines.push(`Confidence: ${Number.isFinite(conf) ? conf.toFixed(3) : String(mem.confidence)}`);
-      }
-      if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
-      if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
-      if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
-      if (it?.source) lines.push(`Source: ${String(it.source)}`);
-
-      // Associations (only present on relation-expanded results)
-      const rels = Array.isArray(it?.relations) ? it.relations : [];
-      if (rels.length) {
-        const summarized = rels.slice(0, 5).map(r => {
-          const t = r?.type ? String(r.type) : 'REL';
-          const s = r?.strength !== undefined ? Number(r.strength) : undefined;
-          const from = r?.from ? String(r.from) : '';
-          const ss = s !== undefined && Number.isFinite(s) ? `(${s.toFixed(2)})` : '';
-          return `${t}${ss}${from ? ` from ${from}` : ''}`;
-        });
-        lines.push(`Relations: ${summarized.join('; ')}${rels.length > 5 ? ` (+${rels.length - 5} more)` : ''}`);
-      }
-
-      return { type: 'text', text: lines.join('\n') };
-    });
-  }
 
   const tools = [
     {
@@ -608,6 +609,10 @@ app.post('/mcp/messages', async (req, res) => {
 });
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log(`AutoMem MCP SSE server listening on :${port}`);
-});
+
+// Avoid side effects on import (tests/tools may import this module).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  app.listen(port, () => {
+    console.log(`AutoMem MCP SSE server listening on :${port}`);
+  });
+}
