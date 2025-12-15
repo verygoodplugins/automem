@@ -27,7 +27,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from falkordb import FalkorDB
-from flask import Blueprint, Flask, abort, jsonify, request
+from flask import Blueprint, Flask, abort, has_request_context, jsonify, request
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
@@ -1077,11 +1077,16 @@ def _get_graph_name() -> str:
 
     Returns:
         Graph name from header if valid, otherwise environment default.
+        Returns default if called outside of request context (e.g., background tasks).
 
     Raises:
         400: If header format is invalid (regex or length check fails)
         403: If graph name is not in ALLOWED_GRAPHS whitelist
     """
+    # Return default for background tasks and non-HTTP contexts
+    if not has_request_context():
+        return GRAPH_NAME
+
     value = request.headers.get("X-Graph-Name", "").strip()
     if value:
         if not re.match(r'^[a-zA-Z0-9_-]+$', value) or len(value) > 64:
@@ -1098,11 +1103,16 @@ def _get_collection_name() -> str:
 
     Returns:
         Collection name from header if valid, otherwise environment default.
+        Returns default if called outside of request context (e.g., background tasks).
 
     Raises:
         400: If header format is invalid (regex or length check fails)
         403: If collection name is not in ALLOWED_COLLECTIONS whitelist
     """
+    # Return default for background tasks and non-HTTP contexts
+    if not has_request_context():
+        return COLLECTION_NAME
+
     value = request.headers.get("X-Collection-Name", "").strip()
     if value:
         if not re.match(r'^[a-zA-Z0-9_-]+$', value) or len(value) > 64:
