@@ -54,6 +54,11 @@ interface IPhoneMessage {
   type: string
   hands: IPhoneHandPose[]
   frameTimestamp: number
+  phonePort?: number
+  webPort?: number
+  phoneConnected?: boolean
+  ips?: string[]
+  lastHandFrameAt?: number | null
 }
 
 interface UseIPhoneHandTrackingOptions {
@@ -199,6 +204,9 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
   const [isConnected, setIsConnected] = useState(false)
   const [fps, setFps] = useState(0)
   const [hasLiDAR, setHasLiDAR] = useState(false)
+  const [phoneConnected, setPhoneConnected] = useState(false)
+  const [bridgeIps, setBridgeIps] = useState<string[]>([])
+  const [phonePort, setPhonePort] = useState<number | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const prevStateRef = useRef<GestureState>(DEFAULT_STATE)
@@ -323,6 +331,10 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
             const data = JSON.parse(event.data) as IPhoneMessage
             if (data.type === 'hand_tracking') {
               processMessage(data)
+            } else if (data.type === 'bridge_status') {
+              if (typeof data.phoneConnected === 'boolean') setPhoneConnected(data.phoneConnected)
+              if (Array.isArray(data.ips)) setBridgeIps(data.ips)
+              if (typeof data.phonePort === 'number') setPhonePort(data.phonePort)
             }
           } catch (e) {
             console.error('Parse error:', e)
@@ -333,6 +345,7 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
           console.log('📱 Disconnected from iPhone')
           setIsConnected(false)
           setGestureState(DEFAULT_STATE)
+          setPhoneConnected(false)
 
           // Reconnect after delay
           if (enabled) {
@@ -364,6 +377,9 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
     isConnected,
     fps,
     hasLiDAR,
+    phoneConnected,
+    bridgeIps,
+    phonePort,
     isEnabled: enabled && isConnected,
   }
 }

@@ -88,6 +88,23 @@ export default function App() {
   const [debugOverlayVisible, setDebugOverlayVisible] = useState(false)
   const [performanceMode, setPerformanceMode] = useState(false)
   const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
+  const [trackingInfo, setTrackingInfo] = useState<{
+    source: 'mediapipe' | 'iphone'
+    iphoneUrl: string
+    iphoneConnected: boolean
+    hasLiDAR: boolean
+    phoneConnected: boolean
+    bridgeIps: string[]
+    phonePort: number | null
+  }>({
+    source: 'mediapipe',
+    iphoneUrl: 'ws://localhost:8766/ws',
+    iphoneConnected: false,
+    hasLiDAR: false,
+    phoneConnected: false,
+    bridgeIps: [],
+    phonePort: null,
+  })
   const [filters, setFilters] = useState<FilterState>({
     types: [],
     minImportance: 0,
@@ -99,9 +116,8 @@ export default function App() {
   }, [])
 
   const { lock: handLock } = useHandLockAndGrab(gestureState, gestureControlEnabled)
-  const trackingSource = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('iphone') === 'true'
-    ? 'iphone'
-    : 'mediapipe'
+  // Note: GraphCanvas owns the actual tracking source selection via URL params.
+  // We mirror it here via onTrackingInfoChange so overlays can show accurate status.
 
   const { data, isLoading, error, refetch } = useGraphSnapshot({
     limit: filters.maxNodes,
@@ -258,6 +274,7 @@ export default function App() {
               onNodeHover={handleNodeHover}
               gestureControlEnabled={gestureControlEnabled}
               onGestureStateChange={handleGestureStateChange}
+              onTrackingInfoChange={setTrackingInfo}
               performanceMode={performanceMode}
             />
 
@@ -276,7 +293,17 @@ export default function App() {
             />
 
             {/* Hand Control Overlay (lock/grab metrics) */}
-            <HandControlOverlay enabled={gestureControlEnabled} lock={handLock} source={trackingSource} />
+            <HandControlOverlay
+              enabled={gestureControlEnabled}
+              lock={handLock}
+              source={trackingInfo.source}
+              iphoneConnected={trackingInfo.iphoneConnected}
+              hasLiDAR={trackingInfo.hasLiDAR}
+              iphoneUrl={trackingInfo.iphoneUrl}
+              phoneConnected={trackingInfo.phoneConnected}
+              bridgeIps={trackingInfo.bridgeIps}
+              phonePort={trackingInfo.phonePort}
+            />
           </div>
         </Panel>
 

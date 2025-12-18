@@ -4,9 +4,25 @@ interface HandControlOverlayProps {
   enabled: boolean
   lock: HandLockState
   source: 'mediapipe' | 'iphone'
+  iphoneConnected?: boolean
+  hasLiDAR?: boolean
+  iphoneUrl?: string
+  phoneConnected?: boolean
+  bridgeIps?: string[]
+  phonePort?: number | null
 }
 
-export function HandControlOverlay({ enabled, lock, source }: HandControlOverlayProps) {
+export function HandControlOverlay({
+  enabled,
+  lock,
+  source,
+  iphoneConnected = false,
+  hasLiDAR = false,
+  iphoneUrl,
+  phoneConnected = false,
+  bridgeIps = [],
+  phonePort = null,
+}: HandControlOverlayProps) {
   if (!enabled) return null
 
   const badge =
@@ -30,8 +46,46 @@ export function HandControlOverlay({ enabled, lock, source }: HandControlOverlay
 
         <div className="flex items-center justify-between">
           <span className="text-slate-400">Source</span>
-          <span className="font-medium">{source === 'iphone' ? 'iPhone (LiDAR)' : 'Webcam (MediaPipe)'}</span>
+          <span className="font-medium">
+            {source === 'iphone' ? 'iPhone Stream' : 'Webcam (MediaPipe)'}
+          </span>
         </div>
+
+        {source === 'iphone' && (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Browser → Bridge</span>
+              <span className={iphoneConnected ? 'text-emerald-200' : 'text-red-300'}>
+                {iphoneConnected ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Phone → Bridge</span>
+              <span className={phoneConnected ? 'text-emerald-200' : 'text-red-300'}>
+                {phoneConnected ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">LiDAR</span>
+              <span className={hasLiDAR ? 'text-emerald-200' : 'text-slate-400'}>
+                {hasLiDAR ? '✓ depth frames' : '✗ no depth'}
+              </span>
+            </div>
+            {iphoneUrl && (
+              <div className="text-[10px] text-slate-400 truncate">
+                ws: <span className="text-slate-300">{iphoneUrl}</span>
+              </div>
+            )}
+            {!phoneConnected && bridgeIps.length > 0 && phonePort && (
+              <div className="text-[10px] text-slate-400">
+                iPhone app URL:{' '}
+                <span className="text-slate-200">
+                  ws://{bridgeIps[0]}:{phonePort}
+                </span>
+              </div>
+            )}
+          </>
+        )}
 
         {m && (
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">

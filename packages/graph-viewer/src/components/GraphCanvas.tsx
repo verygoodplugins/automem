@@ -72,6 +72,15 @@ interface GraphCanvasProps {
   onNodeHover: (node: GraphNode | null) => void
   gestureControlEnabled?: boolean
   onGestureStateChange?: (state: GestureState) => void
+  onTrackingInfoChange?: (info: {
+    source: 'mediapipe' | 'iphone'
+    iphoneUrl: string
+    iphoneConnected: boolean
+    hasLiDAR: boolean
+    phoneConnected: boolean
+    bridgeIps: string[]
+    phonePort: number | null
+  }) => void
   performanceMode?: boolean // New prop for disabling post-processing
 }
 
@@ -85,6 +94,7 @@ export function GraphCanvas({
   onNodeHover,
   gestureControlEnabled = false,
   onGestureStateChange,
+  onTrackingInfoChange,
   performanceMode = false,
 }: GraphCanvasProps) {
   // Determine tracking source
@@ -97,7 +107,14 @@ export function GraphCanvas({
   })
 
   // iPhone hand tracking (WebSocket)
-  const { gestureState: iphoneState, isConnected: iphoneConnected } = useIPhoneHandTracking({
+  const {
+    gestureState: iphoneState,
+    isConnected: iphoneConnected,
+    hasLiDAR,
+    phoneConnected,
+    bridgeIps,
+    phonePort,
+  } = useIPhoneHandTracking({
     enabled: gestureControlEnabled && source === 'iphone',
     serverUrl: iphoneUrl,
     onGestureChange: source === 'iphone' ? onGestureStateChange : undefined,
@@ -106,6 +123,18 @@ export function GraphCanvas({
   // Use whichever source is active
   const gestureState = source === 'iphone' ? iphoneState : mediapipeState
   const gesturesActive = source === 'iphone' ? iphoneConnected : mediapipeActive
+
+  useEffect(() => {
+    onTrackingInfoChange?.({
+      source,
+      iphoneUrl,
+      iphoneConnected,
+      hasLiDAR,
+      phoneConnected,
+      bridgeIps,
+      phonePort,
+    })
+  }, [onTrackingInfoChange, source, iphoneUrl, iphoneConnected, hasLiDAR, phoneConnected, bridgeIps, phonePort])
 
   return (
     <Canvas

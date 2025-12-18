@@ -17,12 +17,47 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PHONE_PORT = 8765;  // iPhone connects here
-const WEB_PORT = 8766;    // Web visualization
+// NOTE: 8765/8767 are often used by other local tooling. Default to 8768 to avoid collisions.
+// Override via env:
+//   HAND_TRACKING_PHONE_PORT=8765 HAND_TRACKING_WEB_PORT=8766 node hand-tracking-server.js
+const PHONE_PORT = Number(process.env.HAND_TRACKING_PHONE_PORT || 8768);  // iPhone connects here
+const WEB_PORT = Number(process.env.HAND_TRACKING_WEB_PORT || 8766);      // Web visualization
 
 // Store latest hand data
 let latestHandData = null;
 let webClients = new Set();
+let phoneClients = new Set();
+
+function getLocalIps() {
+    // Get local IP for convenience
+    const { networkInterfaces } = require('os');
+    const nets = networkInterfaces();
+    const ips = [];
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+            if (net.family === 'IPv4' && !net.internal) {
+                ips.push(net.address);
+            }
+        }
+    }
+    return ips;
+}
+
+function broadcastStatus() {
+    const msg = JSON.stringify({
+        type: 'bridge_status',
+        phonePort: PHONE_PORT,
+        webPort: WEB_PORT,
+        phoneConnected: phoneClients.size > 0,
+        ips: getLocalIps(),
+        lastHandFrameAt: latestHandData?.frameTimestamp || null,
+    });
+    for (const client of webClients) {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(msg);
+        }
+    }
+}
 
 // ============ iPhone WebSocket Server ============
 
@@ -33,6 +68,8 @@ console.log(`   Connect your iPhone app to: ws://<your-mac-ip>:${PHONE_PORT}`);
 
 phoneServer.on('connection', (ws, req) => {
     console.log(`\n✅ iPhone connected from ${req.socket.remoteAddress}`);
+    phoneClients.add(ws);
+    broadcastStatus();
 
     ws.on('message', (data) => {
         try {
@@ -82,6 +119,8 @@ phoneServer.on('connection', (ws, req) => {
 
     ws.on('close', () => {
         console.log('\n📱 iPhone disconnected');
+        phoneClients.delete(ws);
+        broadcastStatus();
     });
 
     ws.on('error', (err) => {
@@ -188,7 +227,7 @@ const webHtml = `<!DOCTYPE html>
         ];
 
         function connect() {
-            const ws = new WebSocket('ws://localhost:8766/ws');
+            const ws = new WebSocket('ws://localhost:${WEB_PORT}/ws');
 
             ws.onopen = () => {
                 statusEl.textContent = 'Connected';
@@ -320,6 +359,17 @@ const webWss = new WebSocketServer({ server: httpServer, path: '/ws' });
 webWss.on('connection', (ws) => {
     console.log('🌐 Web client connected');
     webClients.add(ws);
+    // Send current status immediately
+    try {
+        ws.send(JSON.stringify({
+            type: 'bridge_status',
+            phonePort: PHONE_PORT,
+            webPort: WEB_PORT,
+            phoneConnected: phoneClients.size > 0,
+            ips: getLocalIps(),
+            lastHandFrameAt: latestHandData?.frameTimestamp || null,
+        }));
+    } catch {}
 
     ws.on('close', () => {
         console.log('🌐 Web client disconnected');
@@ -331,15 +381,8 @@ httpServer.listen(WEB_PORT, () => {
     console.log(`\n🌐 Web visualization at http://localhost:${WEB_PORT}`);
 });
 
-// Get local IP for convenience
-const { networkInterfaces } = require('os');
-const nets = networkInterfaces();
 console.log('\n📡 Your Mac IP addresses:');
-for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-        if (net.family === 'IPv4' && !net.internal) {
-            console.log(`   ${name}: ${net.address}`);
-        }
-    }
+for (const ip of getLocalIps()) {
+    console.log(`   ${ip}`);
 }
 console.log('\n');
