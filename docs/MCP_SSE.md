@@ -83,6 +83,18 @@ The SSE bridge exposes these MCP tools:
 | `delete_memory` | Remove a memory |
 | `check_database_health` | Verify FalkorDB/Qdrant connectivity |
 
+## Recall Ordering
+
+`recall_memory` defaults to relevance ranking (`sort: "score"`). For chronological recaps (e.g. “what happened since X”), set:
+
+- `sort: "time_desc"` / `sort: "time_asc"` to order within a time window
+- `sort: "updated_desc"` / `sort: "updated_asc"` for the same ordering, named explicitly for updates
+
+Example:
+```json
+{ "time_query": "last 7 days", "sort": "time_desc" }
+```
+
 ---
 
 ## Client Setup

@@ -929,6 +929,11 @@ def handle_recall(
     multi_queries = _split_multi_value(
         request.args.getlist("queries") or request.args.get("queries")
     )
+    sort_param = (
+        (request.args.get("sort") or request.args.get("order_by") or "score").strip().lower()
+    )
+    if sort_param not in {"score", "time_desc", "time_asc", "updated_desc", "updated_asc"}:
+        sort_param = "score"
     try:
         requested_limit = int(request.args.get("limit", 5))
     except (TypeError, ValueError):
@@ -963,6 +968,17 @@ def handle_recall(
             end_time = normalize_timestamp(end_param)
         except ValueError as exc:
             abort(400, description=f"Invalid end time: {exc}")
+
+    # If caller gives a time window but no query, they usually want a chronological "dump",
+    # not relevance ranking. Default to newest-first in that case unless an explicit sort was set.
+    if (
+        sort_param == "score"
+        and not query_text
+        and not multi_queries
+        and not (embedding_param and str(embedding_param).strip())
+        and (start_time or end_time)
+    ):
+        sort_param = "time_desc"
 
     tag_filters = normalize_tag_list(tags_param)
 
@@ -1039,6 +1055,26 @@ def handle_recall(
     context_tags = normalize_tag_list(context_tags_input)
     graph = get_memory_graph()
     qdrant_client = get_qdrant_client()
+
+    def _parse_iso_for_sort(value: Any) -> str:
+        """
+        Best-effort ISO-ish sort key. We keep it as a string because timestamps are stored normalized
+        (UTC ISO) by the API, and lexicographic order matches chronological order.
+        """
+        if not value:
+            return ""
+        return str(value)
+
+    def _time_sort_key(result: Dict[str, Any]) -> tuple[str, str, str]:
+        mem = result.get("memory") or {}
+        ts = _parse_iso_for_sort(mem.get("timestamp"))
+        upd = _parse_iso_for_sort(mem.get("updated_at"))
+        la = _parse_iso_for_sort(mem.get("last_accessed"))
+        # Prefer updated_at, then timestamp, then last_accessed for deterministic ordering
+        primary = upd or ts or la
+        secondary = ts or upd or la
+        mid = str(result.get("id") or mem.get("id") or mem.get("memory_id") or "")
+        return (primary, secondary, mid)
 
     def _run_single_query(
         query_str: str, per_query_limit: int
@@ -1152,14 +1188,20 @@ def handle_recall(
             if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
         ]
 
-        local_results.sort(
-            key=lambda r: (
-                -float(r.get("final_score", 0.0)),
-                r.get("source") != "qdrant",
-                -float(r.get("original_score", 0.0)),
-                -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
+        if sort_param == "score":
+            local_results.sort(
+                key=lambda r: (
+                    -float(r.get("final_score", 0.0)),
+                    r.get("source") != "qdrant",
+                    -float(r.get("original_score", 0.0)),
+                    -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
+                )
             )
-        )
+        elif sort_param in {"time_desc", "time_asc"}:
+            local_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
+        elif sort_param in {"updated_desc", "updated_asc"}:
+            # Same key, but favor updated_at (already primary) and keep the name explicit for callers
+            local_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
         if len(local_results) > per_query_limit:
             local_results = local_results[:per_query_limit]
 
@@ -1235,14 +1277,19 @@ def handle_recall(
         any_context_injected = any_context_injected or injected
 
     deduped_results, dedup_removed = _dedupe_results(aggregated_results)
-    deduped_results.sort(
-        key=lambda r: (
-            -float(r.get("final_score", 0.0)),
-            r.get("source") != "qdrant",
-            -float(r.get("original_score", 0.0)),
-            -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
+    if sort_param == "score":
+        deduped_results.sort(
+            key=lambda r: (
+                -float(r.get("final_score", 0.0)),
+                r.get("source") != "qdrant",
+                -float(r.get("original_score", 0.0)),
+                -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
+            )
         )
-    )
+    elif sort_param in {"time_desc", "time_asc"}:
+        deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
+    elif sort_param in {"updated_desc", "updated_asc"}:
+        deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
     if len(deduped_results) > limit:
         deduped_results = deduped_results[:limit]
 
@@ -1308,6 +1355,7 @@ def handle_recall(
         "results": results,
         "count": len(results),
         "dedup_removed": dedup_removed,
+        "sort": sort_param,
         "vector_search": {
             "enabled": qdrant_client is not None,
             "matched": bool(total_vector_matches),
@@ -1480,7 +1528,7 @@ def create_recall_blueprint(
                 "critical_lessons": lessons,
                 "system_rules": system_rules,
                 "lesson_count": len(lessons),
-                "has_critical": any(l.get("importance", 0) >= 0.9 for l in lessons),
+                "has_critical": any(lesson.get("importance", 0) >= 0.9 for lesson in lessons),
                 "summary": f"Recalled {len(lessons)} lesson(s) and {len(system_rules)} system rule(s)",
             }
             return jsonify(response), 200

@@ -377,6 +377,81 @@ def test_recall_with_time_query(client, mock_state, auth_headers):
     assert "time_window" in data
 
 
+def test_recall_time_sorting(client, mock_state, auth_headers):
+    """Test that sort=time_desc returns most recent memories first within a time window."""
+    mock_state.memory_graph.memories.clear()
+
+    now = datetime.now(timezone.utc)
+    older_ts = (now - timedelta(days=2)).isoformat()
+    newer_ts = (now - timedelta(days=1)).isoformat()
+
+    mock_state.memory_graph.memories["older"] = {
+        "id": "older",
+        "content": "Older memory",
+        "tags": ["cursor"],
+        "importance": 0.1,
+        "timestamp": older_ts,
+        "updated_at": older_ts,
+        "last_accessed": older_ts,
+    }
+    mock_state.memory_graph.memories["newer"] = {
+        "id": "newer",
+        "content": "Newer memory",
+        "tags": ["cursor"],
+        "importance": 0.1,
+        "timestamp": newer_ts,
+        "updated_at": newer_ts,
+        "last_accessed": newer_ts,
+    }
+
+    response = client.get(
+        "/recall?time_query=last 7 days&tags=cursor&limit=10&sort=time_desc", headers=auth_headers
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+    assert data.get("sort") == "time_desc"
+    assert data["results"], "Expected at least one result"
+    assert data["results"][0]["id"] == "newer"
+
+
+def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_headers):
+    """If time window is provided with no query, recall should default to newest-first ordering."""
+    mock_state.memory_graph.memories.clear()
+
+    now = datetime.now(timezone.utc)
+    older_ts = (now - timedelta(days=2)).isoformat()
+    newer_ts = (now - timedelta(days=1)).isoformat()
+
+    mock_state.memory_graph.memories["older"] = {
+        "id": "older",
+        "content": "Older memory default sort",
+        "tags": ["cursor"],
+        "importance": 0.1,
+        "timestamp": older_ts,
+        "updated_at": older_ts,
+        "last_accessed": older_ts,
+    }
+    mock_state.memory_graph.memories["newer"] = {
+        "id": "newer",
+        "content": "Newer memory default sort",
+        "tags": ["cursor"],
+        "importance": 0.1,
+        "timestamp": newer_ts,
+        "updated_at": newer_ts,
+        "last_accessed": newer_ts,
+    }
+
+    response = client.get(
+        "/recall?time_query=last 7 days&tags=cursor&limit=10", headers=auth_headers
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+    assert data.get("sort") == "time_desc"
+    assert data["results"][0]["id"] == "newer"
+
+
 def test_recall_with_explicit_timestamps(client, mock_state, auth_headers):
     """Test memory recall with explicit start and end timestamps."""
     start = (datetime.now(timezone.utc) - timedelta(days=7)).replace(tzinfo=None).isoformat()

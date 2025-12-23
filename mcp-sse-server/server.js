@@ -69,6 +69,7 @@ export class AutoMemClient {
     if (args.time_query) p.set('time_query', args.time_query);
     if (args.start) p.set('start', args.start);
     if (args.end) p.set('end', args.end);
+    if (args.sort) p.set('sort', args.sort);
     if (Array.isArray(args.tags)) args.tags.forEach(t => p.append('tags', t));
     if (args.tag_mode) p.set('tag_mode', args.tag_mode);
     if (args.tag_match) p.set('tag_match', args.tag_match);
@@ -219,6 +220,11 @@ export function buildMcpServer(client) {
           time_query: { type: 'string', description: 'Natural language time window (e.g. "today", "last week")' },
           start: { type: 'string', description: 'Explicit ISO timestamp lower bound' },
           end: { type: 'string', description: 'Explicit ISO timestamp upper bound' },
+          sort: {
+            type: 'string',
+            enum: ['score', 'time_desc', 'time_asc', 'updated_desc', 'updated_asc'],
+            description: 'Result ordering (use time_* for chronological recaps).',
+          },
           tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
           tag_mode: { type: 'string', enum: ['any', 'all'], description: 'How to combine multiple tags' },
           tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags' },
@@ -320,6 +326,7 @@ export function buildMcpServer(client) {
             time_query: args?.time_query,
             start: args?.start,
             end: args?.end,
+            sort: args?.sort,
             tags: Array.isArray(args?.tags) ? args.tags : undefined,
             tag_mode: args?.tag_mode,
             tag_match: args?.tag_match,

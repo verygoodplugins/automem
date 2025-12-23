@@ -32,6 +32,10 @@ Memory
 Recall
 - GET `/recall`
   - **Basic parameters**: `query`, `limit`, `tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
+  - **Ordering**: `sort` (or `order_by`) supports:
+    - `score` (default) - hybrid relevance/importance ranking
+    - `time_desc` / `time_asc` - chronological ordering by `updated_at`/`timestamp` within the filter window (use for "what happened since X")
+    - `updated_desc` / `updated_asc` - explicit alias (same ordering key as time_*)
   - **Context hints**: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`
   - **Graph expansion**:
     - `expand_relations` - Follow graph edges from seed results to related memories
