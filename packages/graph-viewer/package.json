@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "npx vite",
     "dev:all": "node ./scripts/dev-all.mjs",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
+    "build": "tsc -b && npx vite build",
+    "preview": "npx vite preview",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -31,7 +31,8 @@
     "react-dom": "^18.3.1",
     "react-resizable-panels": "^2.1.7",
     "tailwind-merge": "^2.5.5",
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",
