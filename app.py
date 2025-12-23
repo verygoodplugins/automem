@@ -28,6 +28,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from falkordb import FalkorDB
 from flask import Blueprint, Flask, abort, jsonify, request
+from flask_cors import CORS
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
@@ -103,6 +104,7 @@ except Exception:
         sys.path.insert(0, str(root))
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes (graph viewer needs cross-origin access)
 
 # Legacy blueprint placeholders for deprecated route definitions below.
 # These are not registered with the app and are safe to keep until full removal.
@@ -1113,6 +1115,11 @@ def require_api_token() -> None:
     # Allow unauthenticated health checks (supports blueprint endpoint names)
     endpoint = request.endpoint or ""
     if endpoint.endswith("health") or request.path == "/health":
+        return
+
+    # Allow unauthenticated access to the graph viewer (static files)
+    # Token is passed via URL hash fragment (client-side only)
+    if request.path.startswith("/viewer"):
         return
 
     token = _extract_api_token()
@@ -3430,6 +3437,7 @@ from automem.api.graph import create_graph_blueprint
 from automem.api.health import create_health_blueprint
 from automem.api.memory import create_memory_blueprint_full
 from automem.api.recall import create_recall_blueprint
+from automem.api.viewer import create_viewer_blueprint, is_viewer_enabled
 
 health_bp = create_health_blueprint(
     get_memory_graph,
@@ -3535,6 +3543,12 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
 app.register_blueprint(graph_bp)
+
+# Register optional viewer blueprint (serves the Graph Viewer SPA)
+if is_viewer_enabled():
+    viewer_bp = create_viewer_blueprint()
+    app.register_blueprint(viewer_bp)
+    logger.info("Graph Viewer enabled at /viewer/")
 
 
 if __name__ == "__main__":
