@@ -131,13 +131,18 @@ Controls memory merging, pattern detection, and decay.
 | Variable | Description | Default | Unit |
 |----------|-------------|---------|------|
 | `CONSOLIDATION_TICK_SECONDS` | Check interval | `60` | seconds |
-| `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Decay check interval | `3600` | seconds |
-| `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Pattern detection interval | `3600` | seconds |
-| `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `21600` | seconds |
-| `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forget interval | `86400` | seconds |
+| `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Decay check interval | `86400` | seconds |
+| `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Pattern detection interval | `604800` | seconds |
+| `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `2592000` | seconds |
+| `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forget interval (`0` disables) | `0` | seconds |
 | `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Min importance to keep | `0.3` | 0-1 |
 | `CONSOLIDATION_HISTORY_LIMIT` | Max consolidation history | `20` | count |
 | `CONSOLIDATION_CONTROL_NODE_ID` | Control node identifier | `global` | string |
+| `CONSOLIDATION_DELETE_THRESHOLD` | Delete threshold (`0` disables) | `0.0` | 0-1 |
+| `CONSOLIDATION_ARCHIVE_THRESHOLD` | Archive threshold (`0` disables) | `0.0` | 0-1 |
+| `CONSOLIDATION_GRACE_PERIOD_DAYS` | Protect recent memories | `90` | days |
+| `CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD` | Protect high-importance memories | `0.7` | 0-1 |
+| `CONSOLIDATION_PROTECTED_TYPES` | Comma-separated protected types | `Decision,Insight` | string |
 
 ### Model Configuration
 

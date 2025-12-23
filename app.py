@@ -118,14 +118,19 @@ from automem.config import (
     API_TOKEN,
     CLASSIFICATION_MODEL,
     COLLECTION_NAME,
+    CONSOLIDATION_ARCHIVE_THRESHOLD,
     CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
     CONSOLIDATION_CONTROL_LABEL,
     CONSOLIDATION_CONTROL_NODE_ID,
     CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
     CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
     CONSOLIDATION_DECAY_INTERVAL_SECONDS,
+    CONSOLIDATION_DELETE_THRESHOLD,
     CONSOLIDATION_FORGET_INTERVAL_SECONDS,
+    CONSOLIDATION_GRACE_PERIOD_DAYS,
     CONSOLIDATION_HISTORY_LIMIT,
+    CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+    CONSOLIDATION_PROTECTED_TYPES,
     CONSOLIDATION_RUN_LABEL,
     CONSOLIDATION_TASK_FIELDS,
     CONSOLIDATION_TICK_SECONDS,
@@ -1448,13 +1453,19 @@ def update_last_accessed(memory_ids: List[str]) -> None:
 
 def _load_control_record(graph: Any) -> Dict[str, Any]:
     """Fetch or create the consolidation control node."""
+    bootstrap_timestamp = utc_now()
+    bootstrap_fields = sorted(set(CONSOLIDATION_TASK_FIELDS.values()))
+    bootstrap_set_clause = ",\n                ".join(
+        f"c.{field} = coalesce(c.{field}, $now)" for field in bootstrap_fields
+    )
     try:
         result = graph.query(
             f"""
             MERGE (c:{CONSOLIDATION_CONTROL_LABEL} {{id: $id}})
+            SET {bootstrap_set_clause}
             RETURN c
             """,
-            {"id": CONSOLIDATION_CONTROL_NODE_ID},
+            {"id": CONSOLIDATION_CONTROL_NODE_ID, "now": bootstrap_timestamp},
         )
     except Exception:
         logger.exception("Failed to load consolidation control record")
@@ -1592,7 +1603,7 @@ def _persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:
 
 def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
     vector_store = get_qdrant_client()
-    consolidator = MemoryConsolidator(graph, vector_store)
+    consolidator = _build_consolidator_from_config(graph, vector_store)
     scheduler = ConsolidationScheduler(consolidator)
     _apply_scheduler_overrides(scheduler)
 
@@ -1604,6 +1615,18 @@ def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
             scheduler.schedules[task]["last_run"] = last_run
 
     return scheduler
+
+
+def _build_consolidator_from_config(graph: Any, vector_store: Any) -> MemoryConsolidator:
+    return MemoryConsolidator(
+        graph,
+        vector_store,
+        delete_threshold=CONSOLIDATION_DELETE_THRESHOLD,
+        archive_threshold=CONSOLIDATION_ARCHIVE_THRESHOLD,
+        grace_period_days=CONSOLIDATION_GRACE_PERIOD_DAYS,
+        importance_protection_threshold=CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+        protected_types=set(CONSOLIDATION_PROTECTED_TYPES),
+    )
 
 
 def _run_consolidation_tick() -> None:
@@ -3510,7 +3533,7 @@ admin_bp = create_admin_blueprint_full(
 consolidation_bp = create_consolidation_blueprint_full(
     get_memory_graph,
     get_qdrant_client,
-    MemoryConsolidator,
+    _build_consolidator_from_config,
     _persist_consolidation_run,
     _build_scheduler_from_graph,
     _load_recent_runs,
