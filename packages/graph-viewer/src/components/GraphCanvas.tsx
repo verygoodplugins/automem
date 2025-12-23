@@ -34,9 +34,12 @@ import type {
   SimulationNode,
   ForceConfig,
   DisplayConfig,
+  ClusterConfig,
   RelationshipVisibility,
 } from '../lib/types'
-import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_RELATIONSHIP_VISIBILITY } from '../lib/types'
+import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_CLUSTER_CONFIG, DEFAULT_RELATIONSHIP_VISIBILITY } from '../lib/types'
+import { useClusterDetection } from '../hooks/useClusterDetection'
+import { ClusterBoundaries } from './ClusterBoundaries'
 import { getEdgeStyle } from '../lib/edgeStyles'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
@@ -93,7 +96,9 @@ interface GraphCanvasProps {
   performanceMode?: boolean
   forceConfig?: ForceConfig
   displayConfig?: DisplayConfig
+  clusterConfig?: ClusterConfig
   relationshipVisibility?: RelationshipVisibility
+  typeColors?: Record<string, string>
   onReheatReady?: (reheat: () => void) => void
 }
 
@@ -111,7 +116,9 @@ export function GraphCanvas({
   performanceMode = false,
   forceConfig = DEFAULT_FORCE_CONFIG,
   displayConfig = DEFAULT_DISPLAY_CONFIG,
+  clusterConfig = DEFAULT_CLUSTER_CONFIG,
   relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
+  typeColors = {},
   onReheatReady,
 }: GraphCanvasProps) {
   // Determine tracking source
@@ -173,14 +180,16 @@ export function GraphCanvas({
         performanceMode={performanceMode}
         forceConfig={forceConfig}
         displayConfig={displayConfig}
+        clusterConfig={clusterConfig}
         relationshipVisibility={relationshipVisibility}
+        typeColors={typeColors}
         onReheatReady={onReheatReady}
       />
     </Canvas>
   )
 }
 
-interface SceneProps extends Omit<GraphCanvasProps, 'onGestureStateChange'> {
+interface SceneProps extends Omit<GraphCanvasProps, 'onGestureStateChange' | 'onTrackingInfoChange'> {
   gestureState: GestureState
   gestureControlEnabled: boolean
   performanceMode: boolean
@@ -198,11 +207,21 @@ function Scene({
   gestureControlEnabled,
   performanceMode,
   forceConfig = DEFAULT_FORCE_CONFIG,
-  displayConfig: _displayConfig = DEFAULT_DISPLAY_CONFIG,
-  relationshipVisibility: _relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
+  displayConfig = DEFAULT_DISPLAY_CONFIG,
+  clusterConfig = DEFAULT_CLUSTER_CONFIG,
+  relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
+  typeColors = {},
   onReheatReady,
 }: SceneProps) {
   const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
+
+  // Cluster detection
+  const clusters = useClusterDetection({
+    nodes: layoutNodes,
+    edges,
+    mode: clusterConfig.mode,
+    typeColors,
+  })
 
   // Expose reheat function to parent
   useEffect(() => {
@@ -567,14 +586,22 @@ function Scene({
       {/* Graph content */}
       <group ref={groupRef}>
         {/* Batched edges - single draw call for all edges */}
+        {/* Cluster boundaries (rendered behind edges) */}
+        <ClusterBoundaries
+          clusters={clusters}
+          visible={clusterConfig.showBoundaries}
+          opacity={0.25}
+        />
+
+        {/* Batched edges - single draw call for all edges */}
         <BatchedEdges
           edges={edges}
           nodeById={nodeById}
           selectedNode={selectedNode}
           connectedIds={connectedIds}
-          relationshipVisibility={_relationshipVisibility}
-          linkThickness={_displayConfig.linkThickness}
-          linkOpacity={_displayConfig.linkOpacity}
+          relationshipVisibility={relationshipVisibility}
+          linkThickness={displayConfig.linkThickness}
+          linkOpacity={displayConfig.linkOpacity}
         />
 
         {/* Instanced nodes - single draw call for all nodes */}
@@ -587,17 +614,17 @@ function Scene({
           connectedIds={connectedIds}
           onNodeSelect={onNodeSelect}
           onNodeHover={onNodeHover}
-          nodeSizeScale={_displayConfig.nodeSizeScale}
+          nodeSizeScale={displayConfig.nodeSizeScale}
         />
 
         {/* LOD Labels - only for selected/hovered/nearby nodes */}
-        {_displayConfig.showLabels && (
+        {displayConfig.showLabels && (
           <LODLabels
             nodes={layoutNodes}
             selectedNode={selectedNode}
             hoveredNode={hoveredNode}
             searchTerm={searchTerm}
-            labelFadeDistance={_displayConfig.labelFadeDistance}
+            labelFadeDistance={displayConfig.labelFadeDistance}
             matchingIds={matchingIds}
           />
         )}

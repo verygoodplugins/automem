@@ -347,7 +347,9 @@ export default function App() {
                 performanceMode={performanceMode}
                 forceConfig={forceConfig}
                 displayConfig={displayConfig}
+                clusterConfig={clusterConfig}
                 relationshipVisibility={relationshipVisibility}
+                typeColors={data?.meta?.type_colors}
                 onReheatReady={setReheatFn}
               />
 
