@@ -40,6 +40,7 @@ import type {
 import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_CLUSTER_CONFIG, DEFAULT_RELATIONSHIP_VISIBILITY } from '../lib/types'
 import { useClusterDetection } from '../hooks/useClusterDetection'
 import { ClusterBoundaries } from './ClusterBoundaries'
+import { SelectionHighlight, ConnectedPathsHighlight } from './SelectionHighlight'
 import { getEdgeStyle } from '../lib/edgeStyles'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
@@ -467,6 +468,23 @@ function Scene({
     return ids
   }, [selectedNode, edges])
 
+  // Get connected nodes for selection highlight
+  const connectedNodes = useMemo(() => {
+    if (!selectedNode) return []
+    const ids = new Set<string>()
+    edges.forEach((e) => {
+      if (e.source === selectedNode.id) ids.add(e.target)
+      if (e.target === selectedNode.id) ids.add(e.source)
+    })
+    return layoutNodes.filter(n => ids.has(n.id))
+  }, [selectedNode, edges, layoutNodes])
+
+  // Get selected node from layout (with current position)
+  const selectedLayoutNode = useMemo(() => {
+    if (!selectedNode) return null
+    return layoutNodes.find(n => n.id === selectedNode.id) ?? null
+  }, [selectedNode, layoutNodes])
+
   // Get expanded node and its connections
   const expandedNode = useMemo(() => {
     if (!expandedNodeId) return null
@@ -616,6 +634,23 @@ function Scene({
           onNodeHover={onNodeHover}
           nodeSizeScale={displayConfig.nodeSizeScale}
         />
+
+        {/* Selection highlight - glowing ring around selected node */}
+        {selectedLayoutNode && (
+          <SelectionHighlight
+            node={selectedLayoutNode}
+            innerRadius={selectedLayoutNode.radius * displayConfig.nodeSizeScale * 1.3}
+            outerRadius={selectedLayoutNode.radius * displayConfig.nodeSizeScale * 1.8}
+          />
+        )}
+
+        {/* Connected paths highlight - particles flowing to connected nodes */}
+        {selectedNode && connectedNodes.length > 0 && (
+          <ConnectedPathsHighlight
+            selectedNode={selectedNode}
+            connectedNodes={connectedNodes}
+          />
+        )}
 
         {/* LOD Labels - only for selected/hovered/nearby nodes */}
         {displayConfig.showLabels && (
