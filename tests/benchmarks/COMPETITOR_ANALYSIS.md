@@ -161,7 +161,7 @@ async def detect_contradictions(new_fact: Fact, user_id: str) -> List[Fact]:
     """Find existing facts that conflict with new fact."""
     # Search for facts about the same subject
     existing = await recall_facts_about(new_fact.subject, user_id)
-    
+
     # Use LLM to detect contradictions
     for old_fact in existing:
         if llm_detects_contradiction(old_fact, new_fact):
@@ -241,5 +241,3 @@ CORE's advantage is not magic - it's a more sophisticated representation of know
 - CORE: https://github.com/RedPlanetHQ/core
 - Mem0: https://github.com/mem0ai/mem0
 - Zep/Graphiti: https://arxiv.org/abs/2501.13956
-
-

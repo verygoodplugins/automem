@@ -133,9 +133,9 @@ The analysis agent uses GPT-5.1 to:
 ```json
 {
   "continue_exploring": true,
-  "reasoning": "Multi-hop accuracy (35%) is still below target. The graph_heavy 
-               config showed 10% improvement. I hypothesize increasing 
-               graph_expansion_depth further while adding extract_facts could 
+  "reasoning": "Multi-hop accuracy (35%) is still below target. The graph_heavy
+               config showed 10% improvement. I hypothesize increasing
+               graph_expansion_depth further while adding extract_facts could
                help connect more related memories.",
   "next_experiments": [
     {
@@ -145,7 +145,7 @@ The analysis agent uses GPT-5.1 to:
         "extract_facts": true,
         "enrichment_model": "gpt-4.1"
       },
-      "hypothesis": "Deeper graph traversal + statement extraction will improve 
+      "hypothesis": "Deeper graph traversal + statement extraction will improve
                     multi-hop by enabling better fact chaining"
     }
   ],
@@ -224,5 +224,3 @@ def score(self, weights: Dict[str, float] = None) -> float:
 ### Add Analysis Metrics
 
 Update `ANALYSIS_PROMPT` in `analysis_agent.py` to include new metrics.
-
-

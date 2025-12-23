@@ -110,4 +110,3 @@ export class AutoMemSearchService {
 }
 
 export default AutoMemSearchService;
-

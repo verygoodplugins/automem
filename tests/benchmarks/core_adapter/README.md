@@ -93,4 +93,3 @@ To verify CORE's claimed results:
    ```
 
 This gives us a direct comparison using their exact code.
-

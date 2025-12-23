@@ -15,7 +15,7 @@ Source: https://github.com/snap-research/locomo/blob/main/task_eval/evaluation.p
 import re
 import string
 from collections import Counter
-from typing import List, Tuple, Any
+from typing import Any, List, Tuple
 
 import nltk
 from nltk.stem import PorterStemmer
@@ -135,9 +135,7 @@ def evaluate_category_5_adversarial(output: str) -> float:
     return 0.0
 
 
-def evaluate_qa_official(
-    prediction: str, ground_truth: str, category: int
-) -> Tuple[float, str]:
+def evaluate_qa_official(prediction: str, ground_truth: str, category: int) -> Tuple[float, str]:
     """
     Official LoCoMo evaluation with category-specific handling.
 
@@ -170,9 +168,7 @@ def evaluate_qa_official(
     return score, "f1_standard"
 
 
-def extract_answer_from_context(
-    memories: List[str], question: str, answer_hint: str = None
-) -> str:
+def extract_answer_from_context(memories: List[str], question: str, answer_hint: str = None) -> str:
     """
     Extract the most likely answer from retrieved memory context.
 
@@ -220,9 +216,7 @@ class OfficialLoCoMoEvaluator:
         self.results_overall = []
         self.methods_used = []
 
-    def evaluate(
-        self, prediction: str, ground_truth: str, category: int
-    ) -> Tuple[float, str]:
+    def evaluate(self, prediction: str, ground_truth: str, category: int) -> Tuple[float, str]:
         """
         Evaluate a single QA pair.
 
@@ -364,4 +358,3 @@ class OfficialLoCoMoEvaluator:
             )
 
         print("=" * 60)
-

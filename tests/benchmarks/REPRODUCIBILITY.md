@@ -213,4 +213,3 @@ Example:
 > AutoMem achieved 90.53% accuracy on LoCoMo-10 benchmark (retrieval mode,
 > official F1 scoring with Porter stemmer, evidence hints enabled, F1 threshold 0.5)
 > using commit abc123 on December 3, 2025.
-

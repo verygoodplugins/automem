@@ -30,7 +30,7 @@ We ran multiple evaluation configurations to understand AutoMem's true performan
 We found CORE's actual evaluation prompt:
 
 ```
-"you should be GENEROUS with your grading - as long as it 
+"you should be GENEROUS with your grading - as long as it
 touches on the same topic as the gold answer, it should be counted as CORRECT"
 ```
 
@@ -160,4 +160,3 @@ Category Performance:
 ---
 
 *Completed: December 3, 2025*
-

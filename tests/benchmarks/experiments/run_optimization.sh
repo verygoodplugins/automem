@@ -55,7 +55,7 @@ select_mode() {
     echo "  5) Railway Parallel Testing"
     echo ""
     read -p "Enter choice [1-5]: " choice
-    
+
     case $choice in
         1) MODE="grid_quick" ;;
         2) MODE="grid_full" ;;
@@ -70,7 +70,7 @@ select_mode() {
 main() {
     cd "$SCRIPT_DIR"
     activate_venv
-    
+
     if ! check_automem; then
         echo -e "${YELLOW}Starting AutoMem...${NC}"
         cd "$PROJECT_ROOT"
@@ -78,19 +78,19 @@ main() {
         sleep 15
         cd "$SCRIPT_DIR"
     fi
-    
+
     select_mode
-    
+
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     OUTPUT_DIR="$SCRIPT_DIR/results_${TIMESTAMP}"
     mkdir -p "$OUTPUT_DIR"
-    
+
     echo ""
     echo -e "${GREEN}▶️  Starting optimization...${NC}"
     echo "   Mode: $MODE"
     echo "   Output: $OUTPUT_DIR"
     echo ""
-    
+
     case $MODE in
         grid_quick)
             python experiment_runner.py \
@@ -134,11 +134,11 @@ main() {
                 2>&1 | tee "$OUTPUT_DIR/optimization.log"
             ;;
     esac
-    
+
     echo ""
     echo -e "${GREEN}✅ Optimization complete!${NC}"
     echo "   Results: $OUTPUT_DIR"
-    
+
     # Show summary
     if [ -f "$OUTPUT_DIR/"*"_report.txt" ]; then
         echo ""
@@ -151,5 +151,3 @@ main() {
 trap 'echo -e "\n${RED}⚠️ Interrupted${NC}"; exit 1' INT TERM
 
 main "$@"
-
-
