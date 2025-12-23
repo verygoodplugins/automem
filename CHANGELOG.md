@@ -2,6 +2,18 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.10.0](https://github.com/verygoodplugins/automem/compare/v0.9.3...v0.10.0) (2025-12-23)
+
+
+### Features
+
+* **api:** add graph visualization API endpoints ([#26](https://github.com/verygoodplugins/automem/issues/26)) ([a0d0dd3](https://github.com/verygoodplugins/automem/commit/a0d0dd3719ac9dad7c4e24e78f290c9364d2b2e1))
+* **api:** add time-based sorting to recall API ([c063845](https://github.com/verygoodplugins/automem/commit/c063845bb72af7aaaff519083b850da84f20003e))
+* **api:** add time-based sorting to recall API ([a511f0c](https://github.com/verygoodplugins/automem/commit/a511f0c6b6ab74e1c98d29eaae19c7ca69f6542b))
+* create coderabbit.yml ([e05811f](https://github.com/verygoodplugins/automem/commit/e05811f32904a0355b34957be0d5a15629f73f2b))
+* **mcp-sse:** agent-friendly recall output + tests ([71201d3](https://github.com/verygoodplugins/automem/commit/71201d33b5b8a9044f23f3a911dbf193de67b669))
+* **mcp-sse:** improve recall tool output and options ([97c4f72](https://github.com/verygoodplugins/automem/commit/97c4f7240b5319a95412e7d1e65ae65e67150a46))
+
 ## [0.9.3] - 2025-12-10
 
 ### Fixed
