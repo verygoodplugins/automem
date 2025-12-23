@@ -37,6 +37,7 @@ import type {
   RelationshipVisibility,
 } from '../lib/types'
 import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_RELATIONSHIP_VISIBILITY } from '../lib/types'
+import { getEdgeStyle } from '../lib/edgeStyles'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
 
@@ -201,9 +202,6 @@ function Scene({
   relationshipVisibility: _relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
   onReheatReady,
 }: SceneProps) {
-  // TODO: Use displayConfig and relationshipVisibility in future sprints
-  void _displayConfig
-  void _relationshipVisibility
   const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
 
   // Expose reheat function to parent
@@ -574,6 +572,9 @@ function Scene({
           nodeById={nodeById}
           selectedNode={selectedNode}
           connectedIds={connectedIds}
+          relationshipVisibility={_relationshipVisibility}
+          linkThickness={_displayConfig.linkThickness}
+          linkOpacity={_displayConfig.linkOpacity}
         />
 
         {/* Instanced nodes - single draw call for all nodes */}
@@ -586,16 +587,20 @@ function Scene({
           connectedIds={connectedIds}
           onNodeSelect={onNodeSelect}
           onNodeHover={onNodeHover}
+          nodeSizeScale={_displayConfig.nodeSizeScale}
         />
 
         {/* LOD Labels - only for selected/hovered/nearby nodes */}
-        <LODLabels
-          nodes={layoutNodes}
-          selectedNode={selectedNode}
-          hoveredNode={hoveredNode}
-          searchTerm={searchTerm}
-          matchingIds={matchingIds}
-        />
+        {_displayConfig.showLabels && (
+          <LODLabels
+            nodes={layoutNodes}
+            selectedNode={selectedNode}
+            hoveredNode={hoveredNode}
+            searchTerm={searchTerm}
+            labelFadeDistance={_displayConfig.labelFadeDistance}
+            matchingIds={matchingIds}
+          />
+        )}
 
         {/* Expanded Node View - shows when a node is selected via hand */}
         {expandedNode && (
@@ -672,27 +677,44 @@ function Scene({
 
 /**
  * Batched edge rendering using LineSegments
- * All edges rendered in a single draw call
+ * All edges rendered in a single draw call with relationship-based styling
  */
 interface BatchedEdgesProps {
   edges: GraphEdge[]
   nodeById: Map<string, SimulationNode>
   selectedNode: GraphNode | null
   connectedIds: Set<string>
+  relationshipVisibility: RelationshipVisibility
+  linkThickness: number
+  linkOpacity: number
 }
 
-function BatchedEdges({ edges, nodeById, selectedNode, connectedIds }: BatchedEdgesProps) {
+function BatchedEdges({
+  edges,
+  nodeById,
+  selectedNode,
+  connectedIds,
+  relationshipVisibility,
+  linkThickness,
+  linkOpacity,
+}: BatchedEdgesProps) {
   const lineRef = useRef<THREE.LineSegments>(null)
 
-  // Create geometry with all edge vertices
-  const { positions, colors } = useMemo(() => {
+  // Filter edges by visibility and create geometry
+  const { positions, colors, visibleCount } = useMemo(() => {
     const positions: number[] = []
     const colors: number[] = []
+    let visibleCount = 0
 
     edges.forEach((edge) => {
+      // Filter by relationship visibility
+      if (!relationshipVisibility[edge.type]) return
+
       const sourceNode = nodeById.get(edge.source)
       const targetNode = nodeById.get(edge.target)
       if (!sourceNode || !targetNode) return
+
+      visibleCount++
 
       const isHighlighted =
         selectedNode &&
@@ -708,9 +730,19 @@ function BatchedEdges({ edges, nodeById, selectedNode, connectedIds }: BatchedEd
       // Target vertex
       positions.push(targetNode.x ?? 0, targetNode.y ?? 0, targetNode.z ?? 0)
 
-      // Parse edge color
-      const color = new THREE.Color(edge.color)
-      const alpha = isDimmed ? 0.05 : isHighlighted ? 0.8 : 0.3
+      // Get style for this edge type
+      const style = getEdgeStyle(edge.type)
+
+      // Use style color instead of edge.color
+      const color = new THREE.Color(style.color)
+
+      // Calculate alpha based on state and style
+      let alpha = style.opacity * linkOpacity
+      if (isDimmed) {
+        alpha *= 0.1
+      } else if (isHighlighted) {
+        alpha = Math.min(1, alpha * 1.5)
+      }
 
       // Apply alpha to color (approximate, since LineBasicMaterial doesn't support per-vertex alpha)
       const r = color.r * alpha
@@ -724,8 +756,9 @@ function BatchedEdges({ edges, nodeById, selectedNode, connectedIds }: BatchedEd
     return {
       positions: new Float32Array(positions),
       colors: new Float32Array(colors),
+      visibleCount,
     }
-  }, [edges, nodeById, selectedNode, connectedIds])
+  }, [edges, nodeById, selectedNode, connectedIds, relationshipVisibility, linkOpacity])
 
   // Update geometry when positions/colors change
   useEffect(() => {
@@ -739,10 +772,17 @@ function BatchedEdges({ edges, nodeById, selectedNode, connectedIds }: BatchedEd
     geometry.computeBoundingSphere()
   }, [positions, colors])
 
+  if (visibleCount === 0) return null
+
   return (
     <lineSegments ref={lineRef}>
       <bufferGeometry />
-      <lineBasicMaterial vertexColors transparent opacity={0.6} />
+      <lineBasicMaterial
+        vertexColors
+        transparent
+        opacity={linkOpacity}
+        linewidth={linkThickness}
+      />
     </lineSegments>
   )
 }
@@ -760,6 +800,7 @@ interface InstancedNodesProps {
   connectedIds: Set<string>
   onNodeSelect: (node: GraphNode | null) => void
   onNodeHover: (node: GraphNode | null) => void
+  nodeSizeScale?: number
 }
 
 function InstancedNodes({
@@ -771,6 +812,7 @@ function InstancedNodes({
   connectedIds,
   onNodeSelect,
   onNodeHover,
+  nodeSizeScale = 1.0,
 }: InstancedNodesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const { camera, raycaster, pointer } = useThree()
@@ -838,9 +880,9 @@ function InstancedNodes({
         finalScale *= pulse
       }
 
-      // Set position and scale
+      // Set position and scale (apply nodeSizeScale)
       tempPosition.set(node.x ?? 0, node.y ?? 0, node.z ?? 0)
-      tempScale.setScalar(node.radius * finalScale)
+      tempScale.setScalar(node.radius * finalScale * nodeSizeScale)
       tempMatrix.compose(tempPosition, tempQuaternion, tempScale)
       mesh.setMatrixAt(i, tempMatrix)
 
@@ -927,6 +969,7 @@ interface LODLabelsProps {
   hoveredNode: GraphNode | null
   searchTerm: string
   matchingIds: Set<string>
+  labelFadeDistance?: number
 }
 
 function LODLabels({
@@ -935,6 +978,7 @@ function LODLabels({
   hoveredNode,
   searchTerm,
   matchingIds,
+  labelFadeDistance = LABEL_DISTANCE_THRESHOLD,
 }: LODLabelsProps) {
   const { camera } = useThree()
   const [visibleNodes, setVisibleNodes] = useState<SimulationNode[]>([])
@@ -964,7 +1008,7 @@ function LODLabels({
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
 
       // Include search matches and nearby nodes
-      if (distance < LABEL_DISTANCE_THRESHOLD || isSearchMatch) {
+      if (distance < labelFadeDistance || isSearchMatch) {
         nearbyNodes.push({ node, distance })
       }
     })
