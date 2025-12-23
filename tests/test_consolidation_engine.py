@@ -192,9 +192,10 @@ def test_apply_controlled_forgetting_dry_run() -> None:
     stats = consolidator.apply_controlled_forgetting(dry_run=True)
 
     assert stats["examined"] == 3
-    assert stats["preserved"] == 1
-    assert len(stats["archived"]) == 1
+    assert stats["preserved"] == 2
+    assert len(stats["archived"]) == 0
     assert len(stats["deleted"]) == 1
+    assert len(stats["protected"]) == 1
     assert graph.deleted == []
 
 
@@ -208,9 +209,9 @@ def test_apply_controlled_forgetting_updates_graph_and_vector_store() -> None:
 
     stats = consolidator.apply_controlled_forgetting(dry_run=False)
 
-    assert stats["preserved"] == 1
+    assert stats["preserved"] == 2
     assert graph.updated_scores  # recent memory updated in graph
-    assert graph.archived and graph.archived[0][0] == "archive-candidate"
+    assert graph.archived == []
     assert graph.deleted == ["old-delete"]
     assert vector_store.deletions
     collection, selector = vector_store.deletions[0]

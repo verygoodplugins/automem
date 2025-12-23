@@ -107,7 +107,19 @@ class MemoryConsolidator:
     - Forgetting is controlled and serves learning
     """
 
-    def __init__(self, graph: GraphLike, vector_store: Optional[VectorStoreProtocol] = None):
+    PROTECTED_TYPES = frozenset({"Decision", "Insight"})
+
+    def __init__(
+        self,
+        graph: GraphLike,
+        vector_store: Optional[VectorStoreProtocol] = None,
+        *,
+        delete_threshold: float = 0.05,
+        archive_threshold: float = 0.2,
+        grace_period_days: int = 90,
+        importance_protection_threshold: float = 0.7,
+        protected_types: Optional[Set[str]] = None,
+    ):
         self.graph = graph
         self.vector_store = vector_store
         self._graph_id = id(graph)  # Unique ID for cache invalidation
@@ -122,8 +134,15 @@ class MemoryConsolidator:
         self.similarity_threshold = 0.75
 
         # Forgetting thresholds
-        self.archive_threshold = 0.2  # Archive below this relevance
-        self.delete_threshold = 0.05  # Delete below this (very old, unused)
+        self.archive_threshold = float(archive_threshold)  # Archive below this relevance
+        self.delete_threshold = float(delete_threshold)  # Delete below this (very old, unused)
+
+        # Memory protection parameters (prevent accidental data loss)
+        self.grace_period_days = int(grace_period_days)
+        self.importance_protection_threshold = float(importance_protection_threshold)
+        self.protected_types = (
+            frozenset(protected_types) if protected_types is not None else self.PROTECTED_TYPES
+        )
 
     def _query_graph(
         self, query: str, params: Optional[Dict[str, Any]] = None
@@ -217,6 +236,48 @@ class MemoryConsolidator:
         )
 
         return min(1.0, relevance)  # Cap at 1.0
+
+    def _should_protect_memory(
+        self,
+        memory: Dict[str, Any],
+        current_time: datetime,
+    ) -> tuple[bool, str]:
+        """Return whether a memory should be protected from archiving/deletion."""
+        protected_flag = memory.get("protected")
+        if isinstance(protected_flag, str):
+            protected_flag = protected_flag.strip().lower() not in {"", "0", "false", "no"}
+        if protected_flag:
+            reason = memory.get("protected_reason") or "explicitly protected"
+            return True, str(reason)
+
+        importance_raw = memory.get("importance")
+        if importance_raw is None:
+            importance = 0.5
+        else:
+            try:
+                importance = float(importance_raw)
+            except (TypeError, ValueError):
+                importance = 0.5
+
+        if importance >= self.importance_protection_threshold:
+            return (
+                True,
+                f"high importance ({importance:.2f} >= {self.importance_protection_threshold})",
+            )
+
+        timestamp_str = memory.get("timestamp")
+        if timestamp_str:
+            created_at = _parse_iso_datetime(timestamp_str)
+            if created_at:
+                age_days = (current_time - created_at).days
+                if age_days < self.grace_period_days:
+                    return True, f"within grace period ({age_days} < {self.grace_period_days} days)"
+
+        memory_type = memory.get("type")
+        if memory_type and str(memory_type) in self.protected_types:
+            return True, f"protected type: {memory_type}"
+
+        return False, ""
 
     def discover_creative_associations(self, sample_size: int = 20) -> List[Dict[str, Any]]:
         """
@@ -424,7 +485,7 @@ class MemoryConsolidator:
 
         Returns statistics about what was archived/deleted.
         """
-        stats = {"examined": 0, "archived": [], "deleted": [], "preserved": 0}
+        stats = {"examined": 0, "archived": [], "deleted": [], "preserved": 0, "protected": []}
 
         # Get all memories with scores
         all_memories_query = """
@@ -432,7 +493,8 @@ class MemoryConsolidator:
             RETURN m.id as id, m.content as content,
                    m.relevance_score as score, m.timestamp as timestamp,
                    m.type as type, m.importance as importance,
-                   m.last_accessed as last_accessed
+                   m.last_accessed as last_accessed,
+                   m.protected as protected, m.protected_reason as protected_reason
         """
 
         result = self._query_graph(all_memories_query, {})
@@ -441,7 +503,8 @@ class MemoryConsolidator:
         for row in result:
             stats["examined"] += 1
 
-            # Result row order: id, content, score, timestamp, type, importance, last_accessed
+            # Result row order: id, content, score, timestamp, type, importance, last_accessed,
+            #                   protected, protected_reason
             memory = {
                 "id": row[0],
                 "content": row[1],
@@ -450,13 +513,36 @@ class MemoryConsolidator:
                 "type": row[4],
                 "importance": row[5],
                 "last_accessed": row[6] if len(row) > 6 else None,
+                "protected": row[7] if len(row) > 7 else None,
+                "protected_reason": row[8] if len(row) > 8 else None,
             }
 
             # Calculate current relevance
             relevance = self.calculate_relevance_score(memory, current_time)
+            should_protect, protection_reason = self._should_protect_memory(memory, current_time)
 
             # Determine fate
             if relevance < self.delete_threshold:
+                if should_protect:
+                    stats["protected"].append(
+                        {
+                            "id": memory["id"],
+                            "content_preview": (memory["content"] or "")[:50],
+                            "relevance": relevance,
+                            "type": memory.get("type", "Memory"),
+                            "protection_reason": protection_reason,
+                            "action": "delete",
+                        }
+                    )
+                    stats["preserved"] += 1
+                    if not dry_run:
+                        update_query = """
+                            MATCH (m:Memory {id: $id})
+                            SET m.relevance_score = $score
+                        """
+                        self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                    continue
+
                 stats["deleted"].append(
                     {
                         "id": memory["id"],
@@ -490,6 +576,26 @@ class MemoryConsolidator:
                             logger.exception("Vector store deletion failed for %s", memory["id"])
 
             elif relevance < self.archive_threshold:
+                if should_protect:
+                    stats["protected"].append(
+                        {
+                            "id": memory["id"],
+                            "content_preview": (memory["content"] or "")[:50],
+                            "relevance": relevance,
+                            "type": memory.get("type", "Memory"),
+                            "protection_reason": protection_reason,
+                            "action": "archive",
+                        }
+                    )
+                    stats["preserved"] += 1
+                    if not dry_run:
+                        update_query = """
+                            MATCH (m:Memory {id: $id})
+                            SET m.relevance_score = $score
+                        """
+                        self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                    continue
+
                 stats["archived"].append(
                     {
                         "id": memory["id"],
@@ -525,6 +631,16 @@ class MemoryConsolidator:
                         SET m.relevance_score = $score
                     """
                     self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+
+        if stats["protected"]:
+            logger.info(
+                "Memory protection activated: %d memories saved (examined=%d, deleted=%d, archived=%d, preserved=%d)",
+                len(stats["protected"]),
+                stats["examined"],
+                len(stats["deleted"]),
+                len(stats["archived"]),
+                stats["preserved"],
+            )
 
         return stats
 
@@ -807,6 +923,8 @@ class ConsolidationScheduler:
             return False
 
         schedule = self.schedules[task_type]
+        if schedule["interval"] <= timedelta(0):
+            return False
         if schedule["last_run"] is None:
             return True
 
@@ -865,6 +983,9 @@ class ConsolidationScheduler:
         next_runs = {}
 
         for task_type, schedule in self.schedules.items():
+            if schedule["interval"] <= timedelta(0):
+                next_runs[task_type] = "Disabled"
+                continue
             if schedule["last_run"] is None:
                 next_runs[task_type] = "Due now"
             else:
