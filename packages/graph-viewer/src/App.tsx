@@ -16,6 +16,7 @@ import { Hand2DOverlay } from './components/Hand2DOverlay'
 import { HandControlOverlay } from './components/HandControlOverlay'
 import { SettingsPanel } from './components/settings'
 import { useHandLockAndGrab } from './hooks/useHandLockAndGrab'
+import { useKeyboardNavigation } from './hooks/useKeyboardNavigation'
 import type {
   GraphNode,
   FilterState,
@@ -197,6 +198,24 @@ export default function App() {
   const handleResetForces = useCallback(() => {
     setForceConfig(DEFAULT_FORCE_CONFIG)
   }, [])
+
+  const handleToggleLabels = useCallback(() => {
+    setDisplayConfig(prev => ({ ...prev, showLabels: !prev.showLabels }))
+  }, [])
+
+  // Keyboard navigation
+  const { shortcuts } = useKeyboardNavigation({
+    nodes: (data?.nodes ?? []) as any,
+    selectedNode,
+    onNodeSelect: handleNodeSelect,
+    onReheat: handleReheat,
+    onToggleSettings: () => setSettingsPanelOpen(prev => !prev),
+    onToggleLabels: handleToggleLabels,
+    enabled: true,
+  })
+
+  // Log available shortcuts for debugging (remove in production)
+  void shortcuts
 
   if (!isAuthenticated) {
     return <TokenPrompt onSubmit={setToken} />
