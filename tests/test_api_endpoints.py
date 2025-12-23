@@ -381,8 +381,9 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     """Test that sort=time_desc returns most recent memories first within a time window."""
     mock_state.memory_graph.memories.clear()
 
-    older_ts = "2025-12-12T12:00:00+00:00"
-    newer_ts = "2025-12-13T12:00:00+00:00"
+    now = datetime.now(timezone.utc)
+    older_ts = (now - timedelta(days=2)).isoformat()
+    newer_ts = (now - timedelta(days=1)).isoformat()
 
     mock_state.memory_graph.memories["older"] = {
         "id": "older",
@@ -418,8 +419,9 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
     """If time window is provided with no query, recall should default to newest-first ordering."""
     mock_state.memory_graph.memories.clear()
 
-    older_ts = "2025-12-12T12:00:00+00:00"
-    newer_ts = "2025-12-13T12:00:00+00:00"
+    now = datetime.now(timezone.utc)
+    older_ts = (now - timedelta(days=2)).isoformat()
+    newer_ts = (now - timedelta(days=1)).isoformat()
 
     mock_state.memory_graph.memories["older"] = {
         "id": "older",

@@ -14,6 +14,7 @@ test('AutoMemClient.recallMemory passes through advanced /recall params', async 
   await client.recallMemory({
     query: 'hello',
     limit: 7,
+    sort: 'time_desc',
     tags: ['automem', 'cursor'],
     tag_mode: 'all',
     tag_match: 'prefix',
@@ -35,6 +36,7 @@ test('AutoMemClient.recallMemory passes through advanced /recall params', async 
   assert.ok(capturedPath.startsWith('recall?'));
   assert.ok(capturedPath.includes('query=hello'));
   assert.ok(capturedPath.includes('limit=7'));
+  assert.ok(capturedPath.includes('sort=time_desc'));
   assert.ok(capturedPath.includes('tag_mode=all'));
   assert.ok(capturedPath.includes('tag_match=prefix'));
 
