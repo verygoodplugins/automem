@@ -1,21 +1,35 @@
 import { useState, useCallback } from 'react'
+import { Settings } from 'lucide-react'
 
 // Build version - update this when making significant changes
-const BUILD_VERSION = '2024-12-11-masterhand-v7'
+const BUILD_VERSION = '2024-12-23-obsidian-settings-v1'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { useGraphSnapshot } from './hooks/useGraphData'
 import { useAuth } from './hooks/useAuth'
 import { GraphCanvas } from './components/GraphCanvas'
 import { Inspector } from './components/Inspector'
 import { SearchBar } from './components/SearchBar'
-import { FilterPanel } from './components/FilterPanel'
 import { TokenPrompt } from './components/TokenPrompt'
 import { StatsBar } from './components/StatsBar'
 import { GestureDebugOverlay } from './components/GestureDebugOverlay'
 import { Hand2DOverlay } from './components/Hand2DOverlay'
 import { HandControlOverlay } from './components/HandControlOverlay'
+import { SettingsPanel } from './components/settings'
 import { useHandLockAndGrab } from './hooks/useHandLockAndGrab'
-import type { GraphNode, FilterState } from './lib/types'
+import type {
+  GraphNode,
+  FilterState,
+  ForceConfig,
+  DisplayConfig,
+  ClusterConfig,
+  RelationshipVisibility,
+} from './lib/types'
+import {
+  DEFAULT_FORCE_CONFIG,
+  DEFAULT_DISPLAY_CONFIG,
+  DEFAULT_CLUSTER_CONFIG,
+  DEFAULT_RELATIONSHIP_VISIBILITY,
+} from './lib/types'
 import type { GestureState } from './hooks/useHandGestures'
 
 // Default gesture state for when not tracking
@@ -87,6 +101,7 @@ export default function App() {
   const [gestureControlEnabled, setGestureControlEnabled] = useState(false)
   const [debugOverlayVisible, setDebugOverlayVisible] = useState(false)
   const [performanceMode, setPerformanceMode] = useState(false)
+  const [settingsPanelOpen, setSettingsPanelOpen] = useState(false)
   const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
   const [trackingInfo, setTrackingInfo] = useState<{
     source: 'mediapipe' | 'iphone'
@@ -105,19 +120,36 @@ export default function App() {
     bridgeIps: [],
     phonePort: null,
   })
+
+  // Filter state
   const [filters, setFilters] = useState<FilterState>({
     types: [],
     minImportance: 0,
     maxNodes: 500,
   })
 
+  // Force configuration state
+  const [forceConfig, setForceConfig] = useState<ForceConfig>(DEFAULT_FORCE_CONFIG)
+
+  // Display configuration state
+  const [displayConfig, setDisplayConfig] = useState<DisplayConfig>(DEFAULT_DISPLAY_CONFIG)
+
+  // Clustering configuration state
+  const [clusterConfig, setClusterConfig] = useState<ClusterConfig>(DEFAULT_CLUSTER_CONFIG)
+
+  // Relationship visibility state
+  const [relationshipVisibility, setRelationshipVisibility] = useState<RelationshipVisibility>(
+    DEFAULT_RELATIONSHIP_VISIBILITY
+  )
+
+  // Reheat callback - will be set by GraphCanvas
+  const [reheatFn, setReheatFn] = useState<(() => void) | null>(null)
+
   const handleGestureStateChange = useCallback((state: GestureState) => {
     setGestureState(state)
   }, [])
 
   const { lock: handLock } = useHandLockAndGrab(gestureState, gestureControlEnabled)
-  // Note: GraphCanvas owns the actual tracking source selection via URL params.
-  // We mirror it here via onTrackingInfoChange so overlays can show accurate status.
 
   const { data, isLoading, error, refetch } = useGraphSnapshot({
     limit: filters.maxNodes,
@@ -142,6 +174,30 @@ export default function App() {
     setFilters(prev => ({ ...prev, ...newFilters }))
   }, [])
 
+  const handleForceConfigChange = useCallback((config: Partial<ForceConfig>) => {
+    setForceConfig(prev => ({ ...prev, ...config }))
+  }, [])
+
+  const handleDisplayConfigChange = useCallback((config: Partial<DisplayConfig>) => {
+    setDisplayConfig(prev => ({ ...prev, ...config }))
+  }, [])
+
+  const handleClusterConfigChange = useCallback((config: Partial<ClusterConfig>) => {
+    setClusterConfig(prev => ({ ...prev, ...config }))
+  }, [])
+
+  const handleRelationshipVisibilityChange = useCallback((visibility: Partial<RelationshipVisibility>) => {
+    setRelationshipVisibility(prev => ({ ...prev, ...visibility }))
+  }, [])
+
+  const handleReheat = useCallback(() => {
+    reheatFn?.()
+  }, [reheatFn])
+
+  const handleResetForces = useCallback(() => {
+    setForceConfig(DEFAULT_FORCE_CONFIG)
+  }, [])
+
   if (!isAuthenticated) {
     return <TokenPrompt onSubmit={setToken} />
   }
@@ -163,12 +219,6 @@ export default function App() {
           value={searchTerm}
           onChange={handleSearch}
           className="flex-1 max-w-xl"
-        />
-
-        <FilterPanel
-          filters={filters}
-          onChange={handleFilterChange}
-          typeColors={data?.meta?.type_colors}
         />
 
         <StatsBar stats={data?.stats} isLoading={isLoading} />
@@ -233,92 +283,135 @@ export default function App() {
             </span>
           </button>
         )}
+
+        {/* Settings Panel Toggle */}
+        <button
+          onClick={() => setSettingsPanelOpen(!settingsPanelOpen)}
+          className={`
+            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
+            ${settingsPanelOpen
+              ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg shadow-blue-500/25'
+              : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+            }
+          `}
+          title={settingsPanelOpen ? 'Hide settings' : 'Show graph settings'}
+        >
+          <Settings className="w-5 h-5" />
+          <span className="text-sm font-medium hidden sm:inline">
+            Settings
+          </span>
+        </button>
       </header>
 
       {/* Main Content */}
-      <PanelGroup direction="horizontal" className="flex-1">
-        {/* Graph Canvas */}
-        <Panel defaultSize={75} minSize={50}>
-          <div className="h-full relative">
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-                  <span className="text-slate-400">Loading memories...</span>
+      <div className="flex-1 flex overflow-hidden">
+        <PanelGroup direction="horizontal" className="flex-1">
+          {/* Graph Canvas */}
+          <Panel defaultSize={settingsPanelOpen ? 50 : 75} minSize={40}>
+            <div className="h-full relative">
+              {isLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+                    <span className="text-slate-400">Loading memories...</span>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {error && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
-                <div className="glass p-6 rounded-xl max-w-md text-center">
-                  <div className="text-red-400 text-lg mb-2">Connection Error</div>
-                  <div className="text-slate-400 text-sm mb-4">{(error as Error).message}</div>
-                  <button
-                    onClick={() => refetch()}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
-                  >
-                    Retry
-                  </button>
+              {error && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
+                  <div className="glass p-6 rounded-xl max-w-md text-center">
+                    <div className="text-red-400 text-lg mb-2">Connection Error</div>
+                    <div className="text-slate-400 text-sm mb-4">{(error as Error).message}</div>
+                    <button
+                      onClick={() => refetch()}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
+                    >
+                      Retry
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <GraphCanvas
-              nodes={data?.nodes ?? []}
-              edges={data?.edges ?? []}
-              selectedNode={selectedNode}
-              hoveredNode={hoveredNode}
-              searchTerm={searchTerm}
-              onNodeSelect={handleNodeSelect}
-              onNodeHover={handleNodeHover}
-              gestureControlEnabled={gestureControlEnabled}
-              onGestureStateChange={handleGestureStateChange}
-              onTrackingInfoChange={setTrackingInfo}
-              performanceMode={performanceMode}
+              <GraphCanvas
+                nodes={data?.nodes ?? []}
+                edges={data?.edges ?? []}
+                selectedNode={selectedNode}
+                hoveredNode={hoveredNode}
+                searchTerm={searchTerm}
+                onNodeSelect={handleNodeSelect}
+                onNodeHover={handleNodeHover}
+                gestureControlEnabled={gestureControlEnabled}
+                onGestureStateChange={handleGestureStateChange}
+                onTrackingInfoChange={setTrackingInfo}
+                performanceMode={performanceMode}
+                forceConfig={forceConfig}
+                displayConfig={displayConfig}
+                relationshipVisibility={relationshipVisibility}
+                onReheatReady={setReheatFn}
+              />
+
+              {/* 2D Hand Overlay (on top of canvas, life-size) */}
+              <Hand2DOverlay
+                gestureState={gestureState}
+                enabled={gestureControlEnabled}
+                showLaser={false}
+                handLock={handLock}
+              />
+
+              {/* Gesture Debug Overlay */}
+              <GestureDebugOverlay
+                gestureState={gestureState}
+                visible={debugOverlayVisible && gestureControlEnabled}
+              />
+
+              {/* Hand Control Overlay (lock/grab metrics) */}
+              <HandControlOverlay
+                enabled={gestureControlEnabled}
+                lock={handLock}
+                source={trackingInfo.source}
+                iphoneConnected={trackingInfo.iphoneConnected}
+                hasLiDAR={trackingInfo.hasLiDAR}
+                iphoneUrl={trackingInfo.iphoneUrl}
+                phoneConnected={trackingInfo.phoneConnected}
+                bridgeIps={trackingInfo.bridgeIps}
+                phonePort={trackingInfo.phonePort}
+              />
+            </div>
+          </Panel>
+
+          {/* Resize Handle */}
+          <PanelResizeHandle className="w-1 bg-white/5 hover:bg-blue-500/50 transition-colors cursor-col-resize" />
+
+          {/* Inspector Panel */}
+          <Panel defaultSize={25} minSize={15} maxSize={40}>
+            <Inspector
+              node={selectedNode}
+              onClose={() => setSelectedNode(null)}
+              onNavigate={handleNodeSelect}
             />
+          </Panel>
+        </PanelGroup>
 
-            {/* 2D Hand Overlay (on top of canvas, life-size) */}
-            <Hand2DOverlay
-              gestureState={gestureState}
-              enabled={gestureControlEnabled}
-              showLaser={false}
-              handLock={handLock}
-            />
-
-            {/* Gesture Debug Overlay */}
-            <GestureDebugOverlay
-              gestureState={gestureState}
-              visible={debugOverlayVisible && gestureControlEnabled}
-            />
-
-            {/* Hand Control Overlay (lock/grab metrics) */}
-            <HandControlOverlay
-              enabled={gestureControlEnabled}
-              lock={handLock}
-              source={trackingInfo.source}
-              iphoneConnected={trackingInfo.iphoneConnected}
-              hasLiDAR={trackingInfo.hasLiDAR}
-              iphoneUrl={trackingInfo.iphoneUrl}
-              phoneConnected={trackingInfo.phoneConnected}
-              bridgeIps={trackingInfo.bridgeIps}
-              phonePort={trackingInfo.phonePort}
-            />
-          </div>
-        </Panel>
-
-        {/* Resize Handle */}
-        <PanelResizeHandle className="w-1 bg-white/5 hover:bg-blue-500/50 transition-colors cursor-col-resize" />
-
-        {/* Inspector Panel */}
-        <Panel defaultSize={25} minSize={20} maxSize={40}>
-          <Inspector
-            node={selectedNode}
-            onClose={() => setSelectedNode(null)}
-            onNavigate={handleNodeSelect}
-          />
-        </Panel>
-      </PanelGroup>
+        {/* Settings Panel (right-docked) */}
+        <SettingsPanel
+          isOpen={settingsPanelOpen}
+          onClose={() => setSettingsPanelOpen(false)}
+          filters={filters}
+          onFiltersChange={handleFilterChange}
+          typeColors={data?.meta?.type_colors}
+          forceConfig={forceConfig}
+          onForceConfigChange={handleForceConfigChange}
+          onReheat={handleReheat}
+          onResetForces={handleResetForces}
+          displayConfig={displayConfig}
+          onDisplayConfigChange={handleDisplayConfigChange}
+          clusterConfig={clusterConfig}
+          onClusterConfigChange={handleClusterConfigChange}
+          relationshipVisibility={relationshipVisibility}
+          onRelationshipVisibilityChange={handleRelationshipVisibilityChange}
+        />
+      </div>
     </div>
   )
 }

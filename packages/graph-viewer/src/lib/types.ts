@@ -124,3 +124,80 @@ export interface SimulationLink {
   strength: number
   type: RelationType
 }
+
+// Force layout configuration
+export interface ForceConfig {
+  centerStrength: number      // 0.01 - 0.2, default 0.05
+  chargeStrength: number      // -200 to -50, default -100
+  linkStrength: number        // 0.1 - 1.0, default 0.5
+  linkDistance: number        // 20 - 100, default 50
+  collisionRadius: number     // 1.0 - 4.0, default 2.0
+}
+
+// Display settings
+export interface DisplayConfig {
+  showLabels: boolean
+  labelFadeDistance: number   // Distance at which labels start fading
+  showArrows: boolean
+  nodeSizeScale: number       // Multiplier for node sizes
+  linkThickness: number       // Base link thickness
+  linkOpacity: number         // 0-1
+}
+
+// Clustering configuration
+export type ClusterMode = 'type' | 'tags' | 'semantic' | 'none'
+
+export interface ClusterConfig {
+  mode: ClusterMode
+  showBoundaries: boolean
+  clusterStrength: number     // Additional force pulling cluster members together
+}
+
+// Relationship visibility
+export type RelationshipVisibility = Record<RelationType, boolean>
+
+// Combined settings state
+export interface GraphSettings {
+  forces: ForceConfig
+  display: DisplayConfig
+  clustering: ClusterConfig
+  relationshipVisibility: RelationshipVisibility
+}
+
+// Default values
+export const DEFAULT_FORCE_CONFIG: ForceConfig = {
+  centerStrength: 0.05,
+  chargeStrength: -100,
+  linkStrength: 0.5,
+  linkDistance: 50,
+  collisionRadius: 2.0,
+}
+
+export const DEFAULT_DISPLAY_CONFIG: DisplayConfig = {
+  showLabels: true,
+  labelFadeDistance: 80,
+  showArrows: false,
+  nodeSizeScale: 1.0,
+  linkThickness: 1.0,
+  linkOpacity: 0.6,
+}
+
+export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
+  mode: 'type',
+  showBoundaries: false,
+  clusterStrength: 0.3,
+}
+
+export const DEFAULT_RELATIONSHIP_VISIBILITY: RelationshipVisibility = {
+  RELATES_TO: true,
+  LEADS_TO: true,
+  OCCURRED_BEFORE: true,
+  PREFERS_OVER: true,
+  EXEMPLIFIES: true,
+  CONTRADICTS: true,
+  REINFORCES: true,
+  INVALIDATED_BY: true,
+  EVOLVED_INTO: true,
+  DERIVED_FROM: true,
+  PART_OF: true,
+}

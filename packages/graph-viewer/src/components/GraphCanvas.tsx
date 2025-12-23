@@ -28,7 +28,15 @@ import { useIPhoneHandTracking } from '../hooks/useIPhoneHandTracking'
 import { useHandInteraction } from '../hooks/useHandInteraction'
 import { useHandLockAndGrab } from '../hooks/useHandLockAndGrab'
 import { ExpandedNodeView } from './ExpandedNodeView'
-import type { GraphNode, GraphEdge, SimulationNode } from '../lib/types'
+import type {
+  GraphNode,
+  GraphEdge,
+  SimulationNode,
+  ForceConfig,
+  DisplayConfig,
+  RelationshipVisibility,
+} from '../lib/types'
+import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_RELATIONSHIP_VISIBILITY } from '../lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
 
@@ -81,7 +89,11 @@ interface GraphCanvasProps {
     bridgeIps: string[]
     phonePort: number | null
   }) => void
-  performanceMode?: boolean // New prop for disabling post-processing
+  performanceMode?: boolean
+  forceConfig?: ForceConfig
+  displayConfig?: DisplayConfig
+  relationshipVisibility?: RelationshipVisibility
+  onReheatReady?: (reheat: () => void) => void
 }
 
 export function GraphCanvas({
@@ -96,6 +108,10 @@ export function GraphCanvas({
   onGestureStateChange,
   onTrackingInfoChange,
   performanceMode = false,
+  forceConfig = DEFAULT_FORCE_CONFIG,
+  displayConfig = DEFAULT_DISPLAY_CONFIG,
+  relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
+  onReheatReady,
 }: GraphCanvasProps) {
   // Determine tracking source
   const { source, iphoneUrl } = useTrackingSource()
@@ -154,6 +170,10 @@ export function GraphCanvas({
         gestureState={gestureState}
         gestureControlEnabled={gestureControlEnabled && gesturesActive}
         performanceMode={performanceMode}
+        forceConfig={forceConfig}
+        displayConfig={displayConfig}
+        relationshipVisibility={relationshipVisibility}
+        onReheatReady={onReheatReady}
       />
     </Canvas>
   )
@@ -176,8 +196,22 @@ function Scene({
   gestureState,
   gestureControlEnabled,
   performanceMode,
+  forceConfig = DEFAULT_FORCE_CONFIG,
+  displayConfig: _displayConfig = DEFAULT_DISPLAY_CONFIG,
+  relationshipVisibility: _relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
+  onReheatReady,
 }: SceneProps) {
-  const { nodes: layoutNodes, isSimulating } = useForceLayout({ nodes, edges })
+  // TODO: Use displayConfig and relationshipVisibility in future sprints
+  void _displayConfig
+  void _relationshipVisibility
+  const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
+
+  // Expose reheat function to parent
+  useEffect(() => {
+    if (onReheatReady) {
+      onReheatReady(reheat)
+    }
+  }, [onReheatReady, reheat])
   const [autoRotate, setAutoRotate] = useState(false)
   const groupRef = useRef<THREE.Group>(null)
   const controlsRef = useRef<OrbitControlsImpl>(null)

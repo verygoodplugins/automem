@@ -7,14 +7,19 @@ import {
   forceCollide,
   forceRadial,
 } from 'd3-force-3d'
-import type { GraphNode, GraphEdge, SimulationNode, SimulationLink } from '../lib/types'
+import type {
+  GraphNode,
+  GraphEdge,
+  SimulationNode,
+  SimulationLink,
+  ForceConfig,
+} from '../lib/types'
+import { DEFAULT_FORCE_CONFIG } from '../lib/types'
 
 interface UseForceLayoutOptions {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  strength?: number
-  centerStrength?: number
-  collisionRadius?: number
+  forceConfig?: ForceConfig
 }
 
 interface LayoutState {
@@ -25,24 +30,38 @@ interface LayoutState {
 export function useForceLayout({
   nodes,
   edges,
-  strength = -100,
-  centerStrength = 0.05,
-  collisionRadius = 2,
+  forceConfig = DEFAULT_FORCE_CONFIG,
 }: UseForceLayoutOptions): LayoutState & { reheat: () => void } {
   const simulationRef = useRef<ReturnType<typeof forceSimulation> | null>(null)
   const [layoutNodes, setLayoutNodes] = useState<SimulationNode[]>([])
   const [isSimulating, setIsSimulating] = useState(false)
+  const simNodesRef = useRef<SimulationNode[]>([])
 
   // Initialize simulation when nodes/edges change
   useEffect(() => {
     if (nodes.length === 0) {
       setLayoutNodes([])
+      simNodesRef.current = []
       return
     }
 
     // Create simulation nodes with initial positions
     const simNodes: SimulationNode[] = nodes.map((node, i) => {
-      // Use Fibonacci sphere for initial distribution
+      // Check if we have existing position for this node
+      const existing = simNodesRef.current.find((n) => n.id === node.id)
+      if (existing) {
+        return {
+          ...node,
+          x: existing.x,
+          y: existing.y,
+          z: existing.z,
+          vx: existing.vx || 0,
+          vy: existing.vy || 0,
+          vz: existing.vz || 0,
+        }
+      }
+
+      // Use Fibonacci sphere for initial distribution of new nodes
       const phi = Math.acos(1 - (2 * (i + 0.5)) / nodes.length)
       const theta = Math.PI * (1 + Math.sqrt(5)) * i
       const radius = 50 + (1 - node.importance) * 100 // High importance = center
@@ -57,6 +76,8 @@ export function useForceLayout({
         vz: 0,
       }
     })
+
+    simNodesRef.current = simNodes
 
     // Create node lookup
     const nodeById = new Map(simNodes.map((n) => [n.id, n]))
@@ -82,15 +103,18 @@ export function useForceLayout({
         'link',
         forceLink(links)
           .id((d: SimulationNode) => d.id)
-          .distance((d: SimulationLink) => 30 + (1 - d.strength) * 50)
-          .strength((d: SimulationLink) => d.strength * 0.5)
+          .distance((d: SimulationLink) => {
+            const baseDistance = forceConfig.linkDistance
+            return baseDistance + (1 - d.strength) * baseDistance
+          })
+          .strength((d: SimulationLink) => d.strength * forceConfig.linkStrength)
       )
-      .force('charge', forceManyBody().strength(strength))
-      .force('center', forceCenter(0, 0, 0).strength(centerStrength))
+      .force('charge', forceManyBody().strength(forceConfig.chargeStrength))
+      .force('center', forceCenter(0, 0, 0).strength(forceConfig.centerStrength))
       .force(
         'collision',
         forceCollide()
-          .radius((d: SimulationNode) => d.radius * collisionRadius)
+          .radius((d: SimulationNode) => d.radius * forceConfig.collisionRadius)
           .strength(0.7)
       )
       .force(
@@ -123,7 +147,46 @@ export function useForceLayout({
     return () => {
       simulation.stop()
     }
-  }, [nodes, edges, strength, centerStrength, collisionRadius])
+  }, [nodes, edges]) // Note: forceConfig changes handled separately
+
+  // Update forces when config changes (without resetting positions)
+  useEffect(() => {
+    const simulation = simulationRef.current
+    if (!simulation) return
+
+    // Update charge force
+    const charge = simulation.force('charge') as ReturnType<typeof forceManyBody> | undefined
+    if (charge) {
+      charge.strength(forceConfig.chargeStrength)
+    }
+
+    // Update center force
+    const center = simulation.force('center') as ReturnType<typeof forceCenter> | undefined
+    if (center) {
+      center.strength(forceConfig.centerStrength)
+    }
+
+    // Update collision force
+    const collision = simulation.force('collision') as ReturnType<typeof forceCollide> | undefined
+    if (collision) {
+      collision.radius((d: SimulationNode) => d.radius * forceConfig.collisionRadius)
+    }
+
+    // Update link force
+    const link = simulation.force('link') as ReturnType<typeof forceLink> | undefined
+    if (link) {
+      link
+        .distance((d: SimulationLink) => {
+          const baseDistance = forceConfig.linkDistance
+          return baseDistance + (1 - d.strength) * baseDistance
+        })
+        .strength((d: SimulationLink) => d.strength * forceConfig.linkStrength)
+    }
+
+    // Gently reheat to apply changes
+    simulation.alpha(0.3).restart()
+    setIsSimulating(true)
+  }, [forceConfig])
 
   const reheat = useCallback(() => {
     if (simulationRef.current) {
