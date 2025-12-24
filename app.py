@@ -354,6 +354,18 @@ def _graph_trending_results(
 ) -> List[Dict[str, Any]]:
     """Return high-importance memories when no specific query is supplied."""
     try:
+        sort_param = (
+            ((request.args.get("sort") or request.args.get("order_by") or "score") or "")
+            .strip()
+            .lower()
+        )
+        order_by = {
+            "time_asc": "m.timestamp ASC, m.importance DESC",
+            "time_desc": "m.timestamp DESC, m.importance DESC",
+            "updated_asc": "coalesce(m.updated_at, m.timestamp) ASC, m.importance DESC",
+            "updated_desc": "coalesce(m.updated_at, m.timestamp) DESC, m.importance DESC",
+        }.get(sort_param, "m.importance DESC, m.timestamp DESC")
+
         where_clauses = ["coalesce(m.archived, false) = false"]
         params: Dict[str, Any] = {"limit": limit}
         if start_time:
@@ -372,7 +384,7 @@ def _graph_trending_results(
             MATCH (m:Memory)
             WHERE {' AND '.join(where_clauses)}
             RETURN m
-            ORDER BY m.importance DESC, m.timestamp DESC
+            ORDER BY {order_by}
             LIMIT $limit
         """
         result = graph.query(query, params)
@@ -2039,6 +2051,8 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     if entity_tags:
         tags = list(dict.fromkeys(tags + sorted(entity_tags)))
 
+    tag_prefixes = _compute_tag_prefixes(tags)
+
     temporal_links = find_temporal_relationships(graph, memory_id)
     pattern_info = detect_patterns(graph, memory_id, content)
     semantic_neighbors = link_semantic_neighbors(graph, memory_id)
@@ -2069,6 +2083,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         "id": memory_id,
         "metadata": json.dumps(metadata, default=str),
         "tags": tags,
+        "tag_prefixes": tag_prefixes,
         "summary": summary,
         "enriched_at": utc_now(),
     }
@@ -2078,6 +2093,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         MATCH (m:Memory {id: $id})
         SET m.metadata = $metadata,
             m.tags = $tags,
+            m.tag_prefixes = $tag_prefixes,
             m.summary = $summary,
             m.enriched = true,
             m.enriched_at = $enriched_at,
@@ -2085,6 +2101,21 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         """,
         update_payload,
     )
+
+    qdrant_client = get_qdrant_client()
+    if qdrant_client is not None:
+        try:
+            qdrant_client.set_payload(
+                collection_name=COLLECTION_NAME,
+                points=[memory_id],
+                payload={
+                    "tags": tags,
+                    "tag_prefixes": tag_prefixes,
+                    "metadata": metadata,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to sync Qdrant payload for enriched memory %s", memory_id)
 
     logger.debug(
         "Enriched memory %s (temporal=%s, patterns=%s, semantic=%s)",
