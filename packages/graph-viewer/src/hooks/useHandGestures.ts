@@ -197,6 +197,7 @@ export function useHandGestures(options: UseHandGesturesOptions = {}) {
   const cameraRef = useRef<Camera | null>(null)
   const prevStateRef = useRef<GestureState>(DEFAULT_STATE)
   const isInitializedRef = useRef(false)
+  const isCleaningUpRef = useRef(false) // Prevent send() after close()
 
   // Process MediaPipe results
   const onResults = useCallback((results: Results) => {
@@ -309,6 +310,8 @@ export function useHandGestures(options: UseHandGesturesOptions = {}) {
   useEffect(() => {
     if (!enabled || isInitializedRef.current) return
 
+    isCleaningUpRef.current = false
+
     const initializeHands = async () => {
       // Create video element for camera
       const video = document.createElement('video')
@@ -335,8 +338,17 @@ export function useHandGestures(options: UseHandGesturesOptions = {}) {
       // Initialize camera
       const camera = new Camera(video, {
         onFrame: async () => {
+          // Guard against calling send() after close()
+          if (isCleaningUpRef.current) return
           if (handsRef.current && videoRef.current) {
-            await handsRef.current.send({ image: videoRef.current })
+            try {
+              await handsRef.current.send({ image: videoRef.current })
+            } catch (e) {
+              // Ignore errors during cleanup (BindingError from deleted WASM object)
+              if (!isCleaningUpRef.current) {
+                console.warn('MediaPipe send error:', e)
+              }
+            }
           }
         },
         width: 640,
@@ -351,10 +363,14 @@ export function useHandGestures(options: UseHandGesturesOptions = {}) {
     initializeHands().catch(console.error)
 
     return () => {
+      isCleaningUpRef.current = true
       cameraRef.current?.stop()
+      cameraRef.current = null
       handsRef.current?.close()
+      handsRef.current = null
       if (videoRef.current) {
         videoRef.current.remove()
+        videoRef.current = null
       }
       isInitializedRef.current = false
     }

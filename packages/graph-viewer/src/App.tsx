@@ -104,6 +104,12 @@ export default function App() {
   const [performanceMode, setPerformanceMode] = useState(false)
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false)
   const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
+  // Tracking source - check URL param on mount, then allow UI toggle
+  const [trackingSource, setTrackingSource] = useState<'mediapipe' | 'iphone'>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('iphone') === 'true' ? 'iphone' : 'mediapipe'
+  })
+
   const [trackingInfo, setTrackingInfo] = useState<{
     source: 'mediapipe' | 'iphone'
     iphoneUrl: string
@@ -113,7 +119,7 @@ export default function App() {
     bridgeIps: string[]
     phonePort: number | null
   }>({
-    source: 'mediapipe',
+    source: trackingSource,
     iphoneUrl: 'ws://localhost:8766/ws',
     iphoneConnected: false,
     hasLiDAR: false,
@@ -121,6 +127,10 @@ export default function App() {
     bridgeIps: [],
     phonePort: null,
   })
+
+  const handleSourceChange = useCallback((source: 'mediapipe' | 'iphone') => {
+    setTrackingSource(source)
+  }, [])
 
   // Filter state
   const [filters, setFilters] = useState<FilterState>({
@@ -361,6 +371,7 @@ export default function App() {
                 onNodeSelect={handleNodeSelect}
                 onNodeHover={handleNodeHover}
                 gestureControlEnabled={gestureControlEnabled}
+                trackingSource={trackingSource}
                 onGestureStateChange={handleGestureStateChange}
                 onTrackingInfoChange={setTrackingInfo}
                 performanceMode={performanceMode}
@@ -390,7 +401,8 @@ export default function App() {
               <HandControlOverlay
                 enabled={gestureControlEnabled}
                 lock={handLock}
-                source={trackingInfo.source}
+                source={trackingSource}
+                onSourceChange={handleSourceChange}
                 iphoneConnected={trackingInfo.iphoneConnected}
                 hasLiDAR={trackingInfo.hasLiDAR}
                 iphoneUrl={trackingInfo.iphoneUrl}

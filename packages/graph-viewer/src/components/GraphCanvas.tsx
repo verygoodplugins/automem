@@ -45,23 +45,19 @@ import { getEdgeStyle } from '../lib/edgeStyles'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
 
-// Check if we should use iPhone tracking (based on URL param or env)
-function useTrackingSource() {
-  const [source, setSource] = useState<'mediapipe' | 'iphone'>('mediapipe')
+// Get iPhone WebSocket URL from URL params or default
+function useIPhoneUrl() {
   const [iphoneUrl, setIphoneUrl] = useState('ws://localhost:8766/ws')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('iphone') === 'true') {
-      setSource('iphone')
-    }
     const url = params.get('iphone_url')
     if (url) {
       setIphoneUrl(url)
     }
   }, [])
 
-  return { source, iphoneUrl, setSource }
+  return iphoneUrl
 }
 
 // Performance constants
@@ -84,6 +80,7 @@ interface GraphCanvasProps {
   onNodeSelect: (node: GraphNode | null) => void
   onNodeHover: (node: GraphNode | null) => void
   gestureControlEnabled?: boolean
+  trackingSource?: 'mediapipe' | 'iphone'
   onGestureStateChange?: (state: GestureState) => void
   onTrackingInfoChange?: (info: {
     source: 'mediapipe' | 'iphone'
@@ -112,6 +109,7 @@ export function GraphCanvas({
   onNodeSelect,
   onNodeHover,
   gestureControlEnabled = false,
+  trackingSource: source = 'mediapipe',
   onGestureStateChange,
   onTrackingInfoChange,
   performanceMode = false,
@@ -122,8 +120,8 @@ export function GraphCanvas({
   typeColors = {},
   onReheatReady,
 }: GraphCanvasProps) {
-  // Determine tracking source
-  const { source, iphoneUrl } = useTrackingSource()
+  // Get iPhone WebSocket URL (from URL param or default)
+  const iphoneUrl = useIPhoneUrl()
 
   // MediaPipe hand tracking (webcam)
   const { gestureState: mediapipeState, isEnabled: mediapipeActive } = useHandGestures({

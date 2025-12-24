@@ -4,6 +4,7 @@ interface HandControlOverlayProps {
   enabled: boolean
   lock: HandLockState
   source: 'mediapipe' | 'iphone'
+  onSourceChange?: (source: 'mediapipe' | 'iphone') => void
   iphoneConnected?: boolean
   hasLiDAR?: boolean
   iphoneUrl?: string
@@ -16,6 +17,7 @@ export function HandControlOverlay({
   enabled,
   lock,
   source,
+  onSourceChange,
   iphoneConnected = false,
   hasLiDAR = false,
   iphoneUrl,
@@ -37,18 +39,38 @@ export function HandControlOverlay({
   const m = lock.mode === 'idle' ? lock.metrics : lock.metrics
 
   return (
-    <div className="absolute left-4 bottom-4 z-50 pointer-events-none">
+    <div className="absolute left-4 bottom-4 z-50 pointer-events-auto">
       <div className="glass border border-white/10 rounded-xl px-4 py-3 text-xs text-slate-200 space-y-2 w-[280px]">
         <div className="flex items-center justify-between">
           <span className="text-slate-400">Hand Control</span>
           <span className={`px-2 py-1 rounded-md border ${badge.color}`}>{badge.text}</span>
         </div>
 
+        {/* Source Toggle */}
         <div className="flex items-center justify-between">
           <span className="text-slate-400">Source</span>
-          <span className="font-medium">
-            {source === 'iphone' ? 'iPhone Stream' : 'Webcam (MediaPipe)'}
-          </span>
+          <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-0.5">
+            <button
+              onClick={() => onSourceChange?.('mediapipe')}
+              className={`px-2 py-1 rounded-md text-[10px] transition-all ${
+                source === 'mediapipe'
+                  ? 'bg-blue-500/30 text-blue-200 border border-blue-400/30'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Webcam
+            </button>
+            <button
+              onClick={() => onSourceChange?.('iphone')}
+              className={`px-2 py-1 rounded-md text-[10px] transition-all ${
+                source === 'iphone'
+                  ? 'bg-purple-500/30 text-purple-200 border border-purple-400/30'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              iPhone
+            </button>
+          </div>
         </div>
 
         {source === 'iphone' && (
