@@ -156,6 +156,9 @@ export default function App() {
   // Reheat callback - will be set by GraphCanvas
   const [reheatFn, setReheatFn] = useState<(() => void) | null>(null)
 
+  // Reset view callback - will be set by GraphCanvas
+  const [resetViewFn, setResetViewFn] = useState<(() => void) | null>(null)
+
   const handleGestureStateChange = useCallback((state: GestureState) => {
     setGestureState(state)
   }, [])
@@ -381,6 +384,7 @@ export default function App() {
                 relationshipVisibility={relationshipVisibility}
                 typeColors={data?.meta?.type_colors}
                 onReheatReady={setReheatFn}
+                onResetViewReady={setResetViewFn}
               />
 
               {/* 2D Hand Overlay (on top of canvas, life-size) */}
@@ -403,6 +407,7 @@ export default function App() {
                 lock={handLock}
                 source={trackingSource}
                 onSourceChange={handleSourceChange}
+                onResetView={resetViewFn ?? undefined}
                 iphoneConnected={trackingInfo.iphoneConnected}
                 hasLiDAR={trackingInfo.hasLiDAR}
                 iphoneUrl={trackingInfo.iphoneUrl}

@@ -55,16 +55,19 @@ export type HandLockState =
 export interface CloudControlDeltas {
   /** zoom velocity (positive -> zoom in, negative -> zoom out) */
   zoom: number
-  /** rotation deltas (radians) */
-  rotateX: number
-  rotateY: number
+  /** Displacement-based pan: how much to offset from grab start position */
+  panX: number
+  panY: number
+  panZ: number
+  /** Is this the first frame of a grab? (used to capture initial world position) */
+  grabStart: boolean
 }
 
 const DEFAULT_CONFIDENCE = 0.7
 
 // Tunables (these matter a lot for UX)
 const ACQUIRE_FRAMES_REQUIRED = 4
-const LOCK_PERSIST_MS = 450
+const LOCK_PERSIST_MS = 2000  // 2 seconds before unlocking when hand leaves frame
 
 const SPREAD_THRESHOLD = 0.65
 const PALM_FACING_THRESHOLD = 0.55
@@ -73,10 +76,7 @@ const GRAB_ON_THRESHOLD = 0.72
 const GRAB_OFF_THRESHOLD = 0.45
 
 // Control sensitivity
-const ROTATE_GAIN = 1.8
-const DEPTH_GAIN = 2.6 // exponential factor
 const DEPTH_DEADZONE = 0.01
-const ROT_DEADZONE = 0.003
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v))
@@ -146,29 +146,39 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
 
   // Pointing pose score:
   // index extended while the other 3 fingers are relatively curled.
+  // NOTE: We don't require palm facing camera - natural pointing works from any angle
   const idxExt = fingerExtensionScore(wrist, indexMcp, indexTip)
   const midExt = fingerExtensionScore(wrist, middleMcp, middleTip)
   const ringExt = fingerExtensionScore(wrist, ringMcp, ringTip)
   const pinkyExt = fingerExtensionScore(wrist, pinkyMcp, pinkyTip)
   const others = clamp((midExt + ringExt + pinkyExt) / 3, 0, 1)
-  const palmForward = clamp((palmFacing + 1) / 2, 0, 1)
-  const point = clamp(idxExt * (1 - others) * palmForward, 0, 1)
+  // Point score: index extended (idxExt high) AND other fingers curled (others low)
+  // If index is extended more than others, it's pointing
+  const pointRaw = clamp((idxExt - others) * 2, 0, 1)
+  const point = idxExt > 0.5 && others < 0.5 ? pointRaw : 0
 
-  // Grab: use state.grabStrength only if it's meaningful (computed by source);
-  // otherwise approximate from fingertip distances to wrist (closed fist => smaller)
+  // Grab: closed fist = ALL fingers curled including index
+  // Exclude index from grab calculation to distinguish from pointing
   const hasGrabStrength =
     typeof state.grabStrength === 'number' &&
     state.handsDetected >= 1 &&
     state.grabStrength > 0 // avoid default 0 from sources that don't compute it
   let grab = hasGrabStrength ? clamp(state.grabStrength, 0, 1) : 0
   if (!hasGrabStrength) {
+    // For grab, require ALL fingers to be curled (including index)
     const dw1 = length2(indexTip.x - wrist.x, indexTip.y - wrist.y)
     const dw2 = length2(middleTip.x - wrist.x, middleTip.y - wrist.y)
     const dw3 = length2(ringTip.x - wrist.x, ringTip.y - wrist.y)
     const dw4 = length2(pinkyTip.x - wrist.x, pinkyTip.y - wrist.y)
     const avgDw = (dw1 + dw2 + dw3 + dw4) / 4
-    // Typical: ~0.10 fist .. ~0.25 open
-    grab = clamp(1 - safeDiv(avgDw - 0.10, 0.15), 0, 1)
+    // All fingers must be close to wrist
+    const allCurled = dw1 < 0.15 && dw2 < 0.15 && dw3 < 0.15 && dw4 < 0.15
+    grab = allCurled ? clamp(1 - safeDiv(avgDw - 0.08, 0.07), 0, 1) : 0
+  }
+
+  // Mutual exclusion: if pointing, suppress grab
+  if (point > 0.5) {
+    grab = 0
   }
 
   // Depth: prefer pinch ray origin z when present (iPhone LiDAR mapped into landmarks z)
@@ -186,12 +196,6 @@ function isAcquirePose(m: HandLockMetrics) {
   return m.spread >= SPREAD_THRESHOLD && m.palmFacing >= PALM_FACING_THRESHOLD && m.confidence >= 0.4
 }
 
-function expResponse(delta: number, gain: number) {
-  const s = Math.sign(delta)
-  const a = Math.abs(delta)
-  return s * (Math.exp(a * gain) - 1)
-}
-
 export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
   const lockRef = useRef<HandLockState>({ mode: 'idle', metrics: null })
 
@@ -207,7 +211,7 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
   const next = useMemo((): { lock: HandLockState; deltas: CloudControlDeltas } => {
     if (!enabled) {
       lockRef.current = { mode: 'idle', metrics: null }
-      return { lock: lockRef.current, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+      return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
     }
 
     const prev = lockRef.current
@@ -219,11 +223,11 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
         if (nowMs - prev.lastSeenMs <= LOCK_PERSIST_MS) {
           const persisted: HandLockState = { ...prev, metrics: prev.metrics }
           lockRef.current = persisted
-          return { lock: persisted, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+          return { lock: persisted, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
         }
       }
       lockRef.current = { mode: 'idle', metrics: null }
-      return { lock: lockRef.current, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+      return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
     }
 
     // Hand seen: update FSM
@@ -231,11 +235,11 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
       if (isAcquirePose(metrics)) {
         const candidate: HandLockState = { mode: 'candidate', metrics, frames: 1 }
         lockRef.current = candidate
-        return { lock: candidate, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
       }
       const idle: HandLockState = { mode: 'idle', metrics }
       lockRef.current = idle
-      return { lock: idle, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
     }
 
     if (prev.mode === 'candidate') {
@@ -255,16 +259,16 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
             lastSeenMs: nowMs,
           }
           lockRef.current = locked
-          return { lock: locked, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+          return { lock: locked, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
         }
         const candidate: HandLockState = { mode: 'candidate', metrics, frames }
         lockRef.current = candidate
-        return { lock: candidate, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
       }
       // lost candidate
       const idle: HandLockState = { mode: 'idle', metrics }
       lockRef.current = idle
-      return { lock: idle, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
     }
 
     // locked
@@ -285,30 +289,42 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
         lastSeenMs: nowMs,
       }
 
-      let deltas: CloudControlDeltas = { zoom: 0, rotateX: 0, rotateY: 0 }
+      let deltas: CloudControlDeltas = { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }
 
       if (grabbed) {
-        const anchor = prev.grabAnchor ?? { x, y, depth: metrics.depth }
-        // On first grab frame, set anchor
-        if (!prev.grabbed) {
-          lock.grabAnchor = anchor
+        const isFirstGrabFrame = !prev.grabbed
+
+        if (isFirstGrabFrame) {
+          // First frame of grab - set anchor and signal to capture world position
+          lock.grabAnchor = { x, y, depth: metrics.depth }
+          deltas.grabStart = true
           lockRef.current = lock
           return { lock, deltas }
         }
 
-        // Depth -> zoom (exponential)
-        // User mental model: pull fist toward body (farther from camera) zooms IN; push toward screen/camera zooms OUT.
-        const dz = metrics.depth - anchor.depth
-        if (Math.abs(dz) > DEPTH_DEADZONE) {
-          deltas.zoom = expResponse(dz, DEPTH_GAIN)
-        }
+        const anchor = prev.grabAnchor ?? { x, y, depth: metrics.depth }
 
-        // Position -> rotation
-        const dx = x - anchor.x
-        const dy = y - anchor.y
-        if (Math.abs(dx) > ROT_DEADZONE || Math.abs(dy) > ROT_DEADZONE) {
-          deltas.rotateY = dx * ROTATE_GAIN
-          deltas.rotateX = -dy * ROTATE_GAIN
+        // Calculate displacement from anchor (how far hand moved since grab started)
+        const dx = x - anchor.x  // hand moved right in screen space (0-1 normalized)
+        const dy = y - anchor.y  // hand moved down in screen space
+        const dz = metrics.depth - anchor.depth  // hand moved toward/away from camera
+
+        // PAN the world: displacement-based, not velocity
+        // Scale: moving hand across half the screen (~0.5) should move graph ~150 world units
+        // That's a reasonable "arm's reach" mapping
+        const PAN_GAIN = 300  // world units per full screen unit of hand movement
+
+        deltas.panX = -dx * PAN_GAIN  // drag right = world moves right (opposite sign because we're moving world)
+        deltas.panY = dy * PAN_GAIN   // drag down = world moves down (Y is flipped in screen coords)
+
+        // Depth -> Z translation
+        // Moving hand ~0.2 depth units should translate maybe 50-100 world units
+        const DEPTH_PAN_GAIN = 250
+        deltas.panZ = dz * DEPTH_PAN_GAIN
+
+        // Also apply zoom based on depth (optional, can remove if too much)
+        if (Math.abs(dz) > DEPTH_DEADZONE) {
+          deltas.zoom = dz * 0.5  // gentle zoom
         }
       } else {
         lock.grabAnchor = undefined
@@ -319,7 +335,7 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
     }
 
     lockRef.current = { mode: 'idle', metrics }
-    return { lock: lockRef.current, deltas: { zoom: 0, rotateX: 0, rotateY: 0 } }
+    return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
   }, [
     enabled,
     chosenHand,

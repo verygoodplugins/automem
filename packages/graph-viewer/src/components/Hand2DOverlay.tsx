@@ -65,6 +65,24 @@ export function Hand2DOverlay({
   const [rightSmoothed, setRightSmoothed] = useState<SmoothedHand | null>(null)
   const animationRef = useRef<number>()
 
+  // Track activation flash
+  const [activationFlash, setActivationFlash] = useState(false)
+  const prevLockModeRef = useRef<string>('idle')
+
+  // Flash when transitioning to locked
+  useEffect(() => {
+    const prevMode = prevLockModeRef.current
+    const currentMode = handLock?.mode ?? 'idle'
+
+    if (prevMode !== 'locked' && currentMode === 'locked') {
+      // Just became locked - trigger flash
+      setActivationFlash(true)
+      setTimeout(() => setActivationFlash(false), 400)
+    }
+
+    prevLockModeRef.current = currentMode
+  }, [handLock?.mode])
+
   // Smoothing and ghost effect
   useEffect(() => {
     if (!enabled) return
@@ -156,26 +174,49 @@ export function Hand2DOverlay({
 
   if (!enabled || !gestureState.isTracking) return null
 
-  // Visual state: ghosty until locked; solid when actively grabbing/pinching
+  // Visual state: VERY faint until locked, then solid
+  // Hands should be almost invisible until activation gesture is performed
   const lockMode = handLock?.mode
   const isLocked = lockMode === 'locked'
-  const isActive =
-    isLocked && (((handLock as any).grabbed as boolean) || (((handLock as any).metrics?.pinch as number) ?? 0) > 0.75)
+  const isGrabbing = isLocked && ((handLock as any).grabbed as boolean)
+  const isPinching = isLocked && (((handLock as any).metrics?.pinch as number) ?? 0) > 0.75
+  const isActive = isGrabbing || isPinching
+
+  // Opacity: very faint when not locked, full when locked and active
   const opacityMultiplier = !handLock
-    ? 1
-    : lockMode === 'candidate'
-      ? 0.55
-      : isLocked
-        ? (isActive ? 1.1 : 0.8)
-        : 0.6
+    ? 0.15  // No lock state provided - very faint
+    : lockMode === 'idle'
+      ? 0.12  // Idle - barely visible ghost
+      : lockMode === 'candidate'
+        ? 0.35  // Acquiring - starting to show
+        : isLocked
+          ? (isActive ? 1.2 : 0.85)  // Locked - full visibility; brighter when active
+          : 0.12  // Fallback - very faint
+
+  // Check if pointing (for laser visibility)
+  const isPointing = lockMode === 'locked' && ((handLock as any).metrics?.point as number ?? 0) > 0.5
 
   // Check if both hands are gripping (for two-hand manipulation)
   const leftGripping = gestureState.leftPinchRay?.isValid
   const rightGripping = gestureState.rightPinchRay?.isValid
   const bothGripping = leftGripping && rightGripping
 
+  // Laser visibility: show while aiming (pointing) or while pinching
+  const leftLaserActive = isPointing || (gestureState.leftPinchRay?.strength ?? 0) > 0.3
+  const rightLaserActive = isPointing || (gestureState.rightPinchRay?.strength ?? 0) > 0.3
+
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {/* Activation flash overlay */}
+      {activationFlash && (
+        <div
+          className="absolute inset-0 pointer-events-none animate-pulse"
+          style={{
+            background: 'radial-gradient(circle at center, rgba(78, 205, 196, 0.3) 0%, transparent 70%)',
+            animation: 'flash 0.4s ease-out',
+          }}
+        />
+      )}
       <svg
         className="w-full h-full"
         viewBox="0 0 100 100"
@@ -256,8 +297,8 @@ export function Hand2DOverlay({
           />
         )}
 
-        {/* Left laser - require stable ray to avoid misleading "center-biased" fallback */}
-        {showLaser && leftStableRay?.screenHit && gestureState.leftPinchRay && gestureState.leftPinchRay.strength > 0.3 && (
+        {/* Left laser */}
+        {showLaser && leftLaserActive && leftStableRay?.screenHit && gestureState.leftPinchRay && (
           <LaserBeam
             ray={gestureState.leftPinchRay}
             stableRay={leftStableRay}
@@ -268,8 +309,8 @@ export function Hand2DOverlay({
           />
         )}
 
-        {/* Right laser - use stable ray if available */}
-        {showLaser && rightStableRay?.screenHit && gestureState.rightPinchRay && gestureState.rightPinchRay.strength > 0.3 && (
+        {/* Right laser */}
+        {showLaser && rightLaserActive && rightStableRay?.screenHit && gestureState.rightPinchRay && (
           <LaserBeam
             ray={gestureState.rightPinchRay}
             stableRay={rightStableRay}
@@ -300,6 +341,8 @@ interface GhostHandProps {
   opacityMultiplier?: number
 }
 
+type Point2 = { x: number; y: number }
+
 /**
  * MasterHand - Smash Bros Master Hand / Crazy Hand style
  * Volumetric filled shapes with soft gradients and ambient occlusion
@@ -311,16 +354,35 @@ function GhostHand({
   isGhost = false,
   opacityMultiplier = 1,
 }: GhostHandProps) {
-  // "Portal" depth feel: pushing toward the camera/screen should feel like going *into* the graph,
-  // so we render the hand smaller when it's closer to the camera, larger when it's farther away.
-  // Note: MediaPipe z is small (~[-0.3..0.3]) while iPhone LiDAR z is meters (0..~3).
-  const wristZ = landmarks[0].z || 0
-  const isMeters = Math.abs(wristZ) > 0.5
-  const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
-  const t = isMeters ? clamp01((wristZ - 0.25) / 1.75) : clamp01((wristZ + 0.2) / 0.4)
-  const clampedScale = 0.6 + t * 1.1 // 0.6 .. 1.7
+  // "Portal" depth feel: pushing toward the camera/screen should feel like going *into* the graph.
+  // Current Z (LiDAR): 0.5m (close) .. 3.0m (far)
+  // Normalized Z (MediaPipe-like): positive (close) .. negative (far)
 
-  // Un-mirror the X coordinate
+  const wristZ = landmarks[0].z || 0
+  const isMeters = Math.abs(wristZ) > 0.5 // Raw LiDAR vs Normalized
+
+  // Calculate scale factor based on depth - INVERTED MAPPING
+  // Physical hand closer to camera -> Virtual hand moves AWAY (smaller)
+  // Physical hand moves back -> Virtual hand moves CLOSER (larger)
+
+  let scaleFactor = 1.0
+  if (isMeters) {
+    // LiDAR (meters): 0.3m (close) .. 1.5m (far)
+    // Close (0.3m) -> Scale 0.6 (distant/small)
+    // Far (1.0m) -> Scale 1.2 (close/large)
+    const t = Math.max(0, Math.min(1, (wristZ - 0.3) / 0.7)) // 0 at 0.3m, 1 at 1.0m
+    scaleFactor = 0.6 + t * 0.8
+  } else {
+    // MediaPipe (normalized relative to wrist):
+    // +0.1 (close to camera) -> Scale 0.6
+    // -0.2 (far from camera) -> Scale 1.2
+    const t = Math.max(0, Math.min(1, (0.1 - wristZ) / 0.3)) // 0 at +0.1, 1 at -0.2
+    scaleFactor = 0.6 + t * 0.8
+  }
+
+  const clampedScale = Math.max(0.5, Math.min(1.8, scaleFactor))
+
+  // Un-mirror the X coordinate (selfie-style) and convert to SVG space
   const toSvg = (lm: { x: number; y: number }) => ({
     x: (1 - lm.x) * 100,
     y: lm.y * 100,
@@ -336,7 +398,7 @@ function GhostHand({
   const handId = Math.round(points[0].x * 10)
 
   // Helper: get perpendicular offset for finger width
-  const getPerpendicular = (p1: {x: number, y: number}, p2: {x: number, y: number}, width: number) => {
+  const getPerpendicular = (p1: Point2, p2: Point2, width: number) => {
     const dx = p2.x - p1.x
     const dy = p2.y - p1.y
     const len = Math.sqrt(dx * dx + dy * dy) || 1
@@ -367,7 +429,7 @@ function GhostHand({
     const tipLeft = `${lastPt.x + tipPerp.x},${lastPt.y + tipPerp.y}`
     const tipRight = `${lastPt.x - tipPerp.x},${lastPt.y - tipPerp.y}`
 
-    return `M ${leftSide[0]} L ${leftSide.join(' L ')} L ${tipLeft} A ${width} ${width} 0 0 1 ${tipRight} L ${rightSide.join(' L ')} Z`
+    return `M ${leftSide[0]} L ${leftSide.join(' L ')} L ${tipLeft} A ${width} ${width} 0 0 1 ${tipRight} L ${rightSide.join(' L ')} Z`;
   }
 
   // Create palm shape connecting all finger bases
@@ -397,7 +459,7 @@ function GhostHand({
       Q ${wrist.x + palmWidth * 1.5} ${(wrist.y + pinkyBase.y) / 2}
         ${wrist.x} ${wrist.y + palmWidth}
       Z
-    `
+    `;
   }
 
   // Finger definitions: [landmark indices]
@@ -453,10 +515,7 @@ function GhostHand({
       {/* Shadow layer */}
       <g filter={`url(#hand-shadow-${handId})`}>
         {/* Palm base shape */}
-        <path
-          d={createPalmShape()}
-          fill={`url(#hand-fill-${handId})`}
-        />
+        <path d={createPalmShape()} fill={`url(#hand-fill-${handId})`} />
 
         {/* Fingers - rendered back to front for proper overlapping */}
         {[...fingers].reverse().map((finger, idx) => (

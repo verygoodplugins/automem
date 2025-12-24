@@ -5,6 +5,7 @@ interface HandControlOverlayProps {
   lock: HandLockState
   source: 'mediapipe' | 'iphone'
   onSourceChange?: (source: 'mediapipe' | 'iphone') => void
+  onResetView?: () => void
   iphoneConnected?: boolean
   hasLiDAR?: boolean
   iphoneUrl?: string
@@ -18,6 +19,7 @@ export function HandControlOverlay({
   lock,
   source,
   onSourceChange,
+  onResetView,
   iphoneConnected = false,
   hasLiDAR = false,
   iphoneUrl,
@@ -43,7 +45,18 @@ export function HandControlOverlay({
       <div className="glass border border-white/10 rounded-xl px-4 py-3 text-xs text-slate-200 space-y-2 w-[280px]">
         <div className="flex items-center justify-between">
           <span className="text-slate-400">Hand Control</span>
-          <span className={`px-2 py-1 rounded-md border ${badge.color}`}>{badge.text}</span>
+          <div className="flex items-center gap-2">
+            {onResetView && (
+              <button
+                onClick={onResetView}
+                className="px-2 py-1 rounded-md text-[10px] bg-slate-700/50 text-slate-300 hover:bg-slate-600/50 hover:text-white transition-all border border-slate-500/30"
+                title="Reset view to center"
+              >
+                Reset View
+              </button>
+            )}
+            <span className={`px-2 py-1 rounded-md border ${badge.color}`}>{badge.text}</span>
+          </div>
         </div>
 
         {/* Source Toggle */}

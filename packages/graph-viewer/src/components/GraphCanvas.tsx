@@ -65,11 +65,9 @@ const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
 const LABEL_DISTANCE_THRESHOLD = 80 // Only show labels for nodes within this distance
 const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
 
-// Gesture smoothing constants - prevent sudden movements
-const GESTURE_SMOOTHING = 0.15 // Lower = smoother but laggier (0.1-0.3 recommended)
+// Gesture control constants
 const GESTURE_DEADZONE = 0.005 // Ignore tiny movements
 const MAX_TRANSLATE_SPEED = 3 // Cap cloud translation per frame
-const RECENTER_STRENGTH = 0.01 // How strongly to pull cloud back to center
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -98,6 +96,7 @@ interface GraphCanvasProps {
   relationshipVisibility?: RelationshipVisibility
   typeColors?: Record<string, string>
   onReheatReady?: (reheat: () => void) => void
+  onResetViewReady?: (resetView: () => void) => void
 }
 
 export function GraphCanvas({
@@ -119,6 +118,7 @@ export function GraphCanvas({
   relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
   typeColors = {},
   onReheatReady,
+  onResetViewReady,
 }: GraphCanvasProps) {
   // Get iPhone WebSocket URL (from URL param or default)
   const iphoneUrl = useIPhoneUrl()
@@ -190,6 +190,7 @@ export function GraphCanvas({
         relationshipVisibility={relationshipVisibility}
         typeColors={typeColors}
         onReheatReady={onReheatReady}
+        onResetViewReady={onResetViewReady}
       />
     </Canvas>
   )
@@ -199,6 +200,7 @@ interface SceneProps extends Omit<GraphCanvasProps, 'onGestureStateChange' | 'on
   gestureState: GestureState
   gestureControlEnabled: boolean
   performanceMode: boolean
+  onResetViewReady?: (resetView: () => void) => void
 }
 
 function Scene({
@@ -218,6 +220,7 @@ function Scene({
   relationshipVisibility = DEFAULT_RELATIONSHIP_VISIBILITY,
   typeColors = {},
   onReheatReady,
+  onResetViewReady,
 }: SceneProps) {
   const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
 
@@ -235,6 +238,23 @@ function Scene({
       onReheatReady(reheat)
     }
   }, [onReheatReady, reheat])
+
+  // Reset view function - centers the graph and resets rotation
+  const resetView = useCallback(() => {
+    if (groupRef.current) {
+      groupRef.current.position.set(0, 0, 0)
+      groupRef.current.rotation.set(0, 0, 0)
+    }
+    if (controlsRef.current) {
+      controlsRef.current.reset()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (onResetViewReady) {
+      onResetViewReady(resetView)
+    }
+  }, [onResetViewReady, resetView])
   const [autoRotate, setAutoRotate] = useState(false)
   const groupRef = useRef<THREE.Group>(null)
   const controlsRef = useRef<OrbitControlsImpl>(null)
@@ -392,12 +412,31 @@ function Scene({
       )
     }
 
-    setAimHit(hit)
+    // Snap-to-node: if we have a hit, bias the aim point to the node CENTER (feels "magnetic")
+    // This also makes click-open deterministic.
+    const snapNode = hit ? (nodeById.get(hit.nodeId) ?? null) : null
+    const snappedHit: NodeHit | null =
+      hit && snapNode
+        ? {
+            ...hit,
+            point: {
+              x: snapNode.x ?? hit.point.x,
+              y: snapNode.y ?? hit.point.y,
+              z: snapNode.z ?? hit.point.z,
+            },
+          }
+        : hit
 
-    // World-space aim point for rendering (hit point if present; otherwise plane intersection near graph center)
+    setAimHit(snappedHit)
+
+    // World-space aim point for rendering (snapped node center if present; otherwise plane intersection near graph center)
     let aimPointWorld: THREE.Vector3 | null = null
-    if (group && hit) {
-      aimPointWorld = new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z).applyMatrix4(group.matrixWorld)
+    if (group && snappedHit) {
+      aimPointWorld = new THREE.Vector3(
+        snappedHit.point.x,
+        snappedHit.point.y,
+        snappedHit.point.z
+      ).applyMatrix4(group.matrixWorld)
     } else if (group) {
       const center = group.getWorldPosition(new THREE.Vector3())
       const normal = camera.getWorldDirection(new THREE.Vector3()).normalize()
@@ -411,14 +450,14 @@ function Scene({
     setAimWorldPoint({ x: aimPointWorld.x, y: aimPointWorld.y, z: aimPointWorld.z })
 
     // Hover highlight
-    const hoverNode = hit ? (nodeById.get(hit.nodeId) ?? null) : null
+    const hoverNode = snappedHit ? (nodeById.get(snappedHit.nodeId) ?? null) : null
     onNodeHover(hoverNode as GraphNode | null)
 
     // Pinch click (only when aiming). Trigger on release to allow cancel.
     const pinchActive = m.pinch > 0.75
     if (pinchActive && !pinchDownRef.current) {
       pinchDownRef.current = true
-      pressedNodeRef.current = hit?.nodeId ?? null
+      pressedNodeRef.current = snappedHit?.nodeId ?? null
       return
     }
 
@@ -426,8 +465,8 @@ function Scene({
       pinchDownRef.current = false
       const pressed = pressedNodeRef.current
       pressedNodeRef.current = null
-      if (pressed && hit?.nodeId === pressed) {
-        selectNodeById(pressed, hit.point)
+      if (pressed && snappedHit?.nodeId === pressed) {
+        selectNodeById(pressed, snappedHit.point)
       }
     }
   }, [
@@ -518,24 +557,22 @@ function Scene({
     onNodeSelect(null)
   }, [onNodeSelect])
 
-  // Smoothed gesture values (to prevent sudden movements)
-  const smoothedGestureRef = useRef({
-    translateZ: 0,
-    rotateX: 0,
-    rotateY: 0,
-  })
+  // Track world position at grab start for displacement-based movement
+  const grabStartPosRef = useRef({ x: 0, y: 0, z: 0 })
+
+  // Smoothed pan for non-grab controls only
+  const smoothedPanZRef = useRef(0)
 
   // Clamp helper
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
-  // Apply gesture controls to move the CLOUD (not camera) with smoothing
-  // Now also uses the new interaction state for more precise control
+  // Apply gesture controls to move the CLOUD (not camera)
+  // Grab = physically grab the world and drag it around (displacement-based, not velocity)
   useEffect(() => {
     if (!gestureControlEnabled || !groupRef.current) return
     if (!gestureState.isTracking) return
 
     const group = groupRef.current
-    const smoothed = smoothedGestureRef.current
 
     // Use the new interaction state for cloud manipulation
     const { rotationDelta, zoomDelta, dragDeltaZ, isDragging } = interactionState
@@ -543,18 +580,23 @@ function Scene({
     const usingGrabControls = handLock.mode === 'locked' && handLock.grabbed
 
     if (usingGrabControls) {
-      // Exponential zoom velocity already computed; smooth + clamp
-      smoothed.translateZ += (grabDeltas.zoom - smoothed.translateZ) * GESTURE_SMOOTHING
-      const zVel = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
-      if (Math.abs(zVel) > GESTURE_DEADZONE) {
-        group.position.z += zVel
+      // On first frame of grab, capture current world position
+      if (grabDeltas.grabStart) {
+        grabStartPosRef.current = {
+          x: group.position.x,
+          y: group.position.y,
+          z: group.position.z,
+        }
+        return  // Don't apply deltas on first frame
       }
 
-      // Rotation (pitch/yaw)
-      const rx = clamp(grabDeltas.rotateX, -0.08, 0.08)
-      const ry = clamp(grabDeltas.rotateY, -0.08, 0.08)
-      if (Math.abs(rx) > GESTURE_DEADZONE) group.rotation.x += rx
-      if (Math.abs(ry) > GESTURE_DEADZONE) group.rotation.y += ry
+      // DISPLACEMENT-BASED: Set position relative to grab start, not add velocity
+      // panX/panY/panZ are how much to offset from the grab start position
+      const startPos = grabStartPosRef.current
+
+      group.position.x = startPos.x + grabDeltas.panX
+      group.position.y = startPos.y + grabDeltas.panY
+      group.position.z = startPos.z + grabDeltas.panZ
     } else {
       // Apply zoom (two-hand spread/pinch)
       if (Math.abs(zoomDelta) > GESTURE_DEADZONE) {
@@ -568,23 +610,13 @@ function Scene({
 
       // Apply Z drag (single hand push/pull when not selecting a node)
       if (!isDragging && Math.abs(dragDeltaZ) > GESTURE_DEADZONE) {
-        smoothed.translateZ += (dragDeltaZ - smoothed.translateZ) * GESTURE_SMOOTHING
-        const clamped = clamp(smoothed.translateZ, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
+        smoothedPanZRef.current += (dragDeltaZ - smoothedPanZRef.current) * 0.2
+        const clamped = clamp(smoothedPanZRef.current, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
         group.position.z += clamped
+      } else {
+        smoothedPanZRef.current *= 0.9
       }
     }
-
-    // Decay smoothed values
-      smoothed.translateZ *= 0.9
-      smoothed.rotateX *= 0.9
-      smoothed.rotateY *= 0.9
-
-    // Gentle recenter: slowly pull cloud back toward origin
-    group.position.x *= (1 - RECENTER_STRENGTH)
-    group.position.y *= (1 - RECENTER_STRENGTH)
-    group.position.z *= (1 - RECENTER_STRENGTH)
-    group.rotation.x *= (1 - RECENTER_STRENGTH)
-    group.rotation.y *= (1 - RECENTER_STRENGTH)
   }, [gestureControlEnabled, gestureState, interactionState, handLock, grabDeltas])
 
   return (
@@ -699,8 +731,8 @@ function Scene({
               />
             </mesh>
 
-            {/* Laser beam only while pinching */}
-            {handLock.metrics.pinch > 0.75 && aimRayRef.current && (
+            {/* Laser beam while AIMING (brighter while pinching) */}
+            {aimRayRef.current && (
               <line>
                 <bufferGeometry>
                   <bufferAttribute
@@ -720,7 +752,11 @@ function Scene({
                     ]}
                   />
                 </bufferGeometry>
-                <lineBasicMaterial color="#ffffff" transparent opacity={0.85} />
+                <lineBasicMaterial
+                  color={handLock.metrics.pinch > 0.75 ? '#ffffff' : aimHit ? '#fbbf24' : '#60a5fa'}
+                  transparent
+                  opacity={handLock.metrics.pinch > 0.75 ? 0.9 : 0.35}
+                />
               </line>
             )}
           </>
