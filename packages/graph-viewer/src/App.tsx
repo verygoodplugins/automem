@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Settings } from 'lucide-react'
 
 // Build version - update this when making significant changes
@@ -15,8 +15,20 @@ import { GestureDebugOverlay } from './components/GestureDebugOverlay'
 import { Hand2DOverlay } from './components/Hand2DOverlay'
 import { HandControlOverlay } from './components/HandControlOverlay'
 import { SettingsPanel } from './components/settings'
+import { BookmarksPanel } from './components/BookmarksPanel'
+import { PathfindingOverlay } from './components/PathfindingOverlay'
+import { TimelineBar } from './components/TimelineBar'
+import { RadialMenu } from './components/RadialMenu'
+import { LassoOverlay } from './components/LassoOverlay'
+import { SelectionActions } from './components/SelectionActions'
+import { TagCloud } from './components/TagCloud'
 import { useHandLockAndGrab } from './hooks/useHandLockAndGrab'
+import { useTagCloud } from './hooks/useTagCloud'
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation'
+import { useBookmarks, type Bookmark } from './hooks/useBookmarks'
+import { usePathfinding } from './hooks/usePathfinding'
+import { useTimeTravel } from './hooks/useTimeTravel'
+import { useSoundEffects } from './hooks/useSoundEffects'
 import type {
   GraphNode,
   FilterState,
@@ -103,6 +115,49 @@ export default function App() {
   const [debugOverlayVisible, setDebugOverlayVisible] = useState(false)
   const [performanceMode, setPerformanceMode] = useState(false)
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false)
+
+  // Focus/Spotlight mode state
+  const [focusModeEnabled, setFocusModeEnabled] = useState(false)
+  const [focusTransition, setFocusTransition] = useState(0) // 0-1 for smooth transition
+  const focusTransitionRef = useRef<number>(0)
+  const focusAnimationRef = useRef<number | null>(null)
+
+  // Radial menu state
+  const [radialMenuState, setRadialMenuState] = useState<{
+    isOpen: boolean
+    node: GraphNode | null
+    position: { x: number; y: number }
+  }>({
+    isOpen: false,
+    node: null,
+    position: { x: 0, y: 0 },
+  })
+
+  // Lasso selection state
+  const [lassoState, setLassoState] = useState<{
+    isDrawing: boolean
+    points: { x: number; y: number }[]
+    selectedIds: Set<string>
+  }>({
+    isDrawing: false,
+    points: [],
+    selectedIds: new Set(),
+  })
+  const canvasContainerRef = useRef<HTMLDivElement>(null)
+  const getNodesInPolygonRef = useRef<((polygon: { x: number; y: number }[]) => string[]) | null>(null)
+
+  // Tag cloud state
+  const [tagCloudVisible, setTagCloudVisible] = useState(false)
+
+  // Cleanup focus animation on unmount
+  useEffect(() => {
+    return () => {
+      if (focusAnimationRef.current) {
+        cancelAnimationFrame(focusAnimationRef.current)
+      }
+    }
+  }, [])
+
   const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
   // Tracking source - check URL param on mount, then allow UI toggle
   const [trackingSource, setTrackingSource] = useState<'mediapipe' | 'iphone'>(() => {
@@ -159,6 +214,19 @@ export default function App() {
   // Reset view callback - will be set by GraphCanvas
   const [resetViewFn, setResetViewFn] = useState<(() => void) | null>(null)
 
+  // Bookmarks
+  const {
+    bookmarks,
+    addBookmark,
+    updateBookmark,
+    deleteBookmark,
+    getBookmarkByIndex,
+  } = useBookmarks()
+
+  // Camera state and navigation for bookmarks
+  const [cameraStateForBookmarks, setCameraStateForBookmarks] = useState({ x: 0, y: 0, z: 150, zoom: 1 })
+  const navigateForBookmarksRef = useRef<((x: number, y: number) => void) | null>(null)
+
   const handleGestureStateChange = useCallback((state: GestureState) => {
     setGestureState(state)
   }, [])
@@ -172,17 +240,206 @@ export default function App() {
     enabled: isAuthenticated,
   })
 
+  // Tag Cloud
+  const tagCloud = useTagCloud({
+    nodes: data?.nodes ?? [],
+    typeColors: data?.meta?.type_colors,
+  })
+
+  // Sound Effects
+  const sound = useSoundEffects()
+
+  // Pathfinding
+  const pathfinding = usePathfinding({
+    nodes: (data?.nodes ?? []) as any,
+    edges: data?.edges ?? [],
+  })
+
+  // Time Travel
+  const timeTravel = useTimeTravel({
+    nodes: data?.nodes ?? [],
+    enabled: isAuthenticated,
+  })
+
+  // Play sound when time travel is activated
+  const prevTimeTravelActive = useRef(timeTravel.isActive)
+  useEffect(() => {
+    if (timeTravel.isActive !== prevTimeTravelActive.current) {
+      if (timeTravel.isActive) {
+        sound.playTimeTravel()
+      }
+      prevTimeTravelActive.current = timeTravel.isActive
+    }
+  }, [timeTravel.isActive, sound])
+
+  // Get source and target nodes for pathfinding overlay
+  const pathSourceNode = useMemo(() => {
+    if (!pathfinding.sourceId || !data?.nodes) return null
+    return (data.nodes as any[]).find(n => n.id === pathfinding.sourceId) ?? null
+  }, [pathfinding.sourceId, data?.nodes])
+
+  const pathTargetNode = useMemo(() => {
+    if (!pathfinding.targetId || !data?.nodes) return null
+    return (data.nodes as any[]).find(n => n.id === pathfinding.targetId) ?? null
+  }, [pathfinding.targetId, data?.nodes])
+
+  // Bookmark handlers (must be after data is defined)
+  const handleSaveBookmark = useCallback(() => {
+    addBookmark(
+      { x: cameraStateForBookmarks.x, y: cameraStateForBookmarks.y, z: cameraStateForBookmarks.z },
+      cameraStateForBookmarks.zoom,
+      selectedNode?.id
+    )
+    sound.playBookmark()
+  }, [addBookmark, cameraStateForBookmarks, selectedNode, sound])
+
+  const handleNavigateToBookmark = useCallback((bookmark: Bookmark) => {
+    navigateForBookmarksRef.current?.(bookmark.position.x, bookmark.position.y)
+    // If bookmark has a selected node, select it
+    if (bookmark.selectedNodeId && data?.nodes) {
+      const node = data.nodes.find(n => n.id === bookmark.selectedNodeId)
+      if (node) {
+        setSelectedNode(node)
+      }
+    }
+  }, [data?.nodes])
+
+  const handleRenameBookmark = useCallback((id: string, name: string) => {
+    updateBookmark(id, { name })
+  }, [updateBookmark])
+
+  // Quick navigate to bookmark by number (1-9)
+  const handleQuickNavigate = useCallback((index: number) => {
+    const bookmark = getBookmarkByIndex(index)
+    if (bookmark) {
+      handleNavigateToBookmark(bookmark)
+    }
+  }, [getBookmarkByIndex, handleNavigateToBookmark])
+
   const handleNodeSelect = useCallback((node: GraphNode | null) => {
+    // If we're in path selection mode and a node is clicked, complete the path
+    if (pathfinding.isSelectingTarget && node) {
+      pathfinding.completePathSelection(node.id)
+      sound.playPathFound()
+      return
+    }
+    if (node) {
+      sound.playSelect(node.importance ?? 0.5)
+    }
+    setSelectedNode(node)
+  }, [pathfinding.isSelectingTarget, pathfinding.completePathSelection, sound])
+
+  const handleNodeHover = useCallback((node: GraphNode | null) => {
+    if (node) {
+      sound.playHover()
+    }
+    setHoveredNode(node)
+  }, [sound])
+
+  // Radial menu handlers
+  const handleNodeContextMenu = useCallback((node: GraphNode, screenPosition: { x: number; y: number }) => {
+    setRadialMenuState({
+      isOpen: true,
+      node,
+      position: screenPosition,
+    })
+    setSelectedNode(node) // Also select the node
+  }, [])
+
+  const handleCloseRadialMenu = useCallback(() => {
+    setRadialMenuState(prev => ({
+      ...prev,
+      isOpen: false,
+    }))
+  }, [])
+
+  const handleCopyNodeId = useCallback((nodeId: string) => {
+    // Could show a toast notification here
+    console.log('Copied node ID:', nodeId)
+  }, [])
+
+  const handleViewNodeContent = useCallback((node: GraphNode) => {
+    // Select the node to show in inspector
     setSelectedNode(node)
   }, [])
 
-  const handleNodeHover = useCallback((node: GraphNode | null) => {
-    setHoveredNode(node)
+  // Lasso selection handlers
+  const handleLassoStart = useCallback((x: number, y: number) => {
+    setLassoState(prev => ({
+      ...prev,
+      isDrawing: true,
+      points: [{ x, y }],
+    }))
   }, [])
 
-  const handleSearch = useCallback((term: string) => {
-    setSearchTerm(term)
+  const handleLassoMove = useCallback((x: number, y: number) => {
+    setLassoState(prev => {
+      if (!prev.isDrawing) return prev
+      // Only add point if moved enough to avoid too many points
+      const lastPoint = prev.points[prev.points.length - 1]
+      if (lastPoint) {
+        const dist = Math.sqrt(Math.pow(x - lastPoint.x, 2) + Math.pow(y - lastPoint.y, 2))
+        if (dist < 3) return prev
+      }
+      return {
+        ...prev,
+        points: [...prev.points, { x, y }],
+      }
+    })
   }, [])
+
+  const handleLassoEnd = useCallback(() => {
+    setLassoState(prev => {
+      if (!prev.isDrawing || prev.points.length < 3) {
+        return { ...prev, isDrawing: false, points: [] }
+      }
+
+      // Call GraphCanvas to find nodes in the polygon
+      const nodesInPolygon = getNodesInPolygonRef.current?.(prev.points) ?? []
+      const newSelectedIds = new Set(prev.selectedIds)
+      nodesInPolygon.forEach(id => newSelectedIds.add(id))
+
+      // Play lasso sound if nodes were selected
+      if (nodesInPolygon.length > 0) {
+        sound.playLasso()
+      }
+
+      return {
+        isDrawing: false,
+        points: [],
+        selectedIds: newSelectedIds,
+      }
+    })
+  }, [sound])
+
+  const handleLassoCancel = useCallback(() => {
+    setLassoState(prev => ({
+      ...prev,
+      isDrawing: false,
+      points: [],
+    }))
+  }, [])
+
+  const handleClearLassoSelection = useCallback(() => {
+    setLassoState(prev => ({
+      ...prev,
+      selectedIds: new Set(),
+    }))
+  }, [])
+
+  // Get selected nodes from lasso
+  const lassoSelectedNodes = useMemo(() => {
+    if (!data?.nodes || lassoState.selectedIds.size === 0) return []
+    return data.nodes.filter(n => lassoState.selectedIds.has(n.id))
+  }, [data?.nodes, lassoState.selectedIds])
+
+  const handleSearch = useCallback((term: string) => {
+    // Play search sound on typing (only if term changed and is not empty)
+    if (term.length > 0) {
+      sound.playSearch()
+    }
+    setSearchTerm(term)
+  }, [sound])
 
   const handleFilterChange = useCallback((newFilters: Partial<FilterState>) => {
     setFilters(prev => ({ ...prev, ...newFilters }))
@@ -216,7 +473,51 @@ export default function App() {
     setDisplayConfig(prev => ({ ...prev, showLabels: !prev.showLabels }))
   }, [])
 
+  // Focus mode toggle with smooth transition animation
+  const handleToggleFocusMode = useCallback(() => {
+    setFocusModeEnabled(prev => {
+      const newEnabled = !prev
+
+      // Cancel any existing animation
+      if (focusAnimationRef.current) {
+        cancelAnimationFrame(focusAnimationRef.current)
+      }
+
+      const startTime = performance.now()
+      const duration = 400 // 400ms transition
+      const startValue = focusTransitionRef.current
+      const endValue = newEnabled ? 1 : 0
+
+      const animate = (currentTime: number) => {
+        const elapsed = currentTime - startTime
+        const progress = Math.min(elapsed / duration, 1)
+
+        // Ease out cubic for smooth deceleration
+        const eased = 1 - Math.pow(1 - progress, 3)
+        const newTransition = startValue + (endValue - startValue) * eased
+
+        focusTransitionRef.current = newTransition
+        setFocusTransition(newTransition)
+
+        if (progress < 1) {
+          focusAnimationRef.current = requestAnimationFrame(animate)
+        } else {
+          focusAnimationRef.current = null
+        }
+      }
+
+      focusAnimationRef.current = requestAnimationFrame(animate)
+      return newEnabled
+    })
+  }, [])
+
   // Keyboard navigation
+  const handleStartPathfindingFromKeyboard = useCallback(() => {
+    if (selectedNode) {
+      pathfinding.startPathSelection(selectedNode.id)
+    }
+  }, [selectedNode, pathfinding.startPathSelection])
+
   const { shortcuts } = useKeyboardNavigation({
     nodes: (data?.nodes ?? []) as any,
     selectedNode,
@@ -224,11 +525,30 @@ export default function App() {
     onReheat: handleReheat,
     onToggleSettings: () => setSettingsPanelOpen(prev => !prev),
     onToggleLabels: handleToggleLabels,
+    onToggleFocus: handleToggleFocusMode,
+    onSaveBookmark: handleSaveBookmark,
+    onQuickNavigate: handleQuickNavigate,
+    onStartPathfinding: handleStartPathfindingFromKeyboard,
+    onCancelPathfinding: pathfinding.cancelPathSelection,
+    isPathSelecting: pathfinding.isSelectingTarget,
     enabled: true,
   })
 
   // Log available shortcuts for debugging (remove in production)
   void shortcuts
+
+  // Toggle tag cloud with 'T' key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === 't' || e.key === 'T') {
+        setTagCloudVisible(prev => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   if (!isAuthenticated) {
     return <TokenPrompt onSubmit={setToken} />
@@ -259,6 +579,34 @@ export default function App() {
         <span className="text-xs text-slate-500 hidden lg:inline" title="Build version">
           {BUILD_VERSION}
         </span>
+
+        {/* Focus/Spotlight Mode Toggle */}
+        <button
+          onClick={handleToggleFocusMode}
+          className={`
+            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
+            ${focusModeEnabled
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg shadow-amber-500/25'
+              : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+            }
+          `}
+          title={focusModeEnabled ? 'Disable focus mode (F)' : 'Enable focus mode - spotlight selected node (F)'}
+        >
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v2" />
+            <path d="M12 20v2" />
+            <path d="M2 12h2" />
+            <path d="M20 12h2" />
+            <path d="m4.93 4.93 1.41 1.41" />
+            <path d="m17.66 17.66 1.41 1.41" />
+            <path d="m17.66 6.34 1.41-1.41" />
+            <path d="m4.93 19.07 1.41-1.41" />
+          </svg>
+          <span className="text-sm font-medium hidden sm:inline">
+            {focusModeEnabled ? 'Focus' : 'Focus'}
+          </span>
+        </button>
 
         {/* Performance Mode Toggle */}
         <button
@@ -340,7 +688,7 @@ export default function App() {
         <PanelGroup direction="horizontal" className="flex-1">
           {/* Graph Canvas */}
           <Panel defaultSize={settingsPanelOpen ? 50 : 75} minSize={40}>
-            <div className="h-full relative">
+            <div ref={canvasContainerRef} className="h-full relative">
               {isLoading && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
                   <div className="flex flex-col items-center gap-3">
@@ -373,6 +721,7 @@ export default function App() {
                 searchTerm={searchTerm}
                 onNodeSelect={handleNodeSelect}
                 onNodeHover={handleNodeHover}
+                onNodeContextMenu={handleNodeContextMenu}
                 gestureControlEnabled={gestureControlEnabled}
                 trackingSource={trackingSource}
                 onGestureStateChange={handleGestureStateChange}
@@ -385,6 +734,21 @@ export default function App() {
                 typeColors={data?.meta?.type_colors}
                 onReheatReady={setReheatFn}
                 onResetViewReady={setResetViewFn}
+                focusModeEnabled={focusModeEnabled}
+                focusTransition={focusTransition}
+                onCameraStateForBookmarks={setCameraStateForBookmarks}
+                onNavigateForBookmarks={(fn) => { navigateForBookmarksRef.current = fn }}
+                pathNodeIds={pathfinding.pathNodeIds}
+                pathEdgeKeys={pathfinding.pathEdgeKeys}
+                pathSourceId={pathfinding.sourceId}
+                pathTargetId={pathfinding.targetId}
+                isPathSelecting={pathfinding.isSelectingTarget}
+                timeTravelActive={timeTravel.isActive}
+                timeTravelVisibleNodes={timeTravel.visibleNodes}
+                onGetNodesInPolygon={(fn) => { getNodesInPolygonRef.current = fn }}
+                lassoSelectedIds={lassoState.selectedIds}
+                tagFilteredNodeIds={tagCloud.filteredNodeIds}
+                hasTagFilter={tagCloud.hasActiveFilter}
               />
 
               {/* 2D Hand Overlay (on top of canvas, life-size) */}
@@ -415,6 +779,70 @@ export default function App() {
                 bridgeIps={trackingInfo.bridgeIps}
                 phonePort={trackingInfo.phonePort}
               />
+
+              {/* Bookmarks Panel */}
+              <BookmarksPanel
+                bookmarks={bookmarks}
+                onNavigate={handleNavigateToBookmark}
+                onDelete={deleteBookmark}
+                onRename={handleRenameBookmark}
+                onSaveBookmark={handleSaveBookmark}
+                visible={true}
+              />
+
+              {/* Pathfinding Overlay */}
+              <PathfindingOverlay
+                isSelectingTarget={pathfinding.isSelectingTarget}
+                sourceNode={pathSourceNode}
+                targetNode={pathTargetNode}
+                currentPath={pathfinding.currentPath}
+                pathCount={pathfinding.pathCount}
+                activePath={pathfinding.activePath}
+                onNextPath={pathfinding.nextPath}
+                onPreviousPath={pathfinding.previousPath}
+                onCancel={pathfinding.cancelPathSelection}
+                onClear={pathfinding.clearPath}
+                visible={pathfinding.isSelectingTarget || pathfinding.hasPath}
+              />
+
+              {/* Time Travel Timeline */}
+              <TimelineBar
+                isActive={timeTravel.isActive}
+                isPlaying={timeTravel.isPlaying}
+                currentTime={timeTravel.currentTime}
+                minTime={timeTravel.minTime}
+                maxTime={timeTravel.maxTime}
+                progress={timeTravel.progress}
+                playbackSpeed={timeTravel.playbackSpeed}
+                visibleCount={timeTravel.visibleCount}
+                totalCount={timeTravel.totalCount}
+                onToggleActive={timeTravel.toggleActive}
+                onTogglePlay={timeTravel.togglePlay}
+                onSetProgress={timeTravel.setProgress}
+                onStepForward={timeTravel.stepForward}
+                onStepBackward={timeTravel.stepBackward}
+                onCycleSpeed={timeTravel.cycleSpeed}
+                onGoToStart={timeTravel.goToStart}
+                onGoToEnd={timeTravel.goToEnd}
+              />
+
+              {/* Lasso Selection Overlay */}
+              <LassoOverlay
+                isDrawing={lassoState.isDrawing}
+                points={lassoState.points}
+                selectedCount={lassoState.selectedIds.size}
+                onStartDraw={handleLassoStart}
+                onMoveDraw={handleLassoMove}
+                onEndDraw={handleLassoEnd}
+                onCancelDraw={handleLassoCancel}
+              />
+
+              {/* Selection Actions (bulk operations) */}
+              <SelectionActions
+                selectedNodes={lassoSelectedNodes}
+                allEdges={data?.edges ?? []}
+                onClearSelection={handleClearLassoSelection}
+              />
             </div>
           </Panel>
 
@@ -427,6 +855,8 @@ export default function App() {
               node={selectedNode}
               onClose={() => setSelectedNode(null)}
               onNavigate={handleNodeSelect}
+              onStartPathfinding={pathfinding.startPathSelection}
+              isPathSelecting={pathfinding.isSelectingTarget}
             />
           </Panel>
         </PanelGroup>
@@ -448,8 +878,44 @@ export default function App() {
           onClusterConfigChange={handleClusterConfigChange}
           relationshipVisibility={relationshipVisibility}
           onRelationshipVisibilityChange={handleRelationshipVisibilityChange}
+          soundEnabled={sound.settings.enabled}
+          onSoundEnabledChange={sound.setEnabled}
+          soundVolume={sound.settings.masterVolume}
+          onSoundVolumeChange={sound.setMasterVolume}
         />
       </div>
+
+      {/* Radial Menu (context menu for nodes) */}
+      {radialMenuState.isOpen && radialMenuState.node && (
+        <RadialMenu
+          node={radialMenuState.node}
+          position={radialMenuState.position}
+          onClose={handleCloseRadialMenu}
+          onToggleFocus={handleToggleFocusMode}
+          onStartPath={pathfinding.startPathSelection}
+          onViewContent={handleViewNodeContent}
+          onCopyId={handleCopyNodeId}
+          focusModeEnabled={focusModeEnabled}
+        />
+      )}
+
+      {/* Tag Cloud (press 'T' to toggle) */}
+      <TagCloud
+        tags={tagCloud.tags}
+        filteredTags={tagCloud.filteredTags}
+        selectedTags={tagCloud.selectedTags}
+        filterMode={tagCloud.filterMode}
+        filteredCount={tagCloud.filteredNodeIds.size}
+        totalCount={data?.nodes?.length ?? 0}
+        onToggleTag={tagCloud.toggleTag}
+        onClearSelection={tagCloud.clearSelection}
+        onToggleFilterMode={tagCloud.toggleFilterMode}
+        onSearchChange={tagCloud.setSearchTerm}
+        searchTerm={tagCloud.searchTerm}
+        typeColors={data?.meta?.type_colors}
+        visible={tagCloudVisible}
+        onClose={() => setTagCloudVisible(false)}
+      />
     </div>
   )
 }

@@ -61,3 +61,14 @@ body {
 .glow-purple {
   box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
 }
+
+/* Lasso selection animated dash */
+@keyframes dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.animate-dash {
+  animation: dash 0.5s linear infinite;
+}

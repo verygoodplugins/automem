@@ -1,4 +1,4 @@
-import { X, RotateCcw, Zap } from 'lucide-react'
+import { X, RotateCcw, Zap, Volume2 } from 'lucide-react'
 import { SettingsSection } from './SettingsSection'
 import { SliderControl } from './SliderControl'
 import { ToggleControl } from './ToggleControl'
@@ -61,6 +61,11 @@ interface SettingsPanelProps {
   // Relationship visibility
   relationshipVisibility: RelationshipVisibility
   onRelationshipVisibilityChange: (visibility: Partial<RelationshipVisibility>) => void
+  // Audio settings
+  soundEnabled: boolean
+  onSoundEnabledChange: (enabled: boolean) => void
+  soundVolume: number
+  onSoundVolumeChange: (volume: number) => void
 }
 
 export function SettingsPanel({
@@ -79,6 +84,10 @@ export function SettingsPanel({
   onClusterConfigChange,
   relationshipVisibility,
   onRelationshipVisibilityChange,
+  soundEnabled,
+  onSoundEnabledChange,
+  soundVolume,
+  onSoundVolumeChange,
 }: SettingsPanelProps) {
   if (!isOpen) return null
 
@@ -397,6 +406,39 @@ export function SettingsPanel({
               <RotateCcw className="w-3 h-3" />
               Reset
             </button>
+          </div>
+        </SettingsSection>
+
+        {/* Audio Section */}
+        <SettingsSection title="Audio" defaultOpen={false}>
+          <div className="space-y-3">
+            <ToggleControl
+              label="Sound Effects"
+              checked={soundEnabled}
+              onChange={onSoundEnabledChange}
+              description="Play sounds for interactions"
+            />
+
+            {soundEnabled && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-slate-400" />
+                  <SliderControl
+                    label="Master Volume"
+                    value={soundVolume}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onChange={onSoundVolumeChange}
+                    formatValue={(v) => `${Math.round(v * 100)}%`}
+                  />
+                </div>
+
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  Sounds include: node select, hover, zoom, search typing, bookmarks, and more.
+                </p>
+              </div>
+            )}
           </div>
         </SettingsSection>
       </div>

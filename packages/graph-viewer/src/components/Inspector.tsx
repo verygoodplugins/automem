@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, Clock, Tag, ArrowRight, Sparkles, Edit2, Save, Trash2 } from 'lucide-react'
+import { X, Clock, Tag, ArrowRight, Sparkles, Edit2, Save, Trash2, Route } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useGraphNeighbors } from '../hooks/useGraphData'
 import { updateMemory, deleteMemory } from '../api/client'
@@ -9,9 +9,11 @@ interface InspectorProps {
   node: GraphNode | null
   onClose: () => void
   onNavigate: (node: GraphNode) => void
+  onStartPathfinding?: (nodeId: string) => void
+  isPathSelecting?: boolean
 }
 
-export function Inspector({ node, onClose, onNavigate }: InspectorProps) {
+export function Inspector({ node, onClose, onNavigate, onStartPathfinding, isPathSelecting }: InspectorProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editedImportance, setEditedImportance] = useState(0)
   const queryClient = useQueryClient()
@@ -288,7 +290,23 @@ export function Inspector({ node, onClose, onNavigate }: InspectorProps) {
       </div>
 
       {/* Footer Actions */}
-      <div className="flex-shrink-0 p-4 border-t border-white/5">
+      <div className="flex-shrink-0 p-4 border-t border-white/5 space-y-2">
+        {/* Find Path Button */}
+        {onStartPathfinding && (
+          <button
+            onClick={() => onStartPathfinding(node.id)}
+            disabled={isPathSelecting}
+            className={`w-full flex items-center justify-center gap-2 py-2 text-sm rounded-lg transition-colors ${
+              isPathSelecting
+                ? 'text-cyan-400 bg-cyan-500/20 cursor-not-allowed'
+                : 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10'
+            }`}
+          >
+            <Route className="w-4 h-4" />
+            {isPathSelecting ? 'Click destination node...' : 'Find Path To...'}
+          </button>
+        )}
+
         <button
           onClick={handleDelete}
           disabled={deleteMutation.isPending}

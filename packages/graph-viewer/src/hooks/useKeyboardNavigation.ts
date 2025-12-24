@@ -9,6 +9,12 @@ interface UseKeyboardNavigationOptions {
   onResetView?: () => void
   onToggleSettings?: () => void
   onToggleLabels?: () => void
+  onToggleFocus?: () => void
+  onSaveBookmark?: () => void
+  onQuickNavigate?: (index: number) => void
+  onStartPathfinding?: () => void
+  onCancelPathfinding?: () => void
+  isPathSelecting?: boolean
   enabled?: boolean
 }
 
@@ -31,6 +37,12 @@ export function useKeyboardNavigation({
   onResetView,
   onToggleSettings,
   onToggleLabels,
+  onToggleFocus,
+  onSaveBookmark,
+  onQuickNavigate,
+  onStartPathfinding,
+  onCancelPathfinding,
+  isPathSelecting,
   enabled = true,
 }: UseKeyboardNavigationOptions) {
   const nodesRef = useRef(nodes)
@@ -140,6 +152,22 @@ export function useKeyboardNavigation({
         return
       }
 
+      // Handle Cmd/Ctrl+B for save bookmark
+      if ((event.metaKey || event.ctrlKey) && event.key === 'b') {
+        event.preventDefault()
+        onSaveBookmark?.()
+        return
+      }
+
+      // Handle number keys 1-9 for quick bookmark navigation
+      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+        const num = parseInt(event.key)
+        if (num >= 1 && num <= 9) {
+          onQuickNavigate?.(num)
+          return
+        }
+      }
+
       const shortcuts: KeyboardShortcuts = {
         // Navigation
         ArrowUp: {
@@ -187,9 +215,24 @@ export function useKeyboardNavigation({
 
         // Selection
         Escape: {
-          description: 'Deselect',
+          description: 'Deselect / Cancel pathfinding',
           action: () => {
+            // If pathfinding is in progress, cancel it first
+            if (isPathSelecting) {
+              onCancelPathfinding?.()
+              return
+            }
             onNodeSelect(null)
+          },
+        },
+
+        // Pathfinding
+        p: {
+          description: 'Start pathfinding from selected node',
+          action: () => {
+            if (!event.metaKey && !event.ctrlKey && selectedRef.current) {
+              onStartPathfinding?.()
+            }
           },
         },
 
@@ -224,6 +267,14 @@ export function useKeyboardNavigation({
             }
           },
         },
+        f: {
+          description: 'Toggle focus mode',
+          action: () => {
+            if (!event.metaKey && !event.ctrlKey) {
+              onToggleFocus?.()
+            }
+          },
+        },
 
         // Help
         '?': {
@@ -234,11 +285,15 @@ export function useKeyboardNavigation({
             console.log('  Arrow keys: Navigate between nodes')
             console.log('  Shift+Arrow Up/Down: Navigate in Z axis')
             console.log('  Tab/Shift+Tab: Cycle through nodes')
-            console.log('  Escape: Deselect')
+            console.log('  Escape: Deselect / Cancel pathfinding')
+            console.log('  P: Find path from selected node')
             console.log('  R: Reheat simulation')
             console.log('  Shift+R: Reset view')
             console.log('  ,: Toggle settings')
             console.log('  L: Toggle labels')
+            console.log('  F: Toggle focus mode')
+            console.log('  Cmd+B: Save bookmark')
+            console.log('  1-9: Quick navigate to bookmark')
           },
         },
       }
@@ -248,7 +303,7 @@ export function useKeyboardNavigation({
         shortcut.action()
       }
     },
-    [enabled, findNodeInDirection, navigateSequential, onNodeSelect, onReheat, onResetView, onToggleSettings, onToggleLabels]
+    [enabled, findNodeInDirection, navigateSequential, onNodeSelect, onReheat, onResetView, onToggleSettings, onToggleLabels, onToggleFocus, onSaveBookmark, onQuickNavigate, onStartPathfinding, onCancelPathfinding, isPathSelecting]
   )
 
   // Attach event listener
@@ -268,11 +323,15 @@ export function useKeyboardNavigation({
       { key: 'Shift+↑↓', description: 'Navigate in Z axis' },
       { key: 'Tab', description: 'Next node' },
       { key: 'Shift+Tab', description: 'Previous node' },
-      { key: 'Esc', description: 'Deselect' },
+      { key: 'Esc', description: 'Deselect / Cancel pathfinding' },
+      { key: 'P', description: 'Find path from selected node' },
       { key: 'R', description: 'Reheat simulation' },
       { key: 'Shift+R', description: 'Reset view' },
       { key: ',', description: 'Toggle settings' },
       { key: 'L', description: 'Toggle labels' },
+      { key: 'F', description: 'Toggle focus mode' },
+      { key: 'Cmd+B', description: 'Save bookmark' },
+      { key: '1-9', description: 'Quick navigate to bookmark' },
       { key: '?', description: 'Show help' },
     ],
   }

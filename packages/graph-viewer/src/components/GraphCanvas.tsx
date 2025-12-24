@@ -39,9 +39,12 @@ import type {
 } from '../lib/types'
 import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_CLUSTER_CONFIG, DEFAULT_RELATIONSHIP_VISIBILITY } from '../lib/types'
 import { useClusterDetection } from '../hooks/useClusterDetection'
+import { useFocusMode, type NodeFocusState } from '../hooks/useFocusMode'
 import { ClusterBoundaries } from './ClusterBoundaries'
 import { SelectionHighlight, ConnectedPathsHighlight } from './SelectionHighlight'
 import { getEdgeStyle } from '../lib/edgeStyles'
+import { EdgeParticles } from './EdgeParticles'
+import { MiniMap } from './MiniMap'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
 
@@ -77,6 +80,7 @@ interface GraphCanvasProps {
   searchTerm: string
   onNodeSelect: (node: GraphNode | null) => void
   onNodeHover: (node: GraphNode | null) => void
+  onNodeContextMenu?: (node: GraphNode, screenPosition: { x: number; y: number }) => void
   gestureControlEnabled?: boolean
   trackingSource?: 'mediapipe' | 'iphone'
   onGestureStateChange?: (state: GestureState) => void
@@ -97,6 +101,26 @@ interface GraphCanvasProps {
   typeColors?: Record<string, string>
   onReheatReady?: (reheat: () => void) => void
   onResetViewReady?: (resetView: () => void) => void
+  focusModeEnabled?: boolean
+  focusTransition?: number
+  // Bookmarks: expose camera state and navigation to parent
+  onCameraStateForBookmarks?: (state: { x: number; y: number; z: number; zoom: number }) => void
+  onNavigateForBookmarks?: (fn: (x: number, y: number, z?: number) => void) => void
+  // Pathfinding: highlight path nodes and edges
+  pathNodeIds?: Set<string>
+  pathEdgeKeys?: Set<string>
+  pathSourceId?: string | null
+  pathTargetId?: string | null
+  isPathSelecting?: boolean
+  // Time Travel: filter nodes by timestamp
+  timeTravelActive?: boolean
+  timeTravelVisibleNodes?: Set<string>
+  // Lasso selection
+  onGetNodesInPolygon?: (fn: (polygon: { x: number; y: number }[]) => string[]) => void
+  lassoSelectedIds?: Set<string>
+  // Tag cloud filtering
+  tagFilteredNodeIds?: Set<string>
+  hasTagFilter?: boolean
 }
 
 export function GraphCanvas({
@@ -107,6 +131,7 @@ export function GraphCanvas({
   searchTerm,
   onNodeSelect,
   onNodeHover,
+  onNodeContextMenu,
   gestureControlEnabled = false,
   trackingSource: source = 'mediapipe',
   onGestureStateChange,
@@ -119,7 +144,42 @@ export function GraphCanvas({
   typeColors = {},
   onReheatReady,
   onResetViewReady,
+  focusModeEnabled = false,
+  focusTransition = 0,
+  onCameraStateForBookmarks,
+  onNavigateForBookmarks,
+  pathNodeIds,
+  pathEdgeKeys,
+  pathSourceId,
+  pathTargetId,
+  isPathSelecting,
+  timeTravelActive = false,
+  timeTravelVisibleNodes,
+  onGetNodesInPolygon,
+  lassoSelectedIds,
+  tagFilteredNodeIds,
+  hasTagFilter = false,
 }: GraphCanvasProps) {
+  // MiniMap state
+  const [cameraState, setCameraState] = useState({ x: 0, y: 0, z: 150, zoom: 1 })
+  const [layoutNodesForMiniMap, setLayoutNodesForMiniMap] = useState<SimulationNode[]>([])
+  const navigateToRef = useRef<((x: number, y: number) => void) | null>(null)
+
+  const handleMiniMapNavigate = useCallback((x: number, y: number) => {
+    navigateToRef.current?.(x, y)
+  }, [])
+
+  // Forward camera state to parent for bookmarks
+  useEffect(() => {
+    onCameraStateForBookmarks?.(cameraState)
+  }, [cameraState, onCameraStateForBookmarks])
+
+  // Callback to capture and expose navigation function
+  const handleNavigateToReady = useCallback((fn: (x: number, y: number) => void) => {
+    navigateToRef.current = fn
+    onNavigateForBookmarks?.(fn)
+  }, [onNavigateForBookmarks])
+
   // Get iPhone WebSocket URL (from URL param or default)
   const iphoneUrl = useIPhoneUrl()
 
@@ -167,40 +227,91 @@ export function GraphCanvas({
   }, [onTrackingInfoChange, source, iphoneUrl, iphoneConnected, hasLiDAR, phoneConnected, bridgeIps, phonePort])
 
   return (
-    <Canvas
-      camera={{ position: [0, 0, 150], fov: 60 }}
-      gl={{ antialias: !performanceMode, alpha: true, powerPreference: 'high-performance' }}
-      style={{ background: 'linear-gradient(to bottom, #0a0a0f 0%, #0f0f18 100%)' }}
-      frameloop={performanceMode ? 'demand' : 'always'}
-    >
-      <Scene
-        nodes={nodes}
-        edges={edges}
+    <div className="relative w-full h-full">
+      <Canvas
+        camera={{ position: [0, 0, 150], fov: 60 }}
+        gl={{ antialias: !performanceMode, alpha: true, powerPreference: 'high-performance' }}
+        style={{ background: 'linear-gradient(to bottom, #0a0a0f 0%, #0f0f18 100%)' }}
+        frameloop={performanceMode ? 'demand' : 'always'}
+      >
+        <Scene
+          nodes={nodes}
+          edges={edges}
+          selectedNode={selectedNode}
+          hoveredNode={hoveredNode}
+          searchTerm={searchTerm}
+          onNodeSelect={onNodeSelect}
+          onNodeHover={onNodeHover}
+          onNodeContextMenu={onNodeContextMenu}
+          gestureState={gestureState}
+          gestureControlEnabled={gestureControlEnabled && gesturesActive}
+          performanceMode={performanceMode}
+          forceConfig={forceConfig}
+          displayConfig={displayConfig}
+          clusterConfig={clusterConfig}
+          relationshipVisibility={relationshipVisibility}
+          typeColors={typeColors}
+          onReheatReady={onReheatReady}
+          onResetViewReady={onResetViewReady}
+          focusModeEnabled={focusModeEnabled}
+          focusTransition={focusTransition}
+          onCameraStateChange={setCameraState}
+          onLayoutNodesChange={setLayoutNodesForMiniMap}
+          onNavigateToReady={handleNavigateToReady}
+          pathNodeIds={pathNodeIds}
+          pathEdgeKeys={pathEdgeKeys}
+          pathSourceId={pathSourceId}
+          pathTargetId={pathTargetId}
+          isPathSelecting={isPathSelecting}
+          timeTravelActive={timeTravelActive}
+          timeTravelVisibleNodes={timeTravelVisibleNodes}
+          onGetNodesInPolygon={onGetNodesInPolygon}
+          lassoSelectedIds={lassoSelectedIds}
+          tagFilteredNodeIds={tagFilteredNodeIds}
+          hasTagFilter={hasTagFilter}
+        />
+      </Canvas>
+
+      {/* MiniMap Navigator */}
+      <MiniMap
+        nodes={layoutNodesForMiniMap}
         selectedNode={selectedNode}
-        hoveredNode={hoveredNode}
-        searchTerm={searchTerm}
-        onNodeSelect={onNodeSelect}
-        onNodeHover={onNodeHover}
-        gestureState={gestureState}
-        gestureControlEnabled={gestureControlEnabled && gesturesActive}
-        performanceMode={performanceMode}
-        forceConfig={forceConfig}
-        displayConfig={displayConfig}
-        clusterConfig={clusterConfig}
-        relationshipVisibility={relationshipVisibility}
-        typeColors={typeColors}
-        onReheatReady={onReheatReady}
-        onResetViewReady={onResetViewReady}
+        cameraPosition={cameraState}
+        cameraZoom={cameraState.zoom}
+        onNavigate={handleMiniMapNavigate}
+        visible={!performanceMode && layoutNodesForMiniMap.length > 0}
+        size={140}
       />
-    </Canvas>
+    </div>
   )
 }
 
-interface SceneProps extends Omit<GraphCanvasProps, 'onGestureStateChange' | 'onTrackingInfoChange'> {
+interface SceneProps extends Omit<GraphCanvasProps, 'onGestureStateChange' | 'onTrackingInfoChange' | 'onNodeContextMenu'> {
+  onNodeContextMenu?: (node: GraphNode, screenPosition: { x: number; y: number }) => void
   gestureState: GestureState
   gestureControlEnabled: boolean
   performanceMode: boolean
   onResetViewReady?: (resetView: () => void) => void
+  focusModeEnabled: boolean
+  focusTransition: number
+  onCameraStateChange?: (state: { x: number; y: number; z: number; zoom: number }) => void
+  onLayoutNodesChange?: (nodes: SimulationNode[]) => void
+  onNavigateToReady?: (fn: (x: number, y: number) => void) => void
+  // Pathfinding
+  pathNodeIds?: Set<string>
+  pathEdgeKeys?: Set<string>
+  pathSourceId?: string | null
+  pathTargetId?: string | null
+  isPathSelecting?: boolean
+  // Time Travel
+  timeTravelActive?: boolean
+  timeTravelVisibleNodes?: Set<string>
+  // Lasso selection
+  onGetNodesInPolygon?: (fn: (polygon: { x: number; y: number }[]) => string[]) => void
+  lassoSelectedIds?: Set<string>
+  // Tag cloud filtering
+  tagFilteredNodeIds?: Set<string>
+  hasTagFilter?: boolean
 }
 
 function Scene({
@@ -211,6 +322,7 @@ function Scene({
   searchTerm,
   onNodeSelect,
   onNodeHover,
+  onNodeContextMenu,
   gestureState,
   gestureControlEnabled,
   performanceMode,
@@ -221,8 +333,34 @@ function Scene({
   typeColors = {},
   onReheatReady,
   onResetViewReady,
+  focusModeEnabled,
+  focusTransition,
+  onCameraStateChange,
+  onLayoutNodesChange,
+  onNavigateToReady,
+  pathNodeIds,
+  pathEdgeKeys,
+  pathSourceId,
+  pathTargetId,
+  isPathSelecting: _isPathSelecting,
+  timeTravelActive = false,
+  timeTravelVisibleNodes,
+  onGetNodesInPolygon,
+  lassoSelectedIds,
+  tagFilteredNodeIds,
+  hasTagFilter = false,
 }: SceneProps) {
+  const { camera } = useThree()
   const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
+
+  // Focus mode - compute depth-based opacity for spotlight effect
+  const focusStates = useFocusMode(
+    layoutNodes,
+    edges,
+    selectedNode?.id ?? null,
+    focusModeEnabled,
+    focusTransition
+  )
 
   // Cluster detection
   const clusters = useClusterDetection({
@@ -255,10 +393,129 @@ function Scene({
       onResetViewReady(resetView)
     }
   }, [onResetViewReady, resetView])
+
+  // MiniMap: Send layout nodes when they change
+  useEffect(() => {
+    onLayoutNodesChange?.(layoutNodes)
+  }, [layoutNodes, onLayoutNodesChange])
+
+  // MiniMap: Navigate to function
+  const navigateTo = useCallback((x: number, y: number) => {
+    if (controlsRef.current) {
+      // Smoothly animate the OrbitControls target
+      const controls = controlsRef.current
+      const startTarget = controls.target.clone()
+      const endTarget = new THREE.Vector3(x, y, 0)
+      const startTime = performance.now()
+      const duration = 400
+
+      const animate = () => {
+        const elapsed = performance.now() - startTime
+        const progress = Math.min(elapsed / duration, 1)
+        const eased = 1 - Math.pow(1 - progress, 3) // ease out cubic
+
+        controls.target.lerpVectors(startTarget, endTarget, eased)
+        controls.update()
+
+        if (progress < 1) {
+          requestAnimationFrame(animate)
+        }
+      }
+      requestAnimationFrame(animate)
+    }
+  }, [])
+
+  useEffect(() => {
+    onNavigateToReady?.(navigateTo)
+  }, [navigateTo, onNavigateToReady])
+
+  // Get nodes inside a screen-space polygon (for lasso selection)
+  const getNodesInPolygon = useCallback((polygon: { x: number; y: number }[]) => {
+    if (polygon.length < 3) return []
+
+    // Get the canvas size from the renderer
+    const canvas = document.querySelector('canvas')
+    if (!canvas) return []
+    const rect = canvas.getBoundingClientRect()
+
+    // Point-in-polygon test using ray casting
+    const isPointInPolygon = (point: { x: number; y: number }) => {
+      let inside = false
+      const n = polygon.length
+      for (let i = 0, j = n - 1; i < n; j = i++) {
+        const xi = polygon[i].x
+        const yi = polygon[i].y
+        const xj = polygon[j].x
+        const yj = polygon[j].y
+        if (yi > point.y !== yj > point.y && point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi) {
+          inside = !inside
+        }
+      }
+      return inside
+    }
+
+    // Project each node to screen space and check if inside polygon
+    const result: string[] = []
+    layoutNodes.forEach((node) => {
+      const worldPos = new THREE.Vector3(node.x ?? 0, node.y ?? 0, node.z ?? 0)
+      const projected = worldPos.project(camera)
+      const screenX = ((projected.x + 1) / 2) * rect.width
+      const screenY = ((-projected.y + 1) / 2) * rect.height
+
+      if (isPointInPolygon({ x: screenX, y: screenY })) {
+        result.push(node.id)
+      }
+    })
+
+    return result
+  }, [layoutNodes, camera])
+
+  // Expose getNodesInPolygon to parent
+  useEffect(() => {
+    onGetNodesInPolygon?.(getNodesInPolygon)
+  }, [getNodesInPolygon, onGetNodesInPolygon])
+
   const [autoRotate, setAutoRotate] = useState(false)
   const groupRef = useRef<THREE.Group>(null)
   const controlsRef = useRef<OrbitControlsImpl>(null)
-  const { camera } = useThree()
+
+  // MiniMap: Track camera state and update periodically
+  const lastCameraUpdateRef = useRef(0)
+  const lastCameraPosRef = useRef({ x: 0, y: 0, z: 150 })
+  useFrame(() => {
+    if (!onCameraStateChange) return
+
+    const now = performance.now()
+    // Only update every 100ms to avoid excessive rerenders
+    if (now - lastCameraUpdateRef.current < 100) return
+
+    // Get camera position (accounting for OrbitControls target)
+    const target = controlsRef.current?.target ?? new THREE.Vector3(0, 0, 0)
+    const pos = { x: target.x, y: target.y, z: camera.position.z }
+
+    // Check if position changed significantly
+    const lastPos = lastCameraPosRef.current
+    const dist = Math.sqrt(
+      Math.pow(pos.x - lastPos.x, 2) +
+      Math.pow(pos.y - lastPos.y, 2) +
+      Math.pow(pos.z - lastPos.z, 2)
+    )
+
+    if (dist > 0.5) {
+      lastCameraPosRef.current = pos
+      lastCameraUpdateRef.current = now
+
+      // Calculate zoom from camera distance
+      const zoom = 150 / Math.max(camera.position.z, 10)
+
+      onCameraStateChange({
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        zoom,
+      })
+    }
+  })
 
   // Expanded node state (for the bloom animation)
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
@@ -657,6 +914,20 @@ function Scene({
           relationshipVisibility={relationshipVisibility}
           linkThickness={displayConfig.linkThickness}
           linkOpacity={displayConfig.linkOpacity}
+          focusStates={focusStates}
+          pathEdgeKeys={pathEdgeKeys}
+          timeTravelActive={timeTravelActive}
+          timeTravelVisibleNodes={timeTravelVisibleNodes}
+          tagFilteredNodeIds={tagFilteredNodeIds}
+          hasTagFilter={hasTagFilter}
+        />
+
+        {/* Ambient edge particles - flowing along edges */}
+        <EdgeParticles
+          edges={edges}
+          nodes={layoutNodes}
+          enabled={!performanceMode}
+          particlesPerEdge={2}
         />
 
         {/* Instanced nodes - single draw call for all nodes */}
@@ -669,7 +940,17 @@ function Scene({
           connectedIds={connectedIds}
           onNodeSelect={onNodeSelect}
           onNodeHover={onNodeHover}
+          onNodeContextMenu={onNodeContextMenu}
           nodeSizeScale={displayConfig.nodeSizeScale}
+          focusStates={focusStates}
+          pathNodeIds={pathNodeIds}
+          pathSourceId={pathSourceId}
+          pathTargetId={pathTargetId}
+          timeTravelActive={timeTravelActive}
+          timeTravelVisibleNodes={timeTravelVisibleNodes}
+          lassoSelectedIds={lassoSelectedIds}
+          tagFilteredNodeIds={tagFilteredNodeIds}
+          hasTagFilter={hasTagFilter}
         />
 
         {/* Selection highlight - glowing ring around selected node */}
@@ -790,6 +1071,12 @@ interface BatchedEdgesProps {
   relationshipVisibility: RelationshipVisibility
   linkThickness: number
   linkOpacity: number
+  focusStates: Map<string, NodeFocusState>
+  pathEdgeKeys?: Set<string>
+  timeTravelActive?: boolean
+  timeTravelVisibleNodes?: Set<string>
+  tagFilteredNodeIds?: Set<string>
+  hasTagFilter?: boolean
 }
 
 function BatchedEdges({
@@ -800,6 +1087,12 @@ function BatchedEdges({
   relationshipVisibility,
   linkThickness,
   linkOpacity,
+  focusStates,
+  pathEdgeKeys,
+  timeTravelActive = false,
+  timeTravelVisibleNodes,
+  tagFilteredNodeIds,
+  hasTagFilter = false,
 }: BatchedEdgesProps) {
   const lineRef = useRef<THREE.LineSegments>(null)
 
@@ -817,16 +1110,39 @@ function BatchedEdges({
       const targetNode = nodeById.get(edge.target)
       if (!sourceNode || !targetNode) return
 
+      // Time Travel: hide edges when either endpoint is outside time window
+      if (timeTravelActive && timeTravelVisibleNodes) {
+        const sourceVisible = timeTravelVisibleNodes.has(edge.source)
+        const targetVisible = timeTravelVisibleNodes.has(edge.target)
+        if (!sourceVisible || !targetVisible) return
+      }
+
+      // Tag filtering: dim edges when both endpoints are not in the filtered set
+      // Only hide if BOTH are outside the filter to keep edges from matching nodes visible
+      if (hasTagFilter && tagFilteredNodeIds) {
+        const sourceInFilter = tagFilteredNodeIds.has(edge.source)
+        const targetInFilter = tagFilteredNodeIds.has(edge.target)
+        if (!sourceInFilter && !targetInFilter) return
+      }
+
       visibleCount++
+
+      // Check if this edge is part of the pathfinding result
+      const edgeKey1 = `${edge.source}-${edge.target}`
+      const edgeKey2 = `${edge.target}-${edge.source}`
+      const isInPath = pathEdgeKeys?.has(edgeKey1) || pathEdgeKeys?.has(edgeKey2)
+      const hasActivePath = pathEdgeKeys && pathEdgeKeys.size > 0
 
       const isHighlighted =
         selectedNode &&
         (edge.source === selectedNode.id || edge.target === selectedNode.id)
 
       const isDimmed =
-        selectedNode &&
+        (selectedNode &&
         !connectedIds.has(edge.source) &&
-        !connectedIds.has(edge.target)
+        !connectedIds.has(edge.target)) ||
+        // Dim non-path edges when path is active
+        (hasActivePath && !isInPath)
 
       // Source vertex
       positions.push(sourceNode.x ?? 0, sourceNode.y ?? 0, sourceNode.z ?? 0)
@@ -836,12 +1152,22 @@ function BatchedEdges({
       // Get style for this edge type
       const style = getEdgeStyle(edge.type)
 
-      // Use style color instead of edge.color
-      const color = new THREE.Color(style.color)
+      // Use style color, or bright cyan for path edges
+      const color = isInPath
+        ? new THREE.Color('#00d4ff')  // Bright electric cyan for path
+        : new THREE.Color(style.color)
+
+      // Get focus mode opacity for both endpoints (use minimum)
+      const sourceFocus = focusStates.get(edge.source)?.opacity ?? 1
+      const targetFocus = focusStates.get(edge.target)?.opacity ?? 1
+      const focusOpacity = Math.min(sourceFocus, targetFocus)
 
       // Calculate alpha based on state and style
-      let alpha = style.opacity * linkOpacity
-      if (isDimmed) {
+      let alpha = style.opacity * linkOpacity * focusOpacity
+      if (isInPath) {
+        // Path edges are always bright
+        alpha = 1.0
+      } else if (isDimmed) {
         alpha *= 0.1
       } else if (isHighlighted) {
         alpha = Math.min(1, alpha * 1.5)
@@ -861,7 +1187,7 @@ function BatchedEdges({
       colors: new Float32Array(colors),
       visibleCount,
     }
-  }, [edges, nodeById, selectedNode, connectedIds, relationshipVisibility, linkOpacity])
+  }, [edges, nodeById, selectedNode, connectedIds, relationshipVisibility, linkOpacity, focusStates, pathEdgeKeys, timeTravelActive, timeTravelVisibleNodes, tagFilteredNodeIds, hasTagFilter])
 
   // Update geometry when positions/colors change
   useEffect(() => {
@@ -903,7 +1229,17 @@ interface InstancedNodesProps {
   connectedIds: Set<string>
   onNodeSelect: (node: GraphNode | null) => void
   onNodeHover: (node: GraphNode | null) => void
+  onNodeContextMenu?: (node: GraphNode, screenPosition: { x: number; y: number }) => void
   nodeSizeScale?: number
+  focusStates: Map<string, NodeFocusState>
+  pathNodeIds?: Set<string>
+  pathSourceId?: string | null
+  pathTargetId?: string | null
+  timeTravelActive?: boolean
+  timeTravelVisibleNodes?: Set<string>
+  lassoSelectedIds?: Set<string>
+  tagFilteredNodeIds?: Set<string>
+  hasTagFilter?: boolean
 }
 
 function InstancedNodes({
@@ -915,10 +1251,32 @@ function InstancedNodes({
   connectedIds,
   onNodeSelect,
   onNodeHover,
+  onNodeContextMenu,
   nodeSizeScale = 1.0,
+  focusStates,
+  pathNodeIds,
+  pathSourceId,
+  pathTargetId,
+  timeTravelActive = false,
+  timeTravelVisibleNodes,
+  lassoSelectedIds,
+  tagFilteredNodeIds,
+  hasTagFilter = false,
 }: InstancedNodesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const { camera, raycaster, pointer } = useThree()
+
+  // Refs to hold latest time travel state (needed for useFrame closure)
+  const timeTravelActiveRef = useRef(timeTravelActive)
+  const timeTravelVisibleNodesRef = useRef(timeTravelVisibleNodes)
+  timeTravelActiveRef.current = timeTravelActive
+  timeTravelVisibleNodesRef.current = timeTravelVisibleNodes
+
+  // Refs for tag filtering state (needed for useFrame closure)
+  const hasTagFilterRef = useRef(hasTagFilter)
+  const tagFilteredNodeIdsRef = useRef(tagFilteredNodeIds)
+  hasTagFilterRef.current = hasTagFilter
+  tagFilteredNodeIdsRef.current = tagFilteredNodeIds
 
   // Shared geometry and material - created once
   const geometry = useMemo(() => new THREE.SphereGeometry(1, SPHERE_SEGMENTS, SPHERE_SEGMENTS), [])
@@ -962,13 +1320,49 @@ function InstancedNodes({
       const isSelected = selectedNode?.id === node.id
       const isHovered = hoveredNode?.id === node.id
       const isSearchMatch = !!searchTerm && matchingIds.has(node.id)
+      const isLassoSelected = lassoSelectedIds?.has(node.id) ?? false
+
+      // Pathfinding state
+      const isPathSource = pathSourceId === node.id
+      const isPathTarget = pathTargetId === node.id
+      const isInPath = pathNodeIds?.has(node.id) ?? false
+      const hasActivePath = pathNodeIds && pathNodeIds.size > 0
+
+      // Time Travel visibility - hide nodes outside the time window (use refs for fresh values)
+      const isVisibleInTimeTravel = !timeTravelActiveRef.current || (timeTravelVisibleNodesRef.current?.has(node.id) ?? true)
+
+      // Tag cloud filtering - use refs for fresh values
+      const isMatchingTagFilter = !hasTagFilterRef.current || (tagFilteredNodeIdsRef.current?.has(node.id) ?? true)
+
       const isDimmed = !!(
         (selectedNode && !connectedIds.has(node.id)) ||
-        (searchTerm && !matchingIds.has(node.id))
+        (searchTerm && !matchingIds.has(node.id)) ||
+        // Dim non-path nodes when path is active
+        (hasActivePath && !isInPath) ||
+        // Dim nodes not matching tag filter
+        (hasTagFilterRef.current && !isMatchingTagFilter)
       )
 
-      // Target scale based on state
-      const targetScale = isSelected ? 1.5 : isHovered ? 1.2 : 1
+      // Get focus mode opacity
+      const focusOpacity = focusStates.get(node.id)?.opacity ?? 1
+
+      // Target scale based on state - path nodes get a size boost
+      // Time travel: nodes outside the time window scale to 0
+      let targetScale: number
+      if (!isVisibleInTimeTravel) {
+        targetScale = 0 // Hide node by scaling to 0
+      } else {
+        targetScale = isSelected ? 1.5 : isHovered ? 1.2 : 1
+        if (isPathSource || isPathTarget) {
+          targetScale = Math.max(targetScale, 1.4)
+        } else if (isInPath) {
+          targetScale = Math.max(targetScale, 1.2)
+        }
+        // Lasso selected nodes get a slight boost
+        if (isLassoSelected && !isSelected) {
+          targetScale = Math.max(targetScale, 1.15)
+        }
+      }
       targetScalesRef.current[i] = targetScale
 
       // Smooth scale animation
@@ -976,12 +1370,31 @@ function InstancedNodes({
       const newScale = THREE.MathUtils.lerp(currentScale, targetScale, delta * 10)
       scalesRef.current[i] = newScale
 
-      // Apply pulsing for search matches
+      // Apply pulsing for search matches, path nodes, and lasso selected
       let finalScale = newScale
       if (isSearchMatch) {
         const pulse = 1 + Math.sin(performance.now() * 0.004) * 0.15
         finalScale *= pulse
       }
+      if (isInPath && !isPathSource && !isPathTarget) {
+        // Subtle pulse for intermediate path nodes
+        const pulse = 1 + Math.sin(performance.now() * 0.003) * 0.08
+        finalScale *= pulse
+      }
+      if (isLassoSelected && !isSelected) {
+        // Gentle pulse for lasso selected nodes
+        const pulse = 1 + Math.sin(performance.now() * 0.0025) * 0.06
+        finalScale *= pulse
+      }
+
+      // Node breathing - ambient pulse based on importance
+      // Phase offset based on node ID to prevent synchronized breathing
+      const nodePhase = (node.id.charCodeAt(0) + node.id.charCodeAt(node.id.length - 1)) * 0.1
+      const breathingSpeed = 0.6 + node.importance * 0.2 // Faster for important nodes
+      const breathingAmplitude = 0.015 + node.importance * 0.025 // Bigger pulse for important nodes
+      const breathingTime = performance.now() * 0.001 * breathingSpeed
+      const breathing = 1 + Math.sin(breathingTime + nodePhase) * breathingAmplitude
+      finalScale *= breathing
 
       // Set position and scale (apply nodeSizeScale)
       tempPosition.set(node.x ?? 0, node.y ?? 0, node.z ?? 0)
@@ -989,13 +1402,46 @@ function InstancedNodes({
       tempMatrix.compose(tempPosition, tempQuaternion, tempScale)
       mesh.setMatrixAt(i, tempMatrix)
 
-      // Set color with dimming
-      tempColor.set(node.color)
-      if (isDimmed) {
+      // Set color with special handling for path nodes and lasso selection
+      if (isPathSource) {
+        // Source node: bright green
+        tempColor.set('#22c55e')
+      } else if (isPathTarget) {
+        // Target node: bright red/orange
+        tempColor.set('#ef4444')
+      } else if (isInPath) {
+        // Intermediate path nodes: electric cyan
+        tempColor.set('#00d4ff')
+      } else if (isLassoSelected) {
+        // Lasso selected nodes: blue tint
+        tempColor.set(node.color)
+        // Add blue tint by lerping toward blue
+        const blueColor = new THREE.Color('#3b82f6')
+        tempColor.lerp(blueColor, 0.35)
+      } else {
+        // Normal node color
+        tempColor.set(node.color)
+      }
+
+      if (isDimmed && !isInPath && !isLassoSelected) {
         tempColor.multiplyScalar(0.15)
-      } else if (isSelected || isHovered || isSearchMatch) {
-        // Brighten selected/hovered nodes
-        tempColor.multiplyScalar(1.2)
+      } else if (isSelected || isHovered || isSearchMatch || isInPath || isLassoSelected) {
+        // Brighten selected/hovered/path/lasso nodes
+        tempColor.multiplyScalar(isInPath ? 1.3 : isLassoSelected ? 1.15 : 1.2)
+      } else {
+        // Recent nodes glow brighter - subtle pulsing brightness
+        const nodeTimestamp = node.timestamp ? new Date(node.timestamp).getTime() : 0
+        const daysSinceCreation = (Date.now() - nodeTimestamp) / (1000 * 60 * 60 * 24)
+        if (daysSinceCreation < 7) {
+          // Nodes within last 7 days get a subtle brightness boost
+          const recentnessFactor = 1 - (daysSinceCreation / 7) // 1 for brand new, 0 for 7 days old
+          const glowPulse = 1 + Math.sin(performance.now() * 0.002 + nodePhase) * 0.1 * recentnessFactor
+          tempColor.multiplyScalar(1 + recentnessFactor * 0.15 * glowPulse)
+        }
+      }
+      // Apply focus mode opacity (but don't dim path or lasso selected nodes)
+      if (!isInPath && !isLassoSelected) {
+        tempColor.multiplyScalar(focusOpacity)
       }
       mesh.setColorAt(i, tempColor)
     })
@@ -1051,12 +1497,42 @@ function InstancedNodes({
     [camera, pointer, raycaster, nodeIndexMap, onNodeSelect, selectedNode]
   )
 
+  const handleContextMenu = useCallback(
+    (event: ThreeEvent<MouseEvent>) => {
+      if (!meshRef.current || !onNodeContextMenu) return
+
+      // Prevent the browser's default context menu
+      event.nativeEvent.preventDefault()
+
+      raycaster.setFromCamera(pointer, camera)
+      const intersects = raycaster.intersectObject(meshRef.current)
+
+      if (intersects.length > 0) {
+        const instanceId = intersects[0].instanceId
+        if (instanceId !== undefined) {
+          const node = nodeIndexMap.get(instanceId)
+          if (node) {
+            event.stopPropagation()
+            // Get screen position from the native event
+            const screenPosition = {
+              x: event.nativeEvent.clientX,
+              y: event.nativeEvent.clientY,
+            }
+            onNodeContextMenu(node, screenPosition)
+          }
+        }
+      }
+    },
+    [camera, pointer, raycaster, nodeIndexMap, onNodeContextMenu]
+  )
+
   return (
     <instancedMesh
       ref={meshRef}
       args={[geometry, material, nodes.length]}
       onPointerMove={handlePointerMove}
       onClick={handleClick}
+      onContextMenu={handleContextMenu}
       frustumCulled={true}
     />
   )
