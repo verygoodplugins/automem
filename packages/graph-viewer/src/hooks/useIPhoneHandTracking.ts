@@ -12,28 +12,36 @@ import type { GestureState, HandLandmarks, PinchRay } from './useHandGestures'
 import type { NormalizedLandmarkList } from '@mediapipe/hands'
 
 // iPhone landmark names to MediaPipe indices
+// Vision framework uses abbreviated keys: VNHLK + finger letter + joint
+// W=wrist, T=thumb, I=index, M=middle, R=ring, P=pinky (little)
 const LANDMARK_MAP: Record<string, number> = {
-  'VNHLKJWRIST': 0,
-  'VNHLKJTHUMBCMC': 1,
-  'VNHLKJTHUMBMP': 2,
-  'VNHLKJTHUMBIP': 3,
-  'VNHLKJTHUMBTIP': 4,
-  'VNHLKJINDEXMCP': 5,
-  'VNHLKJINDEXPIP': 6,
-  'VNHLKJINDEXDIP': 7,
-  'VNHLKJINDEXTIP': 8,
-  'VNHLKJMIDDLEMCP': 9,
-  'VNHLKJMIDDLEPIP': 10,
-  'VNHLKJMIDDLEDIP': 11,
-  'VNHLKJMIDDLETIP': 12,
-  'VNHLKJRINGMCP': 13,
-  'VNHLKJRINGPIP': 14,
-  'VNHLKJRINGDIP': 15,
-  'VNHLKJRINGTIP': 16,
-  'VNHLKJLITTLEMCP': 17,
-  'VNHLKJLITTLEPIP': 18,
-  'VNHLKJLITTLEDIP': 19,
-  'VNHLKJLITTLETIP': 20,
+  // Wrist
+  'VNHLKWRI': 0,
+  // Thumb (T)
+  'VNHLKTCMC': 1,
+  'VNHLKTMP': 2,
+  'VNHLKTIP': 3,
+  'VNHLKTTIP': 4,
+  // Index (I)
+  'VNHLKIMCP': 5,
+  'VNHLKIPIP': 6,
+  'VNHLKIDIP': 7,
+  'VNHLKITIP': 8,
+  // Middle (M)
+  'VNHLKMMCP': 9,
+  'VNHLKMPIP': 10,
+  'VNHLKMDIP': 11,
+  'VNHLKMTIP': 12,
+  // Ring (R)
+  'VNHLKRMCP': 13,
+  'VNHLKRPIP': 14,
+  'VNHLKRDIP': 15,
+  'VNHLKRTIP': 16,
+  // Little/Pinky (P)
+  'VNHLKPMCP': 17,
+  'VNHLKPPIP': 18,
+  'VNHLKPDIP': 19,
+  'VNHLKPTIP': 20,
 }
 
 interface IPhoneLandmark {
@@ -86,8 +94,8 @@ function distance3D(a: IPhoneLandmark, b: IPhoneLandmark): number {
 
 // Calculate pinch strength from iPhone landmarks
 function calculatePinchStrength(landmarks: Record<string, IPhoneLandmark>): number {
-  const thumbTip = landmarks['VNHLKJTHUMBTIP']
-  const indexTip = landmarks['VNHLKJINDEXTIP']
+  const thumbTip = landmarks['VNHLKTTIP']
+  const indexTip = landmarks['VNHLKITIP']
   if (!thumbTip || !indexTip) return 0
 
   const dist = distance3D(thumbTip, indexTip)
@@ -97,10 +105,10 @@ function calculatePinchStrength(landmarks: Record<string, IPhoneLandmark>): numb
 
 // Closed fist strength from fingertip-to-wrist distances
 function calculateGrabStrength(landmarks: Record<string, IPhoneLandmark>): number {
-  const wrist = landmarks['VNHLKJWRIST']
+  const wrist = landmarks['VNHLKWRI']
   if (!wrist) return 0
 
-  const tips = ['VNHLKJTHUMBTIP', 'VNHLKJINDEXTIP', 'VNHLKJMIDDLETIP', 'VNHLKJRINGTIP', 'VNHLKJLITTLETIP']
+  const tips = ['VNHLKTTIP', 'VNHLKITIP', 'VNHLKMTIP', 'VNHLKRTIP', 'VNHLKPTIP']
     .map((k) => landmarks[k])
     .filter(Boolean) as IPhoneLandmark[]
   if (tips.length < 3) return 0
@@ -110,29 +118,33 @@ function calculateGrabStrength(landmarks: Record<string, IPhoneLandmark>): numbe
   return Math.max(0, Math.min(1, 1 - (avg - 0.08) / 0.17))
 }
 
-// Calculate pinch ray from iPhone landmarks (with REAL depth!)
+// Calculate pinch ray from iPhone landmarks (with normalized depth)
 function calculatePinchRay(landmarks: Record<string, IPhoneLandmark>, hasLiDAR: boolean): PinchRay {
-  const thumbTip = landmarks['VNHLKJTHUMBTIP']
-  const indexTip = landmarks['VNHLKJINDEXTIP']
-  const wrist = landmarks['VNHLKJWRIST']
+  const thumbTip = landmarks['VNHLKTTIP']
+  const indexTip = landmarks['VNHLKITIP']
+  const wrist = landmarks['VNHLKWRI']
 
   if (!thumbTip || !indexTip || !wrist) {
     return { origin: { x: 0.5, y: 0.5, z: 0 }, direction: { x: 0, y: 0, z: -1 }, isValid: false, strength: 0 }
   }
 
+  // Normalize depths for consistent scaling
+  const thumbZ = normalizeLiDARDepth(thumbTip.z, hasLiDAR)
+  const indexZ = normalizeLiDARDepth(indexTip.z, hasLiDAR)
+  const wristZ = normalizeLiDARDepth(wrist.z, hasLiDAR)
+
   // Origin: midpoint between thumb and index tips
   const origin = {
     x: (thumbTip.x + indexTip.x) / 2,
     y: (thumbTip.y + indexTip.y) / 2,
-    // Use REAL depth from LiDAR if available!
-    z: hasLiDAR ? (thumbTip.z + indexTip.z) / 2 : 0,
+    z: (thumbZ + indexZ) / 2,
   }
 
   // Direction: from wrist through pinch point
   const rawDir = {
     x: origin.x - wrist.x,
     y: origin.y - wrist.y,
-    z: hasLiDAR ? (origin.z - wrist.z) : -0.5, // Default forward if no LiDAR
+    z: origin.z - wristZ || -0.1, // Small default forward if no difference
   }
 
   const length = Math.sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z)
@@ -146,8 +158,20 @@ function calculatePinchRay(landmarks: Record<string, IPhoneLandmark>, hasLiDAR: 
   return { origin, direction, isValid, strength }
 }
 
+// Normalize LiDAR depth (meters) to MediaPipe-like relative depth
+// LiDAR: 0.3m (close) to 3.0m (far) -> MediaPipe-like: 0.1 to -0.3
+// Reference: ~1.0m is "neutral" -> 0
+function normalizeLiDARDepth(depthMeters: number, hasLiDAR: boolean): number {
+  if (!hasLiDAR || depthMeters === 0) return 0
+
+  // Invert and scale: closer = positive, farther = negative
+  // At 1.0m -> 0, at 0.5m -> 0.1, at 2.0m -> -0.2
+  const normalized = (1.0 - depthMeters) * 0.2
+  return Math.max(-0.5, Math.min(0.5, normalized))
+}
+
 // Convert iPhone landmarks to MediaPipe-compatible format
-function convertToMediaPipeLandmarks(landmarks: Record<string, IPhoneLandmark>): NormalizedLandmarkList {
+function convertToMediaPipeLandmarks(landmarks: Record<string, IPhoneLandmark>, hasLiDAR: boolean = false): NormalizedLandmarkList {
   const result: NormalizedLandmarkList = []
 
   // Initialize all 21 landmarks with defaults
@@ -162,7 +186,8 @@ function convertToMediaPipeLandmarks(landmarks: Record<string, IPhoneLandmark>):
       result[idx] = {
         x: lm.x,
         y: lm.y,
-        z: lm.z,
+        // Normalize LiDAR depth to MediaPipe-like values
+        z: normalizeLiDARDepth(lm.z, hasLiDAR),
         visibility: 1,
       }
     }
@@ -213,6 +238,8 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
   const frameCountRef = useRef(0)
   const lastFpsTimeRef = useRef(Date.now())
   const reconnectTimeoutRef = useRef<number>()
+  const messageCountRef = useRef(0)
+  const hasLoggedLandmarksRef = useRef(false)
 
   // Process incoming hand data
   const processMessage = useCallback((data: IPhoneMessage) => {
@@ -235,7 +262,16 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
 
     // Process each hand
     for (const hand of data.hands) {
-      const landmarks = convertToMediaPipeLandmarks(hand.landmarks)
+      // Debug: log the actual landmark keys from iPhone (once per connection)
+      if (!hasLoggedLandmarksRef.current && Object.keys(hand.landmarks).length > 0) {
+        hasLoggedLandmarksRef.current = true
+        console.log('📍 iPhone landmark keys:', Object.keys(hand.landmarks))
+        console.log('📍 Expected keys:', Object.keys(LANDMARK_MAP))
+        const sampleEntry = Object.entries(hand.landmarks)[0]
+        console.log('📍 Sample landmark:', sampleEntry?.[0], '→', sampleEntry?.[1])
+      }
+
+      const landmarks = convertToMediaPipeLandmarks(hand.landmarks, hand.hasLiDARDepth)
       const handData: HandLandmarks = {
         landmarks,
         worldLandmarks: landmarks,
@@ -322,22 +358,35 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
         wsRef.current = ws
 
         ws.onopen = () => {
-          console.log('📱 Connected to iPhone hand tracking')
+          console.log('📱 Connected to iPhone hand tracking bridge')
           setIsConnected(true)
+          messageCountRef.current = 0
+          hasLoggedLandmarksRef.current = false
         }
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data) as IPhoneMessage
+            messageCountRef.current++
+
+            // Log first few messages and then periodically
+            if (messageCountRef.current <= 3 || messageCountRef.current % 100 === 0) {
+              console.log(`📨 Message #${messageCountRef.current}:`, data.type, data.hands?.length || 0, 'hands')
+            }
+
             if (data.type === 'hand_tracking') {
               processMessage(data)
             } else if (data.type === 'bridge_status') {
+              console.log('📡 Bridge status:', data)
               if (typeof data.phoneConnected === 'boolean') setPhoneConnected(data.phoneConnected)
               if (Array.isArray(data.ips)) setBridgeIps(data.ips)
               if (typeof data.phonePort === 'number') setPhonePort(data.phonePort)
+            } else {
+              // Debug: log unexpected message types
+              console.log('📨 Unknown message type:', data.type, data)
             }
           } catch (e) {
-            console.error('Parse error:', e)
+            console.error('Parse error:', e, event.data)
           }
         }
 

@@ -147,6 +147,13 @@ export function GraphCanvas({
   const gestureState = source === 'iphone' ? iphoneState : mediapipeState
   const gesturesActive = source === 'iphone' ? iphoneConnected : mediapipeActive
 
+  // Debug log when source changes
+  useEffect(() => {
+    console.log(`🎯 Tracking source: ${source}, enabled: ${gestureControlEnabled}, active: ${gesturesActive}`)
+    console.log(`   iPhone: connected=${iphoneConnected}, hands=${iphoneState.handsDetected}`)
+    console.log(`   MediaPipe: active=${mediapipeActive}, hands=${mediapipeState.handsDetected}`)
+  }, [source, gestureControlEnabled, gesturesActive, iphoneConnected, mediapipeActive, iphoneState.handsDetected, mediapipeState.handsDetected])
+
   useEffect(() => {
     onTrackingInfoChange?.({
       source,
@@ -568,9 +575,9 @@ function Scene({
     }
 
     // Decay smoothed values
-    smoothed.translateZ *= 0.9
-    smoothed.rotateX *= 0.9
-    smoothed.rotateY *= 0.9
+      smoothed.translateZ *= 0.9
+      smoothed.rotateX *= 0.9
+      smoothed.rotateY *= 0.9
 
     // Gentle recenter: slowly pull cloud back toward origin
     group.position.x *= (1 - RECENTER_STRENGTH)
@@ -652,14 +659,14 @@ function Scene({
 
         {/* LOD Labels - only for selected/hovered/nearby nodes */}
         {displayConfig.showLabels && (
-          <LODLabels
-            nodes={layoutNodes}
-            selectedNode={selectedNode}
-            hoveredNode={hoveredNode}
-            searchTerm={searchTerm}
+        <LODLabels
+          nodes={layoutNodes}
+          selectedNode={selectedNode}
+          hoveredNode={hoveredNode}
+          searchTerm={searchTerm}
             labelFadeDistance={displayConfig.labelFadeDistance}
-            matchingIds={matchingIds}
-          />
+          matchingIds={matchingIds}
+        />
         )}
 
         {/* Expanded Node View - shows when a node is selected via hand */}

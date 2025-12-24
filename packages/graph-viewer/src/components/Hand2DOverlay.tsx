@@ -583,19 +583,19 @@ function LaserBeam({ ray, stableRay, color, isGripped, hasHit = false }: LaserBe
     originX = (1 - ray.origin.x) * 100
     originY = ray.origin.y * 100
 
-    const centerX = 50
-    const centerY = 50
-    const handDeviationX = (originX - 50) * LASER_DEVIATION_SCALE
-    const handDeviationY = (originY - 50) * LASER_DEVIATION_SCALE
-    const targetX = centerX - handDeviationX * (1 - LASER_CENTER_BIAS)
-    const targetY = centerY - handDeviationY * (1 - LASER_CENTER_BIAS)
+  const centerX = 50
+  const centerY = 50
+  const handDeviationX = (originX - 50) * LASER_DEVIATION_SCALE
+  const handDeviationY = (originY - 50) * LASER_DEVIATION_SCALE
+  const targetX = centerX - handDeviationX * (1 - LASER_CENTER_BIAS)
+  const targetY = centerY - handDeviationY * (1 - LASER_CENTER_BIAS)
 
-    const toCenterX = targetX - originX
-    const toCenterY = targetY - originY
-    const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY)
-    const normX = dist > 0 ? toCenterX / dist : 0
-    const normY = dist > 0 ? toCenterY / dist : 0
-    const laserLength = dist
+  const toCenterX = targetX - originX
+  const toCenterY = targetY - originY
+  const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY)
+  const normX = dist > 0 ? toCenterX / dist : 0
+  const normY = dist > 0 ? toCenterY / dist : 0
+  const laserLength = dist
 
     endX = originX + normX * laserLength
     endY = originY + normY * laserLength
