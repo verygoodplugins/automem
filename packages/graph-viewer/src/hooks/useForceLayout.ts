@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import {
   forceSimulation,
   forceLink,
@@ -27,170 +27,159 @@ interface LayoutState {
   isSimulating: boolean
 }
 
-export function useForceLayout({
-  nodes,
-  edges,
-  forceConfig = DEFAULT_FORCE_CONFIG,
-}: UseForceLayoutOptions): LayoutState & { reheat: () => void } {
-  const simulationRef = useRef<ReturnType<typeof forceSimulation> | null>(null)
-  const [layoutNodes, setLayoutNodes] = useState<SimulationNode[]>([])
-  const [isSimulating, setIsSimulating] = useState(false)
-  const simNodesRef = useRef<SimulationNode[]>([])
+// Module-level cache that survives React Strict Mode and HMR
+// This is outside React's lifecycle so it persists across component recreation
+const layoutCache = {
+  signature: '',
+  nodes: [] as SimulationNode[],
+  simulation: null as ReturnType<typeof forceSimulation> | null,
+}
 
-  // Initialize simulation when nodes/edges change
-  useEffect(() => {
-    if (nodes.length === 0) {
-      setLayoutNodes([])
-      simNodesRef.current = []
-      return
-    }
+// Helper to create data signature
+function createDataSignature(nodes: GraphNode[]): string {
+  if (nodes.length === 0) return ''
+  return `${nodes.length}-${nodes[0]?.id}-${nodes[nodes.length - 1]?.id}`
+}
 
-    // Create simulation nodes with initial positions
-    const simNodes: SimulationNode[] = nodes.map((node, i) => {
-      // Check if we have existing position for this node
-      const existing = simNodesRef.current.find((n) => n.id === node.id)
-      if (existing) {
-        return {
-          ...node,
-          x: existing.x,
-          y: existing.y,
-          z: existing.z,
-          vx: existing.vx || 0,
-          vy: existing.vy || 0,
-          vz: existing.vz || 0,
-        }
-      }
-
-      // Use Fibonacci sphere for initial distribution of new nodes
-      const phi = Math.acos(1 - (2 * (i + 0.5)) / nodes.length)
-      const theta = Math.PI * (1 + Math.sqrt(5)) * i
-      const radius = 50 + (1 - node.importance) * 100 // High importance = center
-
+// Helper to run the force simulation (pure function, no React)
+function computeLayout(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  forceConfig: ForceConfig,
+  existingNodes: SimulationNode[]
+): SimulationNode[] {
+  // Create simulation nodes with initial positions
+  const simNodes: SimulationNode[] = nodes.map((node, i) => {
+    // Check if we have existing position for this node
+    const existing = existingNodes.find((n) => n.id === node.id)
+    if (existing) {
       return {
         ...node,
-        x: radius * Math.sin(phi) * Math.cos(theta),
-        y: radius * Math.sin(phi) * Math.sin(theta),
-        z: radius * Math.cos(phi),
-        vx: 0,
-        vy: 0,
-        vz: 0,
+        x: existing.x,
+        y: existing.y,
+        z: existing.z,
+        vx: existing.vx || 0,
+        vy: existing.vy || 0,
+        vz: existing.vz || 0,
       }
-    })
-
-    simNodesRef.current = simNodes
-
-    // Create node lookup
-    const nodeById = new Map(simNodes.map((n) => [n.id, n]))
-
-    // Create links
-    const links: SimulationLink[] = edges
-      .filter((e) => nodeById.has(e.source) && nodeById.has(e.target))
-      .map((e) => ({
-        source: e.source,
-        target: e.target,
-        strength: e.strength,
-        type: e.type,
-      }))
-
-    // Stop existing simulation
-    if (simulationRef.current) {
-      simulationRef.current.stop()
     }
 
-    // Create 3D force simulation
-    const simulation = forceSimulation(simNodes, 3)
-      .force(
-        'link',
-        forceLink(links)
-          .id((d: SimulationNode) => d.id)
-          .distance((d: SimulationLink) => {
-            const baseDistance = forceConfig.linkDistance
-            return baseDistance + (1 - d.strength) * baseDistance
-          })
-          .strength((d: SimulationLink) => d.strength * forceConfig.linkStrength)
-      )
-      .force('charge', forceManyBody().strength(forceConfig.chargeStrength))
-      .force('center', forceCenter(0, 0, 0).strength(forceConfig.centerStrength))
-      .force(
-        'collision',
-        forceCollide()
-          .radius((d: SimulationNode) => d.radius * forceConfig.collisionRadius)
-          .strength(0.7)
-      )
-      .force(
-        'radial',
-        forceRadial(
-          (d: SimulationNode) => 30 + (1 - d.importance) * 70,
-          0,
-          0,
-          0
-        ).strength(0.3)
-      )
-      .alphaDecay(0.02)
-      .velocityDecay(0.3)
+    // Use Fibonacci sphere for initial distribution of new nodes
+    const phi = Math.acos(1 - (2 * (i + 0.5)) / nodes.length)
+    const theta = Math.PI * (1 + Math.sqrt(5)) * i
+    const radius = 50 + (1 - node.importance) * 100 // High importance = center
 
-    simulationRef.current = simulation
-    setIsSimulating(true)
-
-    // Update state on each tick
-    simulation.on('tick', () => {
-      setLayoutNodes([...simNodes])
-    })
-
-    simulation.on('end', () => {
-      setIsSimulating(false)
-    })
-
-    // Run simulation for a bit then settle
-    simulation.alpha(1).restart()
-
-    return () => {
-      simulation.stop()
+    return {
+      ...node,
+      x: radius * Math.sin(phi) * Math.cos(theta),
+      y: radius * Math.sin(phi) * Math.sin(theta),
+      z: radius * Math.cos(phi),
+      vx: 0,
+      vy: 0,
+      vz: 0,
     }
-  }, [nodes, edges]) // Note: forceConfig changes handled separately
+  })
 
-  // Update forces when config changes (without resetting positions)
-  useEffect(() => {
-    const simulation = simulationRef.current
-    if (!simulation) return
+  // Create node lookup
+  const nodeById = new Map(simNodes.map((n) => [n.id, n]))
 
-    // Update charge force
-    const charge = simulation.force('charge') as ReturnType<typeof forceManyBody> | undefined
-    if (charge) {
-      charge.strength(forceConfig.chargeStrength)
-    }
+  // Create links
+  const links: SimulationLink[] = edges
+    .filter((e) => nodeById.has(e.source) && nodeById.has(e.target))
+    .map((e) => ({
+      source: e.source,
+      target: e.target,
+      strength: e.strength,
+      type: e.type,
+    }))
 
-    // Update center force
-    const center = simulation.force('center') as ReturnType<typeof forceCenter> | undefined
-    if (center) {
-      center.strength(forceConfig.centerStrength)
-    }
+  // Stop existing simulation
+  if (layoutCache.simulation) {
+    layoutCache.simulation.stop()
+  }
 
-    // Update collision force
-    const collision = simulation.force('collision') as ReturnType<typeof forceCollide> | undefined
-    if (collision) {
-      collision.radius((d: SimulationNode) => d.radius * forceConfig.collisionRadius)
-    }
-
-    // Update link force
-    const link = simulation.force('link') as ReturnType<typeof forceLink> | undefined
-    if (link) {
-      link
+  // Create 3D force simulation
+  const simulation = forceSimulation(simNodes, 3)
+    .force(
+      'link',
+      forceLink(links)
+        .id((d: SimulationNode) => d.id)
         .distance((d: SimulationLink) => {
           const baseDistance = forceConfig.linkDistance
           return baseDistance + (1 - d.strength) * baseDistance
         })
         .strength((d: SimulationLink) => d.strength * forceConfig.linkStrength)
+    )
+    .force('charge', forceManyBody().strength(forceConfig.chargeStrength))
+    .force('center', forceCenter(0, 0, 0).strength(forceConfig.centerStrength))
+    .force(
+      'collision',
+      forceCollide()
+        .radius((d: SimulationNode) => d.radius * forceConfig.collisionRadius)
+        .strength(0.7)
+    )
+    .force(
+      'radial',
+      forceRadial(
+        (d: SimulationNode) => 30 + (1 - d.importance) * 70,
+        0,
+        0,
+        0
+      ).strength(0.3)
+    )
+    .alphaDecay(0.02)
+    .velocityDecay(0.3)
+
+  // Store simulation reference in cache for reheat
+  layoutCache.simulation = simulation
+
+  // Run simulation synchronously for initial layout
+  const INITIAL_TICKS = 120
+  simulation.alpha(1)
+  for (let i = 0; i < INITIAL_TICKS; i++) {
+    simulation.tick()
+  }
+
+  return simNodes
+}
+
+export function useForceLayout({
+  nodes,
+  edges,
+  forceConfig = DEFAULT_FORCE_CONFIG,
+}: UseForceLayoutOptions): LayoutState & { reheat: () => void } {
+  const [isSimulating, setIsSimulating] = useState(false)
+
+  // Use useMemo to compute layout synchronously, with module-level caching
+  // This approach is immune to React Strict Mode double-invocation
+  const layoutNodes = useMemo(() => {
+    if (nodes.length === 0) {
+      layoutCache.signature = ''
+      layoutCache.nodes = []
+      return []
     }
 
-    // Gently reheat to apply changes
-    simulation.alpha(0.3).restart()
-    setIsSimulating(true)
-  }, [forceConfig])
+    const signature = createDataSignature(nodes)
 
+    // Check cache - if signature matches, return cached nodes
+    if (signature === layoutCache.signature && layoutCache.nodes.length > 0) {
+      return layoutCache.nodes
+    }
+
+    // Compute new layout
+    const computed = computeLayout(nodes, edges, forceConfig, layoutCache.nodes)
+
+    // Update cache
+    layoutCache.signature = signature
+    layoutCache.nodes = computed
+
+    return computed
+  }, [nodes, edges, forceConfig])
+
+  // Reheat function uses module-level cache
   const reheat = useCallback(() => {
-    if (simulationRef.current) {
-      simulationRef.current.alpha(0.5).restart()
+    if (layoutCache.simulation) {
+      layoutCache.simulation.alpha(0.5).restart()
       setIsSimulating(true)
     }
   }, [])

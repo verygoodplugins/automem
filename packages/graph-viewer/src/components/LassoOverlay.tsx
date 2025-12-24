@@ -7,7 +7,7 @@
  * - Shows selection count badge
  */
 
-import { useRef, useCallback, useEffect } from 'react'
+import { useRef, useCallback, useEffect, useState } from 'react'
 
 interface LassoPoint {
   x: number
@@ -34,13 +34,13 @@ export function LassoOverlay({
   onCancelDraw,
 }: LassoOverlayProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
-  const isShiftPressedRef = useRef(false)
+  const [isShiftPressed, setIsShiftPressed] = useState(false)
 
-  // Track Shift key state
+  // Track Shift key state - use state so we can control pointer-events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift') {
-        isShiftPressedRef.current = true
+        setIsShiftPressed(true)
       }
       if (e.key === 'Escape' && isDrawing) {
         onCancelDraw()
@@ -49,7 +49,7 @@ export function LassoOverlay({
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Shift') {
-        isShiftPressedRef.current = false
+        setIsShiftPressed(false)
         // If we were drawing when Shift is released, finish the drawing
         if (isDrawing) {
           onEndDraw()
@@ -68,9 +68,7 @@ export function LassoOverlay({
   // Handle mouse events
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      // Only start if Shift is held
-      if (!isShiftPressedRef.current) return
-
+      // Only start if Shift is held (overlay only receives events when shift is pressed)
       const rect = overlayRef.current?.getBoundingClientRect()
       if (!rect) return
 
@@ -106,12 +104,15 @@ export function LassoOverlay({
         }, '') + ' Z' // Close the path
       : ''
 
+  // Only capture mouse events when shift is pressed or actively drawing
+  const shouldCaptureMouse = isShiftPressed || isDrawing
+
   return (
     <div
       ref={overlayRef}
-      className="absolute inset-0 pointer-events-auto"
+      className={`absolute inset-0 ${shouldCaptureMouse ? 'pointer-events-auto' : 'pointer-events-none'}`}
       style={{
-        cursor: isShiftPressedRef.current || isDrawing ? 'crosshair' : 'default',
+        cursor: shouldCaptureMouse ? 'crosshair' : 'default',
         zIndex: 40,
       }}
       onMouseDown={handleMouseDown}

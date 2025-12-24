@@ -27,6 +27,7 @@ import { useHandGestures, GestureState } from '../hooks/useHandGestures'
 import { useIPhoneHandTracking } from '../hooks/useIPhoneHandTracking'
 import { useHandInteraction } from '../hooks/useHandInteraction'
 import { useHandLockAndGrab } from '../hooks/useHandLockAndGrab'
+import { useHandCursor } from '../hooks/useHandCursor'
 import { ExpandedNodeView } from './ExpandedNodeView'
 import type {
   GraphNode,
@@ -353,6 +354,9 @@ function Scene({
   const { camera } = useThree()
   const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
 
+  // DEBUG: Log node counts
+  console.log('🔍 Scene render - input nodes:', nodes.length, 'layoutNodes:', layoutNodes.length, 'isSimulating:', isSimulating)
+
   // Focus mode - compute depth-based opacity for spotlight effect
   const focusStates = useFocusMode(
     layoutNodes,
@@ -560,12 +564,16 @@ function Scene({
   // New UI: open-palm acquire/lock + fist grab controls (single-hand for now)
   const { lock: handLock, deltas: grabDeltas } = useHandLockAndGrab(gestureState, gestureControlEnabled)
 
-  // Pointing ray + pinch-click
-  const [aimHit, setAimHit] = useState<NodeHit | null>(null)
-  const [aimWorldPoint, setAimWorldPoint] = useState<{ x: number; y: number; z: number } | null>(null)
-  const aimRayRef = useRef<{ origin: THREE.Vector3; direction: THREE.Vector3 } | null>(null)
-  const pinchDownRef = useRef(false)
-  const pressedNodeRef = useRef<string | null>(null)
+  // Simplified hand cursor (replaces complex pointing/pinch logic)
+  const cursorState = useHandCursor(gestureState, { enabled: gestureControlEnabled })
+
+  // Track cursor hit state for rendering
+  const [cursorHit, setCursorHit] = useState<NodeHit | null>(null)
+  const [cursorWorldPoint, setCursorWorldPoint] = useState<{ x: number; y: number; z: number } | null>(null)
+  const raycasterRef = useRef(new THREE.Raycaster())
+
+  // Helper to check if hand is currently grabbing
+  const isGrabbing = handLock.mode === 'locked' && handLock.grabbed
 
   const nodeSpheres: NodeSphere[] = useMemo(() => {
     return layoutNodes.map((n) => ({
@@ -607,58 +615,40 @@ function Scene({
     [layoutNodes]
   )
 
-  // Pointing + pinch click (Meta-style: index points, pinch clicks; fist grabs)
+  // Simplified cursor-based pointing (index fingertip = cursor, pinch = click)
+  // Uses useHandCursor hook for immediate, no-lock cursor tracking
   useEffect(() => {
-    if (!gestureControlEnabled) return
-
-    if (handLock.mode !== 'locked') {
-      setAimHit(null)
-      setAimWorldPoint(null)
-      aimRayRef.current = null
-      pinchDownRef.current = false
-      pressedNodeRef.current = null
-      onNodeHover(null)
+    if (!gestureControlEnabled || !cursorState.isActive || !cursorState.screenPosition) {
+      setCursorHit(null)
+      setCursorWorldPoint(null)
+      // Only clear hover if we're in cursor mode and lost tracking
+      if (gestureControlEnabled && !cursorState.isActive) {
+        onNodeHover(null)
+      }
       return
     }
 
-    const m = handLock.metrics
-    const isAimPose = !handLock.grabbed && m.point > 0.55
-    if (!isAimPose) {
-      setAimHit(null)
-      setAimWorldPoint(null)
-      aimRayRef.current = null
-      pinchDownRef.current = false
-      pressedNodeRef.current = null
-      onNodeHover(null)
+    // Skip cursor updates when grabbing (fist gesture controls camera, not cursor)
+    if (isGrabbing) {
+      setCursorHit(null)
+      setCursorWorldPoint(null)
       return
     }
 
-    const handData = handLock.hand === 'right' ? gestureState.rightHand : gestureState.leftHand
-    if (!handData) return
+    const { x: ndcX, y: ndcY } = cursorState.screenPosition
 
-    const indexTip = handData.landmarks[8]
+    // Build ray from camera through NDC point
+    const raycaster = raycasterRef.current
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
 
-    // Convert to screen-space (0..1, origin bottom-left)
-    // Both MediaPipe and iPhone are in "camera image" coords (x left->right, y top->bottom).
-    // For intuitive interaction, mirror X like a selfie preview, and invert Y to bottom-left origin.
-    const screenX = 1 - indexTip.x
-    const screenY = 1 - indexTip.y
-
-    // Build a ray from the camera through the screen point
-    const ndcX = screenX * 2 - 1
-    const ndcY = screenY * 2 - 1
-    const worldPoint = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera)
-    const direction = worldPoint.sub(camera.position).normalize()
-    const origin = camera.position.clone()
-    aimRayRef.current = { origin, direction: direction.clone() }
-
-    // Hit test against spheres in graph GROUP local coordinates
+    // Hit test against node spheres using findNodeHit (works in group local space)
     const group = groupRef.current
     let hit: NodeHit | null = null
+
     if (group) {
       const inv = group.matrixWorld.clone().invert()
-      const localOrigin = origin.clone().applyMatrix4(inv)
-      const localDir = direction.clone().transformDirection(inv)
+      const localOrigin = raycaster.ray.origin.clone().applyMatrix4(inv)
+      const localDir = raycaster.ray.direction.clone().transformDirection(inv)
       hit = findNodeHit(
         {
           origin: { x: localOrigin.x, y: localOrigin.y, z: localOrigin.z },
@@ -669,8 +659,7 @@ function Scene({
       )
     }
 
-    // Snap-to-node: if we have a hit, bias the aim point to the node CENTER (feels "magnetic")
-    // This also makes click-open deterministic.
+    // Snap to node center for deterministic selection
     const snapNode = hit ? (nodeById.get(hit.nodeId) ?? null) : null
     const snappedHit: NodeHit | null =
       hit && snapNode
@@ -684,63 +673,52 @@ function Scene({
           }
         : hit
 
-    setAimHit(snappedHit)
+    setCursorHit(snappedHit)
 
-    // World-space aim point for rendering (snapped node center if present; otherwise plane intersection near graph center)
-    let aimPointWorld: THREE.Vector3 | null = null
+    // Calculate world-space cursor position for rendering
+    let worldPoint: THREE.Vector3 | null = null
     if (group && snappedHit) {
-      aimPointWorld = new THREE.Vector3(
+      worldPoint = new THREE.Vector3(
         snappedHit.point.x,
         snappedHit.point.y,
         snappedHit.point.z
       ).applyMatrix4(group.matrixWorld)
     } else if (group) {
+      // No hit - intersect with plane at graph center
       const center = group.getWorldPosition(new THREE.Vector3())
       const normal = camera.getWorldDirection(new THREE.Vector3()).normalize()
       const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, center)
-      const ray = new THREE.Ray(origin, direction)
-      aimPointWorld = ray.intersectPlane(plane, new THREE.Vector3()) || null
+      worldPoint = raycaster.ray.intersectPlane(plane, new THREE.Vector3()) || null
     }
-    if (!aimPointWorld) {
-      aimPointWorld = origin.clone().add(direction.clone().multiplyScalar(250))
+    if (!worldPoint) {
+      worldPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.clone().multiplyScalar(200))
     }
-    setAimWorldPoint({ x: aimPointWorld.x, y: aimPointWorld.y, z: aimPointWorld.z })
+    setCursorWorldPoint({ x: worldPoint.x, y: worldPoint.y, z: worldPoint.z })
 
-    // Hover highlight
+    // Update hover state
     const hoverNode = snappedHit ? (nodeById.get(snappedHit.nodeId) ?? null) : null
     onNodeHover(hoverNode as GraphNode | null)
-
-    // Pinch click (only when aiming). Trigger on release to allow cancel.
-    const pinchActive = m.pinch > 0.75
-    if (pinchActive && !pinchDownRef.current) {
-      pinchDownRef.current = true
-      pressedNodeRef.current = snappedHit?.nodeId ?? null
-      return
-    }
-
-    if (!pinchActive && pinchDownRef.current) {
-      pinchDownRef.current = false
-      const pressed = pressedNodeRef.current
-      pressedNodeRef.current = null
-      if (pressed && snappedHit?.nodeId === pressed) {
-        selectNodeById(pressed, snappedHit.point)
-      }
-    }
   }, [
     gestureControlEnabled,
+    cursorState.isActive,
+    cursorState.screenPosition?.x,
+    cursorState.screenPosition?.y,
+    isGrabbing,
     camera,
     nodeSpheres,
     nodeById,
     onNodeHover,
-    selectNodeById,
-    gestureState.leftHand,
-    gestureState.rightHand,
-    handLock.mode,
-    (handLock as any).hand,
-    (handLock as any).grabbed,
-    (handLock as any).metrics?.point,
-    (handLock as any).metrics?.pinch,
   ])
+
+  // Pinch-to-select: trigger on pinch DOWN (immediate response)
+  useEffect(() => {
+    if (!gestureControlEnabled) return
+
+    // Select on pinch down (the moment pinch is detected)
+    if (cursorState.pinchState === 'down' && cursorHit) {
+      selectNodeById(cursorHit.nodeId, cursorHit.point)
+    }
+  }, [gestureControlEnabled, cursorState.pinchState, cursorHit, selectNodeById])
 
   // Filter nodes based on search
   const searchLower = searchTerm.toLowerCase()
@@ -886,6 +864,7 @@ function Scene({
       {/* Camera controls */}
       <OrbitControls
         ref={controlsRef}
+        makeDefault
         enableDamping
         dampingFactor={0.05}
         autoRotate={autoRotate && !isSimulating && !gestureControlEnabled}
@@ -995,52 +974,34 @@ function Scene({
         )}
       </group>
 
-      {/* Aim cursor + laser (Meta-style: index aims, pinch clicks). Laser only appears while pinching. */}
+      {/* Simplified hand cursor - just a dot at cursor position (no laser) */}
       {gestureControlEnabled &&
-        handLock.mode === 'locked' &&
-        !handLock.grabbed &&
-        handLock.metrics.point > 0.55 &&
-        aimWorldPoint && (
-          <>
-            {/* Cursor at aim point (hit point when hovering a node; otherwise a plane in front of the cloud) */}
-            <mesh position={[aimWorldPoint.x, aimWorldPoint.y, aimWorldPoint.z]}>
-              <sphereGeometry args={[handLock.metrics.pinch > 0.75 ? (aimHit ? 0.9 : 0.7) : (aimHit ? 0.55 : 0.4), 16, 16]} />
-              <meshBasicMaterial
-                color={handLock.metrics.pinch > 0.75 ? '#ffffff' : aimHit ? '#fbbf24' : '#94a3b8'}
-                transparent
-                opacity={0.9}
-              />
-            </mesh>
-
-            {/* Laser beam while AIMING (brighter while pinching) */}
-            {aimRayRef.current && (
-              <line>
-                <bufferGeometry>
-                  <bufferAttribute
-                    attach="attributes-position"
-                    args={[
-                      new Float32Array([
-                        // start a bit in front of camera along the aim ray
-                        aimRayRef.current.origin.x + aimRayRef.current.direction.x * 20,
-                        aimRayRef.current.origin.y + aimRayRef.current.direction.y * 20,
-                        aimRayRef.current.origin.z + aimRayRef.current.direction.z * 20,
-                        // end at aim point
-                        aimWorldPoint.x,
-                        aimWorldPoint.y,
-                        aimWorldPoint.z,
-                      ]),
-                      3,
-                    ]}
-                  />
-                </bufferGeometry>
-                <lineBasicMaterial
-                  color={handLock.metrics.pinch > 0.75 ? '#ffffff' : aimHit ? '#fbbf24' : '#60a5fa'}
-                  transparent
-                  opacity={handLock.metrics.pinch > 0.75 ? 0.9 : 0.35}
-                />
-              </line>
-            )}
-          </>
+        cursorState.isActive &&
+        !isGrabbing &&
+        cursorWorldPoint && (
+          <mesh position={[cursorWorldPoint.x, cursorWorldPoint.y, cursorWorldPoint.z]}>
+            {/* Size: larger when hovering or pinching */}
+            <sphereGeometry args={[
+              cursorState.pinchStrength > 0.7
+                ? (cursorHit ? 1.0 : 0.8)  // Pinching: large
+                : cursorHit
+                  ? 0.6                     // Hovering: medium
+                  : 0.4,                    // Idle: small
+              16, 16
+            ]} />
+            {/* Color: blue (idle) → gold (hover) → white (pinch) */}
+            <meshBasicMaterial
+              color={
+                cursorState.pinchStrength > 0.7
+                  ? '#ffffff'              // Pinching: white
+                  : cursorHit
+                    ? '#fbbf24'            // Hovering: gold
+                    : '#60a5fa'            // Idle: blue
+              }
+              transparent
+              opacity={cursorState.pinchStrength > 0.7 ? 1.0 : 0.85}
+            />
+          </mesh>
         )}
 
       {/* Post-processing effects - conditional based on performance mode */}
@@ -1264,7 +1225,81 @@ function InstancedNodes({
   hasTagFilter = false,
 }: InstancedNodesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
-  const { camera, raycaster, pointer } = useThree()
+  const { camera, raycaster, pointer, gl } = useThree()
+
+  // Node lookup for raycasting - must be defined before useEffect that uses it
+  const nodeIndexMap = useMemo(() => {
+    const map = new Map<number, SimulationNode>()
+    nodes.forEach((node, index) => {
+      map.set(index, node)
+    })
+    return map
+  }, [nodes])
+
+  // Track pointer for click detection (distinguish click vs drag)
+  const pointerDownRef = useRef<{ x: number; y: number; time: number } | null>(null)
+
+  // DOM-level click handling (bypasses R3F's event system which doesn't work with OrbitControls)
+  useEffect(() => {
+    const canvas = gl.domElement
+
+    const handlePointerDown = (e: PointerEvent) => {
+      pointerDownRef.current = { x: e.clientX, y: e.clientY, time: Date.now() }
+    }
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (!meshRef.current || !pointerDownRef.current) return
+
+      const dx = e.clientX - pointerDownRef.current.x
+      const dy = e.clientY - pointerDownRef.current.y
+      const dt = Date.now() - pointerDownRef.current.time
+      const distance = Math.sqrt(dx * dx + dy * dy)
+
+      // Consider it a click if moved less than 5px and less than 300ms
+      const isClick = distance < 5 && dt < 300
+
+      console.log('🖱️ DOM PointerUp - distance:', distance.toFixed(1), 'dt:', dt, 'isClick:', isClick)
+
+      if (isClick) {
+        // Calculate NDC from event coordinates (R3F's pointer isn't updated for DOM events)
+        const rect = canvas.getBoundingClientRect()
+        const x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+        const y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+
+        // Force update the mesh's world matrix for accurate raycasting
+        meshRef.current.updateMatrixWorld(true)
+
+        const ndcVector = new THREE.Vector2(x, y)
+        raycaster.setFromCamera(ndcVector, camera)
+        const intersects = raycaster.intersectObject(meshRef.current)
+
+        console.log('🖱️ Raycast - NDC:', x.toFixed(2), y.toFixed(2), 'intersects:', intersects.length, 'nodes:', nodeIndexMap.size)
+
+        if (intersects.length > 0) {
+          const instanceId = intersects[0].instanceId
+          console.log('🖱️ Raycast hit instanceId:', instanceId)
+          if (instanceId !== undefined) {
+            const node = nodeIndexMap.get(instanceId)
+            console.log('🖱️ Found node:', node?.id)
+            if (node) {
+              // Toggle selection
+              onNodeSelect(selectedNode?.id === node.id ? null : node)
+            }
+          }
+        }
+      }
+
+      pointerDownRef.current = null
+    }
+
+    canvas.addEventListener('pointerdown', handlePointerDown)
+    canvas.addEventListener('pointerup', handlePointerUp)
+
+    return () => {
+      canvas.removeEventListener('pointerdown', handlePointerDown)
+      canvas.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [gl, camera, raycaster, nodeIndexMap, onNodeSelect, selectedNode])
 
   // Refs to hold latest time travel state (needed for useFrame closure)
   const timeTravelActiveRef = useRef(timeTravelActive)
@@ -1290,18 +1325,23 @@ function InstancedNodes({
     []
   )
 
-  // Node lookup for raycasting
-  const nodeIndexMap = useMemo(() => {
-    const map = new Map<number, SimulationNode>()
-    nodes.forEach((node, index) => {
-      map.set(index, node)
-    })
-    return map
-  }, [nodes])
+  // Animation state - recreate when node count changes
+  const nodeCount = nodes.length
+  const scalesRef = useRef<Float32Array>(new Float32Array(0))
+  const targetScalesRef = useRef<Float32Array>(new Float32Array(0))
 
-  // Animation state
-  const scalesRef = useRef<Float32Array>(new Float32Array(nodes.length))
-  const targetScalesRef = useRef<Float32Array>(new Float32Array(nodes.length))
+  // Resize scale arrays when node count changes
+  useEffect(() => {
+    if (scalesRef.current.length !== nodeCount) {
+      scalesRef.current = new Float32Array(nodeCount)
+      targetScalesRef.current = new Float32Array(nodeCount)
+      // Initialize scales to 1
+      for (let i = 0; i < nodeCount; i++) {
+        scalesRef.current[i] = 1
+        targetScalesRef.current[i] = 1
+      }
+    }
+  }, [nodeCount])
 
   // Temp objects for matrix calculations (reused to avoid GC)
   const tempMatrix = useMemo(() => new THREE.Matrix4(), [])
@@ -1476,27 +1516,6 @@ function InstancedNodes({
     [camera, pointer, raycaster, nodeIndexMap, onNodeHover]
   )
 
-  const handleClick = useCallback(
-    (event: ThreeEvent<MouseEvent>) => {
-      if (!meshRef.current) return
-
-      raycaster.setFromCamera(pointer, camera)
-      const intersects = raycaster.intersectObject(meshRef.current)
-
-      if (intersects.length > 0) {
-        const instanceId = intersects[0].instanceId
-        if (instanceId !== undefined) {
-          const node = nodeIndexMap.get(instanceId)
-          if (node) {
-            event.stopPropagation()
-            onNodeSelect(selectedNode?.id === node.id ? null : node)
-          }
-        }
-      }
-    },
-    [camera, pointer, raycaster, nodeIndexMap, onNodeSelect, selectedNode]
-  )
-
   const handleContextMenu = useCallback(
     (event: ThreeEvent<MouseEvent>) => {
       if (!meshRef.current || !onNodeContextMenu) return
@@ -1526,12 +1545,42 @@ function InstancedNodes({
     [camera, pointer, raycaster, nodeIndexMap, onNodeContextMenu]
   )
 
+  // R3F onClick handler - uses R3F's event system which works with OrbitControls
+  const handleClick = useCallback(
+    (event: ThreeEvent<MouseEvent>) => {
+      if (!meshRef.current) return
+
+      console.log('🖱️ R3F onClick triggered')
+
+      raycaster.setFromCamera(pointer, camera)
+      const intersects = raycaster.intersectObject(meshRef.current)
+
+      console.log('🖱️ R3F onClick - intersects:', intersects.length)
+
+      if (intersects.length > 0) {
+        const instanceId = intersects[0].instanceId
+        console.log('🖱️ R3F onClick hit instanceId:', instanceId)
+        if (instanceId !== undefined) {
+          const node = nodeIndexMap.get(instanceId)
+          console.log('🖱️ R3F onClick found node:', node?.id)
+          if (node) {
+            event.stopPropagation()
+            // Toggle selection
+            onNodeSelect(selectedNode?.id === node.id ? null : node)
+          }
+        }
+      }
+    },
+    [camera, pointer, raycaster, nodeIndexMap, onNodeSelect, selectedNode]
+  )
+
   return (
     <instancedMesh
+      key={`nodes-${nodeCount}`}
       ref={meshRef}
-      args={[geometry, material, nodes.length]}
-      onPointerMove={handlePointerMove}
+      args={[geometry, material, nodeCount]}
       onClick={handleClick}
+      onPointerMove={handlePointerMove}
       onContextMenu={handleContextMenu}
       frustumCulled={true}
     />

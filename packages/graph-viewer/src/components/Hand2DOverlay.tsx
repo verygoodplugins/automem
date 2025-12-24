@@ -346,6 +346,11 @@ type Point2 = { x: number; y: number }
 /**
  * MasterHand - Smash Bros Master Hand / Crazy Hand style
  * Volumetric filled shapes with soft gradients and ambient occlusion
+ *
+ * Z-AXIS: "Reach Through Screen" Paradigm
+ * - Hand moves TOWARD camera → Virtual hand goes INTO the scene (smaller, recedes)
+ * - Hand moves AWAY from camera → Virtual hand comes OUT of the scene (larger, approaches)
+ * This creates the feeling of reaching through a portal into the 3D world.
  */
 function GhostHand({
   landmarks,
@@ -354,33 +359,40 @@ function GhostHand({
   isGhost = false,
   opacityMultiplier = 1,
 }: GhostHandProps) {
-  // "Portal" depth feel: pushing toward the camera/screen should feel like going *into* the graph.
-  // Current Z (LiDAR): 0.5m (close) .. 3.0m (far)
-  // Normalized Z (MediaPipe-like): positive (close) .. negative (far)
-
   const wristZ = landmarks[0].z || 0
-  const isMeters = Math.abs(wristZ) > 0.5 // Raw LiDAR vs Normalized
 
-  // Calculate scale factor based on depth - INVERTED MAPPING
-  // Physical hand closer to camera -> Virtual hand moves AWAY (smaller)
-  // Physical hand moves back -> Virtual hand moves CLOSER (larger)
+  // Detect if Z is in meters (LiDAR: 0.3-3.0m) or normalized (MediaPipe: -0.5 to +0.3)
+  const isMeters = Math.abs(wristZ) > 0.5
+
+  // Z-AXIS INVERSION: "Reach Through Screen" Paradigm
+  // Physical hand closer to camera → Virtual hand appears SMALLER (receding into scene)
+  // Physical hand farther from camera → Virtual hand appears LARGER (coming out of scene)
+  //
+  // This is OPPOSITE of normal perspective where close=large, far=small.
+  // It creates the illusion that you're reaching THROUGH the screen INTO the 3D world.
 
   let scaleFactor = 1.0
+  let depthOpacity = 1.0  // Additional opacity based on depth
+
   if (isMeters) {
-    // LiDAR (meters): 0.3m (close) .. 1.5m (far)
-    // Close (0.3m) -> Scale 0.6 (distant/small)
-    // Far (1.0m) -> Scale 1.2 (close/large)
-    const t = Math.max(0, Math.min(1, (wristZ - 0.3) / 0.7)) // 0 at 0.3m, 1 at 1.0m
-    scaleFactor = 0.6 + t * 0.8
+    // LiDAR in meters: ~0.3m (arm's length) to ~1.5m (extended reach)
+    // INVERTED: Close (0.3m) → small/faint, Far (1.2m) → large/bright
+    const normalizedDepth = Math.max(0, Math.min(1, (wristZ - 0.3) / 0.9))
+    scaleFactor = 0.4 + normalizedDepth * 1.0  // Range: 0.4 (close) to 1.4 (far)
+    depthOpacity = 0.5 + normalizedDepth * 0.5  // Range: 0.5 (close/faint) to 1.0 (far/bright)
   } else {
-    // MediaPipe (normalized relative to wrist):
-    // +0.1 (close to camera) -> Scale 0.6
-    // -0.2 (far from camera) -> Scale 1.2
-    const t = Math.max(0, Math.min(1, (0.1 - wristZ) / 0.3)) // 0 at +0.1, 1 at -0.2
-    scaleFactor = 0.6 + t * 0.8
+    // MediaPipe normalized: positive Z = closer to camera
+    // Typical range: +0.15 (close) to -0.25 (far)
+    // INVERTED: Positive Z (close) → small/faint, Negative Z (far) → large/bright
+    const normalizedDepth = Math.max(0, Math.min(1, (0.15 - wristZ) / 0.4))
+    scaleFactor = 0.4 + normalizedDepth * 1.0  // Range: 0.4 (close) to 1.4 (far)
+    depthOpacity = 0.5 + normalizedDepth * 0.5  // Range: 0.5 (close/faint) to 1.0 (far/bright)
   }
 
-  const clampedScale = Math.max(0.5, Math.min(1.8, scaleFactor))
+  // Apply the depth opacity to the overall opacity multiplier
+  const effectiveOpacityMultiplier = opacityMultiplier * depthOpacity
+
+  const clampedScale = Math.max(0.3, Math.min(2.0, scaleFactor))
 
   // Un-mirror the X coordinate (selfie-style) and convert to SVG space
   const toSvg = (lm: { x: number; y: number }) => ({
@@ -389,7 +401,7 @@ function GhostHand({
   })
 
   const points = landmarks.map(toSvg)
-  const gloveOpacity = (isGhost ? 0.5 : 0.85) * opacityMultiplier
+  const gloveOpacity = (isGhost ? 0.5 : 0.85) * effectiveOpacityMultiplier
 
   // Finger width based on scale - fatter fingers for Master Hand look
   const fingerWidth = 1.8 * clampedScale

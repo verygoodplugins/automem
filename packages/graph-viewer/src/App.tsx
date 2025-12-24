@@ -106,6 +106,10 @@ function BoltIcon({ className }: { className?: string }) {
   )
 }
 
+// Stable empty arrays to prevent creating new references on every render
+const EMPTY_NODES: GraphNode[] = []
+const EMPTY_EDGES: import('./lib/types').GraphEdge[] = []
+
 export default function App() {
   const { setToken, isAuthenticated } = useAuth()
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
@@ -240,9 +244,13 @@ export default function App() {
     enabled: isAuthenticated,
   })
 
+  // Stable data references - use EMPTY constants when data not loaded
+  const nodes = data?.nodes ?? EMPTY_NODES
+  const edges = data?.edges ?? EMPTY_EDGES
+
   // Tag Cloud
   const tagCloud = useTagCloud({
-    nodes: data?.nodes ?? [],
+    nodes,
     typeColors: data?.meta?.type_colors,
   })
 
@@ -251,13 +259,13 @@ export default function App() {
 
   // Pathfinding
   const pathfinding = usePathfinding({
-    nodes: (data?.nodes ?? []) as any,
-    edges: data?.edges ?? [],
+    nodes: nodes as any,
+    edges,
   })
 
   // Time Travel
   const timeTravel = useTimeTravel({
-    nodes: data?.nodes ?? [],
+    nodes,
     enabled: isAuthenticated,
   })
 
@@ -270,18 +278,18 @@ export default function App() {
       }
       prevTimeTravelActive.current = timeTravel.isActive
     }
-  }, [timeTravel.isActive, sound])
+  }, [timeTravel.isActive, sound.playTimeTravel])
 
   // Get source and target nodes for pathfinding overlay
   const pathSourceNode = useMemo(() => {
-    if (!pathfinding.sourceId || !data?.nodes) return null
-    return (data.nodes as any[]).find(n => n.id === pathfinding.sourceId) ?? null
-  }, [pathfinding.sourceId, data?.nodes])
+    if (!pathfinding.sourceId || nodes.length === 0) return null
+    return nodes.find(n => n.id === pathfinding.sourceId) ?? null
+  }, [pathfinding.sourceId, nodes])
 
   const pathTargetNode = useMemo(() => {
-    if (!pathfinding.targetId || !data?.nodes) return null
-    return (data.nodes as any[]).find(n => n.id === pathfinding.targetId) ?? null
-  }, [pathfinding.targetId, data?.nodes])
+    if (!pathfinding.targetId || nodes.length === 0) return null
+    return nodes.find(n => n.id === pathfinding.targetId) ?? null
+  }, [pathfinding.targetId, nodes])
 
   // Bookmark handlers (must be after data is defined)
   const handleSaveBookmark = useCallback(() => {
@@ -291,18 +299,18 @@ export default function App() {
       selectedNode?.id
     )
     sound.playBookmark()
-  }, [addBookmark, cameraStateForBookmarks, selectedNode, sound])
+  }, [addBookmark, cameraStateForBookmarks, selectedNode, sound.playBookmark])
 
   const handleNavigateToBookmark = useCallback((bookmark: Bookmark) => {
     navigateForBookmarksRef.current?.(bookmark.position.x, bookmark.position.y)
     // If bookmark has a selected node, select it
-    if (bookmark.selectedNodeId && data?.nodes) {
-      const node = data.nodes.find(n => n.id === bookmark.selectedNodeId)
+    if (bookmark.selectedNodeId && nodes.length > 0) {
+      const node = nodes.find(n => n.id === bookmark.selectedNodeId)
       if (node) {
         setSelectedNode(node)
       }
     }
-  }, [data?.nodes])
+  }, [nodes])
 
   const handleRenameBookmark = useCallback((id: string, name: string) => {
     updateBookmark(id, { name })
@@ -327,14 +335,14 @@ export default function App() {
       sound.playSelect(node.importance ?? 0.5)
     }
     setSelectedNode(node)
-  }, [pathfinding.isSelectingTarget, pathfinding.completePathSelection, sound])
+  }, [pathfinding.isSelectingTarget, pathfinding.completePathSelection, sound.playPathFound, sound.playSelect])
 
   const handleNodeHover = useCallback((node: GraphNode | null) => {
     if (node) {
       sound.playHover()
     }
     setHoveredNode(node)
-  }, [sound])
+  }, [sound.playHover])
 
   // Radial menu handlers
   const handleNodeContextMenu = useCallback((node: GraphNode, screenPosition: { x: number; y: number }) => {
@@ -410,7 +418,7 @@ export default function App() {
         selectedIds: newSelectedIds,
       }
     })
-  }, [sound])
+  }, [sound.playLasso])
 
   const handleLassoCancel = useCallback(() => {
     setLassoState(prev => ({
@@ -429,9 +437,9 @@ export default function App() {
 
   // Get selected nodes from lasso
   const lassoSelectedNodes = useMemo(() => {
-    if (!data?.nodes || lassoState.selectedIds.size === 0) return []
-    return data.nodes.filter(n => lassoState.selectedIds.has(n.id))
-  }, [data?.nodes, lassoState.selectedIds])
+    if (nodes.length === 0 || lassoState.selectedIds.size === 0) return []
+    return nodes.filter(n => lassoState.selectedIds.has(n.id))
+  }, [nodes, lassoState.selectedIds])
 
   const handleSearch = useCallback((term: string) => {
     // Play search sound on typing (only if term changed and is not empty)
@@ -439,7 +447,7 @@ export default function App() {
       sound.playSearch()
     }
     setSearchTerm(term)
-  }, [sound])
+  }, [sound.playSearch])
 
   const handleFilterChange = useCallback((newFilters: Partial<FilterState>) => {
     setFilters(prev => ({ ...prev, ...newFilters }))
@@ -519,7 +527,7 @@ export default function App() {
   }, [selectedNode, pathfinding.startPathSelection])
 
   const { shortcuts } = useKeyboardNavigation({
-    nodes: (data?.nodes ?? []) as any,
+    nodes: nodes as any,
     selectedNode,
     onNodeSelect: handleNodeSelect,
     onReheat: handleReheat,
@@ -714,8 +722,8 @@ export default function App() {
               )}
 
               <GraphCanvas
-                nodes={data?.nodes ?? []}
-                edges={data?.edges ?? []}
+                nodes={nodes}
+                edges={edges}
                 selectedNode={selectedNode}
                 hoveredNode={hoveredNode}
                 searchTerm={searchTerm}
@@ -840,7 +848,7 @@ export default function App() {
               {/* Selection Actions (bulk operations) */}
               <SelectionActions
                 selectedNodes={lassoSelectedNodes}
-                allEdges={data?.edges ?? []}
+                allEdges={edges}
                 onClearSelection={handleClearLassoSelection}
               />
             </div>
@@ -906,7 +914,7 @@ export default function App() {
         selectedTags={tagCloud.selectedTags}
         filterMode={tagCloud.filterMode}
         filteredCount={tagCloud.filteredNodeIds.size}
-        totalCount={data?.nodes?.length ?? 0}
+        totalCount={nodes.length}
         onToggleTag={tagCloud.toggleTag}
         onClearSelection={tagCloud.clearSelection}
         onToggleFilterMode={tagCloud.toggleFilterMode}
