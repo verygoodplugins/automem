@@ -9,12 +9,9 @@
  * - Optional post-processing (performance mode toggle)
  * - Single useFrame callback for all animations
  *
- * Hand interaction features:
- * - Stable pointer ray with arm model + One Euro Filter
- * - Accurate ray-sphere intersection for node selection
- * - Pinch-to-select with expansion animation
- * - Pull/push gestures for Z manipulation
- * - Two-hand rotation and zoom
+ * Interaction model (simplified):
+ * - Mouse: Click nodes to select, OrbitControls for navigation
+ * - Hand gestures: Fist grab to pan the graph
  */
 
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react'
@@ -25,10 +22,7 @@ import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
 import { useHandGestures, GestureState } from '../hooks/useHandGestures'
 import { useIPhoneHandTracking } from '../hooks/useIPhoneHandTracking'
-import { useHandInteraction } from '../hooks/useHandInteraction'
 import { useHandLockAndGrab } from '../hooks/useHandLockAndGrab'
-import { useHandCursor } from '../hooks/useHandCursor'
-import { ExpandedNodeView } from './ExpandedNodeView'
 import type {
   GraphNode,
   GraphEdge,
@@ -47,7 +41,6 @@ import { getEdgeStyle } from '../lib/edgeStyles'
 import { EdgeParticles } from './EdgeParticles'
 import { MiniMap } from './MiniMap'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { findNodeHit, type NodeSphere, type NodeHit } from '../hooks/useStablePointerRay'
 
 // Get iPhone WebSocket URL from URL params or default
 function useIPhoneUrl() {
@@ -68,10 +61,6 @@ function useIPhoneUrl() {
 const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
 const LABEL_DISTANCE_THRESHOLD = 80 // Only show labels for nodes within this distance
 const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
-
-// Gesture control constants
-const GESTURE_DEADZONE = 0.005 // Ignore tiny movements
-const MAX_TRANSLATE_SPEED = 3 // Cap cloud translation per frame
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -521,204 +510,14 @@ function Scene({
     }
   })
 
-  // Expanded node state (for the bloom animation)
-  const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
-  const [hitPoint, setHitPoint] = useState<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0 })
-  const [isExpanding, setIsExpanding] = useState(false)
-
-  // Hand interaction (stable rays) - used for future two-hand gestures and internal metrics
-  const { interactionState, processGestures } = useHandInteraction({
-    nodes: layoutNodes,
-    enableSelection: false,
-    onNodeSelect: (nodeId) => {
-      if (nodeId) {
-        // Find the node and trigger expansion
-        const node = layoutNodes.find(n => n.id === nodeId)
-        if (node) {
-          setExpandedNodeId(nodeId)
-          setHitPoint({
-            x: interactionState.hoveredNode?.point.x ?? node.x ?? 0,
-            y: interactionState.hoveredNode?.point.y ?? node.y ?? 0,
-            z: interactionState.hoveredNode?.point.z ?? node.z ?? 0,
-          })
-          setIsExpanding(true)
-        }
-        onNodeSelect(node ?? null)
-      } else {
-        setExpandedNodeId(null)
-        setIsExpanding(false)
-        onNodeSelect(null)
-      }
-    },
-    // We'll drive hover from the explicit pointing ray (below)
-    onNodeHover: undefined,
-  })
-
-  // Process gestures each frame
-  useEffect(() => {
-    if (gestureControlEnabled && gestureState.isTracking) {
-      processGestures(gestureState)
-    }
-  }, [gestureControlEnabled, gestureState, processGestures])
-
-  // New UI: open-palm acquire/lock + fist grab controls (single-hand for now)
+  // Hand grab controls - fist to pan the graph
   const { lock: handLock, deltas: grabDeltas } = useHandLockAndGrab(gestureState, gestureControlEnabled)
-
-  // Simplified hand cursor (replaces complex pointing/pinch logic)
-  const cursorState = useHandCursor(gestureState, { enabled: gestureControlEnabled })
-
-  // Track cursor hit state for rendering
-  const [cursorHit, setCursorHit] = useState<NodeHit | null>(null)
-  const [cursorWorldPoint, setCursorWorldPoint] = useState<{ x: number; y: number; z: number } | null>(null)
-  const raycasterRef = useRef(new THREE.Raycaster())
-
-  // Helper to check if hand is currently grabbing
-  const isGrabbing = handLock.mode === 'locked' && handLock.grabbed
-
-  const nodeSpheres: NodeSphere[] = useMemo(() => {
-    return layoutNodes.map((n) => ({
-      id: n.id,
-      x: n.x ?? 0,
-      y: n.y ?? 0,
-      z: n.z ?? 0,
-      radius: (n.radius ?? 1) * 1.5,
-    }))
-  }, [layoutNodes])
-
-  // Helper: select a node by id and animate expansion
-  const selectNodeById = useCallback(
-    (nodeId: string | null, hit?: { x: number; y: number; z: number }) => {
-      if (nodeId) {
-        const node = layoutNodes.find((n) => n.id === nodeId) ?? null
-        if (node) {
-          setExpandedNodeId(nodeId)
-          setHitPoint({
-            x: hit?.x ?? node.x ?? 0,
-            y: hit?.y ?? node.y ?? 0,
-            z: hit?.z ?? node.z ?? 0,
-          })
-          setIsExpanding(true)
-        }
-        onNodeSelect(node)
-      } else {
-        setExpandedNodeId(null)
-        setIsExpanding(false)
-        onNodeSelect(null)
-      }
-    },
-    [layoutNodes, onNodeSelect]
-  )
 
   // Create node lookup for edges
   const nodeById = useMemo(
     () => new Map(layoutNodes.map((n) => [n.id, n])),
     [layoutNodes]
   )
-
-  // Simplified cursor-based pointing (index fingertip = cursor, pinch = click)
-  // Uses useHandCursor hook for immediate, no-lock cursor tracking
-  useEffect(() => {
-    if (!gestureControlEnabled || !cursorState.isActive || !cursorState.screenPosition) {
-      setCursorHit(null)
-      setCursorWorldPoint(null)
-      // Only clear hover if we're in cursor mode and lost tracking
-      if (gestureControlEnabled && !cursorState.isActive) {
-        onNodeHover(null)
-      }
-      return
-    }
-
-    // Skip cursor updates when grabbing (fist gesture controls camera, not cursor)
-    if (isGrabbing) {
-      setCursorHit(null)
-      setCursorWorldPoint(null)
-      return
-    }
-
-    const { x: ndcX, y: ndcY } = cursorState.screenPosition
-
-    // Build ray from camera through NDC point
-    const raycaster = raycasterRef.current
-    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
-
-    // Hit test against node spheres using findNodeHit (works in group local space)
-    const group = groupRef.current
-    let hit: NodeHit | null = null
-
-    if (group) {
-      const inv = group.matrixWorld.clone().invert()
-      const localOrigin = raycaster.ray.origin.clone().applyMatrix4(inv)
-      const localDir = raycaster.ray.direction.clone().transformDirection(inv)
-      hit = findNodeHit(
-        {
-          origin: { x: localOrigin.x, y: localOrigin.y, z: localOrigin.z },
-          direction: { x: localDir.x, y: localDir.y, z: localDir.z },
-        },
-        nodeSpheres,
-        4000
-      )
-    }
-
-    // Snap to node center for deterministic selection
-    const snapNode = hit ? (nodeById.get(hit.nodeId) ?? null) : null
-    const snappedHit: NodeHit | null =
-      hit && snapNode
-        ? {
-            ...hit,
-            point: {
-              x: snapNode.x ?? hit.point.x,
-              y: snapNode.y ?? hit.point.y,
-              z: snapNode.z ?? hit.point.z,
-            },
-          }
-        : hit
-
-    setCursorHit(snappedHit)
-
-    // Calculate world-space cursor position for rendering
-    let worldPoint: THREE.Vector3 | null = null
-    if (group && snappedHit) {
-      worldPoint = new THREE.Vector3(
-        snappedHit.point.x,
-        snappedHit.point.y,
-        snappedHit.point.z
-      ).applyMatrix4(group.matrixWorld)
-    } else if (group) {
-      // No hit - intersect with plane at graph center
-      const center = group.getWorldPosition(new THREE.Vector3())
-      const normal = camera.getWorldDirection(new THREE.Vector3()).normalize()
-      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, center)
-      worldPoint = raycaster.ray.intersectPlane(plane, new THREE.Vector3()) || null
-    }
-    if (!worldPoint) {
-      worldPoint = raycaster.ray.origin.clone().add(raycaster.ray.direction.clone().multiplyScalar(200))
-    }
-    setCursorWorldPoint({ x: worldPoint.x, y: worldPoint.y, z: worldPoint.z })
-
-    // Update hover state
-    const hoverNode = snappedHit ? (nodeById.get(snappedHit.nodeId) ?? null) : null
-    onNodeHover(hoverNode as GraphNode | null)
-  }, [
-    gestureControlEnabled,
-    cursorState.isActive,
-    cursorState.screenPosition?.x,
-    cursorState.screenPosition?.y,
-    isGrabbing,
-    camera,
-    nodeSpheres,
-    nodeById,
-    onNodeHover,
-  ])
-
-  // Pinch-to-select: trigger on pinch DOWN (immediate response)
-  useEffect(() => {
-    if (!gestureControlEnabled) return
-
-    // Select on pinch down (the moment pinch is detected)
-    if (cursorState.pinchState === 'down' && cursorHit) {
-      selectNodeById(cursorHit.nodeId, cursorHit.point)
-    }
-  }, [gestureControlEnabled, cursorState.pinchState, cursorHit, selectNodeById])
 
   // Filter nodes based on search
   const searchLower = searchTerm.toLowerCase()
@@ -764,57 +563,23 @@ function Scene({
     return layoutNodes.find(n => n.id === selectedNode.id) ?? null
   }, [selectedNode, layoutNodes])
 
-  // Get expanded node and its connections
-  const expandedNode = useMemo(() => {
-    if (!expandedNodeId) return null
-    return layoutNodes.find(n => n.id === expandedNodeId) ?? null
-  }, [expandedNodeId, layoutNodes])
-
-  const connectedToExpanded = useMemo(() => {
-    if (!expandedNodeId) return []
-    const connectedNodeIds = new Set<string>()
-    edges.forEach(e => {
-      if (e.source === expandedNodeId) connectedNodeIds.add(e.target)
-      if (e.target === expandedNodeId) connectedNodeIds.add(e.source)
-    })
-    return layoutNodes.filter(n => connectedNodeIds.has(n.id))
-  }, [expandedNodeId, edges, layoutNodes])
-
   // Stop auto-rotate on user interaction
   const handleInteractionStart = useCallback(() => {
     setAutoRotate(false)
   }, [])
 
-  // Close expanded node
-  const handleCloseExpanded = useCallback(() => {
-    setExpandedNodeId(null)
-    setIsExpanding(false)
-    onNodeSelect(null)
-  }, [onNodeSelect])
-
   // Track world position at grab start for displacement-based movement
   const grabStartPosRef = useRef({ x: 0, y: 0, z: 0 })
 
-  // Smoothed pan for non-grab controls only
-  const smoothedPanZRef = useRef(0)
-
-  // Clamp helper
-  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
-
-  // Apply gesture controls to move the CLOUD (not camera)
-  // Grab = physically grab the world and drag it around (displacement-based, not velocity)
+  // Apply grab controls - fist to pan the graph
   useEffect(() => {
     if (!gestureControlEnabled || !groupRef.current) return
     if (!gestureState.isTracking) return
 
     const group = groupRef.current
+    const isGrabbing = handLock.mode === 'locked' && handLock.grabbed
 
-    // Use the new interaction state for cloud manipulation
-    const { rotationDelta, zoomDelta, dragDeltaZ, isDragging } = interactionState
-
-    const usingGrabControls = handLock.mode === 'locked' && handLock.grabbed
-
-    if (usingGrabControls) {
+    if (isGrabbing) {
       // On first frame of grab, capture current world position
       if (grabDeltas.grabStart) {
         grabStartPosRef.current = {
@@ -822,37 +587,16 @@ function Scene({
           y: group.position.y,
           z: group.position.z,
         }
-        return  // Don't apply deltas on first frame
+        return
       }
 
-      // DISPLACEMENT-BASED: Set position relative to grab start, not add velocity
-      // panX/panY/panZ are how much to offset from the grab start position
+      // DISPLACEMENT-BASED: Set position relative to grab start
       const startPos = grabStartPosRef.current
-
       group.position.x = startPos.x + grabDeltas.panX
       group.position.y = startPos.y + grabDeltas.panY
       group.position.z = startPos.z + grabDeltas.panZ
-    } else {
-      // Apply zoom (two-hand spread/pinch)
-      if (Math.abs(zoomDelta) > GESTURE_DEADZONE) {
-        group.position.z += zoomDelta * 0.5
-      }
-
-      // Apply rotation (two-hand rotation)
-      if (Math.abs(rotationDelta.x) > GESTURE_DEADZONE) {
-        group.rotation.z += rotationDelta.x
-      }
-
-      // Apply Z drag (single hand push/pull when not selecting a node)
-      if (!isDragging && Math.abs(dragDeltaZ) > GESTURE_DEADZONE) {
-        smoothedPanZRef.current += (dragDeltaZ - smoothedPanZRef.current) * 0.2
-        const clamped = clamp(smoothedPanZRef.current, -MAX_TRANSLATE_SPEED, MAX_TRANSLATE_SPEED)
-        group.position.z += clamped
-      } else {
-        smoothedPanZRef.current *= 0.9
-      }
     }
-  }, [gestureControlEnabled, gestureState, interactionState, handLock, grabDeltas])
+  }, [gestureControlEnabled, gestureState, handLock, grabDeltas])
 
   return (
     <>
@@ -961,48 +705,7 @@ function Scene({
         />
         )}
 
-        {/* Expanded Node View - shows when a node is selected via hand */}
-        {expandedNode && (
-          <ExpandedNodeView
-            node={expandedNode}
-            connectedNodes={connectedToExpanded}
-            edges={edges}
-            hitPoint={hitPoint}
-            onClose={handleCloseExpanded}
-            isExpanding={isExpanding}
-          />
-        )}
       </group>
-
-      {/* Simplified hand cursor - just a dot at cursor position (no laser) */}
-      {gestureControlEnabled &&
-        cursorState.isActive &&
-        !isGrabbing &&
-        cursorWorldPoint && (
-          <mesh position={[cursorWorldPoint.x, cursorWorldPoint.y, cursorWorldPoint.z]}>
-            {/* Size: larger when hovering or pinching */}
-            <sphereGeometry args={[
-              cursorState.pinchStrength > 0.7
-                ? (cursorHit ? 1.0 : 0.8)  // Pinching: large
-                : cursorHit
-                  ? 0.6                     // Hovering: medium
-                  : 0.4,                    // Idle: small
-              16, 16
-            ]} />
-            {/* Color: blue (idle) → gold (hover) → white (pinch) */}
-            <meshBasicMaterial
-              color={
-                cursorState.pinchStrength > 0.7
-                  ? '#ffffff'              // Pinching: white
-                  : cursorHit
-                    ? '#fbbf24'            // Hovering: gold
-                    : '#60a5fa'            // Idle: blue
-              }
-              transparent
-              opacity={cursorState.pinchStrength > 0.7 ? 1.0 : 0.85}
-            />
-          </mesh>
-        )}
 
       {/* Post-processing effects - conditional based on performance mode */}
       {!performanceMode && (

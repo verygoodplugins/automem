@@ -1,19 +1,16 @@
 /**
  * Hand 2D Overlay
  *
- * Renders hands as a 2D overlay on top of the canvas with:
- * - Ghost 3D hand effect (translucent, glowing)
- * - Smoothing/interpolation (ghost persists when hand disappears)
- * - Accurate laser beams using stable pointer ray with arm model
- * - Hit indicator when pointing at a node
- * - Pinch grip indicator (lights up when gripped)
- * - Support for two-hand manipulation
+ * Renders hands as a 2D SVG overlay with:
+ * - Ghost 3D hand effect (translucent, glowing Master Hand style)
+ * - Smoothing/interpolation (ghost persists briefly when hand disappears)
+ * - Depth-aware scaling ("reach through screen" paradigm)
+ *
+ * SIMPLIFIED: No lasers, no center target, just visual hand feedback.
  */
 
 import { useState, useEffect, useRef } from 'react'
-import type { GestureState, PinchRay } from '../hooks/useHandGestures'
-import type { StableRay, NodeHit } from '../hooks/useStablePointerRay'
-import type { HandLockState } from '../hooks/useHandLockAndGrab'
+import type { GestureState } from '../hooks/useHandGestures'
 
 // Fingertip indices
 const FINGERTIPS = [4, 8, 12, 16, 20]
@@ -26,10 +23,6 @@ const SMOOTHING_FACTOR = 0.2 // Lower = smoother but laggier
 const GHOST_FADE_DURATION = 500 // ms to fade out ghost hand
 const GHOST_PERSIST_DURATION = 300 // ms to keep ghost before fading
 
-// Laser configuration
-const LASER_CENTER_BIAS = 0.7 // How strongly laser aims at center (0 = follow hand, 1 = always center)
-const LASER_DEVIATION_SCALE = 0.3 // How much hand position affects laser direction
-
 interface SmoothedHand {
   landmarks: { x: number; y: number; z: number }[]
   lastSeen: number
@@ -40,48 +33,16 @@ interface SmoothedHand {
 interface Hand2DOverlayProps {
   gestureState: GestureState
   enabled?: boolean
-  showLaser?: boolean
-  /** Stable left ray from arm model + One Euro Filter */
-  leftStableRay?: StableRay | null
-  /** Stable right ray from arm model + One Euro Filter */
-  rightStableRay?: StableRay | null
-  /** Current node hit (if any) */
-  hoveredNode?: NodeHit | null
-  /** Optional lock/grab state for nicer visuals */
-  handLock?: HandLockState
 }
 
 export function Hand2DOverlay({
   gestureState,
   enabled = true,
-  showLaser = true,
-  leftStableRay,
-  rightStableRay,
-  hoveredNode,
-  handLock,
 }: Hand2DOverlayProps) {
   // Track smoothed hand positions with ghost effect
   const [leftSmoothed, setLeftSmoothed] = useState<SmoothedHand | null>(null)
   const [rightSmoothed, setRightSmoothed] = useState<SmoothedHand | null>(null)
   const animationRef = useRef<number>()
-
-  // Track activation flash
-  const [activationFlash, setActivationFlash] = useState(false)
-  const prevLockModeRef = useRef<string>('idle')
-
-  // Flash when transitioning to locked
-  useEffect(() => {
-    const prevMode = prevLockModeRef.current
-    const currentMode = handLock?.mode ?? 'idle'
-
-    if (prevMode !== 'locked' && currentMode === 'locked') {
-      // Just became locked - trigger flash
-      setActivationFlash(true)
-      setTimeout(() => setActivationFlash(false), 400)
-    }
-
-    prevLockModeRef.current = currentMode
-  }, [handLock?.mode])
 
   // Smoothing and ghost effect
   useEffect(() => {
@@ -174,49 +135,11 @@ export function Hand2DOverlay({
 
   if (!enabled || !gestureState.isTracking) return null
 
-  // Visual state: VERY faint until locked, then solid
-  // Hands should be almost invisible until activation gesture is performed
-  const lockMode = handLock?.mode
-  const isLocked = lockMode === 'locked'
-  const isGrabbing = isLocked && ((handLock as any).grabbed as boolean)
-  const isPinching = isLocked && (((handLock as any).metrics?.pinch as number) ?? 0) > 0.75
-  const isActive = isGrabbing || isPinching
-
-  // Opacity: very faint when not locked, full when locked and active
-  const opacityMultiplier = !handLock
-    ? 0.15  // No lock state provided - very faint
-    : lockMode === 'idle'
-      ? 0.12  // Idle - barely visible ghost
-      : lockMode === 'candidate'
-        ? 0.35  // Acquiring - starting to show
-        : isLocked
-          ? (isActive ? 1.2 : 0.85)  // Locked - full visibility; brighter when active
-          : 0.12  // Fallback - very faint
-
-  // Check if pointing (for laser visibility)
-  const isPointing = lockMode === 'locked' && ((handLock as any).metrics?.point as number ?? 0) > 0.5
-
-  // Check if both hands are gripping (for two-hand manipulation)
-  const leftGripping = gestureState.leftPinchRay?.isValid
-  const rightGripping = gestureState.rightPinchRay?.isValid
-  const bothGripping = leftGripping && rightGripping
-
-  // Laser visibility: show while aiming (pointing) or while pinching
-  const leftLaserActive = isPointing || (gestureState.leftPinchRay?.strength ?? 0) > 0.3
-  const rightLaserActive = isPointing || (gestureState.rightPinchRay?.strength ?? 0) > 0.3
+  // Simple opacity - always visible when tracking
+  const opacityMultiplier = 0.85
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
-      {/* Activation flash overlay */}
-      {activationFlash && (
-        <div
-          className="absolute inset-0 pointer-events-none animate-pulse"
-          style={{
-            background: 'radial-gradient(circle at center, rgba(78, 205, 196, 0.3) 0%, transparent 70%)',
-            animation: 'flash 0.4s ease-out',
-          }}
-        />
-      )}
       <svg
         className="w-full h-full"
         viewBox="0 0 100 100"
@@ -282,52 +205,6 @@ export function Hand2DOverlay({
             />
           </g>
         )}
-
-        {/* Connection line between hands when both gripping */}
-        {bothGripping && gestureState.leftPinchRay && gestureState.rightPinchRay && (
-          <line
-            x1={(1 - gestureState.leftPinchRay.origin.x) * 100}
-            y1={gestureState.leftPinchRay.origin.y * 100}
-            x2={(1 - gestureState.rightPinchRay.origin.x) * 100}
-            y2={gestureState.rightPinchRay.origin.y * 100}
-            stroke="#ffffff"
-            strokeWidth={0.3}
-            strokeDasharray="2 1"
-            opacity={0.5}
-          />
-        )}
-
-        {/* Left laser */}
-        {showLaser && leftLaserActive && leftStableRay?.screenHit && gestureState.leftPinchRay && (
-          <LaserBeam
-            ray={gestureState.leftPinchRay}
-            stableRay={leftStableRay}
-            color="#4ecdc4"
-            isGripped={leftGripping || false}
-            hasHit={hoveredNode !== null && leftStableRay !== null &&
-              (leftStableRay?.confidence ?? 0) >= (rightStableRay?.confidence ?? 0)}
-          />
-        )}
-
-        {/* Right laser */}
-        {showLaser && rightLaserActive && rightStableRay?.screenHit && gestureState.rightPinchRay && (
-          <LaserBeam
-            ray={gestureState.rightPinchRay}
-            stableRay={rightStableRay}
-            color="#f72585"
-            isGripped={rightGripping || false}
-            hasHit={hoveredNode !== null && rightStableRay !== null &&
-              (rightStableRay?.confidence ?? 0) > (leftStableRay?.confidence ?? 0)}
-          />
-        )}
-
-        {/* Center nexus indicator when gripping */}
-        {(leftGripping || rightGripping) && (
-          <g>
-            <circle cx={50} cy={50} r={3} fill="none" stroke="#ffffff" strokeWidth={0.2} opacity={0.3} />
-            <circle cx={50} cy={50} r={1.5} fill="#ffffff" opacity={0.2} />
-          </g>
-        )}
       </svg>
     </div>
   )
@@ -381,10 +258,10 @@ function GhostHand({
     scaleFactor = 0.4 + normalizedDepth * 1.0  // Range: 0.4 (close) to 1.4 (far)
     depthOpacity = 0.5 + normalizedDepth * 0.5  // Range: 0.5 (close/faint) to 1.0 (far/bright)
   } else {
-    // MediaPipe normalized: positive Z = closer to camera
-    // Typical range: +0.15 (close) to -0.25 (far)
-    // INVERTED: Positive Z (close) → small/faint, Negative Z (far) → large/bright
-    const normalizedDepth = Math.max(0, Math.min(1, (0.15 - wristZ) / 0.4))
+    // MediaPipe normalized: positive Z = FARTHER from camera, negative Z = CLOSER
+    // Typical range: -0.25 (close) to +0.15 (far)
+    // "Reach through screen": Close → small/faint, Far → large/bright
+    const normalizedDepth = Math.max(0, Math.min(1, (wristZ + 0.25) / 0.4))
     scaleFactor = 0.4 + normalizedDepth * 1.0  // Range: 0.4 (close) to 1.4 (far)
     depthOpacity = 0.5 + normalizedDepth * 0.5  // Range: 0.5 (close/faint) to 1.0 (far/bright)
   }
@@ -620,195 +497,6 @@ function GhostHand({
         strokeWidth={fingerWidth * 0.4}
         opacity={0.3}
       />
-    </g>
-  )
-}
-
-interface LaserBeamProps {
-  ray: PinchRay
-  stableRay?: StableRay | null
-  color: string
-  isGripped: boolean
-  hasHit?: boolean
-}
-
-function LaserBeam({ ray, stableRay, color, isGripped, hasHit = false }: LaserBeamProps) {
-  // Use stable ray screen hit if available, otherwise fall back to basic calculation
-  let originX: number, originY: number, endX: number, endY: number
-
-  if (stableRay?.screenHit) {
-    // Use the stable ray (arm model + One Euro Filter)
-    // Un-mirror the X coordinate (webcam is mirrored)
-    originX = (1 - stableRay.pinchPoint.x) * 100
-    originY = stableRay.pinchPoint.y * 100
-
-    // End point from ray intersection with screen plane
-    endX = (1 - stableRay.screenHit.x) * 100
-    endY = stableRay.screenHit.y * 100
-
-    // Clamp to viewport
-    endX = Math.max(0, Math.min(100, endX))
-    endY = Math.max(0, Math.min(100, endY))
-  } else {
-    // Fallback: original basic ray calculation
-    originX = (1 - ray.origin.x) * 100
-    originY = ray.origin.y * 100
-
-  const centerX = 50
-  const centerY = 50
-  const handDeviationX = (originX - 50) * LASER_DEVIATION_SCALE
-  const handDeviationY = (originY - 50) * LASER_DEVIATION_SCALE
-  const targetX = centerX - handDeviationX * (1 - LASER_CENTER_BIAS)
-  const targetY = centerY - handDeviationY * (1 - LASER_CENTER_BIAS)
-
-  const toCenterX = targetX - originX
-  const toCenterY = targetY - originY
-  const dist = Math.sqrt(toCenterX * toCenterX + toCenterY * toCenterY)
-  const normX = dist > 0 ? toCenterX / dist : 0
-  const normY = dist > 0 ? toCenterY / dist : 0
-  const laserLength = dist
-
-    endX = originX + normX * laserLength
-    endY = originY + normY * laserLength
-  }
-
-  // Visual properties - intensify based on state
-  const pinchStrength = stableRay?.pinchStrength ?? ray.strength
-  const baseStrokeWidth = 0.2 + pinchStrength * 0.3
-  const strokeWidth = isGripped ? baseStrokeWidth * 2.5 : hasHit ? baseStrokeWidth * 1.5 : baseStrokeWidth
-  const baseOpacity = 0.3 + pinchStrength * 0.4
-  const opacity = isGripped ? Math.min(1, baseOpacity * 1.8) : hasHit ? baseOpacity * 1.3 : baseOpacity
-  const glowRadius = isGripped ? 2 + pinchStrength * 2 : hasHit ? 1.5 + pinchStrength : 0.8 + pinchStrength * 0.8
-
-  // Color changes based on state
-  const activeColor = isGripped ? '#ffffff' : hasHit ? '#fbbf24' : color // Golden when hitting
-  const confidence = stableRay?.confidence ?? 0.8
-
-  return (
-    <g filter={isGripped ? 'url(#grip-glow)' : undefined}>
-      {/* Outer glow when gripped */}
-      {isGripped && (
-        <line
-          x1={originX}
-          y1={originY}
-          x2={endX}
-          y2={endY}
-          stroke={color}
-          strokeWidth={strokeWidth * 4}
-          strokeLinecap="round"
-          opacity={0.2}
-        />
-      )}
-
-      {/* Laser glow (wider, more transparent) */}
-      <line
-        x1={originX}
-        y1={originY}
-        x2={endX}
-        y2={endY}
-        stroke={color}
-        strokeWidth={strokeWidth * 2.5}
-        strokeLinecap="round"
-        opacity={opacity * 0.3}
-      />
-
-      {/* Main laser beam */}
-      <line
-        x1={originX}
-        y1={originY}
-        x2={endX}
-        y2={endY}
-        stroke={activeColor}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        opacity={opacity * confidence}
-      />
-
-      {/* Origin glow sphere */}
-      <circle
-        cx={originX}
-        cy={originY}
-        r={glowRadius * 1.5}
-        fill={color}
-        opacity={0.2}
-      />
-      <circle
-        cx={originX}
-        cy={originY}
-        r={glowRadius}
-        fill={activeColor}
-        opacity={isGripped ? 1 : hasHit ? 0.9 : 0.7}
-      />
-
-      {/* Hit indicator - pulsing crosshair when pointing at a node */}
-      {hasHit && (
-        <g className="animate-pulse">
-          {/* Outer ring */}
-          <circle
-            cx={endX}
-            cy={endY}
-            r={3}
-            fill="none"
-            stroke="#fbbf24"
-            strokeWidth={0.3}
-            opacity={0.8}
-          />
-          {/* Inner target */}
-          <circle
-            cx={endX}
-            cy={endY}
-            r={1.5}
-            fill="#fbbf24"
-            opacity={0.6}
-          />
-          {/* Crosshair lines */}
-          <line x1={endX - 4} y1={endY} x2={endX - 2} y2={endY} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
-          <line x1={endX + 2} y1={endY} x2={endX + 4} y2={endY} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
-          <line x1={endX} y1={endY - 4} x2={endX} y2={endY - 2} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
-          <line x1={endX} y1={endY + 2} x2={endX} y2={endY + 4} stroke="#fbbf24" strokeWidth={0.2} opacity={0.7} />
-        </g>
-      )}
-
-      {/* Impact point at center - "warm spot" where laser hits the nexus */}
-      <circle
-        cx={endX}
-        cy={endY}
-        r={isGripped ? 2.5 : 1.5}
-        fill={color}
-        opacity={isGripped ? 0.6 : 0.3}
-      />
-      {isGripped && (
-        <>
-          <circle
-            cx={endX}
-            cy={endY}
-            r={4}
-            fill={color}
-            opacity={0.2}
-          />
-          <circle
-            cx={endX}
-            cy={endY}
-            r={1}
-            fill="#ffffff"
-            opacity={0.8}
-          />
-        </>
-      )}
-
-      {/* Pulsing ring at origin when gripped */}
-      {isGripped && (
-        <circle
-          cx={originX}
-          cy={originY}
-          r={glowRadius * 2}
-          fill="none"
-          stroke={activeColor}
-          strokeWidth={0.3}
-          opacity={0.7}
-          className="animate-ping"
-        />
-      )}
     </g>
   )
 }
