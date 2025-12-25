@@ -1,7 +1,107 @@
-import { useRef, useMemo } from 'react'
+import { useRef, useMemo, useState, useEffect } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { SimulationNode, GraphNode } from '../lib/types'
+
+/**
+ * Visual feedback for direct pinch selection ("pick the berry")
+ * Shows a ring that tightens as pinch strength increases
+ */
+interface PinchPreSelectHighlightProps {
+  node: SimulationNode | null
+  pinchStrength: number // 0-1: how close to pinching
+  color?: string
+}
+
+export function PinchPreSelectHighlight({
+  node,
+  pinchStrength,
+  color,
+}: PinchPreSelectHighlightProps) {
+  const ringRef = useRef<THREE.Mesh>(null)
+  const innerRingRef = useRef<THREE.Mesh>(null)
+  const [prevNode, setPrevNode] = useState<SimulationNode | null>(null)
+  const fadeRef = useRef(0)
+
+  // Smooth fade in/out when node changes
+  useEffect(() => {
+    if (node !== prevNode) {
+      setPrevNode(node)
+    }
+  }, [node, prevNode])
+
+  // Animate the ring based on pinch strength
+  useFrame((state, delta) => {
+    // Fade in/out
+    const targetFade = node ? 1 : 0
+    fadeRef.current += (targetFade - fadeRef.current) * Math.min(1, delta * 8)
+
+    if (fadeRef.current < 0.01) return
+    if (!ringRef.current || !innerRingRef.current) return
+
+    const t = state.clock.elapsedTime
+
+    // Outer ring: pulses gently
+    const outerMaterial = ringRef.current.material as THREE.MeshBasicMaterial
+    const pulse = 0.4 + Math.sin(t * 3) * 0.1
+    outerMaterial.opacity = pulse * fadeRef.current
+
+    // Slow rotation
+    ringRef.current.rotation.z = t * 0.5
+
+    // Inner ring: tightens based on pinch strength
+    // At 0 strength, inner ring is at same size as outer
+    // At 1 strength (pinched), inner ring contracts to node size
+    const innerMaterial = innerRingRef.current.material as THREE.MeshBasicMaterial
+    const contractAmount = pinchStrength * 0.7 // How much it contracts (0-0.7)
+    innerRingRef.current.scale.setScalar(1 - contractAmount)
+
+    // Inner ring gets brighter and more opaque as pinch increases
+    innerMaterial.opacity = (0.3 + pinchStrength * 0.5) * fadeRef.current
+
+    // Opposite rotation for visual interest
+    innerRingRef.current.rotation.z = -t * 0.8
+  })
+
+  // Use the node that's fading (current or previous)
+  const displayNode = node || prevNode
+  if (!displayNode || fadeRef.current < 0.01) return null
+
+  const nodeColor = color || '#fbbf24' // Amber/gold for pre-select
+  const nodeRadius = displayNode.radius || 3
+
+  // Ring sizes
+  const innerRadius = nodeRadius * 1.3
+  const outerRadius = nodeRadius * 2.2
+
+  return (
+    <group position={[displayNode.x || 0, displayNode.y || 0, displayNode.z || 0]}>
+      {/* Outer pulsing ring */}
+      <mesh ref={ringRef}>
+        <ringGeometry args={[innerRadius, outerRadius, 32]} />
+        <meshBasicMaterial
+          color={nodeColor}
+          transparent
+          opacity={0.4}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {/* Inner contracting ring - shows pinch progress */}
+      <mesh ref={innerRingRef}>
+        <ringGeometry args={[innerRadius * 0.9, innerRadius, 32]} />
+        <meshBasicMaterial
+          color={nodeColor}
+          transparent
+          opacity={0.6}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+    </group>
+  )
+}
 
 interface SelectionHighlightProps {
   node: SimulationNode | null

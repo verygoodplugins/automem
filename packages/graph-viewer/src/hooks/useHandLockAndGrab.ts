@@ -50,6 +50,8 @@ export type HandLockState =
       grabAnchor?: { x: number; y: number; depth: number }
       /** when we last saw a usable hand */
       lastSeenMs: number
+      /** is pinch currently activated (for selection) */
+      pinchActivated: boolean
     }
 
 export interface CloudControlDeltas {
@@ -75,6 +77,10 @@ const PALM_FACING_THRESHOLD = 0.72
 
 const GRAB_ON_THRESHOLD = 0.72
 const GRAB_OFF_THRESHOLD = 0.45
+
+// Pinch thresholds for direct selection ("pick the berry")
+const PINCH_ON_THRESHOLD = 0.85
+const PINCH_OFF_THRESHOLD = 0.65
 
 // Control sensitivity
 const DEPTH_DEADZONE = 0.01
@@ -284,10 +290,19 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
           ? lockedMetrics.grab >= GRAB_OFF_THRESHOLD
           : lockedMetrics.grab >= GRAB_ON_THRESHOLD
 
+      // Pinch hysteresis for selection ("pick the berry")
+      // Only activate when NOT grabbing (grab takes priority)
+      const pinchActivated = grabbed
+        ? false
+        : prev.pinchActivated
+          ? lockedMetrics.pinch >= PINCH_OFF_THRESHOLD
+          : lockedMetrics.pinch >= PINCH_ON_THRESHOLD
+
       const lock: HandLockState = {
         ...prev,
         metrics: lockedMetrics,
         grabbed,
+        pinchActivated,
         lastSeenMs: nowMs,
       }
 
@@ -370,6 +385,7 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
             lockedAtMs: nowMs,
             neutral: { x: wrist?.x ?? 0.5, y: wrist?.y ?? 0.5, depth: candidateMetrics.depth },
             grabbed: false,
+            pinchActivated: false,
             lastSeenMs: nowMs,
           }
           lockRef.current = locked

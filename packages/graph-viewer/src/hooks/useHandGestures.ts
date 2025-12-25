@@ -59,7 +59,11 @@ export interface GestureState {
   pinchStrength: number // 0-1, how pinched is the pointing hand
   grabStrength: number // 0-1, how closed is the fist
 
-  // Pinch ray for laser pointer (Meta Quest style)
+  // Direct pinch selection point (midpoint between thumb tip and index tip)
+  // Used for "pick the berry" selection - position this over a node and pinch
+  pinchPoint: { x: number; y: number } | null // Normalized screen coords (0-1)
+
+  // Pinch ray for laser pointer (Meta Quest style) - DEPRECATED, use pinchPoint instead
   leftPinchRay: PinchRay | null
   rightPinchRay: PinchRay | null
   activePinchRay: PinchRay | null // The one currently being used for interaction
@@ -88,6 +92,7 @@ const DEFAULT_STATE: GestureState = {
   pointDirection: null,
   pinchStrength: 0,
   grabStrength: 0,
+  pinchPoint: null,
   leftPinchRay: null,
   rightPinchRay: null,
   activePinchRay: null,

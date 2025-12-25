@@ -36,7 +36,7 @@ import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_CLUSTER_CONFIG, D
 import { useClusterDetection } from '../hooks/useClusterDetection'
 import { useFocusMode, type NodeFocusState } from '../hooks/useFocusMode'
 import { ClusterBoundaries } from './ClusterBoundaries'
-import { SelectionHighlight, ConnectedPathsHighlight } from './SelectionHighlight'
+import { SelectionHighlight, ConnectedPathsHighlight, PinchPreSelectHighlight } from './SelectionHighlight'
 import { getEdgeStyle } from '../lib/edgeStyles'
 import { EdgeParticles } from './EdgeParticles'
 import { MiniMap } from './MiniMap'
@@ -563,6 +563,16 @@ function Scene({
     return layoutNodes.find(n => n.id === selectedNode.id) ?? null
   }, [selectedNode, layoutNodes])
 
+  // Get hovered node from layout (for hand-tracking pre-select highlight)
+  const hoveredLayoutNode = useMemo(() => {
+    if (!hoveredNode) return null
+    return layoutNodes.find(n => n.id === hoveredNode.id) ?? null
+  }, [hoveredNode, layoutNodes])
+
+  // Track pinch strength for visual feedback (updated in useFrame)
+  const [pinchStrength, setPinchStrength] = useState(0)
+  const pinchStrengthRef = useRef(0)
+
   // Stop auto-rotate on user interaction
   const handleInteractionStart = useCallback(() => {
     setAutoRotate(false)
@@ -575,32 +585,14 @@ function Scene({
   const wasGrabbingRef = useRef(false)
   const inertiaActiveRef = useRef(false)
 
-  // Hand aim / selection (point + pinch click)
-  const handRayPositions = useMemo(() => new Float32Array(6), [])
-  const handRayGeom = useMemo(() => {
-    const geom = new THREE.BufferGeometry()
-    geom.setAttribute('position', new THREE.BufferAttribute(handRayPositions, 3))
-    geom.computeBoundingSphere()
-    return geom
-  }, [handRayPositions])
-  const handRayLine = useMemo(() => {
-    const mat = new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.65 })
-    const line = new THREE.Line(handRayGeom, mat)
-    line.visible = false
-    line.frustumCulled = false
-    return line
-  }, [handRayGeom])
-  const aimSmoothedRef = useRef({ x: 0.5, y: 0.5 })
+  // Direct pinch selection ("pick the berry")
+  // Position pinchPoint over a node on screen, pinch to select
+  const PINCH_SELECT_RADIUS = 50 // pixels - fixed radius for selection
   const handHoverIdRef = useRef<string | null>(null)
-  const pinchDownRef = useRef(false)
+  const pinchWasActiveRef = useRef(false) // for edge detection
   const lastClickMsRef = useRef(0)
 
-  const handRaycaster = useMemo(() => new THREE.Raycaster(), [])
-  const tmpNdc = useMemo(() => new THREE.Vector2(), [])
-  const tmpInvMat = useMemo(() => new THREE.Matrix4(), [])
-  const tmpLocalRay = useMemo(() => new THREE.Ray(), [])
-  const tmpHitLocal = useMemo(() => new THREE.Vector3(), [])
-  const tmpHitWorld = useMemo(() => new THREE.Vector3(), [])
+  // Temp objects for grab calculations
   const tmpTarget = useMemo(() => new THREE.Vector3(), [])
   const tmpInstVel = useMemo(() => new THREE.Vector3(), [])
 
@@ -661,135 +653,101 @@ function Scene({
     }
     wasGrabbingRef.current = isGrabbing
 
-    // --- Point + pinch-click selection (only when locked, not grabbing) ---
-    const pointScore = isLocked ? handLock.metrics.point : 0
-    const pinchScore = isLocked ? handLock.metrics.pinch : 0
-    const aimActive = isLocked && !isGrabbing && pointScore > 0.55
+    // --- Direct pinch selection ("pick the berry") ---
+    // Only active when locked and not grabbing
+    const pinchActive = isLocked && !isGrabbing
 
-    const rayLine = handRayLine
-    if (!aimActive) {
-      // Hide aim visuals and clear hover if we were controlling it
-      if (rayLine) rayLine.visible = false
+    // Update pinch strength for visual feedback
+    const currentPinchStrength = isLocked ? handLock.metrics.pinch : 0
+    if (Math.abs(currentPinchStrength - pinchStrengthRef.current) > 0.02) {
+      pinchStrengthRef.current = currentPinchStrength
+      setPinchStrength(currentPinchStrength)
+    }
+
+    if (!pinchActive) {
+      // Clear hover when not in selection mode
       if (handHoverIdRef.current !== null) {
         onNodeHover(null)
         handHoverIdRef.current = null
       }
-      pinchDownRef.current = false
+      pinchWasActiveRef.current = false
+      // Reset pinch strength when not active
+      if (pinchStrengthRef.current > 0.01) {
+        pinchStrengthRef.current = 0
+        setPinchStrength(0)
+      }
       return
     }
 
-    const handData = handLock.hand === 'right' ? gestureState.rightHand : gestureState.leftHand
-    const indexTip = handData?.landmarks?.[8]
-    if (!indexTip) {
-      if (rayLine) rayLine.visible = false
+    // Get pinchPoint from gesture state (midpoint between thumb and index tips)
+    const pinchPoint = gestureState.pinchPoint
+    if (!pinchPoint) {
+      if (handHoverIdRef.current !== null) {
+        onNodeHover(null)
+        handHoverIdRef.current = null
+      }
       return
     }
 
-    // Smooth the aim point a bit (camera + hand jitter)
-    const safeDt = Math.max(1e-4, dt)
-    const aimLerp = 1 - Math.exp(-20 * safeDt)
-    aimSmoothedRef.current.x += (indexTip.x - aimSmoothedRef.current.x) * aimLerp
-    aimSmoothedRef.current.y += (indexTip.y - aimSmoothedRef.current.y) * aimLerp
+    // Get canvas size for screen-space calculations
+    const canvas = document.querySelector('canvas')
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
 
-    const aimX = aimSmoothedRef.current.x
-    const aimY = aimSmoothedRef.current.y
+    // Convert pinchPoint (0-1 normalized) to screen pixels
+    const pinchScreenX = pinchPoint.x * rect.width
+    const pinchScreenY = pinchPoint.y * rect.height
 
-    // Build a ray from the camera through the aim screen point
-    tmpNdc.set(aimX * 2 - 1, -(aimY * 2 - 1))
-    handRaycaster.setFromCamera(tmpNdc, camera)
-
-    // Transform ray into group-local space (nodes are in group coordinates)
-    tmpInvMat.copy(group.matrixWorld).invert()
-    tmpLocalRay.copy(handRaycaster.ray).applyMatrix4(tmpInvMat)
-
-    // Find best node hit (ray-sphere intersection)
-    let bestNode: SimulationNode | null = null
-    let bestT = Infinity
-    const radiusScale = displayConfig.nodeSizeScale
-    const hitRadiusBoost = 1.25
+    // Find nearest node to pinchPoint in screen space
+    let nearestNode: SimulationNode | null = null
+    let nearestDist = Infinity
 
     for (const n of layoutNodes) {
-      const cx = n.x ?? 0
-      const cy = n.y ?? 0
-      const cz = n.z ?? 0
-      const r = (n.radius ?? 6) * radiusScale * hitRadiusBoost
+      // Get node world position (accounting for group transform)
+      const worldPos = new THREE.Vector3(n.x ?? 0, n.y ?? 0, n.z ?? 0)
+      group.localToWorld(worldPos)
 
-      // Ray-sphere intersection (group-local)
-      const ox = tmpLocalRay.origin.x
-      const oy = tmpLocalRay.origin.y
-      const oz = tmpLocalRay.origin.z
-      const dx = tmpLocalRay.direction.x
-      const dy = tmpLocalRay.direction.y
-      const dz = tmpLocalRay.direction.z
+      // Project to screen coordinates
+      const projected = worldPos.project(camera)
+      const screenX = ((projected.x + 1) / 2) * rect.width
+      const screenY = ((-projected.y + 1) / 2) * rect.height
 
-      const lx = cx - ox
-      const ly = cy - oy
-      const lz = cz - oz
-      const tca = lx * dx + ly * dy + lz * dz
-      if (tca < 0) continue
-      const d2 = lx * lx + ly * ly + lz * lz - tca * tca
-      const r2 = r * r
-      if (d2 > r2) continue
-      const thc = Math.sqrt(r2 - d2)
-      const t0 = tca - thc
-      if (t0 > 0 && t0 < bestT) {
-        bestT = t0
-        bestNode = n
+      // Calculate distance to pinch point
+      const dx = screenX - pinchScreenX
+      const dy = screenY - pinchScreenY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      // Check if within selection radius and closer than current best
+      if (dist < PINCH_SELECT_RADIUS && dist < nearestDist) {
+        nearestDist = dist
+        nearestNode = n
       }
     }
 
-    if (bestNode) {
-      if (handHoverIdRef.current !== bestNode.id) {
-        onNodeHover(bestNode)
-        handHoverIdRef.current = bestNode.id
+    // Update hover state based on nearest node
+    if (nearestNode) {
+      if (handHoverIdRef.current !== nearestNode.id) {
+        onNodeHover(nearestNode)
+        handHoverIdRef.current = nearestNode.id
       }
     } else if (handHoverIdRef.current !== null) {
       onNodeHover(null)
       handHoverIdRef.current = null
     }
 
-    // Update aim ray visualization (world space)
-    if (handRayGeom && rayLine) {
-      rayLine.visible = true
+    // Get pinch activation state (with hysteresis from useHandLockAndGrab)
+    const pinchActivated = handLock.mode === 'locked' && handLock.pinchActivated
 
-      const o = handRaycaster.ray.origin
-      const d = handRaycaster.ray.direction
-
-      handRayPositions[0] = o.x
-      handRayPositions[1] = o.y
-      handRayPositions[2] = o.z
-
-      if (bestNode && bestT < Infinity) {
-        tmpHitLocal.set(
-          (tmpLocalRay.origin.x + tmpLocalRay.direction.x * bestT) as number,
-          (tmpLocalRay.origin.y + tmpLocalRay.direction.y * bestT) as number,
-          (tmpLocalRay.origin.z + tmpLocalRay.direction.z * bestT) as number
-        )
-        tmpHitWorld.copy(tmpHitLocal)
-        group.localToWorld(tmpHitWorld)
-      } else {
-        tmpHitWorld.copy(o).addScaledVector(d, 250)
-      }
-
-      handRayPositions[3] = tmpHitWorld.x
-      handRayPositions[4] = tmpHitWorld.y
-      handRayPositions[5] = tmpHitWorld.z
-
-      const attr = handRayGeom.getAttribute('position') as THREE.BufferAttribute | undefined
-      if (attr) attr.needsUpdate = true
-      handRayGeom.computeBoundingSphere()
-    }
-
-    // Pinch click (edge triggered)
-    const down = pinchScore > 0.85
-    if (!pinchDownRef.current && down && bestNode) {
+    // Pinch selection (edge triggered: select on rising edge of pinchActivated)
+    if (pinchActivated && !pinchWasActiveRef.current && nearestNode) {
       const nowMs = performance.now()
+      // Debounce to prevent rapid double-selects
       if (nowMs - lastClickMsRef.current > 250) {
         lastClickMsRef.current = nowMs
-        onNodeSelect(bestNode)
+        onNodeSelect(nearestNode)
       }
     }
-    pinchDownRef.current = down
+    pinchWasActiveRef.current = pinchActivated
   })
 
   return (
@@ -813,9 +771,6 @@ function Scene({
       />
 
       {/* Graph content */}
-      {/* Hand aim ray (point + pinch-click) */}
-      <primitive object={handRayLine} />
-
       <group ref={groupRef}>
         {/* Batched edges - single draw call for all edges */}
         {/* Cluster boundaries (rendered behind edges) */}
@@ -879,6 +834,14 @@ function Scene({
             node={selectedLayoutNode}
             innerRadius={selectedLayoutNode.radius * displayConfig.nodeSizeScale * 1.3}
             outerRadius={selectedLayoutNode.radius * displayConfig.nodeSizeScale * 1.8}
+          />
+        )}
+
+        {/* Pinch pre-select highlight - tightening ring for "pick the berry" selection */}
+        {gestureControlEnabled && (
+          <PinchPreSelectHighlight
+            node={hoveredLayoutNode}
+            pinchStrength={pinchStrength}
           />
         )}
 
@@ -1229,16 +1192,23 @@ function InstancedNodes({
   const nodeCount = nodes.length
   const scalesRef = useRef<Float32Array>(new Float32Array(0))
   const targetScalesRef = useRef<Float32Array>(new Float32Array(0))
+  // Deep dive: z-offset for selected node (pulls toward camera)
+  const zOffsetsRef = useRef<Float32Array>(new Float32Array(0))
+  const targetZOffsetsRef = useRef<Float32Array>(new Float32Array(0))
 
-  // Resize scale arrays when node count changes
+  // Resize animation arrays when node count changes
   useEffect(() => {
     if (scalesRef.current.length !== nodeCount) {
       scalesRef.current = new Float32Array(nodeCount)
       targetScalesRef.current = new Float32Array(nodeCount)
-      // Initialize scales to 1
+      zOffsetsRef.current = new Float32Array(nodeCount)
+      targetZOffsetsRef.current = new Float32Array(nodeCount)
+      // Initialize scales to 1 and z-offsets to 0
       for (let i = 0; i < nodeCount; i++) {
         scalesRef.current[i] = 1
         targetScalesRef.current[i] = 1
+        zOffsetsRef.current[i] = 0
+        targetZOffsetsRef.current[i] = 0
       }
     }
   }, [nodeCount])
@@ -1310,6 +1280,23 @@ function InstancedNodes({
       const newScale = THREE.MathUtils.lerp(currentScale, targetScale, delta * 10)
       scalesRef.current[i] = newScale
 
+      // Deep dive z-offset: selected node pops toward camera, connected nodes follow slightly
+      // This creates a "focus" effect where the selected node comes forward
+      const DEEP_DIVE_DISTANCE = 25 // How far forward selected node moves
+      const CONNECTED_DIVE_DISTANCE = 10 // How far connected nodes follow
+      let targetZOffset = 0
+      if (isSelected) {
+        targetZOffset = DEEP_DIVE_DISTANCE
+      } else if (selectedNode && connectedIds.has(node.id)) {
+        targetZOffset = CONNECTED_DIVE_DISTANCE
+      }
+      targetZOffsetsRef.current[i] = targetZOffset
+
+      // Smooth z-offset animation (slightly slower for dramatic effect)
+      const currentZOffset = zOffsetsRef.current[i] || 0
+      const newZOffset = THREE.MathUtils.lerp(currentZOffset, targetZOffset, delta * 6)
+      zOffsetsRef.current[i] = newZOffset
+
       // Apply pulsing for search matches, path nodes, and lasso selected
       let finalScale = newScale
       if (isSearchMatch) {
@@ -1336,8 +1323,9 @@ function InstancedNodes({
       const breathing = 1 + Math.sin(breathingTime + nodePhase) * breathingAmplitude
       finalScale *= breathing
 
-      // Set position and scale (apply nodeSizeScale)
-      tempPosition.set(node.x ?? 0, node.y ?? 0, node.z ?? 0)
+      // Set position and scale (apply nodeSizeScale and deep-dive z-offset)
+      // z-offset moves node toward camera (positive z in screen space)
+      tempPosition.set(node.x ?? 0, node.y ?? 0, (node.z ?? 0) + newZOffset)
       tempScale.setScalar(node.radius * finalScale * nodeSizeScale)
       tempMatrix.compose(tempPosition, tempQuaternion, tempScale)
       mesh.setMatrixAt(i, tempMatrix)

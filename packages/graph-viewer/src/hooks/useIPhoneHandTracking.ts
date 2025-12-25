@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { GestureState, HandLandmarks, PinchRay } from './useHandGestures'
 import type { NormalizedLandmarkList } from '@mediapipe/hands'
+import { OneEuroFilter, OneEuroFilter3D, ONE_EURO_PRESETS } from '../utils/OneEuroFilter'
 
 // iPhone landmark names to MediaPipe indices
 // Vision framework uses abbreviated keys: VNHLK + finger letter + joint
@@ -78,11 +79,30 @@ interface UseIPhoneHandTrackingOptions {
   onGestureChange?: (state: GestureState) => void
 }
 
-// Smoothing for stability
-const SMOOTHING = 0.3
+// Legacy lerp and smoothing for two-hand gestures (zoom/rotate)
+// Two-hand interactions are less sensitive to jitter, so simple lerp is fine
+const TWO_HAND_SMOOTHING = 0.3
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
+}
+
+// 1€ Filter instances for smooth, responsive tracking
+// These are created per-hand and persist across frames
+interface HandFilters {
+  landmarks: OneEuroFilter3D[]  // 21 landmarks
+  pinch: OneEuroFilter
+  grab: OneEuroFilter
+  pointerDirection: OneEuroFilter3D
+}
+
+function createHandFilters(): HandFilters {
+  return {
+    landmarks: Array.from({ length: 21 }, () => new OneEuroFilter3D(ONE_EURO_PRESETS.landmark)),
+    pinch: new OneEuroFilter(ONE_EURO_PRESETS.gesture),
+    grab: new OneEuroFilter(ONE_EURO_PRESETS.gesture),
+    pointerDirection: new OneEuroFilter3D(ONE_EURO_PRESETS.pointer),
+  }
 }
 
 function distance3D(a: IPhoneLandmark, b: IPhoneLandmark): number {
@@ -276,6 +296,7 @@ const DEFAULT_STATE: GestureState = {
   pointDirection: null,
   pinchStrength: 0,
   grabStrength: 0,
+  pinchPoint: null,
   leftPinchRay: null,
   rightPinchRay: null,
   activePinchRay: null,
@@ -309,6 +330,10 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
   const messageCountRef = useRef(0)
   const hasLoggedLandmarksRef = useRef(false)
 
+  // 1€ Filters for smooth tracking (one set per hand)
+  const leftFiltersRef = useRef<HandFilters>(createHandFilters())
+  const rightFiltersRef = useRef<HandFilters>(createHandFilters())
+
   // Process incoming hand data
   const processMessage = useCallback((data: IPhoneMessage) => {
     frameCountRef.current++
@@ -339,8 +364,31 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
         console.log('📍 Sample landmark:', sampleEntry?.[0], '→', sampleEntry?.[1])
       }
 
-      const landmarks = convertToMediaPipeLandmarks(hand.landmarks, hand.hasLiDARDepth)
-      const worldLandmarks = convertToWorldLandmarksMeters(hand.landmarks, hand.hasLiDARDepth)
+      // Get the appropriate filter set for this hand
+      const filters = hand.handedness === 'left' ? leftFiltersRef.current : rightFiltersRef.current
+
+      // Convert raw landmarks
+      const rawLandmarks = convertToMediaPipeLandmarks(hand.landmarks, hand.hasLiDARDepth)
+      const rawWorldLandmarks = convertToWorldLandmarksMeters(hand.landmarks, hand.hasLiDARDepth)
+
+      // Apply 1€ filter to each landmark for smooth, responsive tracking
+      const landmarks: NormalizedLandmarkList = rawLandmarks.map((lm, idx) => {
+        const filtered = filters.landmarks[idx].filter(
+          { x: lm.x, y: lm.y, z: lm.z ?? 0 },
+          now
+        )
+        return { ...filtered, visibility: lm.visibility }
+      })
+
+      const worldLandmarks: NormalizedLandmarkList = rawWorldLandmarks.map((lm, idx) => {
+        // World landmarks use same filter as screen landmarks for consistency
+        const filtered = filters.landmarks[idx].filter(
+          { x: lm.x, y: lm.y, z: lm.z ?? 0 },
+          now
+        )
+        return { ...filtered, visibility: lm.visibility }
+      })
+
       const handData: HandLandmarks = {
         landmarks,
         worldLandmarks,
@@ -374,16 +422,16 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
       const dx = leftWrist.x - rightWrist.x
       const dy = leftWrist.y - rightWrist.y
       const rawDistance = Math.sqrt(dx * dx + dy * dy)
-      newState.twoHandDistance = lerp(prev.twoHandDistance, rawDistance, 1 - SMOOTHING)
+      newState.twoHandDistance = lerp(prev.twoHandDistance, rawDistance, 1 - TWO_HAND_SMOOTHING)
 
       // Rotation
       const rawRotation = Math.atan2(rightWrist.y - leftWrist.y, rightWrist.x - leftWrist.x)
-      newState.twoHandRotation = lerp(prev.twoHandRotation, rawRotation, 1 - SMOOTHING)
+      newState.twoHandRotation = lerp(prev.twoHandRotation, rawRotation, 1 - TWO_HAND_SMOOTHING)
 
       // Center
       newState.twoHandCenter = {
-        x: lerp(prev.twoHandCenter.x, (leftWrist.x + rightWrist.x) / 2, 1 - SMOOTHING),
-        y: lerp(prev.twoHandCenter.y, (leftWrist.y + rightWrist.y) / 2, 1 - SMOOTHING),
+        x: lerp(prev.twoHandCenter.x, (leftWrist.x + rightWrist.x) / 2, 1 - TWO_HAND_SMOOTHING),
+        y: lerp(prev.twoHandCenter.y, (leftWrist.y + rightWrist.y) / 2, 1 - TWO_HAND_SMOOTHING),
       }
 
       // Deltas
@@ -403,9 +451,12 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
       }
     }
 
-    // Pinch strength (smoothed)
+    // Pinch/grab strength (filtered with 1€ for responsive but stable values)
     const primaryHand = newState.rightHand || newState.leftHand
     if (primaryHand) {
+      const isRight = primaryHand.handedness === 'Right'
+      const filters = isRight ? rightFiltersRef.current : leftFiltersRef.current
+
       const reconstructed = Object.fromEntries(
         Object.entries(LANDMARK_MAP).map(([name, idx]) => [
           name,
@@ -413,11 +464,23 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
         ])
       ) as Record<string, IPhoneLandmark>
 
-      const pinch = calculatePinchStrength(reconstructed)
-      const grab = calculateGrabStrength(reconstructed)
+      const rawPinch = calculatePinchStrength(reconstructed)
+      const rawGrab = calculateGrabStrength(reconstructed)
 
-      newState.pinchStrength = lerp(prev.pinchStrength, pinch, 1 - SMOOTHING)
-      newState.grabStrength = lerp(prev.grabStrength, grab, 1 - SMOOTHING)
+      // Apply 1€ filter for smooth but responsive gesture detection
+      newState.pinchStrength = filters.pinch.filter(rawPinch, now)
+      newState.grabStrength = filters.grab.filter(rawGrab, now)
+
+      // Calculate pinch point (midpoint between thumb tip and index tip)
+      // This is the "pick the berry" selection point
+      const thumbTip = primaryHand.landmarks[4]  // THUMB_TIP
+      const indexTip = primaryHand.landmarks[8]  // INDEX_TIP
+      if (thumbTip && indexTip) {
+        newState.pinchPoint = {
+          x: (thumbTip.x + indexTip.x) / 2,
+          y: (thumbTip.y + indexTip.y) / 2,
+        }
+      }
     }
 
     prevStateRef.current = newState
@@ -476,6 +539,10 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
           setIsConnected(false)
           setGestureState(DEFAULT_STATE)
           setPhoneConnected(false)
+
+          // Reset filters when disconnected (important for clean re-acquisition)
+          leftFiltersRef.current = createHandFilters()
+          rightFiltersRef.current = createHandFilters()
 
           // Reconnect after delay
           if (enabled) {

@@ -23,6 +23,8 @@ import { LassoOverlay } from './components/LassoOverlay'
 import { SelectionActions } from './components/SelectionActions'
 import { TagCloud } from './components/TagCloud'
 import { useHandLockAndGrab } from './hooks/useHandLockAndGrab'
+import { useHandRecording, downloadRecording, listSavedRecordings, loadRecordingFromStorage } from './hooks/useHandRecording'
+import { useHandPlayback } from './hooks/useHandPlayback'
 import { useTagCloud } from './hooks/useTagCloud'
 import { useKeyboardNavigation } from './hooks/useKeyboardNavigation'
 import { useBookmarks, type Bookmark } from './hooks/useBookmarks'
@@ -58,6 +60,7 @@ const DEFAULT_GESTURE_STATE: GestureState = {
   pointDirection: null,
   pinchStrength: 0,
   grabStrength: 0,
+  pinchPoint: null,
   leftPinchRay: null,
   rightPinchRay: null,
   activePinchRay: null,
@@ -163,6 +166,56 @@ export default function App() {
   }, [])
 
   const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
+
+  // Test mode - check URL param for automated testing
+  const [isTestMode] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('test') === 'true'
+  })
+
+  // Hand recording/playback for automated testing
+  const recording = useHandRecording({ autoDownload: false })
+  const playback = useHandPlayback({
+    logEvents: true,
+    exposeGlobal: true,
+    onGestureChange: (state) => {
+      // When playing back, use the playback gesture state
+      if (playback.isPlaying) {
+        setGestureState(state)
+      }
+    },
+  })
+
+  // Expose recording controls globally for automation
+  useEffect(() => {
+    if (isTestMode) {
+      const api = {
+        // Recording
+        startRecording: recording.startRecording,
+        stopRecording: () => {
+          const rec = recording.stopRecording()
+          if (rec) downloadRecording(rec)
+          return rec
+        },
+        isRecording: () => recording.isRecording,
+        // Playback
+        loadRecording: playback.loadRecording,
+        play: playback.play,
+        pause: playback.pause,
+        stop: playback.stop,
+        seek: playback.seek,
+        setSpeed: playback.setSpeed,
+        // Utilities
+        listRecordings: listSavedRecordings,
+        loadFromStorage: loadRecordingFromStorage,
+        getGestureState: () => gestureState,
+      }
+      ;(window as unknown as Record<string, unknown>).__handTest = api
+      console.log('[TEST MODE] Enabled. Use window.__handTest for automation')
+      console.log('[TEST MODE] Commands: startRecording(), stopRecording(), listRecordings(), loadFromStorage(key), play(), pause()')
+    }
+  }, [isTestMode, recording, playback, gestureState])
+
   // Tracking source - check URL param on mount, then allow UI toggle
   const [trackingSource, setTrackingSource] = useState<'mediapipe' | 'iphone'>(() => {
     const params = new URLSearchParams(window.location.search)
@@ -233,7 +286,11 @@ export default function App() {
 
   const handleGestureStateChange = useCallback((state: GestureState) => {
     setGestureState(state)
-  }, [])
+    // Record frame if recording is active
+    if (recording.isRecording) {
+      recording.recordFrame(state, trackingInfo.hasLiDAR)
+    }
+  }, [recording.isRecording, recording.recordFrame, trackingInfo.hasLiDAR])
 
   const { lock: handLock } = useHandLockAndGrab(gestureState, gestureControlEnabled)
 
@@ -670,6 +727,33 @@ export default function App() {
               {debugOverlayVisible ? 'Debug ON' : 'Debug'}
             </span>
           </button>
+        )}
+
+        {/* Recording Indicator (when recording) */}
+        {recording.isRecording && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/50">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-red-400 text-sm font-medium">
+              REC {Math.floor(recording.duration / 1000)}s ({recording.frameCount})
+            </span>
+          </div>
+        )}
+
+        {/* Playback Indicator (when playing) */}
+        {playback.isPlaying && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/20 border border-green-500/50">
+            <div className="w-2 h-2 rounded-full bg-green-500" />
+            <span className="text-green-400 text-sm font-medium">
+              PLAY {Math.floor(playback.currentTime / 1000)}s / {Math.floor(playback.duration / 1000)}s
+            </span>
+          </div>
+        )}
+
+        {/* Test Mode Indicator */}
+        {isTestMode && !recording.isRecording && !playback.isPlaying && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-yellow-500/20 border border-yellow-500/50">
+            <span className="text-yellow-400 text-sm font-medium">TEST MODE</span>
+          </div>
         )}
 
         {/* Settings Panel Toggle */}
