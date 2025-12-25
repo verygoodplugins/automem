@@ -56,6 +56,7 @@ export function GestureDebugOverlay({ gestureState, visible }: GestureDebugOverl
 
   // Format number for display
   const fmt = (n: number, decimals = 3) => n.toFixed(decimals)
+  const fmtMeters = (n: number) => `${fmt(n, 2)}m`
 
   // Get landmark name
   const landmarkName = (i: number) => {
@@ -230,11 +231,14 @@ export function GestureDebugOverlay({ gestureState, visible }: GestureDebugOverl
           <div className="grid grid-cols-1 gap-0.5 text-[9px] max-h-32 overflow-y-auto">
             {[0, 4, 8, 12, 16, 20].map((i) => {
               const lm = leftHand.landmarks[i]
+              const wm = leftHand.worldLandmarks?.[i]
+              const worldZ = (wm?.z ?? 0) as number
               return (
                 <div key={i} className="flex justify-between">
                   <span className="text-gray-400">{landmarkName(i)}:</span>
                   <span className="text-cyan-400">
-                    ({fmt(lm.x, 2)}, {fmt(lm.y, 2)}, {fmt(lm.z || 0, 2)})
+                    ({fmt(lm.x, 2)}, {fmt(lm.y, 2)}, {fmt((lm.z || 0) as number, 2)}
+                    {worldZ > 0 ? ` | ${fmtMeters(worldZ)}` : ''})
                   </span>
                 </div>
               )
@@ -250,11 +254,14 @@ export function GestureDebugOverlay({ gestureState, visible }: GestureDebugOverl
           <div className="grid grid-cols-1 gap-0.5 text-[9px] max-h-32 overflow-y-auto">
             {[0, 4, 8, 12, 16, 20].map((i) => {
               const lm = rightHand.landmarks[i]
+              const wm = rightHand.worldLandmarks?.[i]
+              const worldZ = (wm?.z ?? 0) as number
               return (
                 <div key={i} className="flex justify-between">
                   <span className="text-gray-400">{landmarkName(i)}:</span>
                   <span className="text-pink-400">
-                    ({fmt(lm.x, 2)}, {fmt(lm.y, 2)}, {fmt(lm.z || 0, 2)})
+                    ({fmt(lm.x, 2)}, {fmt(lm.y, 2)}, {fmt((lm.z || 0) as number, 2)}
+                    {worldZ > 0 ? ` | ${fmtMeters(worldZ)}` : ''})
                   </span>
                 </div>
               )

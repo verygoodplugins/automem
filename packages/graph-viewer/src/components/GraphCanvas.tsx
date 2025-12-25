@@ -218,24 +218,24 @@ export function GraphCanvas({
 
   return (
     <div className="relative w-full h-full">
-      <Canvas
-        camera={{ position: [0, 0, 150], fov: 60 }}
-        gl={{ antialias: !performanceMode, alpha: true, powerPreference: 'high-performance' }}
-        style={{ background: 'linear-gradient(to bottom, #0a0a0f 0%, #0f0f18 100%)' }}
-        frameloop={performanceMode ? 'demand' : 'always'}
-      >
-        <Scene
-          nodes={nodes}
-          edges={edges}
-          selectedNode={selectedNode}
-          hoveredNode={hoveredNode}
-          searchTerm={searchTerm}
-          onNodeSelect={onNodeSelect}
-          onNodeHover={onNodeHover}
+    <Canvas
+      camera={{ position: [0, 0, 150], fov: 60 }}
+      gl={{ antialias: !performanceMode, alpha: true, powerPreference: 'high-performance' }}
+      style={{ background: 'linear-gradient(to bottom, #0a0a0f 0%, #0f0f18 100%)' }}
+      frameloop={performanceMode ? 'demand' : 'always'}
+    >
+      <Scene
+        nodes={nodes}
+        edges={edges}
+        selectedNode={selectedNode}
+        hoveredNode={hoveredNode}
+        searchTerm={searchTerm}
+        onNodeSelect={onNodeSelect}
+        onNodeHover={onNodeHover}
           onNodeContextMenu={onNodeContextMenu}
-          gestureState={gestureState}
-          gestureControlEnabled={gestureControlEnabled && gesturesActive}
-          performanceMode={performanceMode}
+        gestureState={gestureState}
+        gestureControlEnabled={gestureControlEnabled && gesturesActive}
+        performanceMode={performanceMode}
           forceConfig={forceConfig}
           displayConfig={displayConfig}
           clusterConfig={clusterConfig}
@@ -259,8 +259,8 @@ export function GraphCanvas({
           lassoSelectedIds={lassoSelectedIds}
           tagFilteredNodeIds={tagFilteredNodeIds}
           hasTagFilter={hasTagFilter}
-        />
-      </Canvas>
+      />
+    </Canvas>
 
       {/* MiniMap Navigator */}
       <MiniMap
@@ -570,33 +570,227 @@ function Scene({
 
   // Track world position at grab start for displacement-based movement
   const grabStartPosRef = useRef({ x: 0, y: 0, z: 0 })
+  const grabPrevTargetRef = useRef(new THREE.Vector3())
+  const grabVelocityRef = useRef(new THREE.Vector3())
+  const wasGrabbingRef = useRef(false)
+  const inertiaActiveRef = useRef(false)
 
-  // Apply grab controls - fist to pan the graph
-  useEffect(() => {
+  // Hand aim / selection (point + pinch click)
+  const handRayPositions = useMemo(() => new Float32Array(6), [])
+  const handRayGeom = useMemo(() => {
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.BufferAttribute(handRayPositions, 3))
+    geom.computeBoundingSphere()
+    return geom
+  }, [handRayPositions])
+  const handRayLine = useMemo(() => {
+    const mat = new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.65 })
+    const line = new THREE.Line(handRayGeom, mat)
+    line.visible = false
+    line.frustumCulled = false
+    return line
+  }, [handRayGeom])
+  const aimSmoothedRef = useRef({ x: 0.5, y: 0.5 })
+  const handHoverIdRef = useRef<string | null>(null)
+  const pinchDownRef = useRef(false)
+  const lastClickMsRef = useRef(0)
+
+  const handRaycaster = useMemo(() => new THREE.Raycaster(), [])
+  const tmpNdc = useMemo(() => new THREE.Vector2(), [])
+  const tmpInvMat = useMemo(() => new THREE.Matrix4(), [])
+  const tmpLocalRay = useMemo(() => new THREE.Ray(), [])
+  const tmpHitLocal = useMemo(() => new THREE.Vector3(), [])
+  const tmpHitWorld = useMemo(() => new THREE.Vector3(), [])
+  const tmpTarget = useMemo(() => new THREE.Vector3(), [])
+  const tmpInstVel = useMemo(() => new THREE.Vector3(), [])
+
+  // Hand controls (grab inertia + point/pinch selection)
+  useFrame((_, dt) => {
     if (!gestureControlEnabled || !groupRef.current) return
     if (!gestureState.isTracking) return
 
     const group = groupRef.current
-    const isGrabbing = handLock.mode === 'locked' && handLock.grabbed
+    const isLocked = handLock.mode === 'locked'
+    const isGrabbing = isLocked && handLock.grabbed
 
+    // --- Grab: follow target with damping + inertial coast on release ---
     if (isGrabbing) {
       // On first frame of grab, capture current world position
-      if (grabDeltas.grabStart) {
+      if (grabDeltas.grabStart || !wasGrabbingRef.current) {
         grabStartPosRef.current = {
           x: group.position.x,
           y: group.position.y,
           z: group.position.z,
         }
-        return
+        grabPrevTargetRef.current.set(group.position.x, group.position.y, group.position.z)
+        grabVelocityRef.current.set(0, 0, 0)
+        inertiaActiveRef.current = false
       }
 
-      // DISPLACEMENT-BASED: Set position relative to grab start
+      // Target position relative to grab start
       const startPos = grabStartPosRef.current
-      group.position.x = startPos.x + grabDeltas.panX
-      group.position.y = startPos.y + grabDeltas.panY
-      group.position.z = startPos.z + grabDeltas.panZ
+      tmpTarget.set(startPos.x + grabDeltas.panX, startPos.y + grabDeltas.panY, startPos.z + grabDeltas.panZ)
+
+      // Estimate target velocity (used for inertial release)
+      const safeDt = Math.max(1e-4, dt)
+      tmpInstVel.copy(tmpTarget).sub(grabPrevTargetRef.current).multiplyScalar(1 / safeDt)
+      grabVelocityRef.current.lerp(tmpInstVel, 0.35)
+      grabPrevTargetRef.current.copy(tmpTarget)
+
+      // Follow target with a critically-damped feel (reduces jitter while still feeling 1:1)
+      const follow = 1 - Math.exp(-28 * safeDt)
+      group.position.lerp(tmpTarget, follow)
+    } else {
+      // Released: coast briefly with exponential decay (iOS-style momentum)
+      if (wasGrabbingRef.current) inertiaActiveRef.current = true
+
+      if (inertiaActiveRef.current) {
+        const safeDt = Math.max(1e-4, dt)
+        group.position.x += grabVelocityRef.current.x * safeDt
+        group.position.y += grabVelocityRef.current.y * safeDt
+        group.position.z += grabVelocityRef.current.z * safeDt
+
+        const decay = Math.exp(-6.5 * safeDt)
+        grabVelocityRef.current.multiplyScalar(decay)
+
+        if (grabVelocityRef.current.lengthSq() < 1) {
+          grabVelocityRef.current.set(0, 0, 0)
+          inertiaActiveRef.current = false
+        }
+      }
     }
-  }, [gestureControlEnabled, gestureState, handLock, grabDeltas])
+    wasGrabbingRef.current = isGrabbing
+
+    // --- Point + pinch-click selection (only when locked, not grabbing) ---
+    const pointScore = isLocked ? handLock.metrics.point : 0
+    const pinchScore = isLocked ? handLock.metrics.pinch : 0
+    const aimActive = isLocked && !isGrabbing && pointScore > 0.55
+
+    const rayLine = handRayLine
+    if (!aimActive) {
+      // Hide aim visuals and clear hover if we were controlling it
+      if (rayLine) rayLine.visible = false
+      if (handHoverIdRef.current !== null) {
+        onNodeHover(null)
+        handHoverIdRef.current = null
+      }
+      pinchDownRef.current = false
+      return
+    }
+
+    const handData = handLock.hand === 'right' ? gestureState.rightHand : gestureState.leftHand
+    const indexTip = handData?.landmarks?.[8]
+    if (!indexTip) {
+      if (rayLine) rayLine.visible = false
+      return
+    }
+
+    // Smooth the aim point a bit (camera + hand jitter)
+    const safeDt = Math.max(1e-4, dt)
+    const aimLerp = 1 - Math.exp(-20 * safeDt)
+    aimSmoothedRef.current.x += (indexTip.x - aimSmoothedRef.current.x) * aimLerp
+    aimSmoothedRef.current.y += (indexTip.y - aimSmoothedRef.current.y) * aimLerp
+
+    const aimX = aimSmoothedRef.current.x
+    const aimY = aimSmoothedRef.current.y
+
+    // Build a ray from the camera through the aim screen point
+    tmpNdc.set(aimX * 2 - 1, -(aimY * 2 - 1))
+    handRaycaster.setFromCamera(tmpNdc, camera)
+
+    // Transform ray into group-local space (nodes are in group coordinates)
+    tmpInvMat.copy(group.matrixWorld).invert()
+    tmpLocalRay.copy(handRaycaster.ray).applyMatrix4(tmpInvMat)
+
+    // Find best node hit (ray-sphere intersection)
+    let bestNode: SimulationNode | null = null
+    let bestT = Infinity
+    const radiusScale = displayConfig.nodeSizeScale
+    const hitRadiusBoost = 1.25
+
+    for (const n of layoutNodes) {
+      const cx = n.x ?? 0
+      const cy = n.y ?? 0
+      const cz = n.z ?? 0
+      const r = (n.radius ?? 6) * radiusScale * hitRadiusBoost
+
+      // Ray-sphere intersection (group-local)
+      const ox = tmpLocalRay.origin.x
+      const oy = tmpLocalRay.origin.y
+      const oz = tmpLocalRay.origin.z
+      const dx = tmpLocalRay.direction.x
+      const dy = tmpLocalRay.direction.y
+      const dz = tmpLocalRay.direction.z
+
+      const lx = cx - ox
+      const ly = cy - oy
+      const lz = cz - oz
+      const tca = lx * dx + ly * dy + lz * dz
+      if (tca < 0) continue
+      const d2 = lx * lx + ly * ly + lz * lz - tca * tca
+      const r2 = r * r
+      if (d2 > r2) continue
+      const thc = Math.sqrt(r2 - d2)
+      const t0 = tca - thc
+      if (t0 > 0 && t0 < bestT) {
+        bestT = t0
+        bestNode = n
+      }
+    }
+
+    if (bestNode) {
+      if (handHoverIdRef.current !== bestNode.id) {
+        onNodeHover(bestNode)
+        handHoverIdRef.current = bestNode.id
+      }
+    } else if (handHoverIdRef.current !== null) {
+      onNodeHover(null)
+      handHoverIdRef.current = null
+    }
+
+    // Update aim ray visualization (world space)
+    if (handRayGeom && rayLine) {
+      rayLine.visible = true
+
+      const o = handRaycaster.ray.origin
+      const d = handRaycaster.ray.direction
+
+      handRayPositions[0] = o.x
+      handRayPositions[1] = o.y
+      handRayPositions[2] = o.z
+
+      if (bestNode && bestT < Infinity) {
+        tmpHitLocal.set(
+          (tmpLocalRay.origin.x + tmpLocalRay.direction.x * bestT) as number,
+          (tmpLocalRay.origin.y + tmpLocalRay.direction.y * bestT) as number,
+          (tmpLocalRay.origin.z + tmpLocalRay.direction.z * bestT) as number
+        )
+        tmpHitWorld.copy(tmpHitLocal)
+        group.localToWorld(tmpHitWorld)
+      } else {
+        tmpHitWorld.copy(o).addScaledVector(d, 250)
+      }
+
+      handRayPositions[3] = tmpHitWorld.x
+      handRayPositions[4] = tmpHitWorld.y
+      handRayPositions[5] = tmpHitWorld.z
+
+      const attr = handRayGeom.getAttribute('position') as THREE.BufferAttribute | undefined
+      if (attr) attr.needsUpdate = true
+      handRayGeom.computeBoundingSphere()
+    }
+
+    // Pinch click (edge triggered)
+    const down = pinchScore > 0.85
+    if (!pinchDownRef.current && down && bestNode) {
+      const nowMs = performance.now()
+      if (nowMs - lastClickMsRef.current > 250) {
+        lastClickMsRef.current = nowMs
+        onNodeSelect(bestNode)
+      }
+    }
+    pinchDownRef.current = down
+  })
 
   return (
     <>
@@ -619,6 +813,9 @@ function Scene({
       />
 
       {/* Graph content */}
+      {/* Hand aim ray (point + pinch-click) */}
+      <primitive object={handRayLine} />
+
       <group ref={groupRef}>
         {/* Batched edges - single draw call for all edges */}
         {/* Cluster boundaries (rendered behind edges) */}
@@ -1157,7 +1354,7 @@ function InstancedNodes({
         tempColor.set('#00d4ff')
       } else if (isLassoSelected) {
         // Lasso selected nodes: blue tint
-        tempColor.set(node.color)
+      tempColor.set(node.color)
         // Add blue tint by lerping toward blue
         const blueColor = new THREE.Color('#3b82f6')
         tempColor.lerp(blueColor, 0.35)

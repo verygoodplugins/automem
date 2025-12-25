@@ -763,6 +763,7 @@ export default function App() {
               <Hand2DOverlay
                 gestureState={gestureState}
                 enabled={gestureControlEnabled}
+                lock={handLock}
               />
 
               {/* Gesture Debug Overlay */}

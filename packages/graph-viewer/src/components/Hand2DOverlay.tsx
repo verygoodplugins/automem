@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import type { GestureState } from '../hooks/useHandGestures'
+import type { HandLockState } from '../hooks/useHandLockAndGrab'
 
 // Fingertip indices
 const FINGERTIPS = [4, 8, 12, 16, 20]
@@ -33,11 +34,13 @@ interface SmoothedHand {
 interface Hand2DOverlayProps {
   gestureState: GestureState
   enabled?: boolean
+  lock?: HandLockState
 }
 
 export function Hand2DOverlay({
   gestureState,
   enabled = true,
+  lock,
 }: Hand2DOverlayProps) {
   // Track smoothed hand positions with ghost effect
   const [leftSmoothed, setLeftSmoothed] = useState<SmoothedHand | null>(null)
@@ -53,17 +56,20 @@ export function Hand2DOverlay({
     // Process left hand
     if (gestureState.leftHand) {
       setLeftSmoothed(prev => {
-        const newLandmarks = gestureState.leftHand!.landmarks.map((lm, i) => {
+        const hand = gestureState.leftHand!
+        const newLandmarks = hand.landmarks.map((lm, i) => {
+          // Prefer world Z (meters for iPhone LiDAR) when available; fall back to normalized z.
+          const zTarget = (hand.worldLandmarks?.[i]?.z ?? (lm.z || 0)) as number
           const prevLm = prev?.landmarks[i]
           if (prevLm && !prev.isGhost) {
             // Interpolate toward new position
             return {
               x: prevLm.x + (lm.x - prevLm.x) * SMOOTHING_FACTOR,
               y: prevLm.y + (lm.y - prevLm.y) * SMOOTHING_FACTOR,
-              z: prevLm.z + ((lm.z || 0) - prevLm.z) * SMOOTHING_FACTOR,
+              z: prevLm.z + (zTarget - prevLm.z) * SMOOTHING_FACTOR,
             }
           }
-          return { x: lm.x, y: lm.y, z: lm.z || 0 }
+          return { x: lm.x, y: lm.y, z: zTarget }
         })
         return { landmarks: newLandmarks, lastSeen: now, isGhost: false, opacity: 1 }
       })
@@ -75,16 +81,19 @@ export function Hand2DOverlay({
     // Process right hand
     if (gestureState.rightHand) {
       setRightSmoothed(prev => {
-        const newLandmarks = gestureState.rightHand!.landmarks.map((lm, i) => {
+        const hand = gestureState.rightHand!
+        const newLandmarks = hand.landmarks.map((lm, i) => {
+          // Prefer world Z (meters for iPhone LiDAR) when available; fall back to normalized z.
+          const zTarget = (hand.worldLandmarks?.[i]?.z ?? (lm.z || 0)) as number
           const prevLm = prev?.landmarks[i]
           if (prevLm && !prev.isGhost) {
             return {
               x: prevLm.x + (lm.x - prevLm.x) * SMOOTHING_FACTOR,
               y: prevLm.y + (lm.y - prevLm.y) * SMOOTHING_FACTOR,
-              z: prevLm.z + ((lm.z || 0) - prevLm.z) * SMOOTHING_FACTOR,
+              z: prevLm.z + (zTarget - prevLm.z) * SMOOTHING_FACTOR,
             }
           }
-          return { x: lm.x, y: lm.y, z: lm.z || 0 }
+          return { x: lm.x, y: lm.y, z: zTarget }
         })
         return { landmarks: newLandmarks, lastSeen: now, isGhost: false, opacity: 1 }
       })
@@ -135,8 +144,20 @@ export function Hand2DOverlay({
 
   if (!enabled || !gestureState.isTracking) return null
 
-  // Simple opacity - always visible when tracking
-  const opacityMultiplier = 0.85
+  // Visibility gating:
+  // - Non-acquired hands should be *extremely* faint to avoid the "desk hand blur" problem.
+  // - Locked hand is bright.
+  const lockMode = lock?.mode ?? 'idle'
+  const lockedHand =
+    lock?.mode === 'locked'
+      ? lock.hand
+      : lock?.mode === 'candidate'
+        ? lock.hand
+        : null
+  const baseOpacity =
+    lockMode === 'locked' ? 0.85 :
+    lockMode === 'candidate' ? 0.25 :
+    0.06
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -188,7 +209,7 @@ export function Hand2DOverlay({
               color="#4ecdc4"
               gradientId="hand-gradient-cyan"
               isGhost={leftSmoothed.isGhost}
-              opacityMultiplier={opacityMultiplier}
+              opacityMultiplier={baseOpacity * (lockedHand && lockedHand !== 'left' ? 0.08 : 1)}
             />
           </g>
         )}
@@ -201,7 +222,7 @@ export function Hand2DOverlay({
               color="#f72585"
               gradientId="hand-gradient-magenta"
               isGhost={rightSmoothed.isGhost}
-              opacityMultiplier={opacityMultiplier}
+              opacityMultiplier={baseOpacity * (lockedHand && lockedHand !== 'right' ? 0.08 : 1)}
             />
           </g>
         )}
@@ -238,32 +259,35 @@ function GhostHand({
 }: GhostHandProps) {
   const wristZ = landmarks[0].z || 0
 
-  // Detect if Z is in meters (LiDAR: 0.3-3.0m) or normalized (MediaPipe: -0.5 to +0.3)
-  const isMeters = Math.abs(wristZ) > 0.5
+  // Detect if Z is in meters (LiDAR) vs normalized (MediaPipe-style).
+  // With iPhone LiDAR we use worldLandmarks.z in meters, which is positive (e.g. 0.3..2.0).
+  const isMeters = wristZ >= 0.1 && wristZ <= 8.0
 
-  // Z-AXIS INVERSION: "Reach Through Screen" Paradigm
+  // Z-AXIS INVERSION: "Reach Through Portal" Paradigm
   // Physical hand closer to camera → Virtual hand appears SMALLER (receding into scene)
   // Physical hand farther from camera → Virtual hand appears LARGER (coming out of scene)
   //
-  // This is OPPOSITE of normal perspective where close=large, far=small.
-  // It creates the illusion that you're reaching THROUGH the screen INTO the 3D world.
+  // This creates the illusion that you're reaching THROUGH the screen INTO the 3D world.
+  // Convention for all sources (MediaPipe, iPhone LiDAR):
+  //   negative Z = closer to camera
+  //   positive Z = farther from camera
 
   let scaleFactor = 1.0
   let depthOpacity = 1.0  // Additional opacity based on depth
 
   if (isMeters) {
-    // LiDAR in meters: ~0.3m (arm's length) to ~1.5m (extended reach)
-    // INVERTED: Close (0.3m) → small/faint, Far (1.2m) → large/bright
-    const normalizedDepth = Math.max(0, Math.min(1, (wristZ - 0.3) / 0.9))
-    scaleFactor = 0.4 + normalizedDepth * 1.0  // Range: 0.4 (close) to 1.4 (far)
-    depthOpacity = 0.5 + normalizedDepth * 0.5  // Range: 0.5 (close/faint) to 1.0 (far/bright)
+    // LiDAR in meters (positive): ~0.25m (very close) .. ~1.10m (arm's length / comfy)
+    // Portal mapping: close -> small, far -> large (strong enough to overcome perspective scaling)
+    const t = Math.max(0, Math.min(1, (wristZ - 0.25) / 0.85))
+    scaleFactor = 0.25 + t * 1.55        // 0.25 (close) .. 1.80 (far)
+    depthOpacity = 0.55 + t * 0.45       // 0.55 (close) .. 1.00 (far)
   } else {
     // MediaPipe normalized: positive Z = FARTHER from camera, negative Z = CLOSER
     // Typical range: -0.25 (close) to +0.15 (far)
     // "Reach through screen": Close → small/faint, Far → large/bright
-    const normalizedDepth = Math.max(0, Math.min(1, (wristZ + 0.25) / 0.4))
-    scaleFactor = 0.4 + normalizedDepth * 1.0  // Range: 0.4 (close) to 1.4 (far)
-    depthOpacity = 0.5 + normalizedDepth * 0.5  // Range: 0.5 (close/faint) to 1.0 (far/bright)
+    const t = Math.max(0, Math.min(1, (wristZ + 0.25) / 0.35))
+    scaleFactor = 0.25 + t * 1.55        // 0.25 (close) .. 1.80 (far)
+    depthOpacity = 0.55 + t * 0.45       // 0.55 (close) .. 1.00 (far)
   }
 
   // Apply the depth opacity to the overall opacity multiplier
@@ -271,13 +295,35 @@ function GhostHand({
 
   const clampedScale = Math.max(0.3, Math.min(2.0, scaleFactor))
 
-  // Un-mirror the X coordinate (selfie-style) and convert to SVG space
+  // "Reach Through Portal" X-axis: Keep the natural webcam mirror
+  // This makes the virtual hand appear ON THE OTHER SIDE of the screen
+  // When you point at the camera, the virtual finger points INTO the 3D scene
   const toSvg = (lm: { x: number; y: number }) => ({
-    x: (1 - lm.x) * 100,
+    x: lm.x * 100,
     y: lm.y * 100,
   })
 
-  const points = landmarks.map(toSvg)
+  // IMPORTANT: apply portal scaling to the landmark positions (not just stroke widths),
+  // otherwise the overlay will behave like a normal camera feed (closer = bigger).
+  const rawPoints = landmarks.map(toSvg)
+  const cx = rawPoints[0]?.x ?? 50 // scale around wrist so position stays intuitive
+  const cy = rawPoints[0]?.y ?? 50
+
+  // Extra depth warp per-landmark: makes "pointing at the screen" read as pointing *into* the scene.
+  // (Index tip physically closer than wrist should appear *deeper* / smaller in the portal model.)
+  const warpGain = isMeters ? 2.2 : 6.0
+  const clampRange = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+
+  const points = rawPoints.map((p, i) => {
+    const zi = landmarks[i]?.z ?? wristZ
+    const dz = zi - wristZ // meters or normalized depending on source
+    const pointScale = clampRange(1 + dz * warpGain, 0.65, 1.45)
+    const s = clampedScale * pointScale
+    return {
+      x: cx + (p.x - cx) * s,
+      y: cy + (p.y - cy) * s,
+    }
+  })
   const gloveOpacity = (isGhost ? 0.5 : 0.85) * effectiveOpacityMultiplier
 
   // Finger width based on scale - fatter fingers for Master Hand look

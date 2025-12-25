@@ -36,7 +36,7 @@ export interface HandLockMetrics {
 
 export type HandLockState =
   | { mode: 'idle'; metrics: HandLockMetrics | null }
-  | { mode: 'candidate'; metrics: HandLockMetrics; frames: number }
+  | { mode: 'candidate'; hand: HandSide; metrics: HandLockMetrics; frames: number }
   | {
       mode: 'locked'
       hand: HandSide
@@ -66,11 +66,12 @@ export interface CloudControlDeltas {
 const DEFAULT_CONFIDENCE = 0.7
 
 // Tunables (these matter a lot for UX)
-const ACQUIRE_FRAMES_REQUIRED = 4
+const ACQUIRE_FRAMES_REQUIRED = 8
 const LOCK_PERSIST_MS = 2000  // 2 seconds before unlocking when hand leaves frame
 
-const SPREAD_THRESHOLD = 0.65
-const PALM_FACING_THRESHOLD = 0.55
+// Make acquisition VERY intentional: open palm + spread fingers + palm facing camera.
+const SPREAD_THRESHOLD = 0.78
+const PALM_FACING_THRESHOLD = 0.72
 
 const GRAB_ON_THRESHOLD = 0.72
 const GRAB_OFF_THRESHOLD = 0.45
@@ -88,6 +89,19 @@ function length2(dx: number, dy: number) {
 
 function safeDiv(a: number, b: number, fallback = 0) {
   return b !== 0 ? a / b : fallback
+}
+
+function isLikelyMetersZ(z: unknown): z is number {
+  return typeof z === 'number' && Number.isFinite(z) && z > 0.1 && z < 8
+}
+
+function depthTowardCameraScore(wristZ: number, tipZ: number, isMeters: boolean) {
+  // Positive when tip is closer to camera than wrist.
+  // iPhone meters: smaller = closer. MediaPipe-like normalized: more negative = closer.
+  const delta = wristZ - tipZ
+  const deadzone = isMeters ? 0.015 : 0.01
+  const fullScale = isMeters ? 0.08 : 0.06
+  return clamp(safeDiv(delta - deadzone, fullScale), 0, 1)
 }
 
 function fingerExtensionScore(
@@ -110,6 +124,7 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
   if (!handData) return null
 
   const lm = handData.landmarks
+  const wm = handData.worldLandmarks || lm
   // Required joints
   const wrist = lm[0]
   const indexMcp = lm[5]
@@ -141,8 +156,10 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
   const palmFacing = clamp(safeDiv((wrist.y - (indexMcp.y + middleMcp.y) / 2) - 0.02, 0.12), 0, 1) * 2 - 1
 
   // Pinch (thumb-index)
+  const pinchRay = hand === 'right' ? state.rightPinchRay : state.leftPinchRay
   const pinchDist = length2(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y)
-  const pinch = clamp(1 - safeDiv(pinchDist - 0.02, 0.13), 0, 1)
+  const pinch2d = clamp(1 - safeDiv(pinchDist - 0.02, 0.13), 0, 1)
+  const pinch = clamp((pinchRay?.strength ?? pinch2d) as number, 0, 1)
 
   // Pointing pose score:
   // index extended while the other 3 fingers are relatively curled.
@@ -155,34 +172,45 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
   // Point score: index extended (idxExt high) AND other fingers curled (others low)
   // If index is extended more than others, it's pointing
   const pointRaw = clamp((idxExt - others) * 2, 0, 1)
-  const point = idxExt > 0.5 && others < 0.5 ? pointRaw : 0
+  const point2d = idxExt > 0.5 && others < 0.5 ? pointRaw : 0
+
+  // Depth-based pointing:
+  // When "pointing at the screen" the silhouette can still look fist-like in 2D.
+  // LiDAR gives a strong signal: index tip moves toward the camera while the other fingers stay back/curled.
+  const wristWz = (wm[0]?.z ?? wrist.z ?? 0) as number
+  const indexTipWz = (wm[8]?.z ?? indexTip.z ?? 0) as number
+  const middleTipWz = (wm[12]?.z ?? middleTip.z ?? 0) as number
+  const ringTipWz = (wm[16]?.z ?? ringTip.z ?? 0) as number
+  const pinkyTipWz = (wm[20]?.z ?? pinkyTip.z ?? 0) as number
+
+  const isMeters = isLikelyMetersZ(wristWz)
+  const idxToward = depthTowardCameraScore(wristWz, indexTipWz, isMeters)
+  const midToward = depthTowardCameraScore(wristWz, middleTipWz, isMeters)
+  const ringToward = depthTowardCameraScore(wristWz, ringTipWz, isMeters)
+  const pinkyToward = depthTowardCameraScore(wristWz, pinkyTipWz, isMeters)
+  const othersToward = clamp((midToward + ringToward + pinkyToward) / 3, 0, 1)
+  const pointDepth = clamp(idxToward * (1 - othersToward * 0.9), 0, 1)
+
+  const point = clamp(Math.max(point2d, pointDepth), 0, 1)
 
   // Grab: closed fist = ALL fingers curled including index
   // Exclude index from grab calculation to distinguish from pointing
-  const hasGrabStrength =
-    typeof state.grabStrength === 'number' &&
-    state.handsDetected >= 1 &&
-    state.grabStrength > 0 // avoid default 0 from sources that don't compute it
-  let grab = hasGrabStrength ? clamp(state.grabStrength, 0, 1) : 0
-  if (!hasGrabStrength) {
-    // For grab, require ALL fingers to be curled (including index)
-    const dw1 = length2(indexTip.x - wrist.x, indexTip.y - wrist.y)
-    const dw2 = length2(middleTip.x - wrist.x, middleTip.y - wrist.y)
-    const dw3 = length2(ringTip.x - wrist.x, ringTip.y - wrist.y)
-    const dw4 = length2(pinkyTip.x - wrist.x, pinkyTip.y - wrist.y)
-    const avgDw = (dw1 + dw2 + dw3 + dw4) / 4
-    // All fingers must be close to wrist
-    const allCurled = dw1 < 0.15 && dw2 < 0.15 && dw3 < 0.15 && dw4 < 0.15
-    grab = allCurled ? clamp(1 - safeDiv(avgDw - 0.08, 0.07), 0, 1) : 0
-  }
+  // Prefer per-hand heuristic. (state.grabStrength is only reliable in the single-hand path.)
+  const dw1 = length2(indexTip.x - wrist.x, indexTip.y - wrist.y)
+  const dw2 = length2(middleTip.x - wrist.x, middleTip.y - wrist.y)
+  const dw3 = length2(ringTip.x - wrist.x, ringTip.y - wrist.y)
+  const dw4 = length2(pinkyTip.x - wrist.x, pinkyTip.y - wrist.y)
+  const avgDw = (dw1 + dw2 + dw3 + dw4) / 4
+  const grab2d = clamp(1 - safeDiv(avgDw - 0.08, 0.17), 0, 1)
+  let grab =
+    state.handsDetected === 1 && typeof state.grabStrength === 'number' && state.grabStrength > 0
+      ? clamp(state.grabStrength, 0, 1)
+      : grab2d
 
   // Mutual exclusion: if pointing, suppress grab
-  if (point > 0.5) {
-    grab = 0
-  }
+  if (point > 0.55) grab = 0
 
   // Depth: prefer pinch ray origin z when present (iPhone LiDAR mapped into landmarks z)
-  const pinchRay = hand === 'right' ? state.rightPinchRay : state.leftPinchRay
   const depth = (pinchRay?.origin.z ?? wrist.z ?? 0) as number
 
   // Confidence: use landmark visibility if present; else assume ok
@@ -193,7 +221,15 @@ function computeMetrics(state: GestureState, hand: HandSide): HandLockMetrics | 
 }
 
 function isAcquirePose(m: HandLockMetrics) {
-  return m.spread >= SPREAD_THRESHOLD && m.palmFacing >= PALM_FACING_THRESHOLD && m.confidence >= 0.4
+  // Additional gates: prevent accidental acquire from "pointing at screen" or semi-closed poses.
+  return (
+    m.spread >= SPREAD_THRESHOLD &&
+    m.palmFacing >= PALM_FACING_THRESHOLD &&
+    m.grab <= 0.25 &&
+    m.pinch <= 0.25 &&
+    m.point <= 0.25 &&
+    m.confidence >= 0.6
+  )
 }
 
 export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
@@ -204,8 +240,13 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
   const right = enabled ? computeMetrics(state, 'right') : null
   const left = enabled ? computeMetrics(state, 'left') : null
 
-  // For now, single-hand only: prefer right if present, else left.
-  const chosenHand: HandSide | null = right ? 'right' : left ? 'left' : null
+  // Choose a hand to consider when not locked:
+  // - Prefer a hand currently holding the acquire pose
+  // - Otherwise prefer right if present, else left
+  const rightAcquire = !!right && isAcquirePose(right)
+  const leftAcquire = !!left && isAcquirePose(left)
+  const chosenHand: HandSide | null =
+    rightAcquire ? 'right' : leftAcquire ? 'left' : right ? 'right' : left ? 'left' : null
   const metrics = chosenHand === 'right' ? right : chosenHand === 'left' ? left : null
 
   const next = useMemo((): { lock: HandLockState; deltas: CloudControlDeltas } => {
@@ -216,75 +257,36 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
 
     const prev = lockRef.current
 
-    // No hand seen
-    if (!chosenHand || !metrics) {
-      if (prev.mode === 'locked') {
-        // persist lock briefly
+    // Locked mode: ONLY the locked hand can drive state; never switch to the other hand implicitly.
+    if (prev.mode === 'locked') {
+      const lockedMetrics = prev.hand === 'right' ? right : left
+      const handData = prev.hand === 'right' ? state.rightHand : state.leftHand
+
+      // Locked hand not currently seen
+      if (!lockedMetrics || !handData) {
+        // Persist lock briefly, but don't let another hand keep it alive.
         if (nowMs - prev.lastSeenMs <= LOCK_PERSIST_MS) {
           const persisted: HandLockState = { ...prev, metrics: prev.metrics }
           lockRef.current = persisted
           return { lock: persisted, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
         }
+        lockRef.current = { mode: 'idle', metrics: null }
+        return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
       }
-      lockRef.current = { mode: 'idle', metrics: null }
-      return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
-    }
 
-    // Hand seen: update FSM
-    if (prev.mode === 'idle') {
-      if (isAcquirePose(metrics)) {
-        const candidate: HandLockState = { mode: 'candidate', metrics, frames: 1 }
-        lockRef.current = candidate
-        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
-      }
-      const idle: HandLockState = { mode: 'idle', metrics }
-      lockRef.current = idle
-      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
-    }
-
-    if (prev.mode === 'candidate') {
-      if (isAcquirePose(metrics)) {
-        const frames = prev.frames + 1
-        if (frames >= ACQUIRE_FRAMES_REQUIRED) {
-          // lock!
-          const handData = chosenHand === 'right' ? state.rightHand : state.leftHand
-          const wrist = handData?.landmarks[0]
-          const locked: HandLockState = {
-            mode: 'locked',
-            hand: chosenHand,
-            metrics,
-            lockedAtMs: nowMs,
-            neutral: { x: wrist?.x ?? 0.5, y: wrist?.y ?? 0.5, depth: metrics.depth },
-            grabbed: false,
-            lastSeenMs: nowMs,
-          }
-          lockRef.current = locked
-          return { lock: locked, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
-        }
-        const candidate: HandLockState = { mode: 'candidate', metrics, frames }
-        lockRef.current = candidate
-        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
-      }
-      // lost candidate
-      const idle: HandLockState = { mode: 'idle', metrics }
-      lockRef.current = idle
-      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
-    }
-
-    // locked
-    if (prev.mode === 'locked') {
-      const handData = prev.hand === 'right' ? state.rightHand : state.leftHand
-      const wrist = handData?.landmarks[0]
+      const wrist = handData.landmarks[0]
       const x = wrist?.x ?? prev.neutral.x
       const y = wrist?.y ?? prev.neutral.y
 
       // Grab hysteresis
       const grabbed =
-        prev.grabbed ? metrics.grab >= GRAB_OFF_THRESHOLD : metrics.grab >= GRAB_ON_THRESHOLD
+        prev.grabbed
+          ? lockedMetrics.grab >= GRAB_OFF_THRESHOLD
+          : lockedMetrics.grab >= GRAB_ON_THRESHOLD
 
       const lock: HandLockState = {
         ...prev,
-        metrics,
+        metrics: lockedMetrics,
         grabbed,
         lastSeenMs: nowMs,
       }
@@ -296,18 +298,18 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
 
         if (isFirstGrabFrame) {
           // First frame of grab - set anchor and signal to capture world position
-          lock.grabAnchor = { x, y, depth: metrics.depth }
+          lock.grabAnchor = { x, y, depth: lockedMetrics.depth }
           deltas.grabStart = true
           lockRef.current = lock
           return { lock, deltas }
         }
 
-        const anchor = prev.grabAnchor ?? { x, y, depth: metrics.depth }
+        const anchor = prev.grabAnchor ?? { x, y, depth: lockedMetrics.depth }
 
         // Calculate displacement from anchor (how far hand moved since grab started)
         const dx = x - anchor.x  // hand moved right in screen space (0-1 normalized)
         const dy = y - anchor.y  // hand moved down in screen space
-        const dz = metrics.depth - anchor.depth  // hand moved toward/away from camera
+        const dz = lockedMetrics.depth - anchor.depth  // hand moved toward/away from camera
 
         // PAN the world: displacement-based, not velocity
         // Scale: moving hand across half the screen (~0.5) should move graph ~150 world units
@@ -334,6 +336,55 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
       return { lock, deltas }
     }
 
+    // No hand seen
+    if (!chosenHand || !metrics) {
+      lockRef.current = { mode: 'idle', metrics: null }
+      return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
+    }
+
+    // Hand seen: update FSM
+    if (prev.mode === 'idle') {
+      if (isAcquirePose(metrics)) {
+        const candidate: HandLockState = { mode: 'candidate', hand: chosenHand, metrics, frames: 1 }
+        lockRef.current = candidate
+        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
+      }
+      const idle: HandLockState = { mode: 'idle', metrics }
+      lockRef.current = idle
+      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
+    }
+
+    if (prev.mode === 'candidate') {
+      const candidateHand = prev.hand
+      const candidateMetrics = candidateHand === 'right' ? right : left
+      if (candidateMetrics && isAcquirePose(candidateMetrics)) {
+        const frames = prev.frames + 1
+        if (frames >= ACQUIRE_FRAMES_REQUIRED) {
+          // lock!
+          const handData = candidateHand === 'right' ? state.rightHand : state.leftHand
+          const wrist = handData?.landmarks[0]
+          const locked: HandLockState = {
+            mode: 'locked',
+            hand: candidateHand,
+            metrics: candidateMetrics,
+            lockedAtMs: nowMs,
+            neutral: { x: wrist?.x ?? 0.5, y: wrist?.y ?? 0.5, depth: candidateMetrics.depth },
+            grabbed: false,
+            lastSeenMs: nowMs,
+          }
+          lockRef.current = locked
+          return { lock: locked, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
+        }
+        const candidate: HandLockState = { mode: 'candidate', hand: candidateHand, metrics: candidateMetrics, frames }
+        lockRef.current = candidate
+        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
+      }
+      // lost candidate
+      const idle: HandLockState = { mode: 'idle', metrics }
+      lockRef.current = idle
+      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
+    }
+
     lockRef.current = { mode: 'idle', metrics }
     return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false } }
   }, [
@@ -354,6 +405,20 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean) {
     state.grabStrength,
     state.leftPinchRay,
     state.rightPinchRay,
+    right?.spread,
+    right?.palmFacing,
+    right?.point,
+    right?.pinch,
+    right?.grab,
+    right?.depth,
+    right?.confidence,
+    left?.spread,
+    left?.palmFacing,
+    left?.point,
+    left?.pinch,
+    left?.grab,
+    left?.depth,
+    left?.confidence,
   ])
 
   return next

@@ -92,6 +92,45 @@ function distance3D(a: IPhoneLandmark, b: IPhoneLandmark): number {
   return Math.sqrt(dx * dx + dy * dy + dz * dz)
 }
 
+function distance2D(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+function isPointingPose(landmarks: NormalizedLandmarkList): boolean {
+  // Similar heuristic as MediaPipe path: index extended, others curled.
+  const wrist = landmarks[0]
+  const indexMcp = landmarks[5]
+  const middleMcp = landmarks[9]
+  const ringMcp = landmarks[13]
+  const pinkyMcp = landmarks[17]
+
+  const indexTip = landmarks[8]
+  const middleTip = landmarks[12]
+  const ringTip = landmarks[16]
+  const pinkyTip = landmarks[20]
+
+  const idx = distance2D(indexTip, wrist) - distance2D(indexMcp, wrist)
+  const mid = distance2D(middleTip, wrist) - distance2D(middleMcp, wrist)
+  const ring = distance2D(ringTip, wrist) - distance2D(ringMcp, wrist)
+  const pinky = distance2D(pinkyTip, wrist) - distance2D(pinkyMcp, wrist)
+
+  // Index significantly more extended than other fingers
+  const othersAvg = (mid + ring + pinky) / 3
+  return idx > 0.06 && othersAvg < 0.04
+}
+
+function getPointDirection2D(landmarks: NormalizedLandmarkList): { x: number; y: number } {
+  const indexTip = landmarks[8]
+  const indexMcp = landmarks[5]
+  const dx = indexTip.x - indexMcp.x
+  // Y: make "up" positive for display
+  const dy = indexMcp.y - indexTip.y
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  return { x: dx / len, y: dy / len }
+}
+
 // Calculate pinch strength from iPhone landmarks
 function calculatePinchStrength(landmarks: Record<string, IPhoneLandmark>): number {
   const thumbTip = landmarks['VNHLKTTIP']
@@ -159,15 +198,44 @@ function calculatePinchRay(landmarks: Record<string, IPhoneLandmark>, hasLiDAR: 
 }
 
 // Normalize LiDAR depth (meters) to MediaPipe-like relative depth
-// LiDAR: 0.3m (close) to 3.0m (far) -> MediaPipe-like: 0.1 to -0.3
+// MediaPipe convention: negative Z = closer to camera, positive Z = farther
+// LiDAR: 0.3m (close) to 3.0m (far) -> MediaPipe-like: -0.15 to +0.2
 // Reference: ~1.0m is "neutral" -> 0
 function normalizeLiDARDepth(depthMeters: number, hasLiDAR: boolean): number {
   if (!hasLiDAR || depthMeters === 0) return 0
 
-  // Invert and scale: closer = positive, farther = negative
-  // At 1.0m -> 0, at 0.5m -> 0.1, at 2.0m -> -0.2
-  const normalized = (1.0 - depthMeters) * 0.2
+  // Match MediaPipe convention: closer = negative, farther = positive
+  // At 1.0m -> 0, at 0.5m -> -0.1, at 2.0m -> +0.2
+  const normalized = (depthMeters - 1.0) * 0.2
   return Math.max(-0.5, Math.min(0.5, normalized))
+}
+
+// Convert iPhone landmarks to a "world" format where Z is preserved in meters (LiDAR).
+// This is useful for debugging and for future 1:1 physical mapping.
+function convertToWorldLandmarksMeters(
+  landmarks: Record<string, IPhoneLandmark>,
+  hasLiDAR: boolean = false
+): NormalizedLandmarkList {
+  const result: NormalizedLandmarkList = []
+
+  // Initialize all 21 landmarks with defaults
+  for (let i = 0; i < 21; i++) {
+    result.push({ x: 0.5, y: 0.5, z: 0, visibility: 0 })
+  }
+
+  for (const [name, idx] of Object.entries(LANDMARK_MAP)) {
+    const lm = landmarks[name]
+    if (lm) {
+      result[idx] = {
+        x: lm.x,
+        y: lm.y,
+        z: hasLiDAR ? lm.z : 0,
+        visibility: 1,
+      }
+    }
+  }
+
+  return result
 }
 
 // Convert iPhone landmarks to MediaPipe-compatible format
@@ -272,9 +340,10 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
       }
 
       const landmarks = convertToMediaPipeLandmarks(hand.landmarks, hand.hasLiDARDepth)
+      const worldLandmarks = convertToWorldLandmarksMeters(hand.landmarks, hand.hasLiDARDepth)
       const handData: HandLandmarks = {
         landmarks,
-        worldLandmarks: landmarks,
+        worldLandmarks,
         handedness: hand.handedness === 'left' ? 'Left' : 'Right',
       }
 
@@ -320,6 +389,18 @@ export function useIPhoneHandTracking(options: UseIPhoneHandTrackingOptions = {}
       // Deltas
       newState.zoomDelta = (newState.twoHandDistance - prev.twoHandDistance) * 5
       newState.rotateDelta = newState.twoHandRotation - prev.twoHandRotation
+    }
+
+    // Single-hand pointing (debug + optional features)
+    if (newState.handsDetected === 1) {
+      const pointingHandData = newState.rightHand || newState.leftHand
+      if (pointingHandData) {
+        const landmarks = pointingHandData.landmarks
+        if (isPointingPose(landmarks)) {
+          newState.pointingHand = pointingHandData.handedness === 'Right' ? 'right' : 'left'
+          newState.pointDirection = getPointDirection2D(landmarks)
+        }
+      }
     }
 
     // Pinch strength (smoothed)
