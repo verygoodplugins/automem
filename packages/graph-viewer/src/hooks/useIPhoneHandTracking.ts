@@ -214,7 +214,14 @@ function calculatePinchRay(landmarks: Record<string, IPhoneLandmark>, hasLiDAR: 
   const strength = calculatePinchStrength(landmarks)
   const isValid = strength > 0.5
 
-  return { origin, direction, isValid, strength }
+  // Mirror X to match the viewer's "self view" coordinate system.
+  // This keeps the iPhone (back-camera) feed consistent with the webcam UI.
+  return {
+    origin: { ...origin, x: 1 - origin.x },
+    direction: { ...direction, x: -direction.x },
+    isValid,
+    strength,
+  }
 }
 
 // Normalize LiDAR depth (meters) to MediaPipe-like relative depth
@@ -247,7 +254,7 @@ function convertToWorldLandmarksMeters(
     const lm = landmarks[name]
     if (lm) {
       result[idx] = {
-        x: lm.x,
+        x: 1 - lm.x,
         y: lm.y,
         z: hasLiDAR ? lm.z : 0,
         visibility: 1,
@@ -272,7 +279,7 @@ function convertToMediaPipeLandmarks(landmarks: Record<string, IPhoneLandmark>, 
     const lm = landmarks[name]
     if (lm) {
       result[idx] = {
-        x: lm.x,
+        x: 1 - lm.x,
         y: lm.y,
         // Normalize LiDAR depth to MediaPipe-like values
         z: normalizeLiDARDepth(lm.z, hasLiDAR),

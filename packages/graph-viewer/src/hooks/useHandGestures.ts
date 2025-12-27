@@ -109,6 +109,12 @@ function distance(a: { x: number; y: number; z?: number }, b: { x: number; y: nu
   return Math.sqrt(dx * dx + dy * dy + dz * dz)
 }
 
+function mirrorXLandmarks(landmarks: NormalizedLandmarkList): NormalizedLandmarkList {
+  // Mirror landmarks horizontally so the UI behaves like a webcam "self view":
+  // moving your right hand to the right moves the on-screen hand to the right.
+  return landmarks.map((lm) => ({ ...lm, x: 1 - lm.x }))
+}
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
@@ -215,15 +221,14 @@ export function useHandGestures(options: UseHandGesturesOptions = {}) {
     if (results.multiHandLandmarks && results.multiHandedness) {
       // Sort hands into left/right
       for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-        const landmarks = results.multiHandLandmarks[i]
+        const landmarks = mirrorXLandmarks(results.multiHandLandmarks[i])
         const worldLandmarks = results.multiHandWorldLandmarks?.[i] || landmarks
         const handedness = results.multiHandedness[i].label as 'Left' | 'Right'
 
         const handData: HandLandmarks = {
           landmarks,
           worldLandmarks,
-          // MediaPipe returns mirrored handedness, so flip it
-          handedness: handedness === 'Left' ? 'Right' : 'Left',
+          handedness,
         }
 
         if (handData.handedness === 'Left') {

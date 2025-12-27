@@ -156,7 +156,7 @@ export function HandControlOverlay({
             <span className="text-slate-300">Acquire:</span> raise open palm + spread fingers
           </div>
           <div>
-            <span className="text-slate-300">Navigate:</span> make fist; pull/push to zoom; move to rotate
+            <span className="text-slate-300">Navigate:</span> pinch with both hands to pan/zoom/rotate the world
           </div>
           <div>
             <span className="text-slate-300">Select:</span> point (index out) + pinch thumb/index to click

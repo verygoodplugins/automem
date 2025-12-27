@@ -11,7 +11,7 @@
  *
  * Interaction model (simplified):
  * - Mouse: Click nodes to select, OrbitControls for navigation
- * - Hand gestures: Fist grab to pan the graph
+ * - Hand gestures: Two-hand pinch to pan/zoom/rotate; one-hand fist grab to pan
  */
 
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react'
@@ -153,6 +153,8 @@ export function GraphCanvas({
   // MiniMap state
   const [cameraState, setCameraState] = useState({ x: 0, y: 0, z: 150, zoom: 1 })
   const [layoutNodesForMiniMap, setLayoutNodesForMiniMap] = useState<SimulationNode[]>([])
+  // Bimanual grab state for visual feedback
+  const [bimanualActive, setBimanualActive] = useState(false)
   const navigateToRef = useRef<((x: number, y: number) => void) | null>(null)
 
   const handleMiniMapNavigate = useCallback((x: number, y: number) => {
@@ -197,13 +199,6 @@ export function GraphCanvas({
   const gestureState = source === 'iphone' ? iphoneState : mediapipeState
   const gesturesActive = source === 'iphone' ? iphoneConnected : mediapipeActive
 
-  // Debug log when source changes
-  useEffect(() => {
-    console.log(`🎯 Tracking source: ${source}, enabled: ${gestureControlEnabled}, active: ${gesturesActive}`)
-    console.log(`   iPhone: connected=${iphoneConnected}, hands=${iphoneState.handsDetected}`)
-    console.log(`   MediaPipe: active=${mediapipeActive}, hands=${mediapipeState.handsDetected}`)
-  }, [source, gestureControlEnabled, gesturesActive, iphoneConnected, mediapipeActive, iphoneState.handsDetected, mediapipeState.handsDetected])
-
   useEffect(() => {
     onTrackingInfoChange?.({
       source,
@@ -217,7 +212,7 @@ export function GraphCanvas({
   }, [onTrackingInfoChange, source, iphoneUrl, iphoneConnected, hasLiDAR, phoneConnected, bridgeIps, phonePort])
 
   return (
-    <div className="relative w-full h-full">
+    <div className={`relative w-full h-full transition-shadow duration-300 ${bimanualActive ? 'ring-2 ring-inset ring-purple-500/50 shadow-[inset_0_0_30px_rgba(168,85,247,0.15)]' : ''}`}>
     <Canvas
       camera={{ position: [0, 0, 150], fov: 60 }}
       gl={{ antialias: !performanceMode, alpha: true, powerPreference: 'high-performance' }}
@@ -259,6 +254,7 @@ export function GraphCanvas({
           lassoSelectedIds={lassoSelectedIds}
           tagFilteredNodeIds={tagFilteredNodeIds}
           hasTagFilter={hasTagFilter}
+          onBimanualGrabChange={setBimanualActive}
       />
     </Canvas>
 
@@ -302,6 +298,8 @@ interface SceneProps extends Omit<GraphCanvasProps, 'onGestureStateChange' | 'on
   // Tag cloud filtering
   tagFilteredNodeIds?: Set<string>
   hasTagFilter?: boolean
+  // Bimanual world-manipulation feedback
+  onBimanualGrabChange?: (active: boolean) => void
 }
 
 function Scene({
@@ -339,13 +337,12 @@ function Scene({
   lassoSelectedIds,
   tagFilteredNodeIds,
   hasTagFilter = false,
+  onBimanualGrabChange,
 }: SceneProps) {
   const { camera } = useThree()
   const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
 
   // DEBUG: Log node counts
-  console.log('🔍 Scene render - input nodes:', nodes.length, 'layoutNodes:', layoutNodes.length, 'isSimulating:', isSimulating)
-
   // Focus mode - compute depth-based opacity for spotlight effect
   const focusStates = useFocusMode(
     layoutNodes,
@@ -510,8 +507,29 @@ function Scene({
     }
   })
 
-  // Hand grab controls - fist to pan the graph
-  const { lock: handLock, deltas: grabDeltas } = useHandLockAndGrab(gestureState, gestureControlEnabled)
+  // Hand controls: two-hand pinch world manipulation + single-hand lock/grab/pinch
+  const {
+    lock: handLock,
+    deltas: grabDeltas,
+    clearRequested,
+    bimanualPinch,
+    leftMetrics,
+    rightMetrics,
+  } = useHandLockAndGrab(gestureState, gestureControlEnabled)
+
+  // Clear selection when user holds open palm for ~0.5 seconds
+  const clearWasRequestedRef = useRef(false)
+  useEffect(() => {
+    if (clearRequested && !clearWasRequestedRef.current && selectedNode) {
+      onNodeSelect(null)
+    }
+    clearWasRequestedRef.current = clearRequested
+  }, [clearRequested, selectedNode, onNodeSelect])
+
+  // Notify parent of bimanual grab state for visual feedback (border glow)
+  useEffect(() => {
+    onBimanualGrabChange?.(bimanualPinch)
+  }, [bimanualPinch, onBimanualGrabChange])
 
   // Create node lookup for edges
   const nodeById = useMemo(
@@ -585,6 +603,16 @@ function Scene({
   const wasGrabbingRef = useRef(false)
   const inertiaActiveRef = useRef(false)
 
+  // Bimanual navigation: two-hand pinch to pan/zoom/rotate the cloud
+  const wasBimanualRef = useRef(false)
+  const bimanualAnchorRef = useRef<{
+    distance: number
+    angle: number
+    center: { x: number; y: number }
+    worldPos: { x: number; y: number; z: number }
+    worldRotZ: number
+  } | null>(null)
+
   // Direct pinch selection ("pick the berry")
   // Position pinchPoint over a node on screen, pinch to select
   const PINCH_SELECT_RADIUS = 50 // pixels - fixed radius for selection
@@ -604,6 +632,80 @@ function Scene({
     const group = groupRef.current
     const isLocked = handLock.mode === 'locked'
     const isGrabbing = isLocked && handLock.grabbed
+
+    // --- Bimanual pinch: two-point transform (pan/zoom/rotate) ---
+    if (bimanualPinch && leftMetrics && rightMetrics) {
+      const PAN_SPEED = 350 // world units per normalized screen unit
+      const ZOOM_SPEED = 320 // world units per ln(distance ratio)
+      const ROTATE_SPEED = 1.0 // radians per radian of pinch-line rotation
+
+      const left = leftMetrics.pinchPoint
+      const right = rightMetrics.pinchPoint
+
+      const center = { x: (left.x + right.x) / 2, y: (left.y + right.y) / 2 }
+      const dx = right.x - left.x
+      const dyUp = -(right.y - left.y) // flip Y so "up" is positive for angles
+      const distance = Math.sqrt(dx * dx + dyUp * dyUp)
+
+      const canonicalSegmentAngle = (angle: number) => {
+        // Treat the segment as undirected: wrap to [-pi/2, pi/2) so swapping endpoints doesn't jump by pi.
+        let a = angle
+        while (a >= Math.PI / 2) a -= Math.PI
+        while (a < -Math.PI / 2) a += Math.PI
+        return a
+      }
+
+      const normalizeDeltaPi = (delta: number) => {
+        // Normalize to [-pi/2, pi/2] to match canonical segment angle range.
+        let d = delta
+        while (d > Math.PI / 2) d -= Math.PI
+        while (d < -Math.PI / 2) d += Math.PI
+        return d
+      }
+
+      const angle = canonicalSegmentAngle(Math.atan2(dyUp, dx))
+
+      if (!wasBimanualRef.current) {
+        bimanualAnchorRef.current = {
+          distance: Math.max(1e-4, distance),
+          angle,
+          center,
+          worldPos: { x: group.position.x, y: group.position.y, z: group.position.z },
+          worldRotZ: group.rotation.z,
+        }
+      }
+
+      const anchor = bimanualAnchorRef.current
+      if (anchor) {
+        const safeDt = Math.max(1e-4, dt)
+        const follow = 1 - Math.exp(-18 * safeDt)
+
+        const panDx = center.x - anchor.center.x
+        const panDy = center.y - anchor.center.y
+        const rotationDelta = normalizeDeltaPi(angle - anchor.angle)
+
+        // Standard pinch zoom uses a distance ratio. log() makes it symmetric for in/out.
+        const distRatio = Math.max(1e-4, distance) / Math.max(1e-4, anchor.distance)
+        const zoomDelta = Math.log(distRatio)
+
+        const targetX = anchor.worldPos.x + panDx * PAN_SPEED
+        const targetY = anchor.worldPos.y - panDy * PAN_SPEED
+        const targetZ = anchor.worldPos.z + zoomDelta * ZOOM_SPEED
+        const targetRotZ = anchor.worldRotZ + rotationDelta * ROTATE_SPEED
+
+        group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, follow)
+        group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, follow)
+        group.position.z = THREE.MathUtils.lerp(group.position.z, targetZ, follow)
+        group.rotation.z = THREE.MathUtils.lerp(group.rotation.z, targetRotZ, follow)
+      }
+
+      wasBimanualRef.current = true
+      wasGrabbingRef.current = false
+      return
+    } else {
+      wasBimanualRef.current = false
+      bimanualAnchorRef.current = null
+    }
 
     // --- Grab: follow target with damping + inertial coast on release ---
     if (isGrabbing) {
@@ -679,8 +781,11 @@ function Scene({
       return
     }
 
-    // Get pinchPoint from gesture state (midpoint between thumb and index tips)
-    const pinchPoint = gestureState.pinchPoint
+    // Use the locked hand's pinch point when available, otherwise prefer right then left.
+    const pinchPoint =
+      handLock.mode === 'locked'
+        ? handLock.metrics.pinchPoint
+        : rightMetrics?.pinchPoint ?? leftMetrics?.pinchPoint ?? null
     if (!pinchPoint) {
       if (handHoverIdRef.current !== null) {
         onNodeHover(null)
@@ -1352,7 +1457,7 @@ function InstancedNodes({
       }
 
       if (isDimmed && !isInPath && !isLassoSelected) {
-        tempColor.multiplyScalar(0.15)
+        tempColor.multiplyScalar(0.35) // was 0.15 - too aggressive
       } else if (isSelected || isHovered || isSearchMatch || isInPath || isLassoSelected) {
         // Brighten selected/hovered/path/lasso nodes
         tempColor.multiplyScalar(isInPath ? 1.3 : isLassoSelected ? 1.15 : 1.2)
