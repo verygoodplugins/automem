@@ -318,6 +318,16 @@ export default function App() {
   const nodes = data?.nodes ?? EMPTY_NODES
   const edges = data?.edges ?? EMPTY_EDGES
 
+  const searchLower = searchTerm.toLowerCase()
+  const matchingNodes = useMemo(() => {
+    if (!searchTerm) return [] as GraphNode[]
+    return nodes.filter((n) =>
+      n.content.toLowerCase().includes(searchLower) ||
+      n.tags.some((t) => t.toLowerCase().includes(searchLower)) ||
+      n.type.toLowerCase().includes(searchLower)
+    )
+  }, [nodes, searchTerm]) as GraphNode[]
+
   // Tag Cloud
   const tagCloud = useTagCloud({
     nodes,
@@ -510,6 +520,12 @@ export default function App() {
     if (nodes.length === 0 || lassoState.selectedIds.size === 0) return []
     return nodes.filter(n => lassoState.selectedIds.has(n.id))
   }, [nodes, lassoState.selectedIds])
+
+  useEffect(() => {
+    if (searchTerm && matchingNodes.length > 0 && !selectedNode) {
+      setSelectedNode(matchingNodes[0])
+    }
+  }, [matchingNodes, selectedNode, searchTerm])
 
   const handleSearch = useCallback((term: string) => {
     // Play search sound on typing (only if term changed and is not empty)

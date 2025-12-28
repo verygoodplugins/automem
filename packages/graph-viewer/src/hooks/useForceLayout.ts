@@ -61,7 +61,7 @@ function getTagPosition(tag: string, _index: number): { tx: number; ty: number; 
     hash = tag.charCodeAt(i) + ((hash << 5) - hash)
   }
   const angle = (Math.abs(hash) % 360) * (Math.PI / 180)
-  const radius = 80 + (Math.abs(hash) % 60) // 80-140 radius for tag clusters
+    const radius = 100 + (Math.abs(hash) % 80) // 100-180 radius for tag clusters
 
   return {
     tx: radius * Math.cos(angle),

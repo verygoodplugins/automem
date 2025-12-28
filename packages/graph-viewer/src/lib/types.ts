@@ -168,9 +168,9 @@ export interface GraphSettings {
 // Default values
 export const DEFAULT_FORCE_CONFIG: ForceConfig = {
   centerStrength: 0.05,
-  chargeStrength: -60,      // Reduced from -100 for tighter clusters
-  linkStrength: 0.75,       // Increased from 0.5 for stronger grouping
-  linkDistance: 40,         // Reduced from 50 for denser clusters
+  chargeStrength: -50,
+  linkStrength: 0.85,
+  linkDistance: 35,
   collisionRadius: 2.0,
 }
 
@@ -184,8 +184,8 @@ export const DEFAULT_DISPLAY_CONFIG: DisplayConfig = {
 }
 
 export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
-  mode: 'type',
-  showBoundaries: false,
+  mode: 'tags',
+  showBoundaries: true,
   clusterStrength: 0.3,
   useUMAP: false,
 }

@@ -93,7 +93,7 @@ export function useClusterDetection({
       // Build adjacency list from edges with strength >= 0.3 (lowered for tighter clusters)
       const adj = new Map<string, string[]>()
       for (const edge of edges) {
-        if (edge.strength >= 0.3) {
+        if (edge.strength >= 0.25) {
           // GraphEdge source/target are always strings
           const source = edge.source
           const target = edge.target

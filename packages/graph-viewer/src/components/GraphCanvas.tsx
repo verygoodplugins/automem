@@ -1363,6 +1363,9 @@ function InstancedNodes({
         (hasTagFilterRef.current && !isMatchingTagFilter)
       )
 
+      // Node color (cluster coloring is done at scene level, not instanced nodes)
+      const baseNodeColor = node.color
+
       // Get focus mode opacity
       const focusOpacity = focusStates.get(node.id)?.opacity ?? 1
 
@@ -1452,17 +1455,18 @@ function InstancedNodes({
         tempColor.set('#00d4ff')
       } else if (isLassoSelected) {
         // Lasso selected nodes: blue tint
-      tempColor.set(node.color)
+      tempColor.set(baseNodeColor)
         // Add blue tint by lerping toward blue
         const blueColor = new THREE.Color('#3b82f6')
         tempColor.lerp(blueColor, 0.35)
       } else {
         // Normal node color
-        tempColor.set(node.color)
+        tempColor.set(baseNodeColor)
       }
 
       if (isDimmed && !isInPath && !isLassoSelected) {
         tempColor.multiplyScalar(0.35) // was 0.15 - too aggressive
+        finalScale *= 0.4
       } else if (isSelected || isHovered || isSearchMatch || isInPath || isLassoSelected) {
         // Brighten selected/hovered/path/lasso nodes
         tempColor.multiplyScalar(isInPath ? 1.3 : isLassoSelected ? 1.15 : 1.2)
@@ -1481,6 +1485,11 @@ function InstancedNodes({
       if (!isInPath && !isLassoSelected) {
         tempColor.multiplyScalar(focusOpacity)
       }
+
+      if (searchTerm && !isSearchMatch) {
+        finalScale *= 0.02
+      }
+
       mesh.setColorAt(i, tempColor)
     })
 
