@@ -5,17 +5,32 @@ Exposes memory graph structure in a format optimized for 3D visualization.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from collections import defaultdict
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
+import numpy as np
 from flask import Blueprint, abort, jsonify, request
 
 from automem.config import ALLOWED_RELATIONS, MEMORY_TYPES
 from automem.utils.graph import _serialize_node
+
+# Lazy load UMAP to avoid slow import on every request
+_umap_module = None
+
+
+def _get_umap():
+    """Lazy load UMAP to avoid slow import at startup."""
+    global _umap_module
+    if _umap_module is None:
+        try:
+            import umap
+
+            _umap_module = umap
+        except ImportError:
+            _umap_module = False
+    return _umap_module if _umap_module else None
+
 
 logger = logging.getLogger("automem.api.graph")
 
@@ -201,6 +216,223 @@ def create_graph_blueprint(
 
         except Exception as e:
             logger.error(f"graph/snapshot failed: {e}")
+            abort(500, description=str(e))
+
+    @bp.route("/projected", methods=["GET"])
+    def projected() -> Any:
+        """Return graph with UMAP-projected 3D positions based on embeddings.
+
+        Uses dimensionality reduction to position nodes so semantically similar
+        memories appear close together, regardless of explicit edges or tags.
+
+        Query params:
+            limit: Max nodes to return (default 500)
+            min_importance: Filter by minimum importance (0.0-1.0)
+            types: Comma-separated list of memory types to include
+            n_neighbors: UMAP n_neighbors param (default 15)
+            min_dist: UMAP min_dist param (default 0.1)
+            spread: UMAP spread param (default 1.0)
+        """
+        query_start = time.perf_counter()
+
+        umap_mod = _get_umap()
+        if umap_mod is None:
+            abort(501, description="UMAP not available - install umap-learn")
+
+        limit = min(int(request.args.get("limit", 500)), 2000)
+        min_importance = float(request.args.get("min_importance", 0.0))
+        types_filter = (
+            request.args.get("types", "").split(",") if request.args.get("types") else None
+        )
+
+        # UMAP parameters
+        n_neighbors = min(int(request.args.get("n_neighbors", 15)), 50)
+        min_dist = float(request.args.get("min_dist", 0.1))
+        spread = float(request.args.get("spread", 1.0))
+
+        qdrant = get_qdrant_client()
+        if qdrant is None:
+            abort(503, description="Vector database unavailable for projection")
+
+        graph = get_memory_graph()
+        if graph is None:
+            abort(503, description="Graph database unavailable")
+
+        try:
+            # Fetch embeddings from Qdrant with scroll
+            all_points = []
+            offset = None
+
+            while True:
+                scroll_result = qdrant.scroll(
+                    collection_name=collection_name,
+                    limit=100,
+                    offset=offset,
+                    with_vectors=True,
+                    with_payload=True,
+                )
+                points, next_offset = scroll_result
+                if not points:
+                    break
+                all_points.extend(points)
+                if next_offset is None or len(all_points) >= limit:
+                    break
+                offset = next_offset
+
+            if len(all_points) < 3:
+                # Not enough points for UMAP
+                abort(400, description="Need at least 3 memories for projection")
+
+            # Filter by importance and type if specified
+            filtered_points = []
+            for p in all_points:
+                payload = p.payload or {}
+                importance = float(payload.get("importance", 0.5))
+                mem_type = payload.get("type", "Memory")
+
+                if importance < min_importance:
+                    continue
+                if types_filter and types_filter[0] and mem_type not in types_filter:
+                    continue
+                if p.vector is None:
+                    continue
+
+                filtered_points.append(p)
+
+            if len(filtered_points) < 3:
+                abort(400, description="Not enough memories match filters for projection")
+
+            # Limit to requested count
+            if len(filtered_points) > limit:
+                # Sort by importance and take top N
+                filtered_points.sort(
+                    key=lambda p: float((p.payload or {}).get("importance", 0.5)),
+                    reverse=True,
+                )
+                filtered_points = filtered_points[:limit]
+
+            # Extract embeddings matrix
+            embeddings = np.array([p.vector for p in filtered_points], dtype=np.float32)
+            memory_ids = [p.id for p in filtered_points]
+
+            # Run UMAP projection to 3D
+            logger.info(f"Running UMAP on {len(embeddings)} embeddings...")
+            umap_start = time.perf_counter()
+
+            reducer = umap_mod.UMAP(
+                n_components=3,
+                n_neighbors=min(n_neighbors, len(embeddings) - 1),
+                min_dist=min_dist,
+                spread=spread,
+                metric="cosine",
+                random_state=42,  # Reproducible projections
+            )
+            projected_coords = reducer.fit_transform(embeddings)
+
+            umap_time = time.perf_counter() - umap_start
+            logger.info(f"UMAP completed in {umap_time:.2f}s")
+
+            # Scale coordinates to reasonable visualization range
+            # Center at origin and scale to ~100 unit radius
+            projected_coords -= projected_coords.mean(axis=0)
+            max_range = np.abs(projected_coords).max()
+            if max_range > 0:
+                projected_coords = projected_coords * (100.0 / max_range)
+
+            # Build node list with projected positions
+            nodes: List[Dict[str, Any]] = []
+            node_ids: Set[str] = set()
+
+            for i, point in enumerate(filtered_points):
+                payload = point.payload or {}
+                node_id = str(point.id)
+                node_ids.add(node_id)
+
+                importance = float(payload.get("importance", 0.5))
+                confidence = float(payload.get("confidence", 0.8))
+                mem_type = payload.get("type", "Memory")
+
+                nodes.append(
+                    {
+                        "id": node_id,
+                        "content": payload.get("content", ""),
+                        "type": mem_type,
+                        "importance": importance,
+                        "confidence": confidence,
+                        "tags": payload.get("tags", []),
+                        "timestamp": payload.get("timestamp"),
+                        "updated_at": payload.get("updated_at"),
+                        "metadata": payload.get("metadata", {}),
+                        # Visual properties
+                        "color": TYPE_COLORS.get(mem_type, TYPE_COLORS["Memory"]),
+                        "radius": 0.5 + (importance * 1.5),
+                        "opacity": 0.4 + (confidence * 0.6),
+                        # UMAP-projected positions
+                        "x": float(projected_coords[i, 0]),
+                        "y": float(projected_coords[i, 1]),
+                        "z": float(projected_coords[i, 2]),
+                    }
+                )
+
+            # Fetch edges between visible nodes
+            edges: List[Dict[str, Any]] = []
+            if node_ids:
+                edge_query = """
+                    MATCH (m1:Memory)-[r]->(m2:Memory)
+                    WHERE m1.id IN $node_ids AND m2.id IN $node_ids
+                    RETURN m1.id as source, m2.id as target, type(r) as rel_type, r as rel
+                """
+                edge_result = graph.query(edge_query, {"node_ids": list(node_ids)})
+
+                for row in edge_result.result_set:
+                    source, target, rel_type, rel = row
+                    rel_props = dict(rel.properties) if hasattr(rel, "properties") else {}
+                    strength = float(rel_props.get("strength", 0.5))
+
+                    edges.append(
+                        {
+                            "id": f"{source}-{rel_type}-{target}",
+                            "source": source,
+                            "target": target,
+                            "type": rel_type,
+                            "strength": strength,
+                            "color": RELATION_COLORS.get(rel_type, "#94A3B8"),
+                            "properties": rel_props,
+                        }
+                    )
+
+            elapsed = time.perf_counter() - query_start
+            logger.info(
+                f"graph/projected: {len(nodes)} nodes, {len(edges)} edges in {elapsed:.3f}s"
+            )
+
+            return jsonify(
+                {
+                    "nodes": nodes,
+                    "edges": edges,
+                    "stats": {
+                        "total_nodes": len(all_points),
+                        "returned_nodes": len(nodes),
+                        "returned_edges": len(edges),
+                    },
+                    "projection": {
+                        "method": "umap",
+                        "n_neighbors": n_neighbors,
+                        "min_dist": min_dist,
+                        "spread": spread,
+                        "dimensions": 3,
+                        "umap_time_ms": round(umap_time * 1000, 2),
+                    },
+                    "meta": {
+                        "type_colors": TYPE_COLORS,
+                        "relation_colors": RELATION_COLORS,
+                        "query_time_ms": round(elapsed * 1000, 2),
+                    },
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"graph/projected failed: {e}")
             abort(500, description=str(e))
 
     @bp.route("/neighbors/<memory_id>", methods=["GET"])

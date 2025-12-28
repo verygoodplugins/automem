@@ -4,7 +4,7 @@ import { Settings } from 'lucide-react'
 // Build version - update this when making significant changes
 const BUILD_VERSION = '2024-12-23-obsidian-settings-v1'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { useGraphSnapshot } from './hooks/useGraphData'
+import { useGraphSnapshot, useProjectedGraph } from './hooks/useGraphData'
 import { useAuth } from './hooks/useAuth'
 import { GraphCanvas } from './components/GraphCanvas'
 import { Inspector } from './components/Inspector'
@@ -294,12 +294,25 @@ export default function App() {
 
   const { lock: handLock } = useHandLockAndGrab(gestureState, gestureControlEnabled)
 
-  const { data, isLoading, error, refetch } = useGraphSnapshot({
+  // Use either snapshot or projected endpoint based on UMAP setting
+  const snapshotQuery = useGraphSnapshot({
     limit: filters.maxNodes,
     minImportance: filters.minImportance,
     types: filters.types.length > 0 ? filters.types : undefined,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !clusterConfig.useUMAP,
   })
+
+  const projectedQuery = useProjectedGraph({
+    limit: filters.maxNodes,
+    minImportance: filters.minImportance,
+    types: filters.types.length > 0 ? filters.types : undefined,
+    enabled: isAuthenticated && clusterConfig.useUMAP,
+  })
+
+  // Use the active query based on UMAP setting
+  const { data, isLoading, error, refetch } = clusterConfig.useUMAP
+    ? projectedQuery
+    : snapshotQuery
 
   // Stable data references - use EMPTY constants when data not loaded
   const nodes = data?.nodes ?? EMPTY_NODES

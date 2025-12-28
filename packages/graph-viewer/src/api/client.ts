@@ -109,6 +109,15 @@ export interface SnapshotParams {
   since?: string
 }
 
+export interface ProjectedParams {
+  limit?: number
+  minImportance?: number
+  types?: string[]
+  nNeighbors?: number  // UMAP n_neighbors (default 15)
+  minDist?: number     // UMAP min_dist (default 0.1)
+  spread?: number      // UMAP spread (default 1.0)
+}
+
 export async function fetchGraphSnapshot(params: SnapshotParams = {}): Promise<GraphSnapshot> {
   const searchParams = new URLSearchParams()
 
@@ -120,6 +129,32 @@ export async function fetchGraphSnapshot(params: SnapshotParams = {}): Promise<G
   const url = `${getApiBase()}/graph/snapshot?${searchParams}`
   const response = await fetch(url, { headers: getAuthHeaders() })
   return handleResponse<GraphSnapshot>(response)
+}
+
+export interface ProjectedSnapshot extends GraphSnapshot {
+  projection: {
+    method: string
+    n_neighbors: number
+    min_dist: number
+    spread: number
+    dimensions: number
+    umap_time_ms: number
+  }
+}
+
+export async function fetchProjectedGraph(params: ProjectedParams = {}): Promise<ProjectedSnapshot> {
+  const searchParams = new URLSearchParams()
+
+  if (params.limit) searchParams.set('limit', String(params.limit))
+  if (params.minImportance) searchParams.set('min_importance', String(params.minImportance))
+  if (params.types?.length) searchParams.set('types', params.types.join(','))
+  if (params.nNeighbors) searchParams.set('n_neighbors', String(params.nNeighbors))
+  if (params.minDist) searchParams.set('min_dist', String(params.minDist))
+  if (params.spread) searchParams.set('spread', String(params.spread))
+
+  const url = `${getApiBase()}/graph/projected?${searchParams}`
+  const response = await fetch(url, { headers: getAuthHeaders() })
+  return handleResponse<ProjectedSnapshot>(response)
 }
 
 export interface NeighborsParams {

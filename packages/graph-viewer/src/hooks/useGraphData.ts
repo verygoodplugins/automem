@@ -1,5 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchGraphSnapshot, fetchGraphNeighbors, fetchGraphStats, type SnapshotParams, type NeighborsParams } from '../api/client'
+import {
+  fetchGraphSnapshot,
+  fetchGraphNeighbors,
+  fetchGraphStats,
+  fetchProjectedGraph,
+  type SnapshotParams,
+  type NeighborsParams,
+  type ProjectedParams,
+} from '../api/client'
 
 export function useGraphSnapshot(params: SnapshotParams & { enabled?: boolean } = {}) {
   const { enabled = true, ...queryParams } = params
@@ -8,6 +16,17 @@ export function useGraphSnapshot(params: SnapshotParams & { enabled?: boolean } 
     queryKey: ['graph', 'snapshot', queryParams],
     queryFn: () => fetchGraphSnapshot(queryParams),
     enabled,
+  })
+}
+
+export function useProjectedGraph(params: ProjectedParams & { enabled?: boolean } = {}) {
+  const { enabled = true, ...queryParams } = params
+
+  return useQuery({
+    queryKey: ['graph', 'projected', queryParams],
+    queryFn: () => fetchProjectedGraph(queryParams),
+    enabled,
+    staleTime: 1000 * 60 * 5, // Cache UMAP projections for 5 mins (expensive to compute)
   })
 }
 

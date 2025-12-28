@@ -340,7 +340,12 @@ function Scene({
   onBimanualGrabChange,
 }: SceneProps) {
   const { camera } = useThree()
-  const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({ nodes, edges, forceConfig })
+  const { nodes: layoutNodes, isSimulating, reheat } = useForceLayout({
+    nodes,
+    edges,
+    forceConfig,
+    useServerPositions: clusterConfig?.useUMAP,
+  })
 
   // DEBUG: Log node counts
   // Focus mode - compute depth-based opacity for spotlight effect

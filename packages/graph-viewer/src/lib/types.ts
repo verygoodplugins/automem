@@ -151,6 +151,7 @@ export interface ClusterConfig {
   mode: ClusterMode
   showBoundaries: boolean
   clusterStrength: number     // Additional force pulling cluster members together
+  useUMAP: boolean            // Use UMAP embedding projection for positioning
 }
 
 // Relationship visibility
@@ -186,6 +187,7 @@ export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
   mode: 'type',
   showBoundaries: false,
   clusterStrength: 0.3,
+  useUMAP: false,
 }
 
 export const DEFAULT_RELATIONSHIP_VISIBILITY: RelationshipVisibility = {

@@ -20,6 +20,7 @@ interface UseForceLayoutOptions {
   nodes: GraphNode[]
   edges: GraphEdge[]
   forceConfig?: ForceConfig
+  useServerPositions?: boolean  // If true, use pre-computed x,y,z from server (UMAP)
 }
 
 interface LayoutState {
@@ -53,7 +54,7 @@ function getPrimaryTag(node: GraphNode): string {
 }
 
 // Generate deterministic position offset for a tag (for initial clustering)
-function getTagPosition(tag: string, index: number): { tx: number; ty: number; tz: number } {
+function getTagPosition(tag: string, _index: number): { tx: number; ty: number; tz: number } {
   // Hash the tag to get a deterministic angle
   let hash = 0
   for (let i = 0; i < tag.length; i++) {
@@ -189,6 +190,7 @@ export function useForceLayout({
   nodes,
   edges,
   forceConfig = DEFAULT_FORCE_CONFIG,
+  useServerPositions = false,
 }: UseForceLayoutOptions): LayoutState & { reheat: () => void } {
   const [isSimulating, setIsSimulating] = useState(false)
 
@@ -201,6 +203,26 @@ export function useForceLayout({
       return []
     }
 
+    // If server provided positions (UMAP), use them directly without force simulation
+    if (useServerPositions) {
+      const hasPositions = nodes.every((n) => n.x !== undefined && n.y !== undefined && n.z !== undefined)
+      if (hasPositions) {
+        const serverNodes: SimulationNode[] = nodes.map((node) => ({
+          ...node,
+          x: node.x!,
+          y: node.y!,
+          z: node.z!,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+        }))
+        // Update cache with server-provided positions
+        layoutCache.signature = createDataSignature(nodes) + '-server'
+        layoutCache.nodes = serverNodes
+        return serverNodes
+      }
+    }
+
     const signature = createDataSignature(nodes)
 
     // Check cache - if signature matches, return cached nodes
@@ -208,7 +230,7 @@ export function useForceLayout({
       return layoutCache.nodes
     }
 
-    // Compute new layout
+    // Compute new layout using force simulation
     const computed = computeLayout(nodes, edges, forceConfig, layoutCache.nodes)
 
     // Update cache
@@ -216,7 +238,7 @@ export function useForceLayout({
     layoutCache.nodes = computed
 
     return computed
-  }, [nodes, edges, forceConfig])
+  }, [nodes, edges, forceConfig, useServerPositions])
 
   // Reheat function uses module-level cache
   const reheat = useCallback(() => {

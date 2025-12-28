@@ -299,6 +299,21 @@ export function SettingsPanel({
 
         {/* Clustering Section */}
         <SettingsSection title="Clustering" defaultOpen={false}>
+          {/* UMAP Toggle - semantic embedding layout */}
+          <ToggleControl
+            label="UMAP Layout"
+            checked={clusterConfig.useUMAP}
+            onChange={(v) => onClusterConfigChange({ useUMAP: v })}
+            description="Position nodes by embedding similarity (slower load)"
+          />
+
+          {clusterConfig.useUMAP && (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-1.5 text-[10px] text-emerald-400">
+              UMAP active - nodes positioned by semantic similarity from embeddings.
+              First load may take 5-15 seconds.
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-xs text-slate-400">Cluster Mode</label>
             <div className="grid grid-cols-2 gap-1">
