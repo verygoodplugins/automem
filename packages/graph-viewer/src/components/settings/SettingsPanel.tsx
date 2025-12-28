@@ -166,7 +166,7 @@ export function SettingsPanel({
           <div className="space-y-1.5">
             <label className="text-xs text-slate-400">Max Nodes</label>
             <div className="flex gap-1">
-              {[100, 250, 500, 1000].map((n) => (
+              {[250, 500, 1000, 2000, 5000].map((n) => (
                 <button
                   key={n}
                   onClick={() => onFiltersChange({ maxNodes: n })}

@@ -85,7 +85,7 @@ def create_graph_blueprint(
         """
         query_start = time.perf_counter()
 
-        limit = min(int(request.args.get("limit", 500)), 2000)
+        limit = min(int(request.args.get("limit", 500)), 5000)
         min_importance = float(request.args.get("min_importance", 0.0))
         types_filter = (
             request.args.get("types", "").split(",") if request.args.get("types") else None
@@ -239,7 +239,7 @@ def create_graph_blueprint(
         if umap_mod is None:
             abort(501, description="UMAP not available - install umap-learn")
 
-        limit = min(int(request.args.get("limit", 500)), 2000)
+        limit = min(int(request.args.get("limit", 500)), 5000)
         min_importance = float(request.args.get("min_importance", 0.0))
         types_filter = (
             request.args.get("types", "").split(",") if request.args.get("types") else None

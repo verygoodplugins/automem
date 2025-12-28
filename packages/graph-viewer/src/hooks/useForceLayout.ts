@@ -66,7 +66,7 @@ function getTagPosition(tag: string, _index: number): { tx: number; ty: number; 
   return {
     tx: radius * Math.cos(angle),
     ty: radius * Math.sin(angle),
-    tz: (Math.abs(hash) % 80) - 40, // -40 to 40 z offset
+    tz: (Math.abs(hash) % 100) - 50, // -50 to 50 z offset
   }
 }
 
@@ -110,7 +110,7 @@ function computeLayout(
     // Add small random offset within cluster (Fibonacci-like spiral)
     const localPhi = Math.acos(1 - (2 * (indexInTag + 0.5)) / Math.max(tagNodes.length, 1))
     const localTheta = Math.PI * (1 + Math.sqrt(5)) * indexInTag
-    const localRadius = 5 + (1 - node.importance) * 25 // Tighter local spread
+    const localRadius = 3 + (1 - node.importance) * 20 // Tighter local spread
 
     return {
       ...node,
