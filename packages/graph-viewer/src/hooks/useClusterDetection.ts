@@ -56,14 +56,33 @@ export function useClusterDetection({
         nodeGroups.get(key)!.push(node)
       }
     } else if (mode === 'tags') {
-      // Group by primary tag (first tag)
-      // Nodes with the same first tag belong to the same cluster
+      // Group by shared tags - nodes sharing ANY tag cluster together
+      // Priority: entity tags > project tags > other tags
+      const tagToNodes = new Map<string, SimulationNode[]>()
+
       for (const node of nodes) {
-        const key = node.tags[0] || 'untagged'
-        if (!nodeGroups.has(key)) {
-          nodeGroups.set(key, [])
+        // Find best clustering tag (prefer entity: tags, then project-like tags)
+        let bestTag = 'untagged'
+        for (const tag of node.tags) {
+          if (tag.startsWith('entity:')) {
+            // Entity tags are highest priority (entity:people:jack, entity:organizations:automem)
+            bestTag = tag
+            break
+          } else if (!bestTag.startsWith('entity:') && !tag.match(/^\d{4}-\d{2}$/) && tag !== 'cursor') {
+            // Skip date tags (2025-12) and generic platform tags
+            bestTag = tag
+          }
         }
-        nodeGroups.get(key)!.push(node)
+
+        if (!tagToNodes.has(bestTag)) {
+          tagToNodes.set(bestTag, [])
+        }
+        tagToNodes.get(bestTag)!.push(node)
+      }
+
+      // Transfer to nodeGroups
+      for (const [tag, tagNodes] of tagToNodes) {
+        nodeGroups.set(tag, tagNodes)
       }
     } else if (mode === 'semantic') {
       // Group by connected components using edges
@@ -71,10 +90,10 @@ export function useClusterDetection({
       const visited = new Set<string>()
       const nodeById = new Map(nodes.map(n => [n.id, n]))
 
-      // Build adjacency list from edges with strength > 0.5
+      // Build adjacency list from edges with strength >= 0.3 (lowered for tighter clusters)
       const adj = new Map<string, string[]>()
       for (const edge of edges) {
-        if (edge.strength >= 0.5) {
+        if (edge.strength >= 0.3) {
           // GraphEdge source/target are always strings
           const source = edge.source
           const target = edge.target

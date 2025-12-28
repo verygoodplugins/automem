@@ -41,6 +41,34 @@ function createDataSignature(nodes: GraphNode[]): string {
   return `${nodes.length}-${nodes[0]?.id}-${nodes[nodes.length - 1]?.id}`
 }
 
+// Get primary clustering tag for a node (prioritize entity tags over generic ones)
+function getPrimaryTag(node: GraphNode): string {
+  for (const tag of node.tags) {
+    if (tag.startsWith('entity:')) return tag
+  }
+  for (const tag of node.tags) {
+    if (!tag.match(/^\d{4}-\d{2}$/) && tag !== 'cursor') return tag
+  }
+  return node.tags[0] || 'untagged'
+}
+
+// Generate deterministic position offset for a tag (for initial clustering)
+function getTagPosition(tag: string, index: number): { tx: number; ty: number; tz: number } {
+  // Hash the tag to get a deterministic angle
+  let hash = 0
+  for (let i = 0; i < tag.length; i++) {
+    hash = tag.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const angle = (Math.abs(hash) % 360) * (Math.PI / 180)
+  const radius = 80 + (Math.abs(hash) % 60) // 80-140 radius for tag clusters
+
+  return {
+    tx: radius * Math.cos(angle),
+    ty: radius * Math.sin(angle),
+    tz: (Math.abs(hash) % 80) - 40, // -40 to 40 z offset
+  }
+}
+
 // Helper to run the force simulation (pure function, no React)
 function computeLayout(
   nodes: GraphNode[],
@@ -48,8 +76,16 @@ function computeLayout(
   forceConfig: ForceConfig,
   existingNodes: SimulationNode[]
 ): SimulationNode[] {
-  // Create simulation nodes with initial positions
-  const simNodes: SimulationNode[] = nodes.map((node, i) => {
+  // Group nodes by primary tag for initial positioning
+  const tagGroups = new Map<string, GraphNode[]>()
+  for (const node of nodes) {
+    const tag = getPrimaryTag(node)
+    if (!tagGroups.has(tag)) tagGroups.set(tag, [])
+    tagGroups.get(tag)!.push(node)
+  }
+
+  // Create simulation nodes with initial positions clustered by tag
+  const simNodes: SimulationNode[] = nodes.map((node) => {
     // Check if we have existing position for this node
     const existing = existingNodes.find((n) => n.id === node.id)
     if (existing) {
@@ -64,16 +100,22 @@ function computeLayout(
       }
     }
 
-    // Use Fibonacci sphere for initial distribution of new nodes
-    const phi = Math.acos(1 - (2 * (i + 0.5)) / nodes.length)
-    const theta = Math.PI * (1 + Math.sqrt(5)) * i
-    const radius = 50 + (1 - node.importance) * 100 // High importance = center
+    // Get tag-based cluster position
+    const tag = getPrimaryTag(node)
+    const tagNodes = tagGroups.get(tag) || []
+    const indexInTag = tagNodes.indexOf(node)
+    const { tx, ty, tz } = getTagPosition(tag, indexInTag)
+
+    // Add small random offset within cluster (Fibonacci-like spiral)
+    const localPhi = Math.acos(1 - (2 * (indexInTag + 0.5)) / Math.max(tagNodes.length, 1))
+    const localTheta = Math.PI * (1 + Math.sqrt(5)) * indexInTag
+    const localRadius = 5 + (1 - node.importance) * 25 // Tighter local spread
 
     return {
       ...node,
-      x: radius * Math.sin(phi) * Math.cos(theta),
-      y: radius * Math.sin(phi) * Math.sin(theta),
-      z: radius * Math.cos(phi),
+      x: tx + localRadius * Math.sin(localPhi) * Math.cos(localTheta),
+      y: ty + localRadius * Math.sin(localPhi) * Math.sin(localTheta),
+      z: tz + localRadius * Math.cos(localPhi),
       vx: 0,
       vy: 0,
       vz: 0,
