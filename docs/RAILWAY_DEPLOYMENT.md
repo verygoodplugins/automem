@@ -8,10 +8,10 @@ Complete guide to deploying AutoMem on Railway with persistent storage, backups,
 
 This template automatically sets up:
 
-- ✅ AutoMem Flask API with health checks
-- ✅ FalkorDB with **persistent volumes** and password protection
-- ✅ Automatic secret generation
-- ✅ Service networking configured
+- ✅ **memory-service** — AutoMem Flask API with health checks
+- ✅ **falkordb** — Graph database with **persistent volumes** and password protection
+- ✅ **mcp-sse-server** — SSE bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
+- ✅ Automatic secret generation and service networking
 
 ---
 
@@ -47,16 +47,23 @@ curl -X POST "https://your-automem.up.railway.app/memory" \
   -d '{"content": "Test memory from Railway", "tags": ["test"]}'
 ```
 
-### Optional: Add SSE Bridge for Cloud AI Platforms
+### SSE Bridge (Included)
 
-If you want to use AutoMem with **ChatGPT**, **Claude.ai**, **Claude Mobile**, or **ElevenLabs**:
+The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
 
-👉 **See [MCP_SSE.md](MCP_SSE.md)** for setup instructions.
+| Platform | How to Connect |
+|----------|----------------|
+| **ChatGPT** | Settings → Connectors → Add Server → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN` |
+| **Claude.ai** | Settings → MCP → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN` |
+| **Claude Mobile** | Settings → MCP Servers → same URL as above |
+| **ElevenLabs** | Agent config → MCP → same URL (or use Authorization header) |
 
-The SSE bridge is **not needed** for:
-- Cursor IDE (use local `mcp-automem` package)
-- Claude Desktop (use local `mcp-automem` package)
-- Direct API access
+👉 **See [MCP_SSE.md](MCP_SSE.md)** for detailed setup per platform.
+
+**Don't need the SSE bridge?** If you only use Cursor, Claude Desktop, or direct API access:
+1. Go to Railway Dashboard → `mcp-sse-server` service
+2. Click the three dots menu → **Delete Service**
+3. This saves ~$2-3/month and has no impact on the core memory API
 
 ### Get Your API Tokens
 
@@ -347,17 +354,19 @@ This will:
 
 **Service Sizing**:
 
-- **AutoMem API**: 512MB RAM, 0.5 vCPU (~$5/mo)
+- **memory-service**: 512MB RAM, 0.5 vCPU (~$5/mo)
 - **FalkorDB**: 1GB RAM, 1 vCPU + 2GB volume (~$10/mo)
+- **mcp-sse-server**: 256MB RAM, 0.25 vCPU (~$2-3/mo)
 - **Qdrant Cloud**: Free tier (1GB) or $25/mo (10GB)
 
-**Total**: ~$15-35/month depending on usage
+**Total**: ~$17-40/month depending on usage
 
 **Cost Saving Tips**:
 
 - Use Qdrant Cloud free tier initially
 - Start with smaller FalkorDB volume (1GB)
 - Use Railway's usage-based pricing (scales down when idle)
+- **Remove mcp-sse-server** if you only use Cursor/Claude Desktop (saves ~$2-3/mo)
 
 ---
 

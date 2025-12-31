@@ -55,6 +55,7 @@ AutoMem gives AI assistants the ability to **remember, connect, and evolve** the
 ## What Makes AutoMem State-of-the-Art
 
 **December 2, 2025**: AutoMem scored **90.53%** on LoCoMo—the academic benchmark for long-term conversational memory (ACL 2024). This beats:
+
 - **CORE (heysol.ai)**: 88.24% (previous SOTA)
 - **OpenAI's implementation**: 39%
 - **+14.45 points** improvement since baseline
@@ -110,7 +111,8 @@ AutoMem implements breakthroughs from:
 ## Why Graph + Vector?
 
 ### Traditional RAG (Vector Only)
-```
+
+```text
 Memory: "Chose PostgreSQL for reliability"
 Query: "What database should I use?"
 Result: ✅ Finds the memory
@@ -119,7 +121,8 @@ Result: ✅ Finds the memory
 ```
 
 ### AutoMem (Graph + Vector)
-```
+
+```text
 Memory: "Chose PostgreSQL for reliability"
 Graph: PREFERS_OVER MongoDB
        RELATES_TO "team expertise" memory
@@ -220,6 +223,7 @@ AutoMem uses [neuroscience-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC46
 | **Forget** | Daily | Archives low-relevance (<0.2), deletes very old (<0.05) |
 
 **How it works:**
+
 - Wrong rabbit holes fade naturally (~30-45 days without access)
 - Important memories with strong connections stay indefinitely
 - Memories archive before deletion (0.05-0.2 relevance range)
@@ -230,6 +234,7 @@ AutoMem uses [neuroscience-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC46
 Every memory gets automatically enhanced in the background (doesn't block your API calls):
 
 **Enrichment Pipeline** (runs immediately after storage):
+
 - **Entity extraction** - Identifies people, projects, tools, concepts (spaCy NLP)
 - **Auto-tagging** - Generates `entity:<type>:<slug>` for structured queries
 - **Summaries** - Lightweight gist representations for quick scanning
@@ -238,6 +243,7 @@ Every memory gets automatically enhanced in the background (doesn't block your A
 - **Pattern detection** - Reinforces emerging themes across your memory graph
 
 **Consolidation Engine** (runs on configurable schedules):
+
 - See [Memory Consolidation](#memory-consolidation) section above
 
 ### 11 Relationship Types
@@ -262,17 +268,15 @@ Build rich knowledge graphs:
 
 ### Option 1: Railway (Recommended)
 
-Deploy AutoMem + FalkorDB to Railway in 60 seconds:
+Deploy AutoMem to Railway in 60 seconds:
 
-```bash
-# Install Railway CLI
-npm i -g @railway/cli
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.com/deploy/automem-ai-memory-service)
 
-# Deploy
-railway login
-railway init
-railway up
-```
+This deploys 3 services automatically:
+
+- **memory-service** — Core AutoMem API
+- **falkordb** — Graph database with persistent storage
+- **mcp-sse-server** — SSE bridge for ChatGPT, Claude.ai, ElevenLabs
 
 👉 **[Deployment Guide](INSTALLATION.md#deployment)** for detailed Railway setup
 
@@ -324,10 +328,12 @@ curl -X POST http://localhost:8001/memory \
 ```
 
 **Available memory types**: `Decision`, `Pattern`, `Preference`, `Style`, `Habit`, `Insight`, `Context` (default)
+
 - **Explicit `type` recommended** when you know the classification
 - **Omit `type`** to let enrichment auto-classify from content
 
 ### Recall Memories
+
 ```bash
 # Hybrid search with tags and time
 GET /recall?query=database&tags=decision&time_query=last%20month
