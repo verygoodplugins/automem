@@ -90,8 +90,13 @@ AutoMem supports three embedding backends with automatic fallback.
 | `VECTOR_SIZE` | Embedding dimension | `3072` | `3072` (large), `768` (small) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `false` | `true` |
 
-**Note**: Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
-**Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script. By default the service fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption. To opt into legacy auto-detection (use the existing collection dimension), set `VECTOR_SIZE_AUTODETECT=true`.
+👉 **New to Qdrant?** See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
+
+**Notes**:
+- Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
+- **Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script.
+- By default the service fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption.
+- To opt into legacy auto-detection (use the existing collection dimension), set `VECTOR_SIZE_AUTODETECT=true`.
 
 ### API Server
 
@@ -328,11 +333,12 @@ FALKORDB_HOST = (
 
 | Old Name | New Name | Status |
 |----------|----------|--------|
+| `AUTOMEM_ENDPOINT` | `AUTOMEM_API_URL` | Deprecated, use new name |
 | `MCP_MEMORY_HTTP_ENDPOINT` | `AUTOMEM_API_URL` | Deprecated, use new name |
 | `MCP_MEMORY_AUTO_DISCOVER` | - | Removed (unused) |
 | `DEVELOPMENT` | - | Removed (unused) |
 
-**Backward compatibility**: Old names still work but will show deprecation warnings.
+**Backward compatibility**: Old names still work as fallbacks.
 
 ---
 

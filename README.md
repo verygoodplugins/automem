@@ -473,7 +473,7 @@ Run the benchmark yourself: `make test-locomo`
 - `FALKORDB_HOST` / `FALKORDB_PORT` - Graph database connection
 
 ### Optional
-- `QDRANT_URL` / `QDRANT_API_KEY` - Enable semantic search
+- `QDRANT_URL` / `QDRANT_API_KEY` - Enable semantic search ([setup guide](docs/QDRANT_SETUP.md))
 - `OPENAI_API_KEY` - Real embeddings (otherwise deterministic placeholders)
 - `ADMIN_API_TOKEN` - Required for `/admin/reembed` and enrichment controls
 - Consolidation tuning: `CONSOLIDATION_*_INTERVAL_SECONDS`
@@ -484,6 +484,7 @@ Run the benchmark yourself: `make test-locomo`
 ## Documentation
 
 - 📦 **[Installation Guide](INSTALLATION.md)** - Railway, Docker, development setup
+- 🔍 **[Qdrant Setup Guide](docs/QDRANT_SETUP.md)** - Step-by-step vector database configuration
 - 🌉 **[MCP over SSE Sidecar](docs/MCP_SSE.md)** - Expose AutoMem as an MCP server over SSE for ChatGPT/ElevenLabs
 - 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** - Health monitoring and automated backups
 - 🔧 **[API Reference](docs/API.md)** - All endpoints with examples

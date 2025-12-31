@@ -27,10 +27,12 @@ After deploying, complete these steps to fully configure AutoMem:
 | Variable | Required | How to Get |
 |----------|----------|------------|
 | `OPENAI_API_KEY` | Yes* | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `QDRANT_URL` | Recommended | [cloud.qdrant.io](https://cloud.qdrant.io) (free 1GB tier) |
-| `QDRANT_API_KEY` | With Qdrant | From Qdrant Cloud dashboard |
+| `QDRANT_URL` | Recommended | See [Qdrant Setup Guide](QDRANT_SETUP.md) |
+| `QDRANT_API_KEY` | With Qdrant | See [Qdrant Setup Guide](QDRANT_SETUP.md) |
 
 *Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
+
+👉 **First time with Qdrant?** Follow the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step collection setup.
 
 3. **Redeploy** the memory-service after adding variables.
 
@@ -416,7 +418,7 @@ Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
    - Check startup logs should show: `* Running on http://[::1]:8001`
 
 3. **Wrong internal hostname**:
-   - Verify `AUTOMEM_ENDPOINT` in SSE service matches memory-service's `RAILWAY_PRIVATE_DOMAIN`
+   - Verify `AUTOMEM_API_URL` in SSE service matches memory-service's `RAILWAY_PRIVATE_DOMAIN`
    - Should be: `http://memory-service.railway.internal:8001`
 
 ### Variable Reference Issues

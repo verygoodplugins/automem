@@ -103,9 +103,9 @@ test('formatRecallAsItems supports detailed output including relations', () => {
 
 test('GET /mcp/sse returns an SSE stream and endpoint event', async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
-  const prevEndpoint = process.env.AUTOMEM_ENDPOINT;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
   process.env.AUTOMEM_API_TOKEN = 'test-token';
-  process.env.AUTOMEM_ENDPOINT = 'http://127.0.0.1:8001';
+  process.env.AUTOMEM_API_URL = 'http://127.0.0.1:8001';
 
   const app = createApp();
   const server = await new Promise((resolve) => {
@@ -148,6 +148,6 @@ test('GET /mcp/sse returns an SSE stream and endpoint event', async () => {
   } finally {
     await new Promise((resolve) => server.close(resolve));
     process.env.AUTOMEM_API_TOKEN = prevToken;
-    process.env.AUTOMEM_ENDPOINT = prevEndpoint;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
   }
 });

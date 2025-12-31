@@ -58,7 +58,7 @@ If you deployed before the SSE bridge was included, add it manually:
 3. **Set Environment Variables**
    ```
    PORT=8080
-   AUTOMEM_ENDPOINT=http://memory-service.railway.internal:8001
+   AUTOMEM_API_URL=http://memory-service.railway.internal:8001
    AUTOMEM_API_TOKEN=<copy from memory-service>
    ```
 
@@ -202,10 +202,10 @@ retrieve relevant context before answering questions.
    - Most common cause. Without it, Flask defaults to port 5000.
    - Fix: Add `PORT=8001` to memory-service environment variables.
 
-2. **Verify AUTOMEM_ENDPOINT**
+2. **Verify AUTOMEM_API_URL**
    - Should match your memory service's internal domain:
      ```
-     AUTOMEM_ENDPOINT=http://memory-service.railway.internal:8001
+     AUTOMEM_API_URL=http://memory-service.railway.internal:8001
      ```
    - Check actual domain: `railway variables --service memory-service | grep RAILWAY_PRIVATE_DOMAIN`
 
@@ -217,7 +217,7 @@ retrieve relevant context before answering questions.
 4. **Fallback: Use public URL**
    - If internal networking fails, use the public URL (slower but works):
      ```
-     AUTOMEM_ENDPOINT=https://your-memory-service.up.railway.app
+     AUTOMEM_API_URL=https://your-memory-service.up.railway.app
      ```
 
 ### SSE Connection Drops
