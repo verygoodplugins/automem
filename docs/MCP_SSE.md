@@ -33,19 +33,27 @@ npx @verygoodplugins/mcp-automem cursor  # or 'claude' or 'claude-code'
 
 ## Deploy SSE Bridge on Railway
 
-### Option 1: Add Service Manually (Recommended)
+### Already Using the Template?
 
-If you deployed AutoMem without the SSE bridge, add it as a new service:
+The AutoMem Railway template **includes mcp-sse-server by default**. After deploying:
+
+1. Go to Railway Dashboard → `mcp-sse-server` service
+2. Click Settings → Networking → **Generate Domain**
+3. Your SSE URL is: `https://your-sse-bridge.up.railway.app/mcp/sse`
+
+Skip to [Client Setup](#client-setup) below.
+
+### Adding SSE to an Existing Deployment
+
+If you deployed before the SSE bridge was included, add it manually:
 
 1. **Create New Service**
    - In your Railway project, click `+ New Service`
    - Select `GitHub Repo` → `verygoodplugins/automem`
 
-2. **Configure Build Settings**
-   - **Root Directory**: Leave empty
-   - **Builder**: `Nixpacks`
-   - **Build Command**: `cd mcp-sse-server && npm i`
-   - **Start Command**: `node mcp-sse-server/server.js`
+2. **Configure Root Directory**
+   - Settings → **Root Directory**: `mcp-sse-server`
+   - Railway will auto-detect the Dockerfile
 
 3. **Set Environment Variables**
    ```
@@ -63,10 +71,6 @@ If you deployed AutoMem without the SSE bridge, add it as a new service:
 5. **Generate Public Domain**
    - Settings → Networking → Generate Domain
    - Save your URL: `https://your-sse-bridge.up.railway.app`
-
-### Option 2: Redeploy with Template
-
-If starting fresh, the AutoMem template includes the SSE bridge. Enable it during deployment or add it later using Option 1.
 
 ---
 

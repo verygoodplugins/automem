@@ -19,6 +19,9 @@ tests/benchmarks/locomo/
 /.venv
 /automem/.venv
 
+# Distribution / packaging
+**/dist/
+
 # Node.js dependencies
 /mcp-sse-server/node_modules/
 node_modules/
