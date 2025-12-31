@@ -491,7 +491,8 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
   const endpoint =
     body?.endpoint ||
     req.query.endpoint ||
-    process.env.AUTOMEM_ENDPOINT ||
+    process.env.AUTOMEM_API_URL ||
+    process.env.AUTOMEM_ENDPOINT ||  // Legacy fallback
     'http://127.0.0.1:8001';
   const apiKey = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
 
@@ -568,9 +569,9 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 // SSE endpoint
   app.get('/mcp/sse', async (req, res) => {
   try {
-    const endpoint = process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
+    const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
     const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
-    if (!endpoint) return res.status(500).json({ error: 'AUTOMEM_ENDPOINT not configured' });
+    if (!endpoint) return res.status(500).json({ error: 'AUTOMEM_API_URL not configured' });
     if (!token) return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
 
     const client = new AutoMemClient({ endpoint, apiKey: token });
