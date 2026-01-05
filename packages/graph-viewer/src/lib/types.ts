@@ -184,7 +184,7 @@ export const DEFAULT_DISPLAY_CONFIG: DisplayConfig = {
 }
 
 export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
-  mode: 'tags',
+  mode: 'none',
   showBoundaries: true,
   clusterStrength: 0.3,
   useUMAP: false,

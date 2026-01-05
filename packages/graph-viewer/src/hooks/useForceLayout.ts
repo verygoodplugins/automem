@@ -13,6 +13,7 @@ import type {
   SimulationNode,
   SimulationLink,
   ForceConfig,
+  ClusterMode,
 } from '../lib/types'
 import { DEFAULT_FORCE_CONFIG } from '../lib/types'
 
@@ -21,6 +22,7 @@ interface UseForceLayoutOptions {
   edges: GraphEdge[]
   forceConfig?: ForceConfig
   useServerPositions?: boolean  // If true, use pre-computed x,y,z from server (UMAP)
+  seedMode?: ClusterMode
 }
 
 interface LayoutState {
@@ -34,6 +36,7 @@ const layoutCache = {
   signature: '',
   nodes: [] as SimulationNode[],
   simulation: null as ReturnType<typeof forceSimulation> | null,
+  seedMode: 'tags' as ClusterMode,
 }
 
 // Helper to create data signature
@@ -53,15 +56,21 @@ function getPrimaryTag(node: GraphNode): string {
   return node.tags[0] || 'untagged'
 }
 
-// Generate deterministic position offset for a tag (for initial clustering)
-function getTagPosition(tag: string, _index: number): { tx: number; ty: number; tz: number } {
+function getSeedKey(node: GraphNode, mode: ClusterMode): string | null {
+  if (mode === 'tags') return getPrimaryTag(node)
+  if (mode === 'type') return node.type
+  return null
+}
+
+// Generate deterministic position offset for a group key (for initial clustering)
+function getSeedPosition(key: string, _index: number): { tx: number; ty: number; tz: number } {
   // Hash the tag to get a deterministic angle
   let hash = 0
-  for (let i = 0; i < tag.length; i++) {
-    hash = tag.charCodeAt(i) + ((hash << 5) - hash)
+  for (let i = 0; i < key.length; i++) {
+    hash = key.charCodeAt(i) + ((hash << 5) - hash)
   }
   const angle = (Math.abs(hash) % 360) * (Math.PI / 180)
-    const radius = 100 + (Math.abs(hash) % 80) // 100-180 radius for tag clusters
+  const radius = 100 + (Math.abs(hash) % 80) // 100-180 radius for group clusters
 
   return {
     tx: radius * Math.cos(angle),
@@ -70,23 +79,40 @@ function getTagPosition(tag: string, _index: number): { tx: number; ty: number; 
   }
 }
 
+// Evenly distributed points on a sphere (deterministic)
+function getFibonacciPosition(index: number, total: number, radius: number) {
+  const safeTotal = Math.max(total, 1)
+  const phi = Math.acos(1 - (2 * (index + 0.5)) / safeTotal)
+  const theta = Math.PI * (1 + Math.sqrt(5)) * index
+  return {
+    x: radius * Math.sin(phi) * Math.cos(theta),
+    y: radius * Math.sin(phi) * Math.sin(theta),
+    z: radius * Math.cos(phi),
+  }
+}
+
 // Helper to run the force simulation (pure function, no React)
 function computeLayout(
   nodes: GraphNode[],
   edges: GraphEdge[],
   forceConfig: ForceConfig,
-  existingNodes: SimulationNode[]
+  existingNodes: SimulationNode[],
+  seedMode: ClusterMode
 ): SimulationNode[] {
-  // Group nodes by primary tag for initial positioning
-  const tagGroups = new Map<string, GraphNode[]>()
-  for (const node of nodes) {
-    const tag = getPrimaryTag(node)
-    if (!tagGroups.has(tag)) tagGroups.set(tag, [])
-    tagGroups.get(tag)!.push(node)
+  const normalizedSeedMode = seedMode === 'semantic' ? 'none' : seedMode
+  const useGroupedSeeds = normalizedSeedMode === 'tags' || normalizedSeedMode === 'type'
+  const seedGroups = new Map<string, GraphNode[]>()
+
+  if (useGroupedSeeds) {
+    for (const node of nodes) {
+      const key = getSeedKey(node, normalizedSeedMode) || 'ungrouped'
+      if (!seedGroups.has(key)) seedGroups.set(key, [])
+      seedGroups.get(key)!.push(node)
+    }
   }
 
-  // Create simulation nodes with initial positions clustered by tag
-  const simNodes: SimulationNode[] = nodes.map((node) => {
+  // Create simulation nodes with seeded positions
+  const simNodes: SimulationNode[] = nodes.map((node, index) => {
     // Check if we have existing position for this node
     const existing = existingNodes.find((n) => n.id === node.id)
     if (existing) {
@@ -101,22 +127,37 @@ function computeLayout(
       }
     }
 
-    // Get tag-based cluster position
-    const tag = getPrimaryTag(node)
-    const tagNodes = tagGroups.get(tag) || []
-    const indexInTag = tagNodes.indexOf(node)
-    const { tx, ty, tz } = getTagPosition(tag, indexInTag)
+    if (useGroupedSeeds) {
+      const key = getSeedKey(node, normalizedSeedMode) || 'ungrouped'
+      const groupNodes = seedGroups.get(key) || []
+      const indexInGroup = groupNodes.indexOf(node)
+      const { tx, ty, tz } = getSeedPosition(key, indexInGroup)
 
-    // Add small random offset within cluster (Fibonacci-like spiral)
-    const localPhi = Math.acos(1 - (2 * (indexInTag + 0.5)) / Math.max(tagNodes.length, 1))
-    const localTheta = Math.PI * (1 + Math.sqrt(5)) * indexInTag
-    const localRadius = 3 + (1 - node.importance) * 20 // Tighter local spread
+      // Add small deterministic offset within cluster (Fibonacci-like spiral)
+      const localPhi = Math.acos(1 - (2 * (indexInGroup + 0.5)) / Math.max(groupNodes.length, 1))
+      const localTheta = Math.PI * (1 + Math.sqrt(5)) * indexInGroup
+      const localRadius = 3 + (1 - node.importance) * 20 // Tighter local spread
+
+      return {
+        ...node,
+        x: tx + localRadius * Math.sin(localPhi) * Math.cos(localTheta),
+        y: ty + localRadius * Math.sin(localPhi) * Math.sin(localTheta),
+        z: tz + localRadius * Math.cos(localPhi),
+        vx: 0,
+        vy: 0,
+        vz: 0,
+      }
+    }
+
+    const baseRadius = 110
+    const radius = baseRadius + (1 - node.importance) * 40
+    const { x, y, z } = getFibonacciPosition(index, nodes.length, radius)
 
     return {
       ...node,
-      x: tx + localRadius * Math.sin(localPhi) * Math.cos(localTheta),
-      y: ty + localRadius * Math.sin(localPhi) * Math.sin(localTheta),
-      z: tz + localRadius * Math.cos(localPhi),
+      x,
+      y,
+      z,
       vx: 0,
       vy: 0,
       vz: 0,
@@ -191,6 +232,7 @@ export function useForceLayout({
   edges,
   forceConfig = DEFAULT_FORCE_CONFIG,
   useServerPositions = false,
+  seedMode = 'tags',
 }: UseForceLayoutOptions): LayoutState & { reheat: () => void } {
   const [isSimulating, setIsSimulating] = useState(false)
 
@@ -219,6 +261,7 @@ export function useForceLayout({
         // Update cache with server-provided positions
         layoutCache.signature = createDataSignature(nodes) + '-server'
         layoutCache.nodes = serverNodes
+        layoutCache.seedMode = seedMode
         return serverNodes
       }
     }
@@ -226,19 +269,31 @@ export function useForceLayout({
     const signature = createDataSignature(nodes)
 
     // Check cache - if signature matches, return cached nodes
-    if (signature === layoutCache.signature && layoutCache.nodes.length > 0) {
+    if (
+      signature === layoutCache.signature &&
+      layoutCache.nodes.length > 0 &&
+      layoutCache.seedMode === seedMode
+    ) {
       return layoutCache.nodes
     }
 
     // Compute new layout using force simulation
-    const computed = computeLayout(nodes, edges, forceConfig, layoutCache.nodes)
+    const reusePositions = layoutCache.seedMode === seedMode
+    const computed = computeLayout(
+      nodes,
+      edges,
+      forceConfig,
+      reusePositions ? layoutCache.nodes : [],
+      seedMode
+    )
 
     // Update cache
     layoutCache.signature = signature
     layoutCache.nodes = computed
+    layoutCache.seedMode = seedMode
 
     return computed
-  }, [nodes, edges, forceConfig, useServerPositions])
+  }, [nodes, edges, forceConfig, useServerPositions, seedMode])
 
   // Reheat function uses module-level cache
   const reheat = useCallback(() => {

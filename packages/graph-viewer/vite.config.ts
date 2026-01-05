@@ -4,11 +4,16 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
-  // Base path for embedded mode - assets served from /viewer/static/
-  base: '/viewer/static/',
+  // Use VITE_BASE for deployment, default to /viewer/static/ for local dev
+  base: process.env.VITE_BASE || '/viewer/static/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // IMPORTANT: Force a single Three.js instance.
+      // @react-three/xr -> @pmndrs/xr currently pulls in @iwer/devui/@iwer/sem which depend on three@0.165.0,
+      // which triggers: "WARNING: Multiple instances of Three.js being imported."
+      // This alias ensures all imports resolve to the top-level three dependency.
+      three: path.resolve(__dirname, './node_modules/three'),
     },
   },
   server: {

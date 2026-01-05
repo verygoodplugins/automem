@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { Settings } from 'lucide-react'
+import { Settings, RotateCcw } from 'lucide-react'
 
 // Build version - update this when making significant changes
 const BUILD_VERSION = '2024-12-23-obsidian-settings-v1'
@@ -735,6 +735,25 @@ export default function App() {
           <HandIcon className="w-5 h-5" />
           <span className="text-sm font-medium hidden sm:inline">
             {gestureControlEnabled ? 'Gestures ON' : 'Gestures'}
+          </span>
+        </button>
+
+        {/* Reset View */}
+        <button
+          onClick={() => resetViewFn?.()}
+          disabled={!resetViewFn}
+          className={`
+            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
+            ${resetViewFn
+              ? 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+              : 'bg-white/5 text-slate-600 cursor-not-allowed'
+            }
+          `}
+          title="Reset view to center"
+        >
+          <RotateCcw className="w-5 h-5" />
+          <span className="text-sm font-medium hidden sm:inline">
+            Reset View
           </span>
         </button>
 

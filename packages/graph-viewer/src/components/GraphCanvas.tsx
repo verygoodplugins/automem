@@ -17,6 +17,7 @@
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react'
 import { Canvas, useFrame, useThree, ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Text, Billboard } from '@react-three/drei'
+import { XR, createXRStore } from '@react-three/xr'
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
@@ -61,6 +62,9 @@ function useIPhoneUrl() {
 const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
 const LABEL_DISTANCE_THRESHOLD = 80 // Only show labels for nodes within this distance
 const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
+
+// XR store for WebXR (Quest VR support)
+const xrStore = createXRStore()
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -155,6 +159,7 @@ export function GraphCanvas({
   const [layoutNodesForMiniMap, setLayoutNodesForMiniMap] = useState<SimulationNode[]>([])
   // Bimanual grab state for visual feedback
   const [bimanualActive, setBimanualActive] = useState(false)
+  const [isVrSupported, setIsVrSupported] = useState(false)
   const navigateToRef = useRef<((x: number, y: number) => void) | null>(null)
 
   const handleMiniMapNavigate = useCallback((x: number, y: number) => {
@@ -174,6 +179,28 @@ export function GraphCanvas({
 
   // Get iPhone WebSocket URL (from URL param or default)
   const iphoneUrl = useIPhoneUrl()
+
+  useEffect(() => {
+    let active = true
+    if (typeof navigator === 'undefined' || !navigator.xr?.isSessionSupported) {
+      setIsVrSupported(false)
+      return () => {
+        active = false
+      }
+    }
+
+    navigator.xr.isSessionSupported('immersive-vr')
+      .then((supported) => {
+        if (active) setIsVrSupported(supported)
+      })
+      .catch(() => {
+        if (active) setIsVrSupported(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   // MediaPipe hand tracking (webcam)
   const { gestureState: mediapipeState, isEnabled: mediapipeActive } = useHandGestures({
@@ -219,6 +246,7 @@ export function GraphCanvas({
       style={{ background: 'linear-gradient(to bottom, #0a0a0f 0%, #0f0f18 100%)' }}
       frameloop={performanceMode ? 'demand' : 'always'}
     >
+      <XR store={xrStore}>
       <Scene
         nodes={nodes}
         edges={edges}
@@ -256,7 +284,31 @@ export function GraphCanvas({
           hasTagFilter={hasTagFilter}
           onBimanualGrabChange={setBimanualActive}
       />
+      </XR>
     </Canvas>
+
+      {/* VR Button - Enter Quest VR */}
+      {isVrSupported && (
+        <button
+          onClick={async () => {
+            console.log('VR button clicked')
+            if (!navigator.xr) {
+              alert('WebXR not supported. Need HTTPS?')
+              return
+            }
+            const supported = await navigator.xr.isSessionSupported('immersive-vr')
+            console.log('immersive-vr supported:', supported)
+            if (!supported) {
+              alert('immersive-vr not supported. Try HTTPS via ngrok.')
+              return
+            }
+            xrStore.enterVR()
+          }}
+          className="absolute top-4 right-4 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 z-50"
+        >
+          🥽 Enter VR
+        </button>
+      )}
 
       {/* MiniMap Navigator */}
       <MiniMap
@@ -345,6 +397,7 @@ function Scene({
     edges,
     forceConfig,
     useServerPositions: clusterConfig?.useUMAP,
+    seedMode: clusterConfig.mode,
   })
 
   // DEBUG: Log node counts

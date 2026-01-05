@@ -104,7 +104,12 @@ except Exception:
         sys.path.insert(0, str(root))
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes (graph viewer needs cross-origin access)
+CORS(
+    app,
+    resources={
+        r"/*": {"origins": "*", "allow_headers": ["Content-Type", "X-API-Key", "Authorization"]}
+    },
+)  # Enable CORS for all routes
 
 # Legacy blueprint placeholders for deprecated route definitions below.
 # These are not registered with the app and are safe to keep until full removal.
@@ -1110,6 +1115,10 @@ def _require_admin_token() -> None:
 @app.before_request
 def require_api_token() -> None:
     if not API_TOKEN:
+        return
+
+    # Allow CORS preflight requests (OPTIONS) without auth
+    if request.method == "OPTIONS":
         return
 
     # Allow unauthenticated health checks (supports blueprint endpoint names)

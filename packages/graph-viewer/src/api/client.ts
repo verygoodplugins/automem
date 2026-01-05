@@ -31,7 +31,7 @@ function getApiBase(): string {
     // In embedded mode, use relative URL (same origin)
     return ''
   }
-  return localStorage.getItem('automem_server') || 'http://localhost:8001'
+  return localStorage.getItem('automem_server') || 'https://automem.up.railway.app'
 }
 
 function getTokenFromQuery(): string | null {
@@ -45,14 +45,18 @@ function getToken(): string | null {
 }
 
 function getAuthHeaders(): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+  }
+}
+
+function addTokenToUrl(url: string): string {
   const token = getToken()
   if (!token) {
     throw new Error('No API token configured')
   }
-  return {
-    'Content-Type': 'application/json',
-    'X-API-Key': token,
-  }
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}api_key=${encodeURIComponent(token)}`
 }
 
 export function setServerConfig(serverUrl: string, token: string): void {
@@ -126,8 +130,8 @@ export async function fetchGraphSnapshot(params: SnapshotParams = {}): Promise<G
   if (params.types?.length) searchParams.set('types', params.types.join(','))
   if (params.since) searchParams.set('since', params.since)
 
-  const url = `${getApiBase()}/graph/snapshot?${searchParams}`
-  const response = await fetch(url, { headers: getAuthHeaders() })
+  const url = addTokenToUrl(`${getApiBase()}/graph/snapshot?${searchParams}`)
+  const response = await fetch(url)
   return handleResponse<GraphSnapshot>(response)
 }
 
@@ -152,8 +156,8 @@ export async function fetchProjectedGraph(params: ProjectedParams = {}): Promise
   if (params.minDist) searchParams.set('min_dist', String(params.minDist))
   if (params.spread) searchParams.set('spread', String(params.spread))
 
-  const url = `${getApiBase()}/graph/projected?${searchParams}`
-  const response = await fetch(url, { headers: getAuthHeaders() })
+  const url = addTokenToUrl(`${getApiBase()}/graph/projected?${searchParams}`)
+  const response = await fetch(url)
   return handleResponse<ProjectedSnapshot>(response)
 }
 
@@ -175,13 +179,14 @@ export async function fetchGraphNeighbors(
   }
   if (params.semanticLimit) searchParams.set('semantic_limit', String(params.semanticLimit))
 
-  const url = `${getApiBase()}/graph/neighbors/${memoryId}?${searchParams}`
-  const response = await fetch(url, { headers: getAuthHeaders() })
+  const url = addTokenToUrl(`${getApiBase()}/graph/neighbors/${memoryId}?${searchParams}`)
+  const response = await fetch(url)
   return handleResponse<GraphNeighbors>(response)
 }
 
 export async function fetchGraphStats(): Promise<GraphStats> {
-  const response = await fetch(`${getApiBase()}/graph/stats`, { headers: getAuthHeaders() })
+  const url = addTokenToUrl(`${getApiBase()}/graph/stats`)
+  const response = await fetch(url)
   return handleResponse<GraphStats>(response)
 }
 
@@ -189,7 +194,8 @@ export async function updateMemory(
   memoryId: string,
   updates: { importance?: number; tags?: string[]; content?: string }
 ): Promise<void> {
-  const response = await fetch(`${getApiBase()}/memory/${memoryId}`, {
+  const url = addTokenToUrl(`${getApiBase()}/memory/${memoryId}`)
+  const response = await fetch(url, {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(updates),
@@ -198,7 +204,8 @@ export async function updateMemory(
 }
 
 export async function deleteMemory(memoryId: string): Promise<void> {
-  const response = await fetch(`${getApiBase()}/memory/${memoryId}`, {
+  const url = addTokenToUrl(`${getApiBase()}/memory/${memoryId}`)
+  const response = await fetch(url, {
     method: 'DELETE',
     headers: getAuthHeaders(),
   })
