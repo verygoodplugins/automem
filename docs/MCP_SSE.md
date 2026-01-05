@@ -12,6 +12,51 @@ Most AI platforms (ChatGPT, Claude.ai, ElevenLabs) run in the cloud and can't co
 2. Exposing MCP tools over HTTPS with Server-Sent Events
 3. Allowing cloud platforms to store and recall memories
 
+```mermaid
+flowchart TB
+    subgraph cloud [Cloud AI Platforms]
+        ChatGPT[ChatGPT]
+        ClaudeAI[Claude.ai]
+        ClaudeMobile[Claude Mobile]
+        ElevenLabs[ElevenLabs Agents]
+    end
+
+    subgraph railway [Railway Deployment]
+        SSE[mcp-sse-server<br/>SSE Bridge<br/>Port 8080]
+
+        subgraph automem [AutoMem Service]
+            API[Memory Service API<br/>Port 8001]
+
+            subgraph storage [Storage]
+                FalkorDB[(FalkorDB)]
+                Qdrant[(Qdrant)]
+            end
+        end
+    end
+
+    subgraph local [Local Development]
+        Cursor[Cursor IDE]
+        ClaudeDesktop[Claude Desktop]
+        ClaudeCode[Claude Code]
+        LocalMCP[Local MCP Package<br/>@verygoodplugins/mcp-automem]
+    end
+
+    ChatGPT -->|HTTPS + SSE| SSE
+    ClaudeAI -->|HTTPS + SSE| SSE
+    ClaudeMobile -->|HTTPS + SSE| SSE
+    ElevenLabs -->|HTTPS + SSE| SSE
+
+    SSE -->|Internal networking<br/>railway.internal:8001| API
+
+    API --> FalkorDB
+    API --> Qdrant
+
+    Cursor -.->|Direct connection| LocalMCP
+    ClaudeDesktop -.->|Direct connection| LocalMCP
+    ClaudeCode -.->|Direct connection| LocalMCP
+    LocalMCP -.->|HTTP| API
+```
+
 **When to Deploy It:**
 
 | Platform | Needs SSE Bridge? | Notes |
@@ -110,6 +155,40 @@ Example:
 | `/mcp/sse` | GET | SSE stream (server → client) |
 | `/mcp/messages?sessionId=<id>` | POST | Client → server JSON-RPC |
 | `/health` | GET | Health probe |
+
+```mermaid
+sequenceDiagram
+    participant Client as AI Platform<br/>(ChatGPT/Claude)
+    participant SSE as SSE Bridge<br/>mcp-sse-server
+    participant API as AutoMem API<br/>memory-service
+    participant DB as FalkorDB/Qdrant
+
+    Note over Client,DB: Connection Establishment
+    Client->>SSE: GET /mcp/sse?api_token=xxx
+    SSE-->>Client: 200 OK (SSE stream open)
+    SSE->>Client: event: endpoint<br/>data: /mcp/messages?sessionId=abc123
+
+    Note over Client,DB: Memory Operations
+    Client->>SSE: POST /mcp/messages?sessionId=abc123<br/>tool: store_memory
+    SSE->>API: POST /memory<br/>Authorization: Bearer xxx
+    API->>DB: Store in graph + vectors
+    DB-->>API: Success
+    API-->>SSE: 201 Created
+    SSE->>Client: event: message<br/>data: {status: success, memory_id: ...}
+
+    Note over Client,DB: Recall Operation
+    Client->>SSE: POST /mcp/messages?sessionId=abc123<br/>tool: recall_memory
+    SSE->>API: GET /recall?query=...
+    API->>DB: Hybrid search
+    DB-->>API: Results
+    API-->>SSE: 200 OK
+    SSE->>Client: event: message<br/>data: {results: [...]}
+
+    Note over Client,DB: Keepalive
+    loop Every 20 seconds
+        SSE->>Client: event: ping
+    end
+```
 
 ### Authentication
 

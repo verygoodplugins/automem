@@ -13,6 +13,62 @@ This template automatically sets up:
 - ✅ **mcp-sse-server** — SSE bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
 - ✅ Automatic secret generation and service networking
 
+```mermaid
+flowchart TB
+    subgraph internet [Public Internet]
+        Users[AI Clients<br/>Direct API]
+        CloudAI[Cloud AI Platforms<br/>ChatGPT, Claude.ai, ElevenLabs]
+        Local[Local Tools<br/>Cursor, Claude Desktop]
+    end
+
+    subgraph railway [Railway Project]
+        subgraph sse [mcp-sse-server Service]
+            SSEBridge[SSE Bridge<br/>Port 8080]
+            SSEDomain[Public Domain<br/>sse-bridge.up.railway.app]
+        end
+
+        subgraph api [memory-service Service]
+            FlaskAPI[Flask API<br/>Port 8001]
+            APIDomain[Public Domain<br/>automem.up.railway.app]
+
+            Enrichment[Enrichment Pipeline]
+            Consolidation[Consolidation Engine]
+        end
+
+        subgraph db [falkordb Service]
+            FalkorDB[(FalkorDB<br/>Port 6379)]
+            Volume[Persistent Volume<br/>/var/lib/falkordb/data]
+            TCPProxy[TCP Proxy<br/>Public access]
+        end
+
+        subgraph external [External Services]
+            QdrantCloud[(Qdrant Cloud<br/>Vector DB)]
+            OpenAI[OpenAI API<br/>Embeddings]
+        end
+    end
+
+    Users -->|HTTPS| APIDomain
+    CloudAI -->|HTTPS + SSE| SSEDomain
+    Local -->|HTTPS| APIDomain
+
+    SSEDomain --> SSEBridge
+    APIDomain --> FlaskAPI
+
+    SSEBridge -->|Internal<br/>memory-service.railway.internal:8001| FlaskAPI
+
+    FlaskAPI -->|Internal<br/>falkordb.railway.internal:6379| FalkorDB
+    FlaskAPI --> QdrantCloud
+    FlaskAPI --> OpenAI
+
+    Enrichment --> FalkorDB
+    Enrichment --> QdrantCloud
+    Consolidation --> FalkorDB
+
+    FalkorDB --> Volume
+
+    TCPProxy -.->|Optional<br/>External access| FalkorDB
+```
+
 ---
 
 ## Post-Deploy Checklist

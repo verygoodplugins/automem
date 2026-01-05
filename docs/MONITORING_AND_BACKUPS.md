@@ -10,6 +10,41 @@ AutoMem includes three layers of data protection:
 2. **Dual Storage** - Data stored in both FalkorDB (graph) and Qdrant (vectors)
 3. **Automated Backups** - Scheduled exports to compressed JSON + optional S3 upload
 
+```mermaid
+flowchart TB
+    subgraph layer1 [Layer 1: Persistent Volumes]
+        RailwayVol[Railway Volume Snapshots<br/>Automatic every 24h<br/>One-click restore]
+    end
+
+    subgraph layer2 [Layer 2: Dual Storage]
+        FalkorDB[(FalkorDB<br/>Graph Database<br/>Canonical record)]
+        Qdrant[(Qdrant<br/>Vector Database<br/>Semantic search)]
+
+        FalkorDB <-->|Redundancy| Qdrant
+    end
+
+    subgraph layer3 [Layer 3: Automated Backups]
+        Script[Backup Scripts<br/>Compressed JSON]
+        Local[Local Backups<br/>./backups/]
+        S3[S3 Cloud Storage<br/>Cross-region]
+        GitHub[GitHub Actions<br/>Free tier]
+
+        Script --> Local
+        Script --> S3
+        GitHub --> Script
+    end
+
+    layer1 --> layer2
+    layer2 --> layer3
+
+    Recovery[Recovery Options]
+
+    RailwayVol -.->|Quick restore| Recovery
+    Qdrant -.->|Rebuild FalkorDB| Recovery
+    Local -.->|Full restore| Recovery
+    S3 -.->|Disaster recovery| Recovery
+```
+
 ---
 
 ## Health Monitoring
@@ -200,6 +235,34 @@ Then configure in Railway dashboard:
 ---
 
 ## Backup Restoration
+
+```mermaid
+flowchart TD
+    Start{What data<br/>is lost?}
+
+    Start -->|Only FalkorDB| QdrantCheck{Is Qdrant<br/>intact?}
+    Start -->|Only Qdrant| BackupCheck1{Have recent<br/>backups?}
+    Start -->|Both databases| BackupCheck2{Have recent<br/>backups?}
+    Start -->|None just testing| NoAction[No action needed]
+
+    QdrantCheck -->|Yes| RecoverQdrant[Use recover_from_qdrant.py<br/>⚡ Fastest 5-10 min]
+    QdrantCheck -->|No| BackupCheck3{Have backups?}
+
+    BackupCheck1 -->|Yes| RestoreQdrant[Restore Qdrant from backup<br/>Then rebuild FalkorDB<br/>⏱️ 15-30 min]
+    BackupCheck1 -->|No| DataLoss1[⚠️ Partial data loss<br/>Rebuild from remaining data]
+
+    BackupCheck2 -->|Yes Railway| RailwayRestore[Railway volume restore<br/>FalkorDB only<br/>⏱️ 5 min]
+    BackupCheck2 -->|Yes S3/Local| FullRestore[Full restore from backups<br/>1. Restore Qdrant<br/>2. Rebuild FalkorDB<br/>⏱️ 20-40 min]
+    BackupCheck2 -->|No| DataLoss2[⚠️ Complete data loss<br/>Start fresh]
+
+    BackupCheck3 -->|Yes| FullRestore
+    BackupCheck3 -->|No| DataLoss3[⚠️ Complete data loss<br/>Start fresh]
+
+    RecoverQdrant --> Verify[Verify data integrity<br/>Check memory count]
+    RestoreQdrant --> Verify
+    RailwayRestore --> Verify
+    FullRestore --> Verify
+```
 
 ### Restore from Qdrant (Fastest)
 
