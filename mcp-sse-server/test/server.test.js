@@ -101,6 +101,205 @@ test('formatRecallAsItems supports detailed output including relations', () => {
   assert.ok(compact.includes('ID: mem-1'));
 });
 
+// =============================================================================
+// Streamable HTTP Transport Tests (MCP 2025-03-26)
+// =============================================================================
+
+test('POST /mcp without initialize returns 400 error', async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  process.env.AUTOMEM_API_TOKEN = 'test-token';
+
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Authorization': 'Bearer test-token',
+      },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error);
+    assert.ok(body.error.message.includes('initialize') || body.error.message.includes('session'));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+  }
+});
+
+test('POST /mcp with valid initialize creates session with Mcp-Session-Id', async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = 'test-token';
+  process.env.AUTOMEM_API_URL = 'http://127.0.0.1:8001';
+
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Authorization': 'Bearer test-token',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test', version: '1.0' },
+        },
+      }),
+    });
+
+    clearTimeout(timeout);
+
+    assert.equal(res.status, 200);
+    const sessionId = res.headers.get('mcp-session-id');
+    assert.ok(sessionId, 'should return mcp-session-id header');
+    assert.ok(sessionId.length > 10, 'session ID should be a UUID');
+
+    // Read the SSE response to get the initialize result
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (buf.length < 4096) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) buf += decoder.decode(value, { stream: true });
+      if (buf.includes('"protocolVersion"')) break;
+    }
+    await reader.cancel();
+
+    assert.ok(buf.includes('event: message'), 'should return SSE event');
+    assert.ok(buf.includes('"protocolVersion"'), 'should return initialize result');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
+test('POST /mcp without Accept header returns 406 error', async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = 'test-token';
+  process.env.AUTOMEM_API_URL = 'http://127.0.0.1:8001';
+
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    // First create a valid session
+    const initRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Authorization': 'Bearer test-token',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test', version: '1.0' },
+        },
+      }),
+    });
+
+    const sessionId = initRes.headers.get('mcp-session-id');
+    // Consume the init response
+    await initRes.text();
+
+    // Now try to use it without Accept header
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'mcp-session-id': sessionId,
+        // Missing Accept header
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      }),
+    });
+
+    // SDK returns 406 when Accept header doesn't include both application/json and text/event-stream
+    assert.equal(res.status, 406);
+    const body = await res.json();
+    assert.ok(body.error.message.includes('Accept'));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
+test('GET /health returns both transport types', async () => {
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(res.status, 200);
+
+    const body = await res.json();
+    assert.equal(body.status, 'healthy');
+    assert.ok(Array.isArray(body.transports));
+    assert.ok(body.transports.includes('streamable-http'));
+    assert.ok(body.transports.includes('sse'));
+    assert.ok(body.endpoints);
+    assert.equal(body.endpoints.streamableHttp, '/mcp');
+    assert.equal(body.endpoints.sse, '/mcp/sse');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// =============================================================================
+// SSE Transport Tests (MCP 2024-11-05 - Deprecated)
+// =============================================================================
+
 test('GET /mcp/sse returns an SSE stream and endpoint event', async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;

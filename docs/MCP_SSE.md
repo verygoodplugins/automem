@@ -1,20 +1,33 @@
-# MCP over SSE Bridge
+# MCP Server Bridge
 
-The SSE bridge exposes AutoMem as an MCP server over HTTPS, enabling cloud-based AI platforms to access your memories without local installation.
+The MCP bridge exposes AutoMem as an MCP server over HTTPS, enabling cloud-based AI platforms to access your memories without local installation.
 
-## Why Use the SSE Bridge?
+## Transport Options
+
+AutoMem supports two MCP transport protocols:
+
+| Transport | Protocol Version | Status | Endpoint |
+|-----------|-----------------|--------|----------|
+| **Streamable HTTP** | 2025-03-26 | ✅ Recommended | `/mcp` |
+| SSE (Server-Sent Events) | 2024-11-05 | ⚠️ Deprecated | `/mcp/sse` |
+
+**Streamable HTTP** is the newer, recommended transport. It uses a single endpoint, supports session resumability, and works better with proxies and load balancers.
+
+**SSE** is still supported for backward compatibility with older clients.
+
+## Why Use the MCP Bridge?
 
 **Use Case: Cloud AI Platforms**
 
-Most AI platforms (ChatGPT, Claude.ai, ElevenLabs) run in the cloud and can't connect to local MCP servers. The SSE bridge solves this by:
+Most AI platforms (ChatGPT, Claude.ai, ElevenLabs) run in the cloud and can't connect to local MCP servers. The MCP bridge solves this by:
 
 1. Running alongside your AutoMem API on Railway
-2. Exposing MCP tools over HTTPS with Server-Sent Events
+2. Exposing MCP tools over HTTPS (Streamable HTTP or SSE)
 3. Allowing cloud platforms to store and recall memories
 
 **When to Deploy It:**
 
-| Platform | Needs SSE Bridge? | Notes |
+| Platform | Needs MCP Bridge? | Notes |
 |----------|-------------------|-------|
 | **ChatGPT** | ✅ Yes | Web/mobile, uses MCP connectors |
 | **Claude.ai** | ✅ Yes | Web interface MCP support |
@@ -24,14 +37,14 @@ Most AI platforms (ChatGPT, Claude.ai, ElevenLabs) run in the cloud and can't co
 | **Claude Desktop** | ❌ No | Use local `mcp-automem` package |
 | **Claude Code** | ❌ No | Use local `mcp-automem` package |
 
-**If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the SSE bridge—just install the local MCP package:
+**If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the MCP bridge—just install the local MCP package:
 ```bash
 npx @verygoodplugins/mcp-automem cursor  # or 'claude' or 'claude-code'
 ```
 
 ---
 
-## Deploy SSE Bridge on Railway
+## Deploy MCP Bridge on Railway
 
 ### Already Using the Template?
 
@@ -39,13 +52,14 @@ The AutoMem Railway template **includes mcp-sse-server by default**. After deplo
 
 1. Go to Railway Dashboard → `mcp-sse-server` service
 2. Click Settings → Networking → **Generate Domain**
-3. Your SSE URL is: `https://your-sse-bridge.up.railway.app/mcp/sse`
+3. Your MCP URL is: `https://your-mcp-bridge.up.railway.app/mcp` (Streamable HTTP)
+   - Legacy SSE: `https://your-mcp-bridge.up.railway.app/mcp/sse`
 
 Skip to [Client Setup](#client-setup) below.
 
-### Adding SSE to an Existing Deployment
+### Adding MCP Bridge to an Existing Deployment
 
-If you deployed before the SSE bridge was included, add it manually:
+If you deployed before the MCP bridge was included, add it manually:
 
 1. **Create New Service**
    - In your Railway project, click `+ New Service`
@@ -105,11 +119,38 @@ Example:
 
 ### Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/mcp/sse` | GET | SSE stream (server → client) |
-| `/mcp/messages?sessionId=<id>` | POST | Client → server JSON-RPC |
-| `/health` | GET | Health probe |
+| Endpoint | Method | Protocol | Purpose |
+|----------|--------|----------|---------|
+| `/mcp` | ALL | Streamable HTTP | **Recommended** - Single endpoint for all operations |
+| `/mcp/sse` | GET | SSE | Deprecated - SSE stream (server → client) |
+| `/mcp/messages?sessionId=<id>` | POST | SSE | Deprecated - Client → server JSON-RPC |
+| `/health` | GET | - | Health probe (shows supported transports) |
+
+### Streamable HTTP Usage (Recommended)
+
+```bash
+# 1. Initialize session
+curl -X POST https://your-server/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"my-client","version":"1.0"}}}'
+
+# Response includes Mcp-Session-Id header - save it for subsequent requests
+
+# 2. Make tool calls using the session ID
+curl -X POST https://your-server/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Mcp-Session-Id: <session-id-from-step-1>" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+```
+
+**Key differences from SSE:**
+- Single `/mcp` endpoint instead of `/mcp/sse` + `/mcp/messages`
+- Session ID in `Mcp-Session-Id` header instead of URL parameter
+- Supports `Last-Event-ID` for resumable streams
+- Works better with standard HTTP infrastructure
 
 ### Authentication
 
@@ -128,16 +169,20 @@ https://your-sse-bridge.up.railway.app/mcp/sse?api_token=<AUTOMEM_API_TOKEN>
 
 ### ChatGPT Setup
 
-ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
+ChatGPT supports MCP connectors. Use Streamable HTTP if supported, otherwise fall back to SSE:
 
 1. **Enable Developer Mode**
    - Settings → Connectors → Advanced → Enable Developer Mode
 
 2. **Add MCP Server**
    - Click `+ Add Server`
-   - **Server URL**:
+   - **Server URL** (try Streamable HTTP first):
      ```
-     https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
+     https://your-mcp-bridge.up.railway.app/mcp?api_token=YOUR_TOKEN
+     ```
+   - **Fallback** (if Streamable HTTP not supported):
+     ```
+     https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
      ```
 
 3. **Test It**
@@ -149,9 +194,13 @@ ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
 ### Claude.ai Setup (Web)
 
 1. Go to Settings → MCP Servers (or similar)
-2. **Server URL**:
+2. **Server URL** (Streamable HTTP):
    ```
-   https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
+   https://your-mcp-bridge.up.railway.app/mcp?api_token=YOUR_TOKEN
+   ```
+   Or SSE (if needed):
+   ```
+   https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
    ```
 
 ---
@@ -161,7 +210,7 @@ ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
 1. Open Settings → MCP Servers
 2. **Server URL**:
    ```
-   https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
+   https://your-mcp-bridge.up.railway.app/mcp?api_token=YOUR_TOKEN
    ```
 
 ---
@@ -170,14 +219,17 @@ ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
 
 ElevenLabs supports custom headers, giving you two options:
 
-**Option 1: Custom Header (Recommended)**
-- **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse`
+**Option 1: Streamable HTTP with Custom Header (Recommended)**
+- **Server URL**: `https://your-mcp-bridge.up.railway.app/mcp`
 - **Custom Header**:
   - Name: `Authorization`
   - Value: `Bearer YOUR_TOKEN`
 
 **Option 2: URL Parameter**
-- **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN`
+- **Server URL**: `https://your-mcp-bridge.up.railway.app/mcp?api_token=YOUR_TOKEN`
+
+**Option 3: Legacy SSE (if Streamable HTTP not supported)**
+- **Server URL**: `https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN`
 
 **Using with Voice Agents:**
 ElevenLabs agents can use AutoMem to:
@@ -209,7 +261,7 @@ retrieve relevant context before answering questions.
      ```
    - Check actual domain: `railway variables --service memory-service | grep RAILWAY_PRIVATE_DOMAIN`
 
-3. **Check SSE service logs**
+3. **Check MCP bridge logs**
    ```bash
    railway logs --service automem-mcp-sse
    ```
@@ -220,8 +272,14 @@ retrieve relevant context before answering questions.
      AUTOMEM_API_URL=https://your-memory-service.up.railway.app
      ```
 
-### SSE Connection Drops
+### Connection Drops
 
+**Streamable HTTP (recommended):**
+- Supports `Last-Event-ID` header for resuming streams
+- If connection drops, client can resume from last received event
+- Session persists on server until explicitly terminated
+
+**SSE (deprecated):**
 - Keepalive heartbeats are sent every 20 seconds
 - Some proxies/firewalls may still timeout; check platform-specific limits
 - ElevenLabs has a 30-second idle timeout; ensure heartbeats are reaching client
