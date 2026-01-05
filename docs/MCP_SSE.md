@@ -22,7 +22,7 @@ flowchart TB
     end
 
     subgraph railway [Railway Deployment]
-        SSE[mcp-sse-server<br/>SSE Bridge<br/>Port 8080]
+        MCPBridge[MCP Bridge<br/>Streamable HTTP<br/>Port 8080]
 
         subgraph automem [AutoMem Service]
             API[Memory Service API<br/>Port 8001]
@@ -41,12 +41,12 @@ flowchart TB
         LocalMCP[Local MCP Package<br/>@verygoodplugins/mcp-automem]
     end
 
-    ChatGPT -->|HTTPS + SSE| SSE
-    ClaudeAI -->|HTTPS + SSE| SSE
-    ClaudeMobile -->|HTTPS + SSE| SSE
-    ElevenLabs -->|HTTPS + SSE| SSE
+    ChatGPT -->|Streamable HTTP| MCPBridge
+    ClaudeAI -->|Streamable HTTP| MCPBridge
+    ClaudeMobile -->|Streamable HTTP| MCPBridge
+    ElevenLabs -->|Streamable HTTP| MCPBridge
 
-    SSE -->|Internal networking<br/>railway.internal:8001| API
+    MCPBridge -->|Internal networking<br/>railway.internal:8001| API
 
     API --> FalkorDB
     API --> Qdrant
@@ -59,17 +59,18 @@ flowchart TB
 
 **When to Deploy It:**
 
-| Platform | Needs SSE Bridge? | Notes |
-|----------|-------------------|-------|
-| **ChatGPT** | ✅ Yes | Web/mobile, uses MCP connectors |
-| **Claude.ai** | ✅ Yes | Web interface MCP support |
-| **Claude Mobile** | ✅ Yes | iOS/Android app |
-| **ElevenLabs Agents** | ✅ Yes | Voice AI with tool calling |
-| **Cursor IDE** | ❌ No | Use local `mcp-automem` package |
-| **Claude Desktop** | ❌ No | Use local `mcp-automem` package |
-| **Claude Code** | ❌ No | Use local `mcp-automem` package |
+| Platform              | Needs SSE Bridge? | Notes                           |
+| --------------------- | ----------------- | ------------------------------- |
+| **ChatGPT**           | ✅ Yes            | Web/mobile, uses MCP connectors |
+| **Claude.ai**         | ✅ Yes            | Web interface MCP support       |
+| **Claude Mobile**     | ✅ Yes            | iOS/Android app                 |
+| **ElevenLabs Agents** | ✅ Yes            | Voice AI with tool calling      |
+| **Cursor IDE**        | ❌ No             | Use local `mcp-automem` package |
+| **Claude Desktop**    | ❌ No             | Use local `mcp-automem` package |
+| **Claude Code**       | ❌ No             | Use local `mcp-automem` package |
 
 **If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the SSE bridge—just install the local MCP package:
+
 ```bash
 npx @verygoodplugins/mcp-automem cursor  # or 'claude' or 'claude-code'
 ```
@@ -93,14 +94,17 @@ Skip to [Client Setup](#client-setup) below.
 If you deployed before the SSE bridge was included, add it manually:
 
 1. **Create New Service**
+
    - In your Railway project, click `+ New Service`
    - Select `GitHub Repo` → `verygoodplugins/automem`
 
 2. **Configure Root Directory**
+
    - Settings → **Root Directory**: `mcp-sse-server`
    - Railway will auto-detect the Dockerfile
 
 3. **Set Environment Variables**
+
    ```
    PORT=8080
    AUTOMEM_API_URL=http://memory-service.railway.internal:8001
@@ -110,6 +114,7 @@ If you deployed before the SSE bridge was included, add it manually:
    > **Important**: Replace `memory-service` with your actual service name if different. Check with: `railway variables --service <your-api-service> | grep RAILWAY_PRIVATE_DOMAIN`
 
 4. **Configure Health Check**
+
    - Path: `/health`
    - Timeout: 100s
 
@@ -123,14 +128,14 @@ If you deployed before the SSE bridge was included, add it manually:
 
 The SSE bridge exposes these MCP tools:
 
-| Tool | Description |
-|------|-------------|
-| `store_memory` | Store a new memory with tags and importance |
-| `recall_memory` | Semantic search across memories |
-| `associate_memories` | Create relationships between memories |
-| `update_memory` | Modify existing memory content or metadata |
-| `delete_memory` | Remove a memory |
-| `check_database_health` | Verify FalkorDB/Qdrant connectivity |
+| Tool                    | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `store_memory`          | Store a new memory with tags and importance |
+| `recall_memory`         | Semantic search across memories             |
+| `associate_memories`    | Create relationships between memories       |
+| `update_memory`         | Modify existing memory content or metadata  |
+| `delete_memory`         | Remove a memory                             |
+| `check_database_health` | Verify FalkorDB/Qdrant connectivity         |
 
 ## Recall Ordering
 
@@ -140,6 +145,7 @@ The SSE bridge exposes these MCP tools:
 - `sort: "updated_desc"` / `sort: "updated_asc"` for the same ordering, named explicitly for updates
 
 Example:
+
 ```json
 { "time_query": "last 7 days", "sort": "time_desc" }
 ```
@@ -150,57 +156,58 @@ Example:
 
 ### Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/mcp/sse` | GET | SSE stream (server → client) |
-| `/mcp/messages?sessionId=<id>` | POST | Client → server JSON-RPC |
-| `/health` | GET | Health probe |
+| Endpoint                       | Method | Purpose                      |
+| ------------------------------ | ------ | ---------------------------- |
+| `/mcp/sse`                     | GET    | SSE stream (server → client) |
+| `/mcp/messages?sessionId=<id>` | POST   | Client → server JSON-RPC     |
+| `/health`                      | GET    | Health probe                 |
 
 ```mermaid
 sequenceDiagram
     participant Client as AI Platform<br/>(ChatGPT/Claude)
-    participant SSE as SSE Bridge<br/>mcp-sse-server
+    participant MCP as MCP Bridge<br/>Streamable HTTP
     participant API as AutoMem API<br/>memory-service
     participant DB as FalkorDB/Qdrant
 
     Note over Client,DB: Connection Establishment
-    Client->>SSE: GET /mcp/sse?api_token=xxx
-    SSE-->>Client: 200 OK (SSE stream open)
-    SSE->>Client: event: endpoint<br/>data: /mcp/messages?sessionId=abc123
+    Client->>MCP: POST /mcp (initialize)
+    MCP-->>Client: 200 OK + session info
 
     Note over Client,DB: Memory Operations
-    Client->>SSE: POST /mcp/messages?sessionId=abc123<br/>tool: store_memory
-    SSE->>API: POST /memory<br/>Authorization: Bearer xxx
+    Client->>MCP: POST /mcp<br/>tool: store_memory
+    MCP->>API: POST /memory<br/>Authorization: Bearer xxx
     API->>DB: Store in graph + vectors
     DB-->>API: Success
-    API-->>SSE: 201 Created
-    SSE->>Client: event: message<br/>data: {status: success, memory_id: ...}
+    API-->>MCP: 201 Created
+    MCP-->>Client: JSON-RPC response<br/>{status: success, memory_id: ...}
 
     Note over Client,DB: Recall Operation
-    Client->>SSE: POST /mcp/messages?sessionId=abc123<br/>tool: recall_memory
-    SSE->>API: GET /recall?query=...
+    Client->>MCP: POST /mcp<br/>tool: recall_memory
+    MCP->>API: GET /recall?query=...
     API->>DB: Hybrid search
     DB-->>API: Results
-    API-->>SSE: 200 OK
-    SSE->>Client: event: message<br/>data: {results: [...]}
+    API-->>MCP: 200 OK
+    MCP-->>Client: JSON-RPC response<br/>{results: [...]}
 
-    Note over Client,DB: Keepalive
-    loop Every 20 seconds
-        SSE->>Client: event: ping
-    end
+    Note over Client,DB: Optional SSE Stream
+    Client->>MCP: GET /mcp (Accept: text/event-stream)
+    MCP-->>Client: SSE stream for server notifications
 ```
 
 ### Authentication
 
 **Header-based** (preferred when supported):
+
 ```
 Authorization: Bearer <AUTOMEM_API_TOKEN>
 ```
 
 **URL-based** (for platforms that only support OAuth):
+
 ```
 https://your-sse-bridge.up.railway.app/mcp/sse?api_token=<AUTOMEM_API_TOKEN>
 ```
+
 > Note: `?api_key=` also works as an alias
 
 ---
@@ -210,9 +217,11 @@ https://your-sse-bridge.up.railway.app/mcp/sse?api_token=<AUTOMEM_API_TOKEN>
 ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
 
 1. **Enable Developer Mode**
+
    - Settings → Connectors → Advanced → Enable Developer Mode
 
 2. **Add MCP Server**
+
    - Click `+ Add Server`
    - **Server URL**:
      ```
@@ -250,21 +259,25 @@ ChatGPT only supports OAuth for custom connectors, so use URL-based auth:
 ElevenLabs supports custom headers, giving you two options:
 
 **Option 1: Custom Header (Recommended)**
+
 - **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse`
 - **Custom Header**:
   - Name: `Authorization`
   - Value: `Bearer YOUR_TOKEN`
 
 **Option 2: URL Parameter**
+
 - **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN`
 
 **Using with Voice Agents:**
 ElevenLabs agents can use AutoMem to:
+
 - Remember user preferences across conversations
 - Recall context from previous sessions
 - Store important decisions and facts
 
 Example agent prompt:
+
 ```
 You have access to a persistent memory system. Use store_memory to save
 important user preferences, decisions, and facts. Use recall_memory to
@@ -278,10 +291,12 @@ retrieve relevant context before answering questions.
 ### "fetch failed" or Connection Refused
 
 1. **Check memory-service has `PORT=8001`**
+
    - Most common cause. Without it, Flask defaults to port 5000.
    - Fix: Add `PORT=8001` to memory-service environment variables.
 
 2. **Verify AUTOMEM_API_URL**
+
    - Should match your memory service's internal domain:
      ```
      AUTOMEM_API_URL=http://memory-service.railway.internal:8001
@@ -289,6 +304,7 @@ retrieve relevant context before answering questions.
    - Check actual domain: `railway variables --service memory-service | grep RAILWAY_PRIVATE_DOMAIN`
 
 3. **Check SSE service logs**
+
    ```bash
    railway logs --service automem-mcp-sse
    ```
@@ -319,10 +335,12 @@ The SSE server also includes an Alexa skill endpoint:
 **Endpoint**: `POST /alexa`
 
 **Supported Intents**:
+
 - `RememberIntent`: "Alexa, tell AutoMem to remember {note}"
 - `RecallIntent`: "Alexa, ask AutoMem what I said about {query}"
 
 **Setup**:
+
 1. Create Alexa Custom Skill in developer console
 2. Point HTTPS endpoint to: `https://your-sse-bridge.up.railway.app/alexa`
 3. Configure intents with sample utterances
