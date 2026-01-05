@@ -84,24 +84,29 @@ AutoMem implements breakthroughs from:
 
 ## Architecture
 
-```text
-┌─────────────────────────────────────────────┐
-│           AutoMem Service (Flask)           │
-│   • REST API for memory lifecycle           │
-│   • Background enrichment pipeline          │
-│   • Consolidation engine                    │
-│   • Automated backups (optional)            │
-└──────────────┬──────────────┬───────────────┘
-               │              │
-        ┌──────▼──────┐  ┌───▼────────┐
-        │  FalkorDB   │  │   Qdrant   │
-        │   (Graph)   │  │ (Vectors)  │
-        │             │  │            │
-        │ • 11 edge   │  │ • Semantic │
-        │   types     │  │   search   │
-        │ • Pattern   │  │ • 3072-d   │
-        │   nodes     │  │   vectors  │
-        └─────────────┘  └────────────┘
+```mermaid
+flowchart TB
+    subgraph service [AutoMem Service Flask]
+        API[REST API<br/>Memory Lifecycle]
+        Enrichment[Background Enrichment<br/>Pipeline]
+        Consolidation[Consolidation<br/>Engine]
+        Backups[Automated Backups<br/>Optional]
+    end
+
+    subgraph storage [Dual Storage Layer]
+        FalkorDB[(FalkorDB<br/>Graph Database)]
+        Qdrant[(Qdrant<br/>Vector Database)]
+    end
+
+    Client[AI Client] -->|Store/Recall/Associate| API
+    API --> FalkorDB
+    API --> Qdrant
+    Enrichment -->|11 edge types<br/>Pattern nodes| FalkorDB
+    Enrichment -->|Semantic search<br/>3072-d vectors| Qdrant
+    Consolidation --> FalkorDB
+    Consolidation --> Qdrant
+    Backups -.->|Optional| FalkorDB
+    Backups -.->|Optional| Qdrant
 ```
 
 **FalkorDB** (graph) = canonical record, relationships, consolidation
@@ -109,6 +114,36 @@ AutoMem implements breakthroughs from:
 **Dual storage** = Built-in redundancy and disaster recovery
 
 ## Why Graph + Vector?
+
+```mermaid
+flowchart LR
+    subgraph trad [Traditional RAG Vector Only]
+        direction TB
+        Query1[Query: What database?]
+        VectorDB1[(Vector DB)]
+        Result1[✅ PostgreSQL memory<br/>❌ No reasoning<br/>❌ No connections]
+
+        Query1 -->|Similarity search| VectorDB1
+        VectorDB1 --> Result1
+    end
+
+    subgraph automem [AutoMem Graph + Vector]
+        direction TB
+        Query2[Query: What database?]
+
+        subgraph hybrid [Hybrid Search]
+            VectorDB2[(Qdrant<br/>Vectors)]
+            GraphDB2[(FalkorDB<br/>Graph)]
+        end
+
+        Result2[✅ PostgreSQL memory<br/>✅ PREFERS_OVER MongoDB<br/>✅ RELATES_TO team expertise<br/>✅ DERIVED_FROM boring tech]
+
+        Query2 --> VectorDB2
+        Query2 --> GraphDB2
+        VectorDB2 --> Result2
+        GraphDB2 --> Result2
+    end
+```
 
 ### Traditional RAG (Vector Only)
 
@@ -141,19 +176,35 @@ Result: ✅ Finds the memory
 
 The innovation that pushed AutoMem to SOTA: **path-based memory expansion** that discovers "bridge" memories connecting disparate conversation threads.
 
-```text
-User asks: "Why did we choose the boring tech approach for Kafka?"
+```mermaid
+graph TB
+    Query[User Query:<br/>Why boring tech for Kafka?]
 
-Traditional RAG: Returns "Kafka" memories (misses the connection)
+    Seed1[Seed Memory 1:<br/>PostgreSQL migration<br/>for operational simplicity]
 
-AutoMem bridge discovery:
+    Seed2[Seed Memory 2:<br/>Kafka vs RabbitMQ<br/>evaluation]
+
+    Bridge[Bridge Memory:<br/>Team prefers boring technology<br/>proven, debuggable systems]
+
+    Result[Result:<br/>AI understands architectural<br/>philosophy, not just isolated choices]
+
+    Query -->|Initial recall| Seed1
+    Query -->|Initial recall| Seed2
+    Seed1 -.->|DERIVED_FROM| Bridge
+    Seed2 -.->|DERIVED_FROM| Bridge
+    Bridge --> Result
+    Seed1 --> Result
+    Seed2 --> Result
+```
+
+**Traditional RAG:** Returns "Kafka" memories (misses the connection)
+
+**AutoMem bridge discovery:**
 - Seed 1: "Migrated to PostgreSQL for operational simplicity"
 - Seed 2: "Evaluating Kafka vs RabbitMQ for message queue"
 - Bridge: "Team prefers boring technology—proven, debuggable systems"
 
-AutoMem finds the bridge that connects both decisions
-→ Result: AI understands your architectural philosophy, not just isolated choices
-```
+AutoMem finds the bridge that connects both decisions → Result: AI understands your architectural philosophy, not just isolated choices
 
 **Technical details:**
 
@@ -183,6 +234,46 @@ AI recalls:
 ```
 
 ### 9-Component Hybrid Scoring
+
+```mermaid
+flowchart LR
+    Query[User Query:<br/>database migration<br/>tags=decision<br/>time=last month]
+
+    subgraph scoring [Hybrid Scoring Components]
+        direction TB
+        V[Vector 25%<br/>Semantic similarity]
+        K[Keyword 15%<br/>TF-IDF matching]
+        R[Relation 25%<br/>Graph strength]
+        C[Content 25%<br/>Token overlap]
+        T[Temporal 15%<br/>Time alignment]
+        Tag[Tag 10%<br/>Tag matching]
+        I[Importance 5%<br/>User priority]
+        Conf[Confidence 5%<br/>Memory confidence]
+        Rec[Recency 10%<br/>Freshness boost]
+    end
+
+    FinalScore[Final Score:<br/>Ranked by meaning,<br/>not just similarity]
+
+    Query --> V
+    Query --> K
+    Query --> R
+    Query --> C
+    Query --> T
+    Query --> Tag
+    Query --> I
+    Query --> Conf
+    Query --> Rec
+
+    V --> FinalScore
+    K --> FinalScore
+    R --> FinalScore
+    C --> FinalScore
+    T --> FinalScore
+    Tag --> FinalScore
+    I --> FinalScore
+    Conf --> FinalScore
+    Rec --> FinalScore
+```
 
 ```bash
 GET /recall?query=database%20migration&tags=decision&time_query=last%20month
