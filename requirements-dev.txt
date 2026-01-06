@@ -10,3 +10,7 @@ pre-commit==4.0.1
 
 # Benchmark evaluation (LoCoMo official metrics)
 nltk==3.9.1
+
+# Real-time monitoring CLI (automem_watch.py)
+rich>=13.0.0
+httpx>=0.27.0
