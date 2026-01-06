@@ -1665,7 +1665,6 @@ def _run_consolidation_tick() -> None:
             task_type = result.get("mode", "unknown")
             steps = result.get("steps", {})
             affected_count = 0
-            sample_ids: List[str] = []
 
             # Count affected memories from each step
             if "decay" in steps:
@@ -2959,8 +2958,8 @@ def recall_memories() -> Any:
         if hasattr(resp_data, "get_json"):
             data = resp_data.get_json(silent=True) or {}
             result_count = len(data.get("memories", []))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to parse response for result_count", exc_info=e)
 
     emit_event(
         "memory.recall",
