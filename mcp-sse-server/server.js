@@ -661,7 +661,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
           sessionIdGenerator: () => randomUUID(),
           eventStore, // Enables Last-Event-ID resumability
           onsessioninitialized: (sid) => {
-            sessions.set(sid, { transport, server, type: 'streamable-http' });
+            sessions.set(sid, { transport, server, type: 'streamable-http', eventStore });
             console.log(`[MCP] Streamable HTTP session initialized: ${sid}`);
           }
         });
@@ -686,6 +686,17 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
           id: null
         });
       }
+
+      res.on('close', () => {
+        const sid = transport.sessionId;
+        if (sid && sessions.has(sid)) {
+          console.log(`[MCP] Streamable HTTP client disconnected: ${sid}`);
+          const session = sessions.get(sid);
+          sessions.delete(sid);
+          session?.eventStore?.removeStream(sid);
+          session?.eventStore?.stopCleanup();
+        }
+      });
 
       await transport.handleRequest(req, res, req.body);
     } catch (e) {
