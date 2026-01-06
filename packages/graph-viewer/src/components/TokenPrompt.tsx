@@ -7,7 +7,10 @@ interface TokenPromptProps {
 }
 
 export function TokenPrompt({ onSubmit }: TokenPromptProps) {
-  const [serverUrl, setServerUrl] = useState('https://automem.up.railway.app')
+  const defaultServerUrl =
+    (import.meta.env.VITE_API_TARGET && import.meta.env.VITE_API_TARGET.trim()) ||
+    'https://automem.up.railway.app'
+  const [serverUrl, setServerUrl] = useState(defaultServerUrl)
   const [token, setToken] = useState('')
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState<string | null>(null)

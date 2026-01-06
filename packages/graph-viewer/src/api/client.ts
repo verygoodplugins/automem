@@ -8,6 +8,14 @@ function isEmbeddedMode(): boolean {
   return window.location.pathname.startsWith('/viewer')
 }
 
+function getEnvApiTarget(): string | null {
+  const raw = import.meta.env.VITE_API_TARGET
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  return trimmed.replace(/\/+$/, '')
+}
+
 /**
  * Get token from URL hash (e.g., /viewer/#token=xxx).
  * This keeps the token client-side only, never sent to server in URL.
@@ -25,6 +33,11 @@ function getApiBase(): string {
   const serverOverride = urlParams.get('server')
   if (serverOverride) {
     return serverOverride
+  }
+
+  const envTarget = getEnvApiTarget()
+  if (envTarget) {
+    return envTarget
   }
 
   if (isEmbeddedMode()) {
