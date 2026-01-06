@@ -200,6 +200,7 @@ graph TB
 **Traditional RAG:** Returns "Kafka" memories (misses the connection)
 
 **AutoMem bridge discovery:**
+
 - Seed 1: "Migrated to PostgreSQL for operational simplicity"
 - Seed 2: "Evaluating Kafka vs RabbitMQ for message queue"
 - Bridge: "Team prefers boring technology—proven, debuggable systems"
@@ -295,6 +296,7 @@ score = vector×0.25       # Semantic similarity
 ## Features
 
 ### Core Memory Operations
+
 - **Store** - Rich memories with metadata, importance, timestamps, embeddings
 - **Recall** - Hybrid search (vector + keyword + tags + time windows)
 - **Update** - Modify memories, auto-regenerate embeddings
@@ -306,12 +308,12 @@ score = vector×0.25       # Semantic similarity
 
 AutoMem uses [neuroscience-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC4648295/) consolidation cycles—like human sleep—to keep memories relevant:
 
-| Cycle | Frequency | Purpose |
-|-------|-----------|---------|
-| **Decay** | Hourly | Exponential relevance scoring (age, access, connections, importance) |
-| **Creative** | Hourly | REM-like processing that discovers non-obvious connections |
-| **Cluster** | 6 hours | Groups similar memories, generates meta-patterns |
-| **Forget** | Daily | Archives low-relevance (<0.2), deletes very old (<0.05) |
+| Cycle        | Frequency | Purpose                                                              |
+| ------------ | --------- | -------------------------------------------------------------------- |
+| **Decay**    | Hourly    | Exponential relevance scoring (age, access, connections, importance) |
+| **Creative** | Hourly    | REM-like processing that discovers non-obvious connections           |
+| **Cluster**  | 6 hours   | Groups similar memories, generates meta-patterns                     |
+| **Forget**   | Daily     | Archives low-relevance (<0.2), deletes very old (<0.05)              |
 
 **How it works:**
 
@@ -341,19 +343,19 @@ Every memory gets automatically enhanced in the background (doesn't block your A
 
 Build rich knowledge graphs:
 
-| Type | Use Case | Example |
-|------|----------|---------|
-| `RELATES_TO` | General connection | Bug report → Related issue |
-| `LEADS_TO` | Causal relationship | Problem → Solution |
-| `OCCURRED_BEFORE` | Temporal sequence | Planning → Execution |
-| `PREFERS_OVER` | User preferences | PostgreSQL → MongoDB |
-| `EXEMPLIFIES` | Pattern examples | Code review → Best practice |
-| `CONTRADICTS` | Conflicting info | Old approach → New approach |
-| `REINFORCES` | Supporting evidence | Decision → Validation |
-| `INVALIDATED_BY` | Outdated info | Legacy docs → Current docs |
-| `EVOLVED_INTO` | Knowledge evolution | Initial design → Final design |
-| `DERIVED_FROM` | Source tracking | Implementation → Spec |
-| `PART_OF` | Hierarchical structure | Feature → Epic |
+| Type              | Use Case               | Example                       |
+| ----------------- | ---------------------- | ----------------------------- |
+| `RELATES_TO`      | General connection     | Bug report → Related issue    |
+| `LEADS_TO`        | Causal relationship    | Problem → Solution            |
+| `OCCURRED_BEFORE` | Temporal sequence      | Planning → Execution          |
+| `PREFERS_OVER`    | User preferences       | PostgreSQL → MongoDB          |
+| `EXEMPLIFIES`     | Pattern examples       | Code review → Best practice   |
+| `CONTRADICTS`     | Conflicting info       | Old approach → New approach   |
+| `REINFORCES`      | Supporting evidence    | Decision → Validation         |
+| `INVALIDATED_BY`  | Outdated info          | Legacy docs → Current docs    |
+| `EVOLVED_INTO`    | Knowledge evolution    | Initial design → Final design |
+| `DERIVED_FROM`    | Source tracking        | Implementation → Spec         |
+| `PART_OF`         | Hierarchical structure | Feature → Epic                |
 
 ## Quick Start
 
@@ -367,7 +369,7 @@ This deploys 3 services automatically:
 
 - **memory-service** — Core AutoMem API
 - **falkordb** — Graph database with persistent storage
-- **mcp-sse-server** — SSE bridge for ChatGPT, Claude.ai, ElevenLabs
+- **mcp-sse-server** — MCP bridge for ChatGPT, Claude.ai, ElevenLabs
 
 👉 **[Deployment Guide](INSTALLATION.md#deployment)** for detailed Railway setup
 
@@ -400,6 +402,7 @@ PORT=8001 python app.py
 ## API Examples
 
 ### Store a Memory
+
 ```bash
 curl -X POST http://localhost:8001/memory \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -443,6 +446,7 @@ GET /recall?query=What%20is%20Sarah%27s%20sister%27s%20job&expand_entities=true
 ```
 
 ### Create Relationship
+
 ```bash
 curl -X POST http://localhost:8001/associate \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -462,6 +466,7 @@ AutoMem works with any AI platform via:
 ### MCP (Model Context Protocol)
 
 **Local MCP Bridge** (Claude Desktop, Cursor, Claude Code):
+
 ```bash
 # Install official MCP bridge
 npm install -g @verygoodplugins/mcp-automem
@@ -473,6 +478,7 @@ npx @verygoodplugins/mcp-automem setup
 **SSE Sidecar** (Cloud AI Platforms):
 
 Connect AutoMem to cloud AI platforms via HTTPS. Works with:
+
 - **ChatGPT** (requires developer mode)
 - **Claude.ai** web interface
 - **Claude mobile app**
@@ -481,11 +487,14 @@ Connect AutoMem to cloud AI platforms via HTTPS. Works with:
 See [MCP over SSE documentation](docs/MCP_SSE.md) for setup instructions.
 
 👉 **Resources**:
+
 - NPM bridge (local): https://www.npmjs.com/package/@verygoodplugins/mcp-automem
 - SSE setup guide: [docs/MCP_SSE.md](docs/MCP_SSE.md)
 
 ### Direct API
+
 Any language, any framework:
+
 ```python
 import requests
 
@@ -499,6 +508,7 @@ response = requests.post(
 ## Why AutoMem Beats Everything Else
 
 ### vs. Traditional RAG Systems
+
 Traditional RAG retrieves similar documents. AutoMem understands relationships:
 
 **RAG**: "Here are 5 documents about PostgreSQL"
@@ -510,6 +520,7 @@ Traditional RAG retrieves similar documents. AutoMem understands relationships:
 - ✅ **Consolidation** - Memories strengthen or fade based on use—like human memory
 
 ### vs. Vector Databases (Pinecone, Weaviate, Qdrant)
+
 Vector databases match embeddings. AutoMem builds knowledge graphs:
 
 - ✅ **Multi-hop reasoning** - Bridge discovery connects memories across conversation threads
@@ -518,6 +529,7 @@ Vector databases match embeddings. AutoMem builds knowledge graphs:
 - ✅ **9-component scoring** - Combines semantic, lexical, graph, temporal, and importance signals
 
 ### vs. Building Your Own
+
 AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 
 - ✅ **Benchmark-proven** - 90.53% on LoCoMo (ACL 2024), beats funded competitors
@@ -532,15 +544,16 @@ AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 
 **90.53% overall accuracy** across 1,986 questions:
 
-| Category | AutoMem | Notes |
-|----------|---------|-------|
-| **Complex Reasoning** | **100%** | Perfect score on multi-step reasoning |
-| **Open Domain** | **95.84%** | General knowledge recall |
-| **Temporal Understanding** | **85.05%** | Time-aware queries |
-| **Single-hop Recall** | **79.79%** | Basic fact retrieval |
-| **Multi-hop Reasoning** | **50.00%** | Connecting disparate memories (+12.5pp) |
+| Category                   | AutoMem    | Notes                                   |
+| -------------------------- | ---------- | --------------------------------------- |
+| **Complex Reasoning**      | **100%**   | Perfect score on multi-step reasoning   |
+| **Open Domain**            | **95.84%** | General knowledge recall                |
+| **Temporal Understanding** | **85.05%** | Time-aware queries                      |
+| **Single-hop Recall**      | **79.79%** | Basic fact retrieval                    |
+| **Multi-hop Reasoning**    | **50.00%** | Connecting disparate memories (+12.5pp) |
 
 **Comparison:**
+
 - CORE (previous SOTA): 88.24%
 - AutoMem: **90.53%** (+2.29 points)
 - OpenAI baseline: 39%
@@ -560,10 +573,12 @@ Run the benchmark yourself: `make test-locomo`
 ## Configuration
 
 ### Required
+
 - `AUTOMEM_API_TOKEN` - Authentication for all endpoints (except `/health`)
 - `FALKORDB_HOST` / `FALKORDB_PORT` - Graph database connection
 
 ### Optional
+
 - `QDRANT_URL` / `QDRANT_API_KEY` - Enable semantic search ([setup guide](docs/QDRANT_SETUP.md))
 - `OPENAI_API_KEY` - Real embeddings (otherwise deterministic placeholders)
 - `ADMIN_API_TOKEN` - Required for `/admin/reembed` and enrichment controls
@@ -596,21 +611,25 @@ Run the benchmark yourself: `make test-locomo`
 AutoMem's **90.53% LoCoMo score** didn't come from hype—it came from implementing peer-reviewed neuroscience and graph theory:
 
 ### [HippoRAG 2](https://arxiv.org/abs/2502.14802) (Ohio State, June 2025)
+
 **Finding**: Graph-vector hybrid achieves 7% better associative memory than pure vector RAG, approaching human long-term memory performance.
 
 **AutoMem implementation**: Dual FalkorDB (graph) + Qdrant (vector) architecture with 11 typed relationship edges.
 
 ### [A-MEM](https://arxiv.org/abs/2502.12110) (July 2025)
+
 **Finding**: Dynamic memory organization with Zettelkasten principles enables emergent knowledge structures.
 
 **AutoMem implementation**: Pattern detection, clustering cycles, and automatic entity linking that builds knowledge graphs from conversation.
 
 ### [MELODI](https://arxiv.org/html/2410.03156v1) (DeepMind, 2024)
+
 **Finding**: 8x memory compression without quality loss through gist representations and selective preservation.
 
 **AutoMem implementation**: Summary generation, importance scoring, and consolidation cycles that strengthen relevant memories while fading noise.
 
 ### [ReadAgent](https://arxiv.org/abs/2402.09727) (DeepMind, 2024)
+
 **Finding**: 20x context extension via episodic memory and temporal organization.
 
 **AutoMem implementation**: Temporal relationship types (PRECEDED_BY, OCCURRED_BEFORE) and time-aware scoring that preserves conversation flow.
@@ -649,5 +668,5 @@ Transform your AI from a chatbot into a thinking partner that **actually remembe
 
 ---
 
-*Built by a solo developer. Validated by academic benchmarks. Beats well-funded competitors.*
-*MIT License. Deploy anywhere. No vendor lock-in.*
+_Built by a solo developer. Validated by academic benchmarks. Beats well-funded competitors._
+_MIT License. Deploy anywhere. No vendor lock-in._

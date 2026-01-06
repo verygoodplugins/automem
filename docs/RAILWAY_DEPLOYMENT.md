@@ -10,7 +10,7 @@ This template automatically sets up:
 
 - ✅ **memory-service** — AutoMem Flask API with health checks
 - ✅ **falkordb** — Graph database with **persistent volumes** and password protection
-- ✅ **mcp-sse-server** — SSE bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
+- ✅ **mcp-sse-server** — MCP bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
 - ✅ Automatic secret generation and service networking
 
 ```mermaid
@@ -105,7 +105,7 @@ curl -X POST "https://your-automem.up.railway.app/memory" \
   -d '{"content": "Test memory from Railway", "tags": ["test"]}'
 ```
 
-### SSE Bridge (Included)
+### MCP Bridge (Included)
 
 The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
 
@@ -118,7 +118,7 @@ The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server
 
 👉 **See [MCP_SSE.md](MCP_SSE.md)** for detailed setup per platform.
 
-**Don't need the SSE bridge?** If you only use Cursor, Claude Desktop, or direct API access:
+**Don't need the MCP bridge?** If you only use Cursor, Claude Desktop, or direct API access:
 
 1. Go to Railway Dashboard → `mcp-sse-server` service
 2. Click the three dots menu → **Delete Service**

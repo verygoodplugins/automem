@@ -119,7 +119,7 @@ If you deployed before the MCP bridge was included, add it manually:
 
 3. **Set Environment Variables**
 
-   ```
+   ```bash
    PORT=8080
    AUTOMEM_API_URL=http://memory-service.railway.internal:8001
    AUTOMEM_API_TOKEN=<copy from memory-service>
@@ -170,11 +170,13 @@ Example:
 
 ### Endpoints
 
-| Endpoint                       | Method | Purpose                      |
-| ------------------------------ | ------ | ---------------------------- |
-| `/mcp/sse`                     | GET    | SSE stream (server → client) |
-| `/mcp/messages?sessionId=<id>` | POST   | Client → server JSON-RPC     |
-| `/health`                      | GET    | Health probe                 |
+| Transport                     | Endpoint                            | Purpose                                              |
+| ----------------------------- | ----------------------------------- | ---------------------------------------------------- |
+| Streamable HTTP (Recommended) | `POST /mcp`                         | Initialize session & send JSON-RPC                   |
+| Streamable HTTP (Recommended) | `GET /mcp`                          | Optional SSE stream when `Accept: text/event-stream` |
+| SSE (Deprecated)              | `GET /mcp/sse`                      | SSE stream (server → client)                         |
+| SSE (Deprecated)              | `POST /mcp/messages?sessionId=<id>` | Client → server JSON-RPC                             |
+| Shared                        | `GET /health`                       | Health probe                                         |
 
 ```mermaid
 sequenceDiagram
@@ -212,13 +214,13 @@ sequenceDiagram
 
 **Header-based** (preferred when supported):
 
-```
+```text
 Authorization: Bearer <AUTOMEM_API_TOKEN>
 ```
 
 **URL-based** (for platforms that only support OAuth):
 
-```
+```url
 https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=<AUTOMEM_API_TOKEN>
 ```
 
@@ -238,11 +240,11 @@ ChatGPT supports MCP connectors. Use Streamable HTTP if supported, otherwise fal
 
    - Click `+ Add Server`
    - **Server URL** (try Streamable HTTP first):
-     ```
+     ```url
      https://your-mcp-bridge.up.railway.app/mcp?api_token=YOUR_TOKEN
      ```
    - **Fallback** (if Streamable HTTP not supported):
-     ```
+     ```url
      https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
      ```
 
@@ -256,11 +258,11 @@ ChatGPT supports MCP connectors. Use Streamable HTTP if supported, otherwise fal
 
 1. Go to Settings → MCP Servers (or similar)
 2. **Server URL** (Streamable HTTP):
-   ```
+   ```url
    https://your-mcp-bridge.up.railway.app/mcp?api_token=YOUR_TOKEN
    ```
    Or SSE (if needed):
-   ```
+   ```url
    https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN
    ```
 
@@ -270,7 +272,7 @@ ChatGPT supports MCP connectors. Use Streamable HTTP if supported, otherwise fal
 
 1. Open Settings → MCP Servers
 2. **Server URL**:
-   ```
+   ```url
    https://your-mcp-bridge.up.railway.app/mcp?api_token=YOUR_TOKEN
    ```
 
@@ -300,7 +302,7 @@ ElevenLabs agents can use AutoMem to:
 
 Example agent prompt:
 
-```
+```text
 You have access to a persistent memory system. Use store_memory to save
 important user preferences, decisions, and facts. Use recall_memory to
 retrieve relevant context before answering questions.
@@ -320,7 +322,7 @@ retrieve relevant context before answering questions.
 2. **Verify AUTOMEM_API_URL**
 
    - Should match your memory service's internal domain:
-     ```
+     ```bash
      AUTOMEM_API_URL=http://memory-service.railway.internal:8001
      ```
    - Check actual domain: `railway variables --service memory-service | grep RAILWAY_PRIVATE_DOMAIN`
@@ -333,7 +335,7 @@ retrieve relevant context before answering questions.
 
 4. **Fallback: Use public URL**
    - If internal networking fails, use the public URL (slower but works):
-     ```
+     ```bash
      AUTOMEM_API_URL=https://your-memory-service.up.railway.app
      ```
 
