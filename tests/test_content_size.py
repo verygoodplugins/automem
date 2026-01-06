@@ -93,14 +93,18 @@ class TestMemoryStoreContentSize:
     def app_client(self):
         """Create a test client with mocked dependencies."""
         # Import here to ensure stubs are installed
-        from app import create_app
+        from app import app
 
-        app = create_app()
         app.config["TESTING"] = True
         return app.test_client()
 
+    @pytest.fixture
+    def auth_headers(self):
+        """Provide authorization headers for testing."""
+        return {"Authorization": "Bearer test-token"}
+
     @patch("automem.api.memory.MEMORY_CONTENT_HARD_LIMIT", 100)
-    def test_rejects_content_exceeding_hard_limit(self, app_client):
+    def test_rejects_content_exceeding_hard_limit(self, app_client, auth_headers):
         """Content exceeding hard limit should be rejected with 400."""
         response = app_client.post(
             "/memory",
@@ -108,6 +112,7 @@ class TestMemoryStoreContentSize:
                 "content": "x" * 150,
                 "tags": ["test"],
             },
+            headers=auth_headers,
         )
         assert response.status_code == 400
         assert b"exceeds maximum length" in response.data
@@ -115,26 +120,36 @@ class TestMemoryStoreContentSize:
     @patch("automem.api.memory.MEMORY_CONTENT_SOFT_LIMIT", 50)
     @patch("automem.api.memory.MEMORY_CONTENT_HARD_LIMIT", 200)
     @patch("automem.api.memory.MEMORY_AUTO_SUMMARIZE", True)
-    def test_auto_summarizes_content_above_soft_limit(self, app_client):
+    def test_auto_summarizes_content_above_soft_limit(self, app_client, auth_headers):
         """Content above soft limit should be auto-summarized when enabled."""
-        with patch("automem.api.memory.summarize_content") as mock_summarize:
-            mock_summarize.return_value = "Brief summary."
+        import app as app_module
 
-            response = app_client.post(
-                "/memory",
-                json={
-                    "content": "x" * 100,  # Above soft limit
-                    "tags": ["test"],
-                },
-            )
+        # Patch state.openai_client so get_openai_client() returns a truthy value
+        original_client = app_module.state.openai_client
+        app_module.state.openai_client = MagicMock()
 
-            # Should attempt summarization
-            mock_summarize.assert_called_once()
+        try:
+            with patch("automem.api.memory.summarize_content") as mock_summarize:
+                mock_summarize.return_value = "Brief summary."
+
+                response = app_client.post(
+                    "/memory",
+                    json={
+                        "content": "x" * 100,  # Above soft limit
+                        "tags": ["test"],
+                    },
+                    headers=auth_headers,
+                )
+
+                # Should attempt summarization
+                mock_summarize.assert_called_once()
+        finally:
+            app_module.state.openai_client = original_client
 
     @patch("automem.api.memory.MEMORY_CONTENT_SOFT_LIMIT", 50)
     @patch("automem.api.memory.MEMORY_CONTENT_HARD_LIMIT", 200)
     @patch("automem.api.memory.MEMORY_AUTO_SUMMARIZE", False)
-    def test_skips_summarization_when_disabled(self, app_client):
+    def test_skips_summarization_when_disabled(self, app_client, auth_headers):
         """Content above soft limit should not be summarized when disabled."""
         with patch("automem.api.memory.summarize_content") as mock_summarize:
             response = app_client.post(
@@ -143,6 +158,7 @@ class TestMemoryStoreContentSize:
                     "content": "x" * 100,
                     "tags": ["test"],
                 },
+                headers=auth_headers,
             )
 
             mock_summarize.assert_not_called()

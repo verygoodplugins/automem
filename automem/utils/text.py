@@ -144,6 +144,9 @@ def summarize_content(
     try:
         system_prompt = SUMMARIZE_SYSTEM_PROMPT.format(target_length=target_length)
 
+        # Estimate tokens from target character length (~4 chars/token), cap at 150
+        max_tokens = min(150, max(1, int(target_length / 4)))
+
         response = openai_client.chat.completions.create(
             model=model,
             messages=[
@@ -151,7 +154,7 @@ def summarize_content(
                 {"role": "user", "content": content},
             ],
             temperature=0.3,
-            max_tokens=target_length,  # Conservative token limit
+            max_tokens=max_tokens,
         )
 
         summary = response.choices[0].message.content.strip()
