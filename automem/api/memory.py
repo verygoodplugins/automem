@@ -7,6 +7,8 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
 
+from automem.api.stream import emit_event
+
 
 def create_memory_blueprint(
     store_memory: Callable[[], Any],
@@ -281,6 +283,22 @@ def create_memory_blueprint_full(
                 "enrichment_queued": bool(state.enrichment_queue),
             },
         )
+
+        # Emit SSE event for real-time monitoring
+        emit_event(
+            "memory.store",
+            {
+                "memory_id": memory_id,
+                "type": memory_type,
+                "importance": importance,
+                "tags": tags[:5],  # Limit for SSE payload size
+                "content_preview": content[:100],
+                "embedding_status": embedding_status,
+                "elapsed_ms": response["query_time_ms"],
+            },
+            utc_now,
+        )
+
         return jsonify(response), 201
 
     @bp.route("/memory/<memory_id>", methods=["PATCH"])

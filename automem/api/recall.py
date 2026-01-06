@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
 
+from automem.api.stream import emit_event
 from automem.config import ALLOWED_RELATIONS, RECALL_EXPANSION_LIMIT, RECALL_RELATION_LIMIT
 from automem.utils.graph import _serialize_node
 
@@ -1425,6 +1427,20 @@ def handle_recall(
         ]
         if accessed_ids:
             on_access(accessed_ids)
+
+    # Emit SSE event for real-time monitoring
+    emit_event(
+        "memory.recall",
+        {
+            "query": query_text[:100] if query_text else "",
+            "result_count": len(results),
+            "elapsed_ms": response["query_time_ms"],
+            "vector_search": response.get("vector_search", {}).get("enabled", False),
+            "has_time_filter": bool(start_time or end_time),
+            "has_tag_filter": bool(tag_filters),
+        },
+        lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    )
 
     return jsonify(response)
 
