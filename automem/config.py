@@ -85,6 +85,20 @@ CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
 
+# Memory content size limits (governs auto-summarization on store)
+# Soft limit: Content above this triggers auto-summarization
+MEMORY_CONTENT_SOFT_LIMIT = int(os.getenv("MEMORY_CONTENT_SOFT_LIMIT", "500"))
+# Hard limit: Content above this is rejected outright
+MEMORY_CONTENT_HARD_LIMIT = int(os.getenv("MEMORY_CONTENT_HARD_LIMIT", "2000"))
+# Enable/disable auto-summarization (if disabled, content above soft limit is stored as-is)
+MEMORY_AUTO_SUMMARIZE = os.getenv("MEMORY_AUTO_SUMMARIZE", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+# Target length for summarized content
+MEMORY_SUMMARY_TARGET_LENGTH = int(os.getenv("MEMORY_SUMMARY_TARGET_LENGTH", "300"))
+
 # Memory types for classification
 MEMORY_TYPES = {"Decision", "Pattern", "Preference", "Style", "Habit", "Insight", "Context"}
 

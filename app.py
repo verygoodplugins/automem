@@ -3655,6 +3655,7 @@ memory_bp = create_memory_blueprint_full(
     state,
     logger,
     update_last_accessed,
+    get_openai_client,
 )
 
 admin_bp = create_admin_blueprint_full(
