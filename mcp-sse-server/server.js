@@ -16,20 +16,41 @@ import { randomUUID } from 'node:crypto';
 
 // Event store for resumable streams (Last-Event-ID support)
 class InMemoryEventStore {
-  constructor() {
-    this.events = new Map(); // streamId -> [{eventId, message}]
+  constructor({ ttlMs = 60 * 60 * 1000, sweepMs = 5 * 60 * 1000 } = {}) {
+    this.events = new Map(); // streamId -> { lastAccess, events: [{eventId, message}] }
+    this.ttlMs = ttlMs;
+    this.cleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [streamId, data] of this.events.entries()) {
+        if (now - data.lastAccess > this.ttlMs) {
+          this.events.delete(streamId);
+        }
+      }
+    }, sweepMs);
+    this.cleanupTimer.unref?.();
+  }
+  stopCleanup() {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+  }
+  removeStream(streamId) {
+    this.events.delete(streamId);
   }
   async storeEvent(streamId, message) {
     const eventId = `${streamId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    if (!this.events.has(streamId)) this.events.set(streamId, []);
-    this.events.get(streamId).push({ eventId, message });
+    if (!this.events.has(streamId)) {
+      this.events.set(streamId, { lastAccess: Date.now(), events: [] });
+    }
+    const data = this.events.get(streamId);
+    data.lastAccess = Date.now();
+    data.events.push({ eventId, message });
     // Keep max 1000 events per stream
-    const events = this.events.get(streamId);
-    if (events.length > 1000) events.shift();
+    if (data.events.length > 1000) data.events.shift();
     return eventId;
   }
   async replayEventsAfter(streamId, lastEventId) {
-    const events = this.events.get(streamId) || [];
+    const data = this.events.get(streamId);
+    if (data) data.lastAccess = Date.now();
+    const events = data?.events || [];
     const idx = events.findIndex(e => e.eventId === lastEventId);
     return idx >= 0 ? events.slice(idx + 1).map(e => e.message) : [];
   }
@@ -650,6 +671,8 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
           if (sid && sessions.has(sid)) {
             console.log(`[MCP] Streamable HTTP session closed: ${sid}`);
             sessions.delete(sid);
+            eventStore.removeStream(sid);
+            eventStore.stopCleanup();
           }
         };
 
