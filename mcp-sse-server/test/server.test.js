@@ -268,12 +268,8 @@ test("POST /mcp without Accept header returns error", async () => {
       }),
     });
 
-    // SDK returns 4xx when Accept header doesn't include required types
-    // Behavior changed in SDK 1.20+: returns 400 instead of 406
-    assert.ok(
-      [400, 406].includes(res.status),
-      `Expected 400 or 406, got ${res.status}`
-    );
+    // SDK 1.20+ returns 400 for missing Accept header
+    assert.strictEqual(res.status, 400, `Expected 400, got ${res.status}`);
     const body = await res.json();
     assert.ok(body.error, "Expected error in response body");
   } finally {
