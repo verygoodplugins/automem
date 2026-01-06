@@ -6,10 +6,10 @@ The MCP bridge exposes AutoMem as an MCP server over HTTPS, enabling cloud-based
 
 AutoMem supports two MCP transport protocols:
 
-| Transport | Protocol Version | Status | Endpoint |
-|-----------|-----------------|--------|----------|
-| **Streamable HTTP** | 2025-03-26 | ✅ Recommended | `/mcp` |
-| SSE (Server-Sent Events) | 2024-11-05 | ⚠️ Deprecated | `/mcp/sse` |
+| Transport                | Protocol Version | Status         | Endpoint   |
+| ------------------------ | ---------------- | -------------- | ---------- |
+| **Streamable HTTP**      | 2025-03-26       | ✅ Recommended | `/mcp`     |
+| SSE (Server-Sent Events) | 2024-11-05       | ⚠️ Deprecated  | `/mcp/sse` |
 
 **Streamable HTTP** is the newer, recommended transport. It uses a single endpoint, supports session resumability, and works better with proxies and load balancers.
 
@@ -72,7 +72,7 @@ flowchart TB
 
 **When to Deploy It:**
 
-| Platform              | Needs SSE Bridge? | Notes                           |
+| Platform              | Needs MCP Bridge? | Notes                           |
 | --------------------- | ----------------- | ------------------------------- |
 | **ChatGPT**           | ✅ Yes            | Web/mobile, uses MCP connectors |
 | **Claude.ai**         | ✅ Yes            | Web interface MCP support       |
@@ -82,7 +82,7 @@ flowchart TB
 | **Claude Desktop**    | ❌ No             | Use local `mcp-automem` package |
 | **Claude Code**       | ❌ No             | Use local `mcp-automem` package |
 
-**If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the SSE bridge—just install the local MCP package:
+**If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the MCP bridge—just install the local MCP package:
 
 ```bash
 npx @verygoodplugins/mcp-automem cursor  # or 'claude' or 'claude-code'
@@ -134,13 +134,13 @@ If you deployed before the MCP bridge was included, add it manually:
 
 5. **Generate Public Domain**
    - Settings → Networking → Generate Domain
-   - Save your URL: `https://your-sse-bridge.up.railway.app`
+   - Save your URL: `https://your-mcp-bridge.up.railway.app`
 
 ---
 
 ## Supported Tools
 
-The SSE bridge exposes these MCP tools:
+The MCP bridge exposes these MCP tools:
 
 | Tool                    | Description                                 |
 | ----------------------- | ------------------------------------------- |
@@ -219,7 +219,7 @@ Authorization: Bearer <AUTOMEM_API_TOKEN>
 **URL-based** (for platforms that only support OAuth):
 
 ```
-https://your-sse-bridge.up.railway.app/mcp/sse?api_token=<AUTOMEM_API_TOKEN>
+https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=<AUTOMEM_API_TOKEN>
 ```
 
 > Note: `?api_key=` also works as an alias
@@ -282,14 +282,14 @@ ElevenLabs supports custom headers, giving you two options:
 
 **Option 1: Custom Header (Recommended)**
 
-- **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse`
+- **Server URL**: `https://your-mcp-bridge.up.railway.app/mcp/sse`
 - **Custom Header**:
   - Name: `Authorization`
   - Value: `Bearer YOUR_TOKEN`
 
 **Option 2: URL Parameter**
 
-- **Server URL**: `https://your-sse-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN`
+- **Server URL**: `https://your-mcp-bridge.up.railway.app/mcp/sse?api_token=YOUR_TOKEN`
 
 **Using with Voice Agents:**
 ElevenLabs agents can use AutoMem to:
@@ -340,11 +340,13 @@ retrieve relevant context before answering questions.
 ### Connection Drops
 
 **Streamable HTTP (recommended):**
+
 - Supports `Last-Event-ID` header for resuming streams
 - If connection drops, client can resume from last received event
 - Session persists on server until explicitly terminated
 
 **SSE (deprecated):**
+
 - Keepalive heartbeats are sent every 20 seconds
 - Some proxies/firewalls may still timeout; check platform-specific limits
 - ElevenLabs has a 30-second idle timeout; ensure heartbeats are reaching client
@@ -358,7 +360,7 @@ retrieve relevant context before answering questions.
 
 ## Advanced: Alexa Integration
 
-The SSE server also includes an Alexa skill endpoint:
+The MCP bridge also includes an Alexa skill endpoint:
 
 **Endpoint**: `POST /alexa`
 
@@ -370,7 +372,7 @@ The SSE server also includes an Alexa skill endpoint:
 **Setup**:
 
 1. Create Alexa Custom Skill in developer console
-2. Point HTTPS endpoint to: `https://your-sse-bridge.up.railway.app/alexa`
+2. Point HTTPS endpoint to: `https://your-mcp-bridge.up.railway.app/alexa`
 3. Configure intents with sample utterances
 
 See `mcp-sse-server/README.md` for full Alexa configuration.
