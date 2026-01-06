@@ -65,6 +65,9 @@ try:
 except ImportError:
     OpenAI = None  # type: ignore
 
+# SSE streaming for real-time observability
+from automem.api.stream import create_stream_blueprint, emit_event
+
 # Import only the interface; import backends lazily in init_embedding_provider()
 from automem.embedding.provider import EmbeddingProvider
 
@@ -1651,11 +1654,45 @@ def _run_consolidation_tick() -> None:
         return
 
     try:
+        tick_start = time.perf_counter()
         results = scheduler.run_scheduled_tasks(
             decay_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD
         )
         for result in results:
             _persist_consolidation_run(graph, result)
+
+            # Emit SSE event for real-time monitoring
+            task_type = result.get("mode", "unknown")
+            steps = result.get("steps", {})
+            affected_count = 0
+            sample_ids: List[str] = []
+
+            # Count affected memories from each step
+            if "decay" in steps:
+                affected_count += steps["decay"].get("updated", 0)
+            if "creative" in steps:
+                affected_count += steps["creative"].get("created", 0)
+            if "cluster" in steps:
+                affected_count += steps["cluster"].get("meta_memories_created", 0)
+            if "forget" in steps:
+                affected_count += steps["forget"].get("archived", 0)
+                affected_count += steps["forget"].get("deleted", 0)
+
+            elapsed_ms = int((time.perf_counter() - tick_start) * 1000)
+            next_runs = scheduler.get_next_runs()
+
+            emit_event(
+                "consolidation.run",
+                {
+                    "task_type": task_type,
+                    "affected_count": affected_count,
+                    "elapsed_ms": elapsed_ms,
+                    "success": result.get("success", False),
+                    "next_scheduled": next_runs.get(task_type, "unknown"),
+                    "steps": list(steps.keys()),
+                },
+                utc_now,
+            )
     except Exception:
         logger.exception("Consolidation scheduler tick failed")
 
@@ -1706,13 +1743,46 @@ def enrichment_worker() -> None:
                 state.enrichment_pending.discard(job.memory_id)
                 state.enrichment_inflight.add(job.memory_id)
 
+            enrich_start = time.perf_counter()
+            emit_event(
+                "enrichment.start",
+                {
+                    "memory_id": job.memory_id,
+                    "attempt": job.attempt + 1,
+                },
+                utc_now,
+            )
+
             try:
                 processed = enrich_memory(job.memory_id, forced=job.forced)
                 state.enrichment_stats.record_success(job.memory_id)
+                elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
+                emit_event(
+                    "enrichment.complete",
+                    {
+                        "memory_id": job.memory_id,
+                        "success": True,
+                        "elapsed_ms": elapsed_ms,
+                        "skipped": not processed,
+                    },
+                    utc_now,
+                )
                 if not processed:
                     logger.debug("Enrichment skipped for %s (already processed)", job.memory_id)
             except Exception as exc:  # pragma: no cover - background thread
                 state.enrichment_stats.record_failure(str(exc))
+                elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
+                emit_event(
+                    "enrichment.failed",
+                    {
+                        "memory_id": job.memory_id,
+                        "error": str(exc)[:100],
+                        "attempt": job.attempt + 1,
+                        "elapsed_ms": elapsed_ms,
+                        "will_retry": job.attempt + 1 < ENRICHMENT_MAX_ATTEMPTS,
+                    },
+                    utc_now,
+                )
                 logger.exception("Failed to enrich memory %s", job.memory_id)
                 if job.attempt + 1 < ENRICHMENT_MAX_ATTEMPTS:
                     time.sleep(ENRICHMENT_FAILURE_BACKOFF_SECONDS)
@@ -2597,6 +2667,21 @@ def store_memory() -> Any:
         },
     )
 
+    # Emit SSE event for real-time monitoring
+    emit_event(
+        "memory.store",
+        {
+            "id": memory_id,
+            "content_preview": content[:100] + "..." if len(content) > 100 else content,
+            "type": memory_type,
+            "importance": importance,
+            "tags": tags[:5],
+            "size_bytes": len(content),
+            "elapsed_ms": int(response["query_time_ms"]),
+        },
+        utc_now,
+    )
+
     return jsonify(response), 201
 
 
@@ -2846,7 +2931,7 @@ def recall_memories() -> Any:
     # Delegate implementation to recall blueprint module (kept for backward-compatibility)
     from automem.api.recall import handle_recall  # local import to avoid cycles
 
-    return handle_recall(
+    response = handle_recall(
         get_memory_graph,
         get_qdrant_client,
         _normalize_tag_list,
@@ -2864,6 +2949,32 @@ def recall_memories() -> Any:
         relation_limit=RECALL_RELATION_LIMIT,
         expansion_limit_default=RECALL_EXPANSION_LIMIT,
     )
+
+    # Emit SSE event for real-time monitoring
+    elapsed_ms = int((time.perf_counter() - query_start) * 1000)
+    result_count = 0
+    try:
+        # Response is either a tuple (response, status) or Response object
+        resp_data = response[0] if isinstance(response, tuple) else response
+        if hasattr(resp_data, "get_json"):
+            data = resp_data.get_json(silent=True) or {}
+            result_count = len(data.get("memories", []))
+    except Exception:
+        pass
+
+    emit_event(
+        "memory.recall",
+        {
+            "query": query_text[:50] if query_text else "(no query)",
+            "limit": limit,
+            "result_count": result_count,
+            "elapsed_ms": elapsed_ms,
+            "tags": tag_filters[:3] if tag_filters else [],
+        },
+        utc_now,
+    )
+
+    return response
 
 
 @memory_bp.route("/associate", methods=["POST"])
@@ -3582,6 +3693,10 @@ graph_bp = create_graph_blueprint(
     logger,
 )
 
+stream_bp = create_stream_blueprint(
+    require_api_token=require_api_token,
+)
+
 app.register_blueprint(health_bp)
 app.register_blueprint(enrichment_bp)
 app.register_blueprint(memory_bp)
@@ -3589,6 +3704,7 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
 app.register_blueprint(graph_bp)
+app.register_blueprint(stream_bp)
 
 
 if __name__ == "__main__":
