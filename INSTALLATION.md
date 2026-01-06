@@ -208,23 +208,40 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
 
 #### What You Just Built
 
-```
-┌─────────────────────────────────────┐
-│  Railway Cloud (Your Free Tier)    │
-│                                     │
-│  ┌────────────────┐  ┌───────────┐ │
-│  │  AutoMem API   │  │ FalkorDB  │ │
-│  │  (Flask)       │──│ (Graph DB)│ │
-│  │  Port: 443     │  │ +Volume   │ │
-│  └────────────────┘  └───────────┘ │
-│         ▲                           │
-│         │ HTTPS                     │
-│         │ (your-url.railway.app)    │
-└─────────┼───────────────────────────┘
-          │
-          ▼
-   Your AI Tools
-   (any device, anywhere)
+```mermaid
+flowchart TB
+    subgraph devices [Your AI Tools]
+        Laptop[💻 Laptop]
+        Desktop[🖥️ Desktop]
+        Mobile[📱 Mobile]
+        Tablet[📱 Tablet]
+    end
+
+    subgraph railway [Railway Cloud - Your Free Tier]
+        direction TB
+
+        Domain[Public Domain<br/>your-url.up.railway.app<br/>HTTPS Port 443]
+
+        subgraph services [Services]
+            API[AutoMem API<br/>Flask Service<br/>Internal Port 8001]
+            FalkorDB[(FalkorDB<br/>Graph Database<br/>Port 6379)]
+            Volume[Persistent Volume<br/>Data Storage]
+        end
+
+        Domain -->|Routes to| API
+        API -->|Internal networking| FalkorDB
+        FalkorDB -->|Mounts| Volume
+    end
+
+    Laptop -->|HTTPS| Domain
+    Desktop -->|HTTPS| Domain
+    Mobile -->|HTTPS| Domain
+    Tablet -->|HTTPS| Domain
+
+    Cloud[☁️ Access from anywhere<br/>Any device, anytime]
+
+    devices -.->|Always available| Cloud
+    railway -.->|24/7 uptime| Cloud
 ```
 
 #### Verify Deployment

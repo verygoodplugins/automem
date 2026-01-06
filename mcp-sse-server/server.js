@@ -1,14 +1,60 @@
-// Minimal MCP-over-SSE server that bridges to AutoMem HTTP API
+// MCP server that bridges to AutoMem HTTP API
+// Supports both Streamable HTTP (2025-03-26) and deprecated SSE (2024-11-05) transports
 // Exposes:
-//   GET  /mcp/sse       -> SSE stream (clients POST JSON-RPC to /mcp/messages)
-//   POST /mcp/messages  -> Accepts JSON-RPC messages for active sessions
+//   ALL  /mcp           -> Streamable HTTP (POST to init, GET/POST/DELETE with Mcp-Session-Id)
+//   GET  /mcp/sse       -> SSE stream (deprecated, clients POST JSON-RPC to /mcp/messages)
+//   POST /mcp/messages  -> Accepts JSON-RPC messages for SSE sessions
 //   GET  /health        -> Health probe
 
 import express from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+
+// Event store for resumable streams (Last-Event-ID support)
+class InMemoryEventStore {
+  constructor({ ttlMs = 60 * 60 * 1000, sweepMs = 5 * 60 * 1000 } = {}) {
+    this.events = new Map(); // streamId -> { lastAccess, events: [{eventId, message}] }
+    this.ttlMs = ttlMs;
+    this.cleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [streamId, data] of this.events.entries()) {
+        if (now - data.lastAccess > this.ttlMs) {
+          this.events.delete(streamId);
+        }
+      }
+    }, sweepMs);
+    this.cleanupTimer.unref?.();
+  }
+  stopCleanup() {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+  }
+  removeStream(streamId) {
+    this.events.delete(streamId);
+  }
+  async storeEvent(streamId, message) {
+    const eventId = `${streamId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    if (!this.events.has(streamId)) {
+      this.events.set(streamId, { lastAccess: Date.now(), events: [] });
+    }
+    const data = this.events.get(streamId);
+    data.lastAccess = Date.now();
+    data.events.push({ eventId, message });
+    // Keep max 1000 events per stream
+    if (data.events.length > 1000) data.events.shift();
+    return eventId;
+  }
+  async replayEventsAfter(streamId, lastEventId) {
+    const data = this.events.get(streamId);
+    if (data) data.lastAccess = Date.now();
+    const events = data?.events || [];
+    const idx = events.findIndex(e => e.eventId === lastEventId);
+    return idx >= 0 ? events.slice(idx + 1).map(e => e.message) : [];
+  }
+}
 
 // Simple AutoMem HTTP client (mirrors the npm package behavior but inline to avoid version conflicts)
 export class AutoMemClient {
@@ -413,11 +459,22 @@ export function createApp() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
 
-  // In-memory session store: sessionId -> { transport, server, res, heartbeat }
+  // Expose Mcp-Session-Id header for browser-based clients
+  app.use((req, res, next) => {
+    res.set('Access-Control-Expose-Headers', 'Mcp-Session-Id');
+    next();
+  });
+
+  // In-memory session store: sessionId -> { transport, server, res, heartbeat, type }
   const sessions = new Map();
 
   // Basic health
-  app.get('/health', (_req, res) => res.json({ status: 'healthy', mcp: 'sse', timestamp: new Date().toISOString() }));
+  app.get('/health', (_req, res) => res.json({
+    status: 'healthy',
+    transports: ['streamable-http', 'sse'],
+    endpoints: { streamableHttp: '/mcp', sse: '/mcp/sse' },
+    timestamp: new Date().toISOString()
+  }));
 
 // Helper: validate and extract token from multiple sources
 /**
@@ -566,7 +623,95 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
   return res.json(speech("I'm not sure how to handle that intent.", { endSession: false }));
   });
 
-// SSE endpoint
+// Streamable HTTP endpoint (MCP 2025-03-26 protocol)
+  app.all('/mcp', async (req, res) => {
+    console.log(`[MCP] ${req.method} /mcp`);
+    res.set('X-Accel-Buffering', 'no');
+    res.set('Cache-Control', 'no-cache, no-transform');
+
+    try {
+      const sessionId = req.headers['mcp-session-id'];
+      let transport;
+
+      // Existing session
+      if (sessionId && sessions.has(sessionId)) {
+        const session = sessions.get(sessionId);
+        if (!(session.transport instanceof StreamableHTTPServerTransport)) {
+          return res.status(400).json({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Session uses different transport protocol' },
+            id: null
+          });
+        }
+        transport = session.transport;
+      }
+      // New session (POST initialize request only)
+      else if (!sessionId && req.method === 'POST' && isInitializeRequest(req.body)) {
+        const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
+        const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
+        if (!token) {
+          return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
+        }
+
+        const client = new AutoMemClient({ endpoint, apiKey: token });
+        const server = buildMcpServer(client);
+        const eventStore = new InMemoryEventStore();
+
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          eventStore, // Enables Last-Event-ID resumability
+          onsessioninitialized: (sid) => {
+            sessions.set(sid, { transport, server, type: 'streamable-http', eventStore });
+            console.log(`[MCP] Streamable HTTP session initialized: ${sid}`);
+          }
+        });
+
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid && sessions.has(sid)) {
+            console.log(`[MCP] Streamable HTTP session closed: ${sid}`);
+            sessions.delete(sid);
+            eventStore.removeStream(sid);
+            eventStore.stopCleanup();
+          }
+        };
+
+        await server.connect(transport);
+      }
+      // Invalid request
+      else {
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Bad Request: No valid session ID or not an initialize request' },
+          id: null
+        });
+      }
+
+      res.on('close', () => {
+        const sid = transport.sessionId;
+        if (sid && sessions.has(sid)) {
+          console.log(`[MCP] Streamable HTTP client disconnected: ${sid}`);
+          const session = sessions.get(sid);
+          sessions.delete(sid);
+          session?.eventStore?.removeStream(sid);
+          session?.eventStore?.stopCleanup();
+        }
+      });
+
+      await transport.handleRequest(req, res, req.body);
+    } catch (e) {
+      console.error('[MCP] Streamable HTTP error:', e);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null
+        });
+      }
+    }
+  });
+
+// SSE endpoint (deprecated HTTP+SSE protocol 2024-11-05)
   app.get('/mcp/sse', async (req, res) => {
   try {
     const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
@@ -590,7 +735,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
       clearInterval(heartbeat);
       sessions.delete(transport.sessionId);
     });
-    sessions.set(transport.sessionId, { transport, server, res, heartbeat });
+    sessions.set(transport.sessionId, { transport, server, res, heartbeat, type: 'sse' });
     console.log(`[MCP] New SSE session established: ${transport.sessionId}`);
 
     // Now start SSE (writes event: endpoint)

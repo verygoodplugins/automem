@@ -10,8 +10,64 @@ This template automatically sets up:
 
 - ✅ **memory-service** — AutoMem Flask API with health checks
 - ✅ **falkordb** — Graph database with **persistent volumes** and password protection
-- ✅ **mcp-sse-server** — SSE bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
+- ✅ **mcp-sse-server** — MCP bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
 - ✅ Automatic secret generation and service networking
+
+```mermaid
+flowchart TB
+    subgraph internet [Public Internet]
+        Users[AI Clients<br/>Direct API]
+        CloudAI[Cloud AI Platforms<br/>ChatGPT, Claude.ai, ElevenLabs]
+        Local[Local Tools<br/>Cursor, Claude Desktop]
+    end
+
+    subgraph railway [Railway Project]
+        subgraph mcpbridge [MCP Bridge Service]
+            MCPServer[MCP Bridge<br/>Streamable HTTP<br/>Port 8080]
+            MCPDomain[Public Domain<br/>mcp.up.railway.app]
+        end
+
+        subgraph api [memory-service Service]
+            FlaskAPI[Flask API<br/>Port 8001]
+            APIDomain[Public Domain<br/>automem.up.railway.app]
+
+            Enrichment[Enrichment Pipeline]
+            Consolidation[Consolidation Engine]
+        end
+
+        subgraph db [falkordb Service]
+            FalkorDB[(FalkorDB<br/>Port 6379)]
+            Volume[Persistent Volume<br/>/var/lib/falkordb/data]
+            TCPProxy[TCP Proxy<br/>Public access]
+        end
+
+        subgraph external [External Services]
+            QdrantCloud[(Qdrant Cloud<br/>Vector DB)]
+            OpenAI[OpenAI API<br/>Embeddings]
+        end
+    end
+
+    Users -->|HTTPS| APIDomain
+    CloudAI -->|Streamable HTTP| MCPDomain
+    Local -->|HTTPS| APIDomain
+
+    MCPDomain --> MCPServer
+    APIDomain --> FlaskAPI
+
+    MCPServer -->|Internal<br/>memory-service.railway.internal:8001| FlaskAPI
+
+    FlaskAPI -->|Internal<br/>falkordb.railway.internal:6379| FalkorDB
+    FlaskAPI --> QdrantCloud
+    FlaskAPI --> OpenAI
+
+    Enrichment --> FalkorDB
+    Enrichment --> QdrantCloud
+    Consolidation --> FalkorDB
+
+    FalkorDB --> Volume
+
+    TCPProxy -.->|Optional<br/>External access| FalkorDB
+```
 
 ---
 
@@ -24,13 +80,13 @@ After deploying, complete these steps to fully configure AutoMem:
 1. **Go to `memory-service` → Variables**
 2. **Set these variables:**
 
-| Variable | Required | How to Get |
-|----------|----------|------------|
-| `OPENAI_API_KEY` | Yes* | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `QDRANT_URL` | Recommended | See [Qdrant Setup Guide](QDRANT_SETUP.md) |
-| `QDRANT_API_KEY` | With Qdrant | See [Qdrant Setup Guide](QDRANT_SETUP.md) |
+| Variable         | Required    | How to Get                                                           |
+| ---------------- | ----------- | -------------------------------------------------------------------- |
+| `OPENAI_API_KEY` | Yes\*       | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `QDRANT_URL`     | Recommended | See [Qdrant Setup Guide](QDRANT_SETUP.md)                            |
+| `QDRANT_API_KEY` | With Qdrant | See [Qdrant Setup Guide](QDRANT_SETUP.md)                            |
 
-*Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
+\*Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
 
 👉 **First time with Qdrant?** Follow the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step collection setup.
 
@@ -49,20 +105,21 @@ curl -X POST "https://your-automem.up.railway.app/memory" \
   -d '{"content": "Test memory from Railway", "tags": ["test"]}'
 ```
 
-### SSE Bridge (Included)
+### MCP Bridge (Included)
 
 The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
 
-| Platform | How to Connect |
-|----------|----------------|
-| **ChatGPT** | Settings → Connectors → Add Server → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN` |
-| **Claude.ai** | Settings → MCP → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN` |
-| **Claude Mobile** | Settings → MCP Servers → same URL as above |
-| **ElevenLabs** | Agent config → MCP → same URL (or use Authorization header) |
+| Platform          | How to Connect                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| **ChatGPT**       | Settings → Connectors → Add Server → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN` |
+| **Claude.ai**     | Settings → MCP → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN`                     |
+| **Claude Mobile** | Settings → MCP Servers → same URL as above                                                     |
+| **ElevenLabs**    | Agent config → MCP → same URL (or use Authorization header)                                    |
 
 👉 **See [MCP_SSE.md](MCP_SSE.md)** for detailed setup per platform.
 
-**Don't need the SSE bridge?** If you only use Cursor, Claude Desktop, or direct API access:
+**Don't need the MCP bridge?** If you only use Cursor, Claude Desktop, or direct API access:
+
 1. Go to Railway Dashboard → `mcp-sse-server` service
 2. Click the three dots menu → **Delete Service**
 3. This saves ~$2-3/month and has no impact on the core memory API
@@ -70,6 +127,7 @@ The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server
 ### Get Your API Tokens
 
 Your tokens were auto-generated during deployment. Find them in:
+
 - Railway Dashboard → `memory-service` → Variables
 - Look for `AUTOMEM_API_TOKEN` and `ADMIN_API_TOKEN`
 

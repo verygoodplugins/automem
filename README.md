@@ -84,24 +84,29 @@ AutoMem implements breakthroughs from:
 
 ## Architecture
 
-```text
-┌─────────────────────────────────────────────┐
-│           AutoMem Service (Flask)           │
-│   • REST API for memory lifecycle           │
-│   • Background enrichment pipeline          │
-│   • Consolidation engine                    │
-│   • Automated backups (optional)            │
-└──────────────┬──────────────┬───────────────┘
-               │              │
-        ┌──────▼──────┐  ┌───▼────────┐
-        │  FalkorDB   │  │   Qdrant   │
-        │   (Graph)   │  │ (Vectors)  │
-        │             │  │            │
-        │ • 11 edge   │  │ • Semantic │
-        │   types     │  │   search   │
-        │ • Pattern   │  │ • 3072-d   │
-        │   nodes     │  │   vectors  │
-        └─────────────┘  └────────────┘
+```mermaid
+flowchart TB
+    subgraph service [AutoMem Service Flask]
+        API[REST API<br/>Memory Lifecycle]
+        Enrichment[Background Enrichment<br/>Pipeline]
+        Consolidation[Consolidation<br/>Engine]
+        Backups[Automated Backups<br/>Optional]
+    end
+
+    subgraph storage [Dual Storage Layer]
+        FalkorDB[(FalkorDB<br/>Graph Database)]
+        Qdrant[(Qdrant<br/>Vector Database)]
+    end
+
+    Client[AI Client] -->|Store/Recall/Associate| API
+    API --> FalkorDB
+    API --> Qdrant
+    Enrichment -->|11 edge types<br/>Pattern nodes| FalkorDB
+    Enrichment -->|Semantic search<br/>3072-d vectors| Qdrant
+    Consolidation --> FalkorDB
+    Consolidation --> Qdrant
+    Backups -.->|Optional| FalkorDB
+    Backups -.->|Optional| Qdrant
 ```
 
 **FalkorDB** (graph) = canonical record, relationships, consolidation
@@ -109,6 +114,36 @@ AutoMem implements breakthroughs from:
 **Dual storage** = Built-in redundancy and disaster recovery
 
 ## Why Graph + Vector?
+
+```mermaid
+flowchart LR
+    subgraph trad [Traditional RAG Vector Only]
+        direction TB
+        Query1[Query: What database?]
+        VectorDB1[(Vector DB)]
+        Result1[✅ PostgreSQL memory<br/>❌ No reasoning<br/>❌ No connections]
+
+        Query1 -->|Similarity search| VectorDB1
+        VectorDB1 --> Result1
+    end
+
+    subgraph automem [AutoMem Graph + Vector]
+        direction TB
+        Query2[Query: What database?]
+
+        subgraph hybrid [Hybrid Search]
+            VectorDB2[(Qdrant<br/>Vectors)]
+            GraphDB2[(FalkorDB<br/>Graph)]
+        end
+
+        Result2[✅ PostgreSQL memory<br/>✅ PREFERS_OVER MongoDB<br/>✅ RELATES_TO team expertise<br/>✅ DERIVED_FROM boring tech]
+
+        Query2 --> VectorDB2
+        Query2 --> GraphDB2
+        VectorDB2 --> Result2
+        GraphDB2 --> Result2
+    end
+```
 
 ### Traditional RAG (Vector Only)
 
@@ -141,19 +176,36 @@ Result: ✅ Finds the memory
 
 The innovation that pushed AutoMem to SOTA: **path-based memory expansion** that discovers "bridge" memories connecting disparate conversation threads.
 
-```text
-User asks: "Why did we choose the boring tech approach for Kafka?"
+```mermaid
+graph TB
+    Query[User Query:<br/>Why boring tech for Kafka?]
 
-Traditional RAG: Returns "Kafka" memories (misses the connection)
+    Seed1[Seed Memory 1:<br/>PostgreSQL migration<br/>for operational simplicity]
 
-AutoMem bridge discovery:
+    Seed2[Seed Memory 2:<br/>Kafka vs RabbitMQ<br/>evaluation]
+
+    Bridge[Bridge Memory:<br/>Team prefers boring technology<br/>proven, debuggable systems]
+
+    Result[Result:<br/>AI understands architectural<br/>philosophy, not just isolated choices]
+
+    Query -->|Initial recall| Seed1
+    Query -->|Initial recall| Seed2
+    Seed1 -.->|DERIVED_FROM| Bridge
+    Seed2 -.->|DERIVED_FROM| Bridge
+    Bridge --> Result
+    Seed1 --> Result
+    Seed2 --> Result
+```
+
+**Traditional RAG:** Returns "Kafka" memories (misses the connection)
+
+**AutoMem bridge discovery:**
+
 - Seed 1: "Migrated to PostgreSQL for operational simplicity"
 - Seed 2: "Evaluating Kafka vs RabbitMQ for message queue"
 - Bridge: "Team prefers boring technology—proven, debuggable systems"
 
-AutoMem finds the bridge that connects both decisions
-→ Result: AI understands your architectural philosophy, not just isolated choices
-```
+AutoMem finds the bridge that connects both decisions → Result: AI understands your architectural philosophy, not just isolated choices
 
 **Technical details:**
 
@@ -184,6 +236,46 @@ AI recalls:
 
 ### 9-Component Hybrid Scoring
 
+```mermaid
+flowchart LR
+    Query[User Query:<br/>database migration<br/>tags=decision<br/>time=last month]
+
+    subgraph scoring [Hybrid Scoring Components]
+        direction TB
+        V[Vector 25%<br/>Semantic similarity]
+        K[Keyword 15%<br/>TF-IDF matching]
+        R[Relation 25%<br/>Graph strength]
+        C[Content 25%<br/>Token overlap]
+        T[Temporal 15%<br/>Time alignment]
+        Tag[Tag 10%<br/>Tag matching]
+        I[Importance 5%<br/>User priority]
+        Conf[Confidence 5%<br/>Memory confidence]
+        Rec[Recency 10%<br/>Freshness boost]
+    end
+
+    FinalScore[Final Score:<br/>Ranked by meaning,<br/>not just similarity]
+
+    Query --> V
+    Query --> K
+    Query --> R
+    Query --> C
+    Query --> T
+    Query --> Tag
+    Query --> I
+    Query --> Conf
+    Query --> Rec
+
+    V --> FinalScore
+    K --> FinalScore
+    R --> FinalScore
+    C --> FinalScore
+    T --> FinalScore
+    Tag --> FinalScore
+    I --> FinalScore
+    Conf --> FinalScore
+    Rec --> FinalScore
+```
+
 ```bash
 GET /recall?query=database%20migration&tags=decision&time_query=last%20month
 
@@ -204,6 +296,7 @@ score = vector×0.25       # Semantic similarity
 ## Features
 
 ### Core Memory Operations
+
 - **Store** - Rich memories with metadata, importance, timestamps, embeddings
 - **Recall** - Hybrid search (vector + keyword + tags + time windows)
 - **Update** - Modify memories, auto-regenerate embeddings
@@ -215,12 +308,12 @@ score = vector×0.25       # Semantic similarity
 
 AutoMem uses [neuroscience-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC4648295/) consolidation cycles—like human sleep—to keep memories relevant:
 
-| Cycle | Frequency | Purpose |
-|-------|-----------|---------|
-| **Decay** | Hourly | Exponential relevance scoring (age, access, connections, importance) |
-| **Creative** | Hourly | REM-like processing that discovers non-obvious connections |
-| **Cluster** | 6 hours | Groups similar memories, generates meta-patterns |
-| **Forget** | Daily | Archives low-relevance (<0.2), deletes very old (<0.05) |
+| Cycle        | Frequency | Purpose                                                              |
+| ------------ | --------- | -------------------------------------------------------------------- |
+| **Decay**    | Hourly    | Exponential relevance scoring (age, access, connections, importance) |
+| **Creative** | Hourly    | REM-like processing that discovers non-obvious connections           |
+| **Cluster**  | 6 hours   | Groups similar memories, generates meta-patterns                     |
+| **Forget**   | Daily     | Archives low-relevance (<0.2), deletes very old (<0.05)              |
 
 **How it works:**
 
@@ -250,19 +343,19 @@ Every memory gets automatically enhanced in the background (doesn't block your A
 
 Build rich knowledge graphs:
 
-| Type | Use Case | Example |
-|------|----------|---------|
-| `RELATES_TO` | General connection | Bug report → Related issue |
-| `LEADS_TO` | Causal relationship | Problem → Solution |
-| `OCCURRED_BEFORE` | Temporal sequence | Planning → Execution |
-| `PREFERS_OVER` | User preferences | PostgreSQL → MongoDB |
-| `EXEMPLIFIES` | Pattern examples | Code review → Best practice |
-| `CONTRADICTS` | Conflicting info | Old approach → New approach |
-| `REINFORCES` | Supporting evidence | Decision → Validation |
-| `INVALIDATED_BY` | Outdated info | Legacy docs → Current docs |
-| `EVOLVED_INTO` | Knowledge evolution | Initial design → Final design |
-| `DERIVED_FROM` | Source tracking | Implementation → Spec |
-| `PART_OF` | Hierarchical structure | Feature → Epic |
+| Type              | Use Case               | Example                       |
+| ----------------- | ---------------------- | ----------------------------- |
+| `RELATES_TO`      | General connection     | Bug report → Related issue    |
+| `LEADS_TO`        | Causal relationship    | Problem → Solution            |
+| `OCCURRED_BEFORE` | Temporal sequence      | Planning → Execution          |
+| `PREFERS_OVER`    | User preferences       | PostgreSQL → MongoDB          |
+| `EXEMPLIFIES`     | Pattern examples       | Code review → Best practice   |
+| `CONTRADICTS`     | Conflicting info       | Old approach → New approach   |
+| `REINFORCES`      | Supporting evidence    | Decision → Validation         |
+| `INVALIDATED_BY`  | Outdated info          | Legacy docs → Current docs    |
+| `EVOLVED_INTO`    | Knowledge evolution    | Initial design → Final design |
+| `DERIVED_FROM`    | Source tracking        | Implementation → Spec         |
+| `PART_OF`         | Hierarchical structure | Feature → Epic                |
 
 ## Quick Start
 
@@ -276,7 +369,7 @@ This deploys 3 services automatically:
 
 - **memory-service** — Core AutoMem API
 - **falkordb** — Graph database with persistent storage
-- **mcp-sse-server** — SSE bridge for ChatGPT, Claude.ai, ElevenLabs
+- **mcp-sse-server** — MCP bridge for ChatGPT, Claude.ai, ElevenLabs
 
 👉 **[Deployment Guide](INSTALLATION.md#deployment)** for detailed Railway setup
 
@@ -309,6 +402,7 @@ PORT=8001 python app.py
 ## API Examples
 
 ### Store a Memory
+
 ```bash
 curl -X POST http://localhost:8001/memory \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -352,6 +446,7 @@ GET /recall?query=What%20is%20Sarah%27s%20sister%27s%20job&expand_entities=true
 ```
 
 ### Create Relationship
+
 ```bash
 curl -X POST http://localhost:8001/associate \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -371,6 +466,7 @@ AutoMem works with any AI platform via:
 ### MCP (Model Context Protocol)
 
 **Local MCP Bridge** (Claude Desktop, Cursor, Claude Code):
+
 ```bash
 # Install official MCP bridge
 npm install -g @verygoodplugins/mcp-automem
@@ -382,6 +478,7 @@ npx @verygoodplugins/mcp-automem setup
 **SSE Sidecar** (Cloud AI Platforms):
 
 Connect AutoMem to cloud AI platforms via HTTPS. Works with:
+
 - **ChatGPT** (requires developer mode)
 - **Claude.ai** web interface
 - **Claude mobile app**
@@ -390,11 +487,14 @@ Connect AutoMem to cloud AI platforms via HTTPS. Works with:
 See [MCP over SSE documentation](docs/MCP_SSE.md) for setup instructions.
 
 👉 **Resources**:
+
 - NPM bridge (local): https://www.npmjs.com/package/@verygoodplugins/mcp-automem
 - SSE setup guide: [docs/MCP_SSE.md](docs/MCP_SSE.md)
 
 ### Direct API
+
 Any language, any framework:
+
 ```python
 import requests
 
@@ -408,6 +508,7 @@ response = requests.post(
 ## Why AutoMem Beats Everything Else
 
 ### vs. Traditional RAG Systems
+
 Traditional RAG retrieves similar documents. AutoMem understands relationships:
 
 **RAG**: "Here are 5 documents about PostgreSQL"
@@ -419,6 +520,7 @@ Traditional RAG retrieves similar documents. AutoMem understands relationships:
 - ✅ **Consolidation** - Memories strengthen or fade based on use—like human memory
 
 ### vs. Vector Databases (Pinecone, Weaviate, Qdrant)
+
 Vector databases match embeddings. AutoMem builds knowledge graphs:
 
 - ✅ **Multi-hop reasoning** - Bridge discovery connects memories across conversation threads
@@ -427,6 +529,7 @@ Vector databases match embeddings. AutoMem builds knowledge graphs:
 - ✅ **9-component scoring** - Combines semantic, lexical, graph, temporal, and importance signals
 
 ### vs. Building Your Own
+
 AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 
 - ✅ **Benchmark-proven** - 90.53% on LoCoMo (ACL 2024), beats funded competitors
@@ -441,15 +544,16 @@ AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 
 **90.53% overall accuracy** across 1,986 questions:
 
-| Category | AutoMem | Notes |
-|----------|---------|-------|
-| **Complex Reasoning** | **100%** | Perfect score on multi-step reasoning |
-| **Open Domain** | **95.84%** | General knowledge recall |
-| **Temporal Understanding** | **85.05%** | Time-aware queries |
-| **Single-hop Recall** | **79.79%** | Basic fact retrieval |
-| **Multi-hop Reasoning** | **50.00%** | Connecting disparate memories (+12.5pp) |
+| Category                   | AutoMem    | Notes                                   |
+| -------------------------- | ---------- | --------------------------------------- |
+| **Complex Reasoning**      | **100%**   | Perfect score on multi-step reasoning   |
+| **Open Domain**            | **95.84%** | General knowledge recall                |
+| **Temporal Understanding** | **85.05%** | Time-aware queries                      |
+| **Single-hop Recall**      | **79.79%** | Basic fact retrieval                    |
+| **Multi-hop Reasoning**    | **50.00%** | Connecting disparate memories (+12.5pp) |
 
 **Comparison:**
+
 - CORE (previous SOTA): 88.24%
 - AutoMem: **90.53%** (+2.29 points)
 - OpenAI baseline: 39%
@@ -469,10 +573,12 @@ Run the benchmark yourself: `make test-locomo`
 ## Configuration
 
 ### Required
+
 - `AUTOMEM_API_TOKEN` - Authentication for all endpoints (except `/health`)
 - `FALKORDB_HOST` / `FALKORDB_PORT` - Graph database connection
 
 ### Optional
+
 - `QDRANT_URL` / `QDRANT_API_KEY` - Enable semantic search ([setup guide](docs/QDRANT_SETUP.md))
 - `OPENAI_API_KEY` - Real embeddings (otherwise deterministic placeholders)
 - `ADMIN_API_TOKEN` - Required for `/admin/reembed` and enrichment controls
@@ -505,21 +611,25 @@ Run the benchmark yourself: `make test-locomo`
 AutoMem's **90.53% LoCoMo score** didn't come from hype—it came from implementing peer-reviewed neuroscience and graph theory:
 
 ### [HippoRAG 2](https://arxiv.org/abs/2502.14802) (Ohio State, June 2025)
+
 **Finding**: Graph-vector hybrid achieves 7% better associative memory than pure vector RAG, approaching human long-term memory performance.
 
 **AutoMem implementation**: Dual FalkorDB (graph) + Qdrant (vector) architecture with 11 typed relationship edges.
 
 ### [A-MEM](https://arxiv.org/abs/2502.12110) (July 2025)
+
 **Finding**: Dynamic memory organization with Zettelkasten principles enables emergent knowledge structures.
 
 **AutoMem implementation**: Pattern detection, clustering cycles, and automatic entity linking that builds knowledge graphs from conversation.
 
 ### [MELODI](https://arxiv.org/html/2410.03156v1) (DeepMind, 2024)
+
 **Finding**: 8x memory compression without quality loss through gist representations and selective preservation.
 
 **AutoMem implementation**: Summary generation, importance scoring, and consolidation cycles that strengthen relevant memories while fading noise.
 
 ### [ReadAgent](https://arxiv.org/abs/2402.09727) (DeepMind, 2024)
+
 **Finding**: 20x context extension via episodic memory and temporal organization.
 
 **AutoMem implementation**: Temporal relationship types (PRECEDED_BY, OCCURRED_BEFORE) and time-aware scoring that preserves conversation flow.
@@ -558,5 +668,5 @@ Transform your AI from a chatbot into a thinking partner that **actually remembe
 
 ---
 
-*Built by a solo developer. Validated by academic benchmarks. Beats well-funded competitors.*
-*MIT License. Deploy anywhere. No vendor lock-in.*
+_Built by a solo developer. Validated by academic benchmarks. Beats well-funded competitors._
+_MIT License. Deploy anywhere. No vendor lock-in._
