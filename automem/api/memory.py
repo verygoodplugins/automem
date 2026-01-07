@@ -355,8 +355,8 @@ def create_memory_blueprint_full(
                 "memory_id": memory_id,
                 "type": memory_type,
                 "importance": importance,
-                "tags": tags[:5],  # Limit for SSE payload size
-                "content_preview": content[:100],
+                "tags": tags[:10],
+                "content_preview": content[:500],  # Show more content
                 "embedding_status": embedding_status,
                 "elapsed_ms": response["query_time_ms"],
             },
