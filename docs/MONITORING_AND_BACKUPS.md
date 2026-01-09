@@ -219,7 +219,7 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
 
    - Go to: GitHub repo → Settings → Secrets and variables → Actions
    - Add these secrets:
-     ```
+     ```bash
      FALKORDB_HOST         = monorail.proxy.rlwy.net   # TCP Proxy domain (NOT .railway.internal!)
      FALKORDB_PORT         = 12345                      # TCP Proxy port (NOT 6379!)
      FALKORDB_PASSWORD     = (from Railway FalkorDB service variables)
@@ -229,6 +229,7 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
    - Optional for S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
 
    **Where to find TCP Proxy details:**
+
    - Railway Dashboard → `falkordb` service → Settings → Networking
    - Look for "TCP Proxy" section → shows `RAILWAY_TCP_PROXY_DOMAIN` and `RAILWAY_TCP_PROXY_PORT`
 
@@ -242,7 +243,7 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
 
 ### Troubleshooting GitHub Actions Backup
 
-**Error: "Connection reset by peer" (error 104)**
+#### Error: "Connection reset by peer" (error 104)
 
 This means GitHub Actions can't connect to FalkorDB. Common causes:
 
@@ -251,13 +252,20 @@ This means GitHub Actions can't connect to FalkorDB. Common causes:
 3. **Firewall**: Railway TCP Proxy should be accessible from anywhere, but check if your Railway plan has restrictions
 
 **Verify your setup:**
+
 ```bash
 # Test from your local machine (should work if TCP proxy is enabled)
 redis-cli -h monorail.proxy.rlwy.net -p 12345 -a YOUR_PASSWORD ping
 # Should return: PONG
+
+# If redis-cli is not installed:
+# macOS:   brew install redis
+# Ubuntu:  sudo apt-get install redis-tools
+# Windows: choco install redis
 ```
 
 **Debug checklist:**
+
 - [ ] TCP Proxy is enabled on FalkorDB service
 - [ ] `FALKORDB_HOST` secret uses TCP proxy domain (e.g., `monorail.proxy.rlwy.net`)
 - [ ] `FALKORDB_PORT` secret uses TCP proxy port (e.g., `12345`), NOT `6379`

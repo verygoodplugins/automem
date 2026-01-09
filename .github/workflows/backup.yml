@@ -29,9 +29,8 @@ jobs:
                   FALKORDB_HOST: ${{ secrets.FALKORDB_HOST }}
                   FALKORDB_PORT: ${{ secrets.FALKORDB_PORT }}
               run: |
-                  echo "🔍 Checking FalkorDB connection..."
-                  echo "Host: $FALKORDB_HOST"
-                  echo "Port: $FALKORDB_PORT"
+                  echo "🔍 Checking FalkorDB connectivity..."
+                  # Note: Host/port values are intentionally not printed to avoid exposing configuration
 
                   # Validate that we're not using internal Railway hostname
                   if [[ "$FALKORDB_HOST" == *".railway.internal"* ]]; then
@@ -52,12 +51,12 @@ jobs:
                     exit 1
                   fi
 
-                  # Test TCP connectivity
-                  if timeout 10 bash -c "echo > /dev/tcp/$FALKORDB_HOST/$FALKORDB_PORT" 2>/dev/null; then
-                    echo "✅ TCP connection successful to $FALKORDB_HOST:$FALKORDB_PORT"
+                  # Test TCP connectivity (using single quotes to prevent shell expansion)
+                  if timeout 10 bash -c 'echo > /dev/tcp/$FALKORDB_HOST/$FALKORDB_PORT' 2>/dev/null; then
+                    echo "✅ TCP connection successful"
                   else
                     echo ""
-                    echo "❌ ERROR: Cannot connect to FalkorDB at $FALKORDB_HOST:$FALKORDB_PORT"
+                    echo "❌ ERROR: Cannot connect to FalkorDB"
                     echo ""
                     echo "Possible causes:"
                     echo "1. TCP Proxy not enabled on Railway FalkorDB service"
