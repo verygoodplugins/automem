@@ -1753,21 +1753,35 @@ def enrichment_worker() -> None:
             )
 
             try:
-                processed = enrich_memory(job.memory_id, forced=job.forced)
+                result = enrich_memory(job.memory_id, forced=job.forced)
                 state.enrichment_stats.record_success(job.memory_id)
                 elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
+
+                # Build entity counts for display
+                entities = result.get("entities", {})
+                entity_counts = {cat: len(vals) for cat, vals in entities.items() if vals}
+
                 emit_event(
                     "enrichment.complete",
                     {
                         "memory_id": job.memory_id,
-                        "success": True,
                         "elapsed_ms": elapsed_ms,
-                        "skipped": not processed,
+                        "skipped": not result.get("processed", False),
+                        "skip_reason": result.get("reason"),
+                        # New detailed fields:
+                        "entities": entity_counts,
+                        "temporal_links": result.get("temporal_links", 0),
+                        "patterns_detected": len(result.get("patterns_detected", [])),
+                        "semantic_neighbors": result.get("semantic_neighbors", 0),
+                        "summary_preview": result.get("summary", "")[:80],
+                        "entity_tags_added": result.get("entity_tags_added", 0),
                     },
                     utc_now,
                 )
-                if not processed:
-                    logger.debug("Enrichment skipped for %s (already processed)", job.memory_id)
+                if not result.get("processed"):
+                    logger.debug(
+                        "Enrichment skipped for %s (%s)", job.memory_id, result.get("reason")
+                    )
             except Exception as exc:  # pragma: no cover - background thread
                 state.enrichment_stats.record_failure(str(exc))
                 elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
@@ -2071,8 +2085,18 @@ def _run_sync_check() -> None:
         logger.exception("Sync check failed")
 
 
-def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
-    """Enrich a memory with relationships, patterns, and entity extraction."""
+def enrich_memory(memory_id: str, *, forced: bool = False) -> Dict[str, Any]:
+    """Enrich a memory with relationships, patterns, and entity extraction.
+
+    Returns a dict with enrichment details:
+        - processed: True if enrichment was performed
+        - entities: Dict of extracted entities by category
+        - temporal_links: Count of temporal relationships created
+        - patterns_detected: List of detected pattern info
+        - semantic_neighbors: Count of semantic neighbor links
+        - summary: Generated summary (truncated)
+        - entity_tags_added: Count of entity tags added
+    """
     graph = get_memory_graph()
     if graph is None:
         raise RuntimeError("FalkorDB unavailable for enrichment")
@@ -2081,7 +2105,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
 
     if not result.result_set:
         logger.debug("Skipping enrichment for %s; memory not found", memory_id)
-        return False
+        return {"processed": False, "reason": "memory_not_found"}
 
     node = result.result_set[0][0]
     properties = getattr(node, "properties", None)
@@ -2095,7 +2119,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
 
     already_processed = bool(properties.get("processed"))
     if already_processed and not forced:
-        return False
+        return {"processed": False, "reason": "already_processed"}
 
     content = properties.get("content", "") or ""
     entities = extract_entities(content)
@@ -2194,7 +2218,15 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         len(semantic_neighbors),
     )
 
-    return True
+    return {
+        "processed": True,
+        "entities": entities,
+        "temporal_links": temporal_links,
+        "patterns_detected": pattern_info,
+        "semantic_neighbors": len(semantic_neighbors),
+        "summary": (summary or "")[:100],
+        "entity_tags_added": len(entity_tags),
+    }
 
 
 def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> int:
@@ -2670,13 +2702,16 @@ def store_memory() -> Any:
     emit_event(
         "memory.store",
         {
-            "id": memory_id,
-            "content_preview": content[:100] + "..." if len(content) > 100 else content,
+            "memory_id": memory_id,
+            "content": content,  # Full content
             "type": memory_type,
+            "type_confidence": type_confidence,
             "importance": importance,
-            "tags": tags[:5],
-            "size_bytes": len(content),
-            "elapsed_ms": int(response["query_time_ms"]),
+            "tags": tags,  # All tags
+            "metadata": metadata,  # Full metadata
+            "embedding_status": embedding_status,
+            "qdrant_status": qdrant_result,
+            "elapsed_ms": round(response["query_time_ms"], 2),
         },
         utc_now,
     )
@@ -2952,23 +2987,60 @@ def recall_memories() -> Any:
     # Emit SSE event for real-time monitoring
     elapsed_ms = int((time.perf_counter() - query_start) * 1000)
     result_count = 0
+    dedup_removed = 0
+    result_summaries: List[Dict[str, Any]] = []
     try:
         # Response is either a tuple (response, status) or Response object
         resp_data = response[0] if isinstance(response, tuple) else response
         if hasattr(resp_data, "get_json"):
             data = resp_data.get_json(silent=True) or {}
-            result_count = len(data.get("memories", []))
+            results = data.get("results", [])
+            result_count = len(results)
+            dedup_removed = data.get("dedup_removed", 0)
+
+            # Build result summaries for top 10 results
+            for r in results[:10]:
+                mem = r.get("memory", {})
+                result_summaries.append(
+                    {
+                        "id": str(r.get("id", ""))[:8],
+                        "score": round(float(r.get("final_score", 0)), 3),
+                        "type": mem.get("type", "?"),
+                        "content_length": len(mem.get("content", "")),
+                        "tags_count": len(mem.get("tags", [])),
+                    }
+                )
     except Exception as e:
         logger.debug("Failed to parse response for result_count", exc_info=e)
+
+    # Compute aggregate stats
+    avg_length = 0
+    avg_tags = 0
+    score_min = 0
+    score_max = 0
+    if result_summaries:
+        avg_length = int(sum(r["content_length"] for r in result_summaries) / len(result_summaries))
+        avg_tags = round(sum(r["tags_count"] for r in result_summaries) / len(result_summaries), 1)
+        scores = [r["score"] for r in result_summaries]
+        score_min = min(scores)
+        score_max = max(scores)
 
     emit_event(
         "memory.recall",
         {
-            "query": query_text[:50] if query_text else "(no query)",
-            "limit": limit,
+            "query": query_text,  # Full query
             "result_count": result_count,
+            "dedup_removed": dedup_removed,
             "elapsed_ms": elapsed_ms,
-            "tags": tag_filters[:3] if tag_filters else [],
+            "tags_filter": tag_filters if tag_filters else [],
+            "has_time_filter": bool(start_time or end_time),
+            "vector_search": bool(query_text or embedding_param),
+            "stats": {
+                "avg_length": avg_length,
+                "avg_tags": avg_tags,
+                "score_range": [score_min, score_max],
+            },
+            "result_summaries": result_summaries[:3],  # Top 3 for display
         },
         utc_now,
     )
