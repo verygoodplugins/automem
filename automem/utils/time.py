@@ -10,7 +10,7 @@ def utc_now() -> str:
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO strings that may end with Z into aware datetimes."""
+    """Parse ISO strings into timezone-aware datetimes (UTC fallback for naive)."""
     if not value:
         return None
 
@@ -22,7 +22,11 @@ def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
         candidate = candidate[:-1] + "+00:00"
 
     try:
-        return datetime.fromisoformat(candidate)
+        dt = datetime.fromisoformat(candidate)
+        # Ensure timezone-aware (assume UTC if naive)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except ValueError:
         return None
 
