@@ -147,12 +147,13 @@ def summarize_content(
         # Estimate tokens from target character length (~4 chars/token), cap at 150
         token_limit = min(150, max(1, int(target_length / 4)))
 
-        # Use max_completion_tokens for o-series/newer models, max_tokens for others
-        token_param = (
-            {"max_completion_tokens": token_limit}
-            if model.startswith(("o1", "o3", "gpt-5"))
-            else {"max_tokens": token_limit}
-        )
+        # Use appropriate token parameter based on model family
+        if model.startswith("o"):  # o-series (o1, o3, etc.)
+            token_param = {"max_completion_tokens": token_limit}
+        elif model.startswith("gpt-5"):  # gpt-5 family
+            token_param = {"max_output_tokens": token_limit}
+        else:  # gpt-4o-mini, gpt-4, etc.
+            token_param = {"max_tokens": token_limit}
 
         response = openai_client.chat.completions.create(
             model=model,

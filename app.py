@@ -785,12 +785,13 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             return None
 
         try:
-            # Use max_completion_tokens for o-series/newer models, max_tokens for others
-            token_param = (
-                {"max_completion_tokens": 50}
-                if CLASSIFICATION_MODEL.startswith(("o1", "o3", "gpt-5"))
-                else {"max_tokens": 50}
-            )
+            # Use appropriate token parameter based on model family
+            if CLASSIFICATION_MODEL.startswith("o"):  # o-series (o1, o3, etc.)
+                token_param = {"max_completion_tokens": 50}
+            elif CLASSIFICATION_MODEL.startswith("gpt-5"):  # gpt-5 family
+                token_param = {"max_output_tokens": 50}
+            else:  # gpt-4o-mini, gpt-4, etc.
+                token_param = {"max_tokens": 50}
             response = state.openai_client.chat.completions.create(
                 model=CLASSIFICATION_MODEL,
                 messages=[
