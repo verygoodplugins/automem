@@ -2,12 +2,32 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **GitHub Actions Backup**: Fixed backup workflow failing with "Connection reset by peer" error
+  - Root cause: Backup script tried to connect to Railway internal hostname which isn't accessible from GitHub Actions
+  - Solution: Use Railway TCP Proxy for external access to FalkorDB
+  - Added pre-flight connectivity check with clear error messages and troubleshooting guidance
+  - Updated documentation with TCP Proxy setup instructions
+
+### Documentation
+
+- Expanded `docs/MONITORING_AND_BACKUPS.md` with:
+  - TCP Proxy setup instructions for GitHub Actions backups
+  - Network architecture diagram explaining internal vs external access
+  - Troubleshooting section for common backup failures
+  - Debug checklist for verifying backup configuration
+
 ## [0.9.3] - 2025-12-10
 
 ### Fixed
+
 - **Critical**: Fixed missing `RECALL_EXPANSION_LIMIT` import that caused crashes when using expansion features
 
 ### CI/CD
+
 - Added GitHub Actions CI workflow with tests on Python 3.10, 3.11, 3.12
 - Added pre-commit hooks for code quality enforcement
   - Black formatting (100 char line length)
@@ -18,11 +38,13 @@ All notable changes to AutoMem will be documented in this file.
 - Added release-please for automated versioning and releases
 
 ### Style
+
 - Applied consistent formatting across entire codebase with Black and isort
 
 ## [0.9.2] - 2025-12-10
 
 ### Added
+
 - **Expansion Filtering**: Added `expand_min_strength` and `expand_min_importance` parameters to `recall` API
   - Filters expanded relation results by connection strength and target memory importance
   - Reduces noise in multi-hop reasoning and graph expansion
@@ -33,34 +55,40 @@ All notable changes to AutoMem will be documented in this file.
   - Prevents service crashes when upgrading defaults (e.g. 768d -> 3072d)
 
 ### Documentation
+
 - Expanded `docs/API.md` with detailed expansion filtering documentation and examples
 - Added graph expansion examples to `README.md` API examples section
 
 ## [0.9.1] - 2025-12-02
 
 ### 🏆 Benchmark Improvement
+
 - Achieved **90.53%** on LoCoMo-10 (SOTA, +2.29pp over CORE at 88.24%)
 - Multi-hop reasoning improved from 37.5% to **50%** (+12.5pp)
 - New benchmark report: `tests/benchmarks/BENCHMARK_2025-12-02.md`
 
 ### 🔗 Entity-to-Entity Expansion
+
 - **Feature**: New `expand_entities` parameter for multi-hop reasoning via entity tags
 - **How it works**: Extracts entities from seed results → searches for `entity:people:{name}` tags
 - **Use case**: Query about "Amanda's sister's career" finds "Amanda's sister is Rachel" → entity expansion finds "Rachel works as counselor"
 - Respects original tag filters for proper context scoping
 
 ### 🧪 Test Infrastructure
+
 - Fixed test cleanup: was missing 99% of tagged memories (used wrong endpoint)
 - Added `test_multihop_quick.py` for rapid multi-hop iteration
 - Improved Q+A embedding similarity checking in test harness
 
 ### 📝 Documentation
+
 - Updated API.md with `expand_entities` and `expand_relations` params
 - Updated ENVIRONMENT_VARIABLES.md with `RECALL_EXPANSION_LIMIT`
 - Updated TESTING.md with latest benchmark results
 - Updated README with 90.53% score
 
 ### 🔧 Configuration
+
 - New param: `expand_entities` (default: false) - enables entity-to-entity expansion
 - New param: `entity_expansion` (alias for expand_entities)
 - Existing: `RECALL_EXPANSION_LIMIT=25` - total expansion results limit
@@ -68,20 +96,24 @@ All notable changes to AutoMem will be documented in this file.
 ## [0.9.0] - 2025-11-20
 
 ### 🏆 Benchmark Breakthrough
+
 - Achieved **90.38%** on LoCoMo-10 (SOTA, +2.14pp over CORE at 88.24%)
 - New benchmark report: `tests/benchmarks/BENCHMARK_2025-11-20.md`
 
 ### 🧠 Retrieval Improvements
+
 - Added **multi-hop bridge discovery** to connect disparate seed memories
 - Introduced **temporal alignment scoring** for time-aware recall
 - Added **content token overlap** to boost lexical precision
 - Hybrid scoring now combines 9 weighted components (vector, keyword, relation, content, temporal, tag, importance, confidence, recency, exact)
 
 ### 🔧 Configuration
+
 - New env vars: `RECALL_BRIDGE_LIMIT`, `SEARCH_WEIGHT_CONTENT`, `SEARCH_WEIGHT_TEMPORAL`
 - Tuned defaults for relation/path expansion (`expand_relations`, `expand_paths`, bridge limits)
 
 ### 📝 Documentation
+
 - Documented LoCoMo SOTA run and configuration in `docs/TESTING.md`
 - Updated changelog and benchmark references
 
@@ -90,6 +122,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🏗️ Major Refactoring
 
 #### API Modularization
+
 - **Breaking**: Refactored monolithic `app.py` into modular API blueprints
 - New structure: `automem/api/` with separate modules:
   - `memory.py` - Core memory CRUD operations
@@ -104,11 +137,13 @@ All notable changes to AutoMem will be documented in this file.
 ### 🔒 Security Fixes
 
 #### Memory ID Security
+
 - **Critical**: Removed support for client-supplied memory IDs
 - Now always generates server-side UUIDs to prevent collision/overwrite attacks
 - Eliminates potential for malicious clients to overwrite existing memories
 
 #### Batch Processing Reliability
+
 - Fixed batch failure counter in reembedding endpoint
 - Now correctly tracks only successfully upserted items
 - Prevents incorrect success counts when Qdrant upserts fail
@@ -116,6 +151,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🚀 Railway Deployment Improvements
 
 #### Template Fixes
+
 - **Critical**: Fixed secret generation syntax in `railway-template.json`
 - Changed from `{"generator": "secret"}` to `${{secret()}}` (Railway's correct syntax)
 - Fixes blank `FALKOR_PASSWORD`, `ADMIN_API_TOKEN`, and `AUTOMEM_API_TOKEN` on deploy
@@ -123,6 +159,7 @@ All notable changes to AutoMem will be documented in this file.
 - FalkorDB now handles authentication via `FALKOR_PASSWORD` env var only
 
 #### Documentation Enhancements
+
 - Expanded `docs/RAILWAY_DEPLOYMENT.md` with detailed troubleshooting
 - Added step-by-step deployment instructions
 - Included cost optimization tips and backup strategies
@@ -132,6 +169,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🧪 Testing Improvements
 
 #### Live Integration Tests
+
 - Added safety confirmation prompt to `test-live-server.sh`
 - Prevents accidental test runs against production
 - New `--non-interactive` flag for CI/CD pipelines
@@ -139,12 +177,14 @@ All notable changes to AutoMem will be documented in this file.
 - `test-live-server-auto.sh` now wrapper for backward compatibility
 
 #### LoCoMo Benchmark Support
+
 - Added LoCoMo benchmark integration for memory system evaluation
 - Documents AutoMem's 76.08% accuracy on LoCoMo-10 (vs CORE at 88.24%) as of November 8, 2025
 - Comprehensive benchmark results in `tests/benchmarks/BENCHMARK_2025-11-08.md` and summarized in `docs/TESTING.md`
 - Test coverage for multi-hop reasoning, temporal understanding, complex reasoning
 
 #### Test Infrastructure
+
 - Added OpenAI chat completions mock in `conftest.py`
 - Improved test reliability with proper cache invalidation
 - Removed unused test dependencies (`requests`)
@@ -152,11 +192,13 @@ All notable changes to AutoMem will be documented in this file.
 ### 🛠️ Code Quality Improvements
 
 #### Utility Consolidation
+
 - Removed duplicate `_parse_iso_datetime` from `consolidation.py`
 - Now imports from shared `automem.utils.time` module
 - Improved code reusability and consistency
 
 #### Code Cleanup
+
 - Removed erroneous `or True` from hasattr checks
 - Added proper error logging for import failures
 - Removed trailing whitespace across codebase
@@ -166,11 +208,13 @@ All notable changes to AutoMem will be documented in this file.
 ### 📝 Documentation Updates
 
 #### New Documentation
+
 - Added `docs/API.md` - Comprehensive API reference
 - Added `docs/TESTING.md` - Testing guide with benchmark instructions
 - Enhanced `README.md` with clearer setup instructions
 
 #### Removed Obsolete Documentation
+
 - Archived outdated optimization notes
 - Removed deprecated benchmark files
 - Consolidated deployment documentation
@@ -178,10 +222,12 @@ All notable changes to AutoMem will be documented in this file.
 ### 🔧 Configuration Changes
 
 #### Pre-commit Hooks
+
 - Added `.pre-commit-config.yaml` for automated code quality checks
 - Includes trailing whitespace removal, end-of-file fixing
 
 #### Build System
+
 - Updated `Makefile` with new testing targets
 - Improved development workflow commands
 
@@ -197,24 +243,28 @@ All notable changes to AutoMem will be documented in this file.
 ### 🐛 Railway Deployment Fixes
 
 #### Fixed - IPv6 Networking Support
+
 - **Critical**: Flask now binds to `::` (IPv6 dual-stack) instead of `0.0.0.0` (IPv4 only)
 - Railway's internal networking uses IPv6 addresses (e.g., `fd12:ca03:42be:...`)
 - Resolves `ECONNREFUSED` errors when services try to connect via internal DNS
 - Memory-service now accepts connections from SSE sidecar and other services
 
 #### Fixed - Port Configuration
+
 - **Critical**: Added `PORT=8001` to Railway template for memory-service
 - Without explicit PORT, Flask defaults to 5000, causing connection failures
 - Template now includes PORT for all services that require it
 - Documentation emphasizes PORT is **required** for Railway deployments
 
 #### Fixed - FalkorDB Data Persistence
+
 - Corrected volume mount path: `/var/lib/falkordb/data` (was `/data`)
 - FalkorDB now properly persists data across restarts
 - Updated `REDIS_ARGS` in template to match official FalkorDB Railway template
 - Removed health check configuration (Railway uses container monitoring for databases)
 
 #### Fixed - Service Naming Consistency
+
 - Standardized service name to `memory-service` across all configs and docs
 - Updated `AUTOMEM_ENDPOINT` in SSE service to use correct internal DNS
 - Eliminated confusion from mixed naming (`flask`, `automem-api`, `memory-service`)
@@ -223,6 +273,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 📝 Documentation Improvements
 
 #### Enhanced - Railway Deployment Guide
+
 - New troubleshooting section: "Service Connection Refused (ECONNREFUSED)"
 - Added detailed explanation of Railway's IPv6 networking
 - Documented PORT requirement and common pitfalls
@@ -231,12 +282,14 @@ All notable changes to AutoMem will be documented in this file.
 - Added memory_count to health check examples for easier debugging
 
 #### Enhanced - Environment Variables Reference
+
 - Marked `PORT` as **required** for Railway deployments
 - Added Railway networking notes explaining IPv6 dual-stack binding
 - Clarified auto-populated Railway variables and their usage
 - Updated FalkorDB connection variable documentation
 
 #### Enhanced - MCP SSE Documentation
+
 - Added comprehensive troubleshooting steps for `fetch failed` errors
 - Updated service references to use `memory-service` consistently
 - Added note about internal DNS matching and verification commands
@@ -244,12 +297,14 @@ All notable changes to AutoMem will be documented in this file.
 ### 🔧 Improvements
 
 #### Added - Debug Logging in SSE Server
+
 - SSE server now logs actual URLs being requested (`[AutoMem] GET http://...`)
 - Detailed error messages for fetch failures with endpoint information
 - Helps diagnose connection issues between services
 - Logged errors include cause and network details
 
 #### Updated - Railway Template
+
 - All critical fixes incorporated into `railway-template.json`
 - Template now follows official FalkorDB patterns for environment variables
 - Removed incorrect health check configuration for FalkorDB service
@@ -259,6 +314,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🧹 Cleanup
 
 #### Removed
+
 - Backup files: `app.py.original`, `app.py.withchanges`
 - Empty/unused files: `claude-desktop-mcp.js`
 - Test/benchmark logs: `*.log`, `locomo_results.json`
@@ -266,6 +322,7 @@ All notable changes to AutoMem will be documented in this file.
 - Unused Railway configs: `railway-backup.json`, `railway-health-monitor.json`
 
 ### 📁 Files Modified
+
 - `app.py` (Flask IPv6 binding)
 - `mcp-sse-server/server.js` (debug logging)
 - `railway-template.json` (PORT, volume paths, variable names)
@@ -276,6 +333,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🎯 Migration Notes
 
 **For existing Railway deployments:**
+
 1. **Update memory-service variables**: Add `PORT=8001` (required)
 2. **Redeploy memory-service**: Pull latest code for IPv6 binding fix
 3. **Verify FalkorDB volume**: Should be mounted at `/var/lib/falkordb/data`
@@ -283,6 +341,7 @@ All notable changes to AutoMem will be documented in this file.
 5. **Test health**: `/health` should show `memory_count` field
 
 **For new deployments:**
+
 - Use the updated Railway template (all fixes included)
 - Follow updated `docs/RAILWAY_DEPLOYMENT.md` for manual setup
 
@@ -291,6 +350,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🌉 MCP over SSE Sidecar
 
 #### Added - Hosted MCP Server via SSE
+
 - Exposes AutoMem as an MCP server over SSE for cloud clients (ChatGPT, ElevenLabs Agents)
 - Endpoints:
   - `GET /mcp/sse` — SSE stream (server → client); auth via `Authorization: Bearer`, `X-API-Key`, or `?api_key=`
@@ -300,16 +360,19 @@ All notable changes to AutoMem will be documented in this file.
 - Keepalive: Heartbeats every 20s to avoid idle proxy timeouts
 
 #### Security & Auth
+
 - Preferred auth: `Authorization: Bearer <AUTOMEM_API_TOKEN>`
 - Also supports: `X-API-Key` and `?api_key=` (URL tokens may appear in logs; prefer headers)
 
 #### Documentation
+
 - New: `docs/MCP_SSE.md` with deployment, auth, and troubleshooting
 - README updated to link SSE sidecar alongside the NPM MCP bridge
 
 ### 🚀 Deployment
 
 #### Railway Template Enhancements
+
 - Template now provisions 3 services: `automem-api`, `automem-mcp-sse`, and `FalkorDB`
 - `automem-mcp-sse` preconfigured with `AUTOMEM_ENDPOINT` → `http://${{automem-api.RAILWAY_PRIVATE_DOMAIN}}`
 - Health checks added for the sidecar service
@@ -319,21 +382,25 @@ All notable changes to AutoMem will be documented in this file.
 ### 📊 Benchmarks
 
 #### Added - LoCoMo Benchmark Integration
+
 - End-to-end evaluation flow, docs (`docs/LOCOMO_BENCHMARK.md`), and test harness
 - Make targets for local and live (Railway) runs
 - Initial optimization phases (1–2.5) implemented and documented
 
 ### 📝 Documentation
+
 - INSTALLATION: One‑click Railway section updated to reflect new SSE service
 - README: Added SSE sidecar docs link under MCP and Documentation sections
 
 ### 📁 Files Modified
+
 - `mcp-sse-server/`: `server.js`, `Dockerfile`, `package.json`, `package-lock.json`, `railway.json`
 - `docs/`: `MCP_SSE.md`, `LOCOMO_BENCHMARK.md`
 - `railway-template.json`
 - `INSTALLATION.md`, `README.md`
 
 ### Commits Since 0.6.0
+
 - Add MCP SSE sidecar and LoCoMo quick wins
 - Add MCP SSE server deployment config for Railway
 - Add multi-auth support to SSE server (Bearer, X-API-Key, query param)
@@ -348,6 +415,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🚀 Performance Optimizations
 
 #### Added - Embedding Batching (40-50% Cost Reduction)
+
 - **Feature**: Batch processing for OpenAI embedding generation
 - **Implementation**:
   - New config: `EMBEDDING_BATCH_SIZE` (default: 20) and `EMBEDDING_BATCH_TIMEOUT_SECONDS` (default: 2.0)
@@ -361,6 +429,7 @@ All notable changes to AutoMem will be documented in this file.
   - $8-15/year savings at 1000 memories/day
 
 #### Added - Relationship Count Caching (80% Consolidation Speedup)
+
 - **Feature**: LRU cache for relationship counts with hourly invalidation
 - **Implementation**:
   - Added `@lru_cache(maxsize=10000)` to `_get_relationship_count_cached_impl()`
@@ -372,6 +441,7 @@ All notable changes to AutoMem will be documented in this file.
   - Minimal memory overhead with automatic LRU eviction
 
 #### Added - Async Embedding Generation (60% Faster /memory POST)
+
 - **Feature**: Background embedding generation with queue-based processing
 - **Implementation**:
   - Embeddings generated asynchronously in worker thread
@@ -383,6 +453,7 @@ All notable changes to AutoMem will be documented in this file.
   - No loss in reliability - queued embeddings processed in order
 
 #### Added - Enrichment Stats in /health Endpoint
+
 - **Feature**: Public enrichment metrics in health check (no auth required)
 - **Implementation**: Enhanced `/health` endpoint with enrichment section
 - **Response Format**:
@@ -401,6 +472,7 @@ All notable changes to AutoMem will be documented in this file.
 - **Impact**: Better monitoring and early detection of enrichment backlogs
 
 #### Added - Structured Logging
+
 - **Feature**: Performance metrics in logs for analysis and debugging
 - **Implementation**:
   - Added structured logging to `/recall` endpoint with query, latency, results, filters
@@ -412,6 +484,7 @@ All notable changes to AutoMem will be documented in this file.
   - Foundation for metrics dashboards
 
 #### Added - Query Time Metrics
+
 - **Feature**: All API responses now include `query_time_ms` field
 - **Implementation**: Added `time.perf_counter()` tracking to all endpoints
 - **Impact**: Easy performance monitoring without parsing logs
@@ -419,6 +492,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🏗️ Code Quality & Infrastructure
 
 #### Refactored - Utility Module Structure
+
 - **Change**: Extracted reusable helpers from `app.py` into `automem/` package
 - **Created Modules**:
   - `automem/utils/graph.py` - Graph query helpers
@@ -429,11 +503,13 @@ All notable changes to AutoMem will be documented in this file.
 - **Impact**: Better code organization, easier testing, reduced duplication
 
 #### Improved - Docker Build
+
 - **Added**: `.dockerignore` file for faster builds
 - **Change**: Updated Dockerfile to use new utility module structure
 - **Impact**: Smaller Docker images, faster builds
 
 #### Improved - Backup Infrastructure
+
 - **Added**: GitHub Actions workflow for automated backups to S3
 - **Added**: Comprehensive backup documentation in `docs/MONITORING_AND_BACKUPS.md`
 - **Added**: Backup service deployment guides for Railway
@@ -442,16 +518,19 @@ All notable changes to AutoMem will be documented in this file.
 ### 🐛 Bug Fixes
 
 #### Fixed - Project Name Extraction
+
 - **Issue**: Feature names like "file-ops-automation" were incorrectly extracted as projects
 - **Fix**: Added filtering to prevent feature/module names from entity extraction
 - **Impact**: Cleaner entity metadata, more accurate project tracking
 
 #### Fixed - /health Endpoint Attribute Error
+
 - **Issue**: `/health` endpoint crashed with `AttributeError: 'EnrichmentStats' object has no attribute 'success_count'`
 - **Fix**: Corrected attribute names to `successes` and `failures` (actual class fields)
 - **Impact**: `/health` endpoint now works correctly with enrichment stats
 
 ### 📁 Files Modified
+
 - `app.py` - Embedding batching, async generation, health endpoint, structured logging, query timing
 - `consolidation.py` - Relationship count caching
 - `automem/utils/` - New utility module structure
@@ -464,15 +543,16 @@ All notable changes to AutoMem will be documented in this file.
 
 ### 📊 Performance Comparison
 
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| OpenAI API calls | 1000/day | ~50-100/day | 40-50% ↓ |
-| Annual embedding cost | $20-30 | $12-18 | $8-15 saved |
-| `/memory` latency | 250-400ms | 100-150ms | 60% faster |
-| Consolidation time (10k) | ~5 min | ~1 min | 80% faster |
-| Production visibility | Limited | Full metrics | ∞ better |
+| Metric                   | Before    | After        | Improvement |
+| ------------------------ | --------- | ------------ | ----------- |
+| OpenAI API calls         | 1000/day  | ~50-100/day  | 40-50% ↓    |
+| Annual embedding cost    | $20-30    | $12-18       | $8-15 saved |
+| `/memory` latency        | 250-400ms | 100-150ms    | 60% faster  |
+| Consolidation time (10k) | ~5 min    | ~1 min       | 80% faster  |
+| Production visibility    | Limited   | Full metrics | ∞ better    |
 
 ### 🎓 Based On
+
 - Audit by Steve (October 11, 2025)
 - Implemented highest-ROI recommendations from audit
 - Total implementation time: ~3 hours for optimizations
@@ -485,6 +565,7 @@ All notable changes to AutoMem will be documented in this file.
 ### 🎯 Major Data Quality Overhaul
 
 #### Fixed - Memory Type Pollution (Critical)
+
 - **Issue**: 490/773 memories (64%) had invalid types from recovery script bug
 - **Root Cause**: Recovery script flattened `metadata.type` as top-level property, overwriting actual memory type
 - **Fix**:
@@ -494,17 +575,21 @@ All notable changes to AutoMem will be documented in this file.
 - **Impact**: Analytics now accurate with only valid memory types (Decision, Pattern, Preference, Style, Habit, Insight, Context)
 
 #### Fixed - Tag-Based Search Not Working
+
 - **Issue**: Tag searches returned 0 results despite memories having tags
 - **Root Cause**: Qdrant missing keyword indexes on `tags` and `tag_prefixes` payload fields
 - **Fix**: Added `PayloadSchemaType.KEYWORD` indexes in `_ensure_qdrant_collection()`
 - **Impact**: Tag filtering now works for both exact and prefix matching
 
 #### Improved - Entity Extraction Quality
+
 **Phase 1 - Error Code Filtering:**
+
 - Added `ENTITY_BLOCKLIST` for HTTP errors (Bad Request, Not Found, etc.)
 - Added `ENTITY_BLOCKLIST` for network errors (ECONNRESET, ETIMEDOUT, etc.)
 
 **Phase 2 - Code Artifact Filtering:**
+
 - Block markdown formatting (`- **File:**`, `# Header`, etc.)
 - Block class name suffixes (Adapter, Handler, Manager, Service, etc.)
 - Block JSON field names (starting with underscore like `_embedded`)
@@ -513,11 +598,13 @@ All notable changes to AutoMem will be documented in this file.
 - Block text fragments (strings ending with colons)
 
 **Phase 3 - Project Name Extraction:**
+
 - **Issue**: Project extraction regex required `Project ProjectName` but memories use `project: project-name`
 - **Fix**: Added pattern `r"(?:in |on )?project:\s+([a-z][a-z0-9\-]+)"`
 - **Impact**: Now correctly extracts claude-automation-hub, mcp-automem, autochat from session starts
 
 #### Added - LLM-Based Memory Classification
+
 - **Feature**: Hybrid classification system (regex first, LLM fallback)
 - **Implementation**:
   - Enhanced `MemoryClassifier` with `_classify_with_llm()` method
@@ -529,18 +616,21 @@ All notable changes to AutoMem will be documented in this file.
 - **Script**: Created `scripts/reclassify_with_llm.py` for batch reclassification
 
 #### Added - Automated Backups
+
 - **GitHub Actions**: Workflow runs every 6 hours, backs up to S3
 - **Railway Volumes**: Built-in volume backups for redundancy
 - **Dual Storage**: FalkorDB (primary) + Qdrant (backup) provides data resilience
 - **Documentation**: Consolidated all backup docs into `docs/MONITORING_AND_BACKUPS.md`
 
 #### Fixed - FalkorDB Data Loss Recovery
+
 - **Issue**: FalkorDB restarted and lost all memories (persistence not working)
 - **Recovery**: Used `scripts/recover_from_qdrant.py` to restore 778/780 memories from Qdrant
 - **Root Cause Analysis**: `appendonly` was set to `no` instead of `yes`
 - **Prevention**: Verified `REDIS_ARGS` in Railway and documented proper persistence configuration
 
 ### 📁 Files Modified
+
 - `app.py` - Enhanced entity extraction, LLM classification, Qdrant indexes
 - `scripts/recover_from_qdrant.py` - Fixed metadata field handling
 - `scripts/cleanup_memory_types.py` - Created tool for type reclassification
@@ -551,6 +641,7 @@ All notable changes to AutoMem will be documented in this file.
 - `.github/workflows/backup.yml` - Created automated backup workflow
 
 ### 📊 Impact Summary
+
 - **Memory Types**: 79 invalid types → 7 valid types (100% cleanup)
 - **Reclassified**: 903 total memories
   - 490 via cleanup script (invalid types → valid types)
@@ -564,9 +655,11 @@ All notable changes to AutoMem will be documented in this file.
 - **Classification**: Hybrid system with 85-95% LLM confidence
 
 ### 🚀 Deployment
+
 All changes deployed to Railway at `automem.up.railway.app`
 
 ### 💰 Cost Analysis
+
 - **LLM Classification**: $0.04 one-time + $0.24/year ongoing (~$0.02/month)
 - **S3 Backups**: Minimal (~$0.05/month for storage + lifecycle rules)
 - **Qdrant**: Existing free tier (1GB)
@@ -575,4 +668,5 @@ All changes deployed to Railway at `automem.up.railway.app`
 ---
 
 ## [Prior Releases]
+
 See git history for previous changes.

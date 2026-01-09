@@ -16,13 +16,61 @@ jobs:
               uses: actions/checkout@v4
 
             - name: Set up Python
-              uses: actions/setup-python@v4
+              uses: actions/setup-python@v5
               with:
                   python-version: "3.11"
 
             - name: Install dependencies
               run: |
                   pip install --no-cache-dir -r requirements.txt boto3
+
+            - name: Verify FalkorDB connectivity
+              env:
+                  FALKORDB_HOST: ${{ secrets.FALKORDB_HOST }}
+                  FALKORDB_PORT: ${{ secrets.FALKORDB_PORT }}
+              run: |
+                  echo "🔍 Checking FalkorDB connection..."
+                  echo "Host: $FALKORDB_HOST"
+                  echo "Port: $FALKORDB_PORT"
+
+                  # Validate that we're not using internal Railway hostname
+                  if [[ "$FALKORDB_HOST" == *".railway.internal"* ]]; then
+                    echo ""
+                    echo "❌ ERROR: FALKORDB_HOST is set to a Railway internal hostname!"
+                    echo ""
+                    echo "GitHub Actions cannot access Railway's internal network."
+                    echo "You must use Railway's TCP Proxy instead."
+                    echo ""
+                    echo "To fix this:"
+                    echo "1. Railway Dashboard → falkordb service → Settings → Networking"
+                    echo "2. Enable 'TCP Proxy' to get a public endpoint"
+                    echo "3. Update GitHub secrets:"
+                    echo "   - FALKORDB_HOST = monorail.proxy.rlwy.net (or your TCP proxy domain)"
+                    echo "   - FALKORDB_PORT = your TCP proxy port (NOT 6379)"
+                    echo ""
+                    echo "See: docs/MONITORING_AND_BACKUPS.md for detailed instructions"
+                    exit 1
+                  fi
+
+                  # Test TCP connectivity
+                  if timeout 10 bash -c "echo > /dev/tcp/$FALKORDB_HOST/$FALKORDB_PORT" 2>/dev/null; then
+                    echo "✅ TCP connection successful to $FALKORDB_HOST:$FALKORDB_PORT"
+                  else
+                    echo ""
+                    echo "❌ ERROR: Cannot connect to FalkorDB at $FALKORDB_HOST:$FALKORDB_PORT"
+                    echo ""
+                    echo "Possible causes:"
+                    echo "1. TCP Proxy not enabled on Railway FalkorDB service"
+                    echo "2. Wrong host/port in GitHub secrets"
+                    echo "3. FalkorDB service is down"
+                    echo ""
+                    echo "To fix:"
+                    echo "1. Railway Dashboard → falkordb service → Settings → Networking"
+                    echo "2. Enable 'TCP Proxy' and note the public endpoint"
+                    echo "3. Update GitHub secrets with the TCP proxy host and port"
+                    echo ""
+                    exit 1
+                  fi
 
             - name: Run backup
               env:

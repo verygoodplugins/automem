@@ -190,26 +190,78 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
 
 1. **Workflow file already exists:** `.github/workflows/backup.yml`
 
-2. **Add GitHub secrets:**
+2. **Enable TCP Proxy on FalkorDB** (required for external access):
+
+   ⚠️ **Critical**: GitHub Actions runners are external to Railway's network. They cannot use internal hostnames like `falkordb.railway.internal`. You must enable TCP Proxy for external connectivity.
+
+   - Railway Dashboard → `falkordb` service
+   - Settings → Networking → **Enable TCP Proxy**
+   - Note the public endpoint: `monorail.proxy.rlwy.net:12345` (example)
+
+   ```mermaid
+   flowchart LR
+       subgraph railway [Railway Network]
+           FalkorDB[(FalkorDB<br/>:6379)]
+           TCPProxy[TCP Proxy<br/>monorail.proxy.rlwy.net:12345]
+       end
+
+       subgraph external [External]
+           GHA[GitHub Actions]
+           Local[Local Dev]
+       end
+
+       GHA -->|Public Internet| TCPProxy
+       Local -->|Public Internet| TCPProxy
+       TCPProxy -->|Internal| FalkorDB
+   ```
+
+3. **Add GitHub secrets:**
 
    - Go to: GitHub repo → Settings → Secrets and variables → Actions
    - Add these secrets:
      ```
-     FALKORDB_HOST         = your-host.proxy.rlwy.net (your Railway TCP proxy)
-     FALKORDB_PORT         = 12345 (your Railway TCP proxy port)
-     FALKORDB_PASSWORD     = (from Railway)
-     QDRANT_URL            = (from Railway)
-     QDRANT_API_KEY        = (from Railway)
+     FALKORDB_HOST         = monorail.proxy.rlwy.net   # TCP Proxy domain (NOT .railway.internal!)
+     FALKORDB_PORT         = 12345                      # TCP Proxy port (NOT 6379!)
+     FALKORDB_PASSWORD     = (from Railway FalkorDB service variables)
+     QDRANT_URL            = (your Qdrant Cloud URL)
+     QDRANT_API_KEY        = (your Qdrant Cloud API key)
      ```
    - Optional for S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
 
-3. **Push and test:**
+   **Where to find TCP Proxy details:**
+   - Railway Dashboard → `falkordb` service → Settings → Networking
+   - Look for "TCP Proxy" section → shows `RAILWAY_TCP_PROXY_DOMAIN` and `RAILWAY_TCP_PROXY_PORT`
+
+4. **Push and test:**
    ```bash
    git push origin main
    ```
    - Go to Actions tab → "AutoMem Backup" → Run workflow
 
 **Runs every 6 hours automatically.** Free tier: 2000 minutes/month.
+
+### Troubleshooting GitHub Actions Backup
+
+**Error: "Connection reset by peer" (error 104)**
+
+This means GitHub Actions can't connect to FalkorDB. Common causes:
+
+1. **TCP Proxy not enabled**: Enable it in Railway Dashboard → `falkordb` → Settings → Networking
+2. **Wrong host/port in secrets**: Must use TCP proxy endpoint, not internal hostname
+3. **Firewall**: Railway TCP Proxy should be accessible from anywhere, but check if your Railway plan has restrictions
+
+**Verify your setup:**
+```bash
+# Test from your local machine (should work if TCP proxy is enabled)
+redis-cli -h monorail.proxy.rlwy.net -p 12345 -a YOUR_PASSWORD ping
+# Should return: PONG
+```
+
+**Debug checklist:**
+- [ ] TCP Proxy is enabled on FalkorDB service
+- [ ] `FALKORDB_HOST` secret uses TCP proxy domain (e.g., `monorail.proxy.rlwy.net`)
+- [ ] `FALKORDB_PORT` secret uses TCP proxy port (e.g., `12345`), NOT `6379`
+- [ ] `FALKORDB_PASSWORD` matches the password in FalkorDB service variables
 
 ---
 
