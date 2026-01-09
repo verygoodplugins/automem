@@ -23,6 +23,7 @@ import { LassoOverlay } from './components/LassoOverlay'
 import { SelectionActions } from './components/SelectionActions'
 import { TagCloud } from './components/TagCloud'
 import { WebcamPreview } from './components/WebcamPreview'
+import { HandCursor } from './components/HandCursor'
 import { useHandLockAndGrab } from './hooks/useHandLockAndGrab'
 import { useHandRecording, downloadRecording, listSavedRecordings, loadRecordingFromStorage } from './hooks/useHandRecording'
 import { useHandPlayback } from './hooks/useHandPlayback'
@@ -940,6 +941,20 @@ export default function App() {
                 visible={webcamPreviewVisible && gestureControlEnabled}
                 position="top-right"
                 size="medium"
+              />
+
+              {/* Hand Cursor with visual feedback */}
+              <HandCursor
+                gestureState={gestureState}
+                lock={handLock}
+                enabled={gestureControlEnabled}
+                hasTarget={!!hoveredNode}
+                containerRef={canvasContainerRef}
+                onPinchStart={() => {
+                  if (hoveredNode) {
+                    sound.playSelect(hoveredNode.importance ?? 0.5)
+                  }
+                }}
               />
 
               {/* Hand Control Overlay (lock/grab metrics) */}
