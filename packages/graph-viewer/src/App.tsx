@@ -22,6 +22,7 @@ import { RadialMenu } from './components/RadialMenu'
 import { LassoOverlay } from './components/LassoOverlay'
 import { SelectionActions } from './components/SelectionActions'
 import { TagCloud } from './components/TagCloud'
+import { WebcamPreview } from './components/WebcamPreview'
 import { useHandLockAndGrab } from './hooks/useHandLockAndGrab'
 import { useHandRecording, downloadRecording, listSavedRecordings, loadRecordingFromStorage } from './hooks/useHandRecording'
 import { useHandPlayback } from './hooks/useHandPlayback'
@@ -155,6 +156,10 @@ export default function App() {
 
   // Tag cloud state
   const [tagCloudVisible, setTagCloudVisible] = useState(false)
+
+  // Webcam preview state
+  const [webcamPreviewVisible, setWebcamPreviewVisible] = useState(false)
+  const [webcamVideoElement, setWebcamVideoElement] = useState<HTMLVideoElement | null>(null)
 
   // Cleanup focus animation on unmount
   useEffect(() => {
@@ -757,6 +762,29 @@ export default function App() {
           </span>
         </button>
 
+        {/* Webcam Preview Toggle (only show when gestures enabled) */}
+        {gestureControlEnabled && (
+          <button
+            onClick={() => setWebcamPreviewVisible(!webcamPreviewVisible)}
+            className={`
+              flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
+              ${webcamPreviewVisible
+                ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-500/25'
+                : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+              }
+            `}
+            title={webcamPreviewVisible ? 'Hide webcam preview' : 'Show webcam preview with hand skeleton'}
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M23 7l-7 5 7 5V7z" />
+              <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+            </svg>
+            <span className="text-sm font-medium hidden sm:inline">
+              {webcamPreviewVisible ? 'Cam ON' : 'Cam'}
+            </span>
+          </button>
+        )}
+
         {/* Debug Overlay Toggle (only show when gestures enabled) */}
         {gestureControlEnabled && (
           <button
@@ -889,6 +917,7 @@ export default function App() {
                 lassoSelectedIds={lassoState.selectedIds}
                 tagFilteredNodeIds={tagCloud.filteredNodeIds}
                 hasTagFilter={tagCloud.hasActiveFilter}
+                onVideoElementReady={setWebcamVideoElement}
               />
 
               {/* 2D Hand Overlay (on top of canvas, life-size) */}
@@ -902,6 +931,15 @@ export default function App() {
               <GestureDebugOverlay
                 gestureState={gestureState}
                 visible={debugOverlayVisible && gestureControlEnabled}
+              />
+
+              {/* Webcam Preview with Hand Skeleton */}
+              <WebcamPreview
+                videoElement={webcamVideoElement}
+                gestureState={gestureState}
+                visible={webcamPreviewVisible && gestureControlEnabled}
+                position="top-right"
+                size="medium"
               />
 
               {/* Hand Control Overlay (lock/grab metrics) */}

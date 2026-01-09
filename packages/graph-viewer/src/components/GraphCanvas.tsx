@@ -115,6 +115,8 @@ interface GraphCanvasProps {
   // Tag cloud filtering
   tagFilteredNodeIds?: Set<string>
   hasTagFilter?: boolean
+  // Webcam preview: expose video element to parent
+  onVideoElementReady?: (video: HTMLVideoElement | null) => void
 }
 
 export function GraphCanvas({
@@ -153,6 +155,7 @@ export function GraphCanvas({
   lassoSelectedIds,
   tagFilteredNodeIds,
   hasTagFilter = false,
+  onVideoElementReady,
 }: GraphCanvasProps) {
   // MiniMap state
   const [cameraState, setCameraState] = useState({ x: 0, y: 0, z: 150, zoom: 1 })
@@ -203,10 +206,15 @@ export function GraphCanvas({
   }, [])
 
   // MediaPipe hand tracking (webcam)
-  const { gestureState: mediapipeState, isEnabled: mediapipeActive } = useHandGestures({
+  const { gestureState: mediapipeState, isEnabled: mediapipeActive, videoElement } = useHandGestures({
     enabled: gestureControlEnabled && source === 'mediapipe',
     onGestureChange: source === 'mediapipe' ? onGestureStateChange : undefined,
   })
+
+  // Expose video element to parent for webcam preview
+  useEffect(() => {
+    onVideoElementReady?.(videoElement)
+  }, [videoElement, onVideoElementReady])
 
   // iPhone hand tracking (WebSocket)
   const {
