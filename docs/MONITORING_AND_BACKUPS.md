@@ -219,6 +219,7 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
 
    - Go to: GitHub repo → Settings → Secrets and variables → Actions
    - Add these secrets:
+
      ```bash
      FALKORDB_HOST         = monorail.proxy.rlwy.net   # TCP Proxy domain (NOT .railway.internal!)
      FALKORDB_PORT         = 12345                      # TCP Proxy port (NOT 6379!)
@@ -226,6 +227,7 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
      QDRANT_URL            = (your Qdrant Cloud URL)
      QDRANT_API_KEY        = (your Qdrant Cloud API key)
      ```
+
    - Optional for S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
 
    **Where to find TCP Proxy details:**
@@ -234,9 +236,11 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
    - Look for "TCP Proxy" section → shows `RAILWAY_TCP_PROXY_DOMAIN` and `RAILWAY_TCP_PROXY_PORT`
 
 4. **Push and test:**
+
    ```bash
    git push origin main
    ```
+
    - Go to Actions tab → "AutoMem Backup" → Run workflow
 
 **Runs every 6 hours automatically.** Free tier: 2000 minutes/month.
