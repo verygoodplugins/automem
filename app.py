@@ -1757,10 +1757,6 @@ def enrichment_worker() -> None:
                 state.enrichment_stats.record_success(job.memory_id)
                 elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
 
-                # Build entity counts for display
-                entities = result.get("entities", {})
-                entity_counts = {cat: len(vals) for cat, vals in entities.items() if vals}
-
                 emit_event(
                     "enrichment.complete",
                     {
@@ -1768,13 +1764,16 @@ def enrichment_worker() -> None:
                         "elapsed_ms": elapsed_ms,
                         "skipped": not result.get("processed", False),
                         "skip_reason": result.get("reason"),
-                        # New detailed fields:
-                        "entities": entity_counts,
-                        "temporal_links": result.get("temporal_links", 0),
-                        "patterns_detected": len(result.get("patterns_detected", [])),
-                        "semantic_neighbors": result.get("semantic_neighbors", 0),
-                        "summary_preview": result.get("summary", "")[:80],
-                        "entity_tags_added": result.get("entity_tags_added", 0),
+                        # Full enrichment data:
+                        "content": result.get("content", ""),
+                        "tags_before": result.get("tags_before", []),
+                        "tags_after": result.get("tags_after", []),
+                        "tags_added": result.get("tags_added", []),
+                        "entities": result.get("entities", {}),
+                        "temporal_links": result.get("temporal_links", []),
+                        "semantic_neighbors": result.get("semantic_neighbors", []),
+                        "patterns_detected": result.get("patterns_detected", []),
+                        "summary": result.get("summary", ""),
                     },
                     utc_now,
                 )
@@ -2090,12 +2089,15 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> Dict[str, Any]:
 
     Returns a dict with enrichment details:
         - processed: True if enrichment was performed
+        - content: Original memory content
+        - tags_before: Tags before enrichment
+        - tags_after: Tags after enrichment (includes entity tags)
+        - tags_added: Delta of tags added during enrichment
         - entities: Dict of extracted entities by category
-        - temporal_links: Count of temporal relationships created
+        - temporal_links: List of linked memory IDs (PRECEDED_BY relationships)
+        - semantic_neighbors: List of (id, score) tuples for similar memories
         - patterns_detected: List of detected pattern info
-        - semantic_neighbors: Count of semantic neighbor links
-        - summary: Generated summary (truncated)
-        - entity_tags_added: Count of entity tags added
+        - summary: Generated summary
     """
     graph = get_memory_graph()
     if graph is None:
@@ -2124,7 +2126,9 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> Dict[str, Any]:
     content = properties.get("content", "") or ""
     entities = extract_entities(content)
 
-    tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
+    # Capture original tags before any modification
+    original_tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
+    tags = list(original_tags)  # Copy for modification
     entity_tags: Set[str] = set()
 
     if entities:
@@ -2146,7 +2150,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> Dict[str, Any]:
 
     tag_prefixes = _compute_tag_prefixes(tags)
 
-    temporal_links = find_temporal_relationships(graph, memory_id)
+    temporal_link_ids = find_temporal_relationships(graph, memory_id)
     pattern_info = detect_patterns(graph, memory_id, content)
     semantic_neighbors = link_semantic_neighbors(graph, memory_id)
 
@@ -2163,7 +2167,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> Dict[str, Any]:
         {
             "last_run": utc_now(),
             "forced": forced,
-            "temporal_links": temporal_links,
+            "temporal_links": temporal_link_ids,
             "patterns_detected": pattern_info,
             "semantic_neighbors": [
                 {"id": neighbour_id, "score": score} for neighbour_id, score in semantic_neighbors
@@ -2213,25 +2217,34 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> Dict[str, Any]:
     logger.debug(
         "Enriched memory %s (temporal=%s, patterns=%s, semantic=%s)",
         memory_id,
-        temporal_links,
+        temporal_link_ids,
         pattern_info,
         len(semantic_neighbors),
     )
 
+    # Compute tags added during enrichment
+    tags_added = sorted(set(tags) - set(original_tags))
+
     return {
         "processed": True,
+        "content": content,
+        "tags_before": original_tags,
+        "tags_after": tags,
+        "tags_added": tags_added,
         "entities": entities,
-        "temporal_links": temporal_links,
+        "temporal_links": temporal_link_ids,
+        "semantic_neighbors": [(nid[:8], round(score, 3)) for nid, score in semantic_neighbors],
         "patterns_detected": pattern_info,
-        "semantic_neighbors": len(semantic_neighbors),
-        "summary": (summary or "")[:100],
-        "entity_tags_added": len(entity_tags),
+        "summary": (summary or ""),
     }
 
 
-def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> int:
-    """Find and create temporal relationships with recent memories."""
-    created = 0
+def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> List[str]:
+    """Find and create temporal relationships with recent memories.
+
+    Returns list of linked memory IDs.
+    """
+    linked_ids: List[str] = []
     try:
         result = graph.query(
             """
@@ -2262,11 +2275,11 @@ def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> i
                 """,
                 {"id1": memory_id, "id2": related_id, "timestamp": timestamp},
             )
-            created += 1
+            linked_ids.append(related_id)
     except Exception:
         logger.exception("Failed to find temporal relationships")
 
-    return created
+    return linked_ids
 
 
 def detect_patterns(graph: Any, memory_id: str, content: str) -> List[Dict[str, Any]]:

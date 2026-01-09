@@ -153,32 +153,65 @@ def print_enrichment_event(event: dict) -> None:
             reason = data.get("skip_reason", "")
             console.print(f"[dim]{ts}[/] [yellow]ENRICH[/] {mem_id} skipped ({reason})")
         else:
-            console.print(f"[dim]{ts}[/] [green]ENRICH[/] {mem_id} done ({elapsed}ms)")
+            console.print(f"\n[bold cyan]━━━ ENRICH[/] [dim]{ts}[/] [cyan]({elapsed}ms)[/]")
+            console.print(f"  [dim]memory:[/] {mem_id}")
 
-            # Entity counts
+            # Content
+            content = data.get("content", "")
+            if content:
+                # Indent content lines
+                content_lines = content[:500].split("\n")
+                console.print("  [dim]content:[/]")
+                for line in content_lines[:8]:
+                    console.print(f"    {line}")
+                if len(content) > 500 or len(content_lines) > 8:
+                    console.print("    [dim]...[/]")
+
+            # Tags before/after
+            tags_before = data.get("tags_before", [])
+            tags_added = data.get("tags_added", [])
+            if tags_before or tags_added:
+                console.print("")
+                console.print(f"  [dim]tags before:[/] {tags_before}")
+                if tags_added:
+                    console.print(f"  [green]tags added:[/]  {tags_added}")
+
+            # Entities by category
             entities = data.get("entities", {})
-            if entities:
-                entity_parts = [f"{k}={v}" for k, v in entities.items()]
-                console.print(f"  [dim]entities:[/] {' '.join(entity_parts)}")
+            if entities and any(entities.values()):
+                console.print("")
+                console.print("  [dim]entities:[/]")
+                for category, values in entities.items():
+                    if values:
+                        console.print(f"    {category}: {', '.join(values)}")
 
-            # Links
-            temporal = data.get("temporal_links", 0)
-            semantic = data.get("semantic_neighbors", 0)
-            patterns = data.get("patterns_detected", 0)
-            entity_tags = data.get("entity_tags_added", 0)
+            # Links created
+            temporal_links = data.get("temporal_links", [])
+            semantic_neighbors = data.get("semantic_neighbors", [])
+            patterns = data.get("patterns_detected", [])
 
-            if temporal or semantic or patterns:
-                console.print(
-                    f"  [dim]links:[/] temporal={temporal} semantic={semantic} patterns={patterns}"
-                )
+            if temporal_links or semantic_neighbors or patterns:
+                console.print("")
+                console.print("  [dim]links created:[/]")
+                if temporal_links:
+                    ids = [tid[:8] for tid in temporal_links]
+                    console.print(f"    temporal: {', '.join(ids)} ({len(ids)} memories)")
+                if semantic_neighbors:
+                    neighbor_strs = [f"{nid} ({score})" for nid, score in semantic_neighbors]
+                    console.print(f"    semantic: {', '.join(neighbor_strs)}")
+                if patterns:
+                    for p in patterns:
+                        ptype = p.get("type", "?")
+                        similar = p.get("similar_memories", 0)
+                        console.print(f"    patterns: {ptype} ({similar} similar memories)")
 
-            if entity_tags:
-                console.print(f"  [dim]entity_tags_added:[/] {entity_tags}")
-
-            # Summary preview
-            summary = data.get("summary_preview", "")
+            # Summary
+            summary = data.get("summary", "")
             if summary:
-                console.print(f'  [dim]summary:[/] "{summary}"')
+                console.print("")
+                console.print(f'  [dim]summary:[/] "{summary[:100]}"')
+
+            console.print("")  # Blank line after
 
     elif event_type == "enrichment.failed":
         error = data.get("error", "unknown")[:80]

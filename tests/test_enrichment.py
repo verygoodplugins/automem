@@ -119,7 +119,7 @@ def test_enrich_memory_updates_metadata(monkeypatch):
     update_payload = fake_graph.update_calls[-1]
     metadata = json.loads(update_payload["metadata"])
     assert metadata["entities"]["projects"] == ["Launchpad"]
-    assert metadata["enrichment"]["temporal_links"] == 1
+    assert len(metadata["enrichment"]["temporal_links"]) == 1  # Now returns list of IDs
     assert metadata["enrichment"]["patterns_detected"]
     assert update_payload["summary"].startswith("Met with Alice")
     assert "entity:projects:launchpad" in update_payload["tags"]
