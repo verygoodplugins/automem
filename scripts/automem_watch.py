@@ -216,6 +216,23 @@ def print_error_event(event: dict) -> None:
     console.print(f"[dim]{ts}[/] [bold red]ERROR[/] {error}")
 
 
+def print_associate_event(event: dict) -> None:
+    """Print a memory.associate event."""
+    data = event.get("data", {})
+    ts = format_timestamp(event.get("timestamp", ""))
+
+    mem1 = data.get("memory1_id", "?")[:8]
+    mem2 = data.get("memory2_id", "?")[:8]
+    rel_type = data.get("relation_type", "?")
+    strength = data.get("strength", 0.5)
+
+    console.print(
+        f"[dim]{ts}[/] [bold blue]ASSOCIATE[/] "
+        f"{mem1} [cyan]--{rel_type}-->[/] {mem2}  "
+        f"[dim]strength={strength}[/]"
+    )
+
+
 def print_raw_event(event: dict) -> None:
     """Print any other event as JSON."""
     ts = format_timestamp(event.get("timestamp", ""))
@@ -238,6 +255,8 @@ def process_event(event: dict) -> None:
         print_store_event(event)
     elif event_type == "memory.recall":
         print_recall_event(event)
+    elif event_type == "memory.associate":
+        print_associate_event(event)
     elif event_type.startswith("enrichment."):
         print_enrichment_event(event)
     elif event_type == "consolidation.run":

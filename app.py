@@ -3123,6 +3123,17 @@ def create_association() -> Any:
         if prop in relationship_props:
             response[prop] = relationship_props[prop]
 
+    emit_event(
+        "memory.associate",
+        {
+            "memory1_id": memory1_id,
+            "memory2_id": memory2_id,
+            "relation_type": relation_type,
+            "strength": strength,
+        },
+        utc_now,
+    )
+
     return jsonify(response), 201
 
 
