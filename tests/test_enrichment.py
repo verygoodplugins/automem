@@ -108,8 +108,8 @@ def test_enrich_memory_updates_metadata(monkeypatch):
     fake_graph = FakeGraph()
     app.state.memory_graph = fake_graph
 
-    processed = app.enrich_memory("mem-1", forced=True)
-    assert processed is True
+    result = app.enrich_memory("mem-1", forced=True)
+    assert result.get("processed") is True
 
     assert fake_graph.temporal_calls, "Should create temporal relationships"
     assert fake_graph.pattern_calls, "Should update pattern nodes"
