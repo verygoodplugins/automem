@@ -11,6 +11,7 @@ import json
 import sys
 import textwrap
 import time
+from typing import Any, Mapping
 
 try:
     import httpx
@@ -23,9 +24,15 @@ except ImportError:
 
 console = Console()
 
+# Type alias for SSE event payloads
+Event = Mapping[str, Any]
 
-def format_timestamp(ts: str) -> str:
+
+def format_timestamp(ts: Any) -> str:
     """Extract just the time from ISO timestamp."""
+    if ts is None:
+        return ""
+    ts = str(ts)
     if "T" in ts:
         return ts.split("T")[1][:12]
     return ts[:12]
@@ -47,7 +54,7 @@ def _safe_int(val: object, default: int = 0) -> int:
         return default
 
 
-def print_store_event(event: dict) -> None:
+def print_store_event(event: Event) -> None:
     """Print a memory.store event with full content."""
     data = event.get("data", {})
     ts = format_timestamp(event.get("timestamp", ""))
@@ -103,7 +110,7 @@ def print_store_event(event: dict) -> None:
         console.print(f"[white]{wrapped}[/]")
 
 
-def print_recall_event(event: dict) -> None:
+def print_recall_event(event: Event) -> None:
     """Print a memory.recall event with query details and result summaries."""
     data = event.get("data", {})
     ts = format_timestamp(event.get("timestamp", ""))
@@ -169,7 +176,7 @@ def print_recall_event(event: dict) -> None:
             )
 
 
-def print_enrichment_event(event: dict) -> None:
+def print_enrichment_event(event: Event) -> None:
     """Print enrichment events with details."""
     data = event.get("data", {})
     ts = format_timestamp(event.get("timestamp", ""))
@@ -258,7 +265,7 @@ def print_enrichment_event(event: dict) -> None:
         )
 
 
-def print_consolidation_event(event: dict) -> None:
+def print_consolidation_event(event: Event) -> None:
     """Print consolidation events."""
     data = event.get("data", {})
     ts = format_timestamp(event.get("timestamp", ""))
@@ -275,7 +282,7 @@ def print_consolidation_event(event: dict) -> None:
     )
 
 
-def print_error_event(event: dict) -> None:
+def print_error_event(event: Event) -> None:
     """Print error events."""
     data = event.get("data", {})
     ts = format_timestamp(event.get("timestamp", ""))
@@ -284,7 +291,7 @@ def print_error_event(event: dict) -> None:
     console.print(f"[dim]{ts}[/] [bold red]ERROR[/] {error}")
 
 
-def print_associate_event(event: dict) -> None:
+def print_associate_event(event: Event) -> None:
     """Print a memory.associate event."""
     data = event.get("data", {})
     ts = format_timestamp(event.get("timestamp", ""))
@@ -301,7 +308,7 @@ def print_associate_event(event: dict) -> None:
     )
 
 
-def print_raw_event(event: dict) -> None:
+def print_raw_event(event: Event) -> None:
     """Print any other event as JSON."""
     ts = format_timestamp(event.get("timestamp", ""))
     event_type = event.get("type", "unknown")
@@ -315,7 +322,7 @@ def print_raw_event(event: dict) -> None:
         console.print(syntax)
 
 
-def process_event(event: dict) -> None:
+def process_event(event: Event) -> None:
     """Route event to appropriate printer."""
     event_type = event.get("type", "")
 
