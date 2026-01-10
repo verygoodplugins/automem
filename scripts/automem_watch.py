@@ -348,10 +348,17 @@ def process_event(event: Event) -> None:
         print_raw_event(event)
 
 
-def stream_events(url: str, token: str) -> None:
-    """Connect to SSE stream and print events."""
+def stream_events(url: str, token: str, max_reconnects: int = 0) -> None:
+    """Connect to SSE stream and print events.
+
+    Args:
+        url: AutoMem API base URL
+        token: API authentication token
+        max_reconnects: Max reconnection attempts (0 = unlimited)
+    """
     headers = {"Authorization": f"Bearer {token}"}
     reconnect_count = 0
+    consecutive_ssl_errors = 0
 
     console.print(f"[bold]Connecting to {url}/stream...[/]")
     console.print("[dim]Press Ctrl+C to stop[/]")
@@ -378,6 +385,9 @@ def stream_events(url: str, token: str) -> None:
                         console.print(f"[red]HTTP {resp.status_code}[/]")
                         break
 
+                    # Reset SSL error counter on successful connect
+                    consecutive_ssl_errors = 0
+
                     if reconnect_count > 0:
                         console.print(f"[green]Connected[/] [dim](reconnect #{reconnect_count})[/]")
                     else:
@@ -400,20 +410,42 @@ def stream_events(url: str, token: str) -> None:
                                     event = json.loads(full_data)
                                     process_event(event)
                                 except json.JSONDecodeError:
-                                    pass
+                                    console.print(
+                                        f"[dim red]Malformed event data:[/] {full_data[:100]}"
+                                    )
                         elif line.startswith(":"):
                             # Keepalive comment - ignore silently
-                            console.print(f"[dim red]Malformed event data:[/] {full_data[:100]}")
+                            pass
 
         except KeyboardInterrupt:
             console.print("\n[bold]Disconnected.[/]")
             break
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            # Network/transient errors - retry
             reconnect_count += 1
-            console.print(f"[red]Connection error:[/] {e}")
-            console.print(f"[dim]Reconnecting in 5s... (attempt #{reconnect_count})[/]")
-            time.sleep(5)
+            error_str = str(e)
+
+            # Detect SSL errors (Railway load balancer kills idle SSE connections)
+            is_ssl_error = "SSL" in error_str or "ssl" in error_str or "handshake" in error_str
+
+            if is_ssl_error:
+                consecutive_ssl_errors += 1
+                # Exponential backoff for SSL errors: 2s, 4s, 8s, 16s, max 30s
+                backoff = min(30, 2 ** min(consecutive_ssl_errors, 4))
+                console.print(
+                    f"[yellow]SSL connection reset[/] [dim](Railway LB, backoff {backoff}s)[/]"
+                )
+            else:
+                consecutive_ssl_errors = 0
+                backoff = 5
+                console.print(f"[red]Connection error:[/] {e}")
+
+            # Check max reconnects
+            if max_reconnects > 0 and reconnect_count >= max_reconnects:
+                console.print(f"[red]Max reconnects ({max_reconnects}) reached. Exiting.[/]")
+                break
+
+            console.print(f"[dim]Reconnecting in {backoff}s... (attempt #{reconnect_count})[/]")
+            time.sleep(backoff)
 
 
 def main() -> None:
@@ -424,13 +456,20 @@ def main() -> None:
 Examples:
   python scripts/automem_watch.py --url http://localhost:8001 --token dev
   python scripts/automem_watch.py --url https://automem.up.railway.app --token $TOKEN
+  python scripts/automem_watch.py --url $URL --token $TOKEN --max-reconnects 100
         """,
     )
     parser.add_argument("--url", required=True, help="AutoMem API URL")
     parser.add_argument("--token", required=True, help="API token")
+    parser.add_argument(
+        "--max-reconnects",
+        type=int,
+        default=0,
+        help="Max reconnection attempts (0 = unlimited, default)",
+    )
     args = parser.parse_args()
 
-    stream_events(args.url.rstrip("/"), args.token)
+    stream_events(args.url.rstrip("/"), args.token, args.max_reconnects)
 
 
 if __name__ == "__main__":
