@@ -175,7 +175,7 @@ def print_enrichment_event(event: dict) -> None:
     ts = format_timestamp(event.get("timestamp", ""))
     event_type = event.get("type", "")
 
-    mem_id = data.get("memory_id", "?")[:8]
+    mem_id = str(data.get("memory_id", "?"))[:8]
 
     if event_type == "enrichment.start":
         attempt = data.get("attempt", 1)
@@ -229,7 +229,7 @@ def print_enrichment_event(event: dict) -> None:
                 console.print("")
                 console.print("  [dim]links created:[/]")
                 if temporal_links:
-                    ids = [tid[:8] for tid in temporal_links]
+                    ids = [str(tid)[:8] for tid in temporal_links]
                     console.print(f"    temporal: {', '.join(ids)} ({len(ids)} memories)")
                 if semantic_neighbors:
                     neighbor_strs = [f"{nid} ({score})" for nid, score in semantic_neighbors]
@@ -289,8 +289,8 @@ def print_associate_event(event: dict) -> None:
     data = event.get("data", {})
     ts = format_timestamp(event.get("timestamp", ""))
 
-    mem1 = data.get("memory1_id", "?")[:8]
-    mem2 = data.get("memory2_id", "?")[:8]
+    mem1 = str(data.get("memory1_id", "?"))[:8]
+    mem2 = str(data.get("memory2_id", "?"))[:8]
     rel_type = data.get("relation_type", "?")
     strength = data.get("strength", 0.5)
 
@@ -380,7 +380,7 @@ def stream_events(url: str, token: str) -> None:
             time.sleep(5)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="AutoMem tail - stream memory operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
