@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoMem Monitor</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --card: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --muted: #8b949e;
+            --store: #238636;
+            --recall: #1f6feb;
+            --enrichment: #a371f7;
+            --consolidation: #f0883e;
+            --error: #f85149;
+            --associate: #3fb950;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.5;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        h1 { margin: 0; font-size: 1.5rem; }
+        #status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        #status.connected { background: var(--store); }
+        #status.disconnected { background: var(--error); }
+        #status.connecting { background: var(--consolidation); }
+
+        #events { display: flex; flex-direction: column; gap: 8px; }
+
+        .event {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .event-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .event-header:hover { background: rgba(255,255,255,0.03); }
+
+        .event-type {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #fff;
+        }
+        .type-store { background: var(--store); }
+        .type-recall { background: var(--recall); }
+        .type-enrichment { background: var(--enrichment); }
+        .type-consolidation { background: var(--consolidation); }
+        .type-error { background: var(--error); }
+        .type-associate { background: var(--associate); }
+
+        .event-summary {
+            flex: 1;
+            font-size: 0.9rem;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .event-time {
+            font-size: 0.8rem;
+            color: var(--muted);
+            font-family: monospace;
+        }
+        .event-toggle {
+            color: var(--muted);
+            transition: transform 0.2s;
+        }
+        .event.open .event-toggle { transform: rotate(90deg); }
+
+        .event-details {
+            display: none;
+            padding: 0 16px 16px;
+            border-top: 1px solid var(--border);
+        }
+        .event.open .event-details { display: block; }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 8px 16px;
+            font-size: 0.85rem;
+        }
+        .detail-label {
+            color: var(--muted);
+            font-weight: 500;
+        }
+        .detail-value {
+            color: var(--text);
+            word-break: break-word;
+        }
+        .detail-value.mono {
+            font-family: monospace;
+            font-size: 0.8rem;
+        }
+
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .tag {
+            background: rgba(255,255,255,0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .json-toggle {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+        .json-toggle summary {
+            cursor: pointer;
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+        .json-toggle pre {
+            margin: 8px 0 0;
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.75rem;
+        }
+
+        #empty {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--muted);
+        }
+        #empty svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+        .stat-value { color: var(--text); font-weight: 600; }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>AutoMem Monitor</h1>
+            <div class="stats">
+                <span>Events: <span class="stat-value" id="event-count">0</span></span>
+                <span>Reconnects: <span class="stat-value" id="reconnect-count">0</span></span>
+            </div>
+        </div>
+        <div id="status" class="connecting">Connecting...</div>
+    </header>
+
+    <div id="events">
+        <div id="empty">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <p>Waiting for events...</p>
+        </div>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        let token = params.get('token') || localStorage.getItem('automem_token');
+
+        if (!token) {
+            token = prompt('Enter your AutoMem API token:');
+            if (!token) {
+                document.getElementById('empty').innerHTML = '<p>No token provided. Refresh to try again.</p>';
+                throw new Error('No token');
+            }
+        }
+        localStorage.setItem('automem_token', token);
+
+        // Remove token from URL for security
+        if (params.has('token')) {
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+
+        let eventCount = 0;
+        let reconnectCount = 0;
+        const eventsContainer = document.getElementById('events');
+        const statusEl = document.getElementById('status');
+        const eventCountEl = document.getElementById('event-count');
+        const reconnectCountEl = document.getElementById('reconnect-count');
+
+        function formatTime(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            return d.toLocaleTimeString('en-US', { hour12: false });
+        }
+
+        function truncate(str, len = 80) {
+            if (!str) return '';
+            str = String(str);
+            return str.length > len ? str.slice(0, len) + '...' : str;
+        }
+
+        function renderTags(tags) {
+            if (!tags || !tags.length) return '<span style="color: var(--muted)">none</span>';
+            return tags.map(t => `<span class="tag">${t}</span>`).join('');
+        }
+
+        function getSummary(event) {
+            const d = event.data || {};
+            switch (event.type) {
+                case 'memory.store':
+                    return truncate(d.content) || d.memory_id?.slice(0, 8);
+                case 'memory.recall':
+                    return `"${truncate(d.query, 50)}" → ${d.result_count} results`;
+                case 'memory.associate':
+                    return `${d.memory1_id?.slice(0,8)} → ${d.memory2_id?.slice(0,8)} (${d.relation_type})`;
+                case 'enrichment.start':
+                    return `${d.memory_id?.slice(0,8)} attempt ${d.attempt}`;
+                case 'enrichment.complete':
+                    return `${d.memory_id?.slice(0,8)} in ${d.elapsed_ms}ms`;
+                case 'enrichment.failed':
+                    return `${d.memory_id?.slice(0,8)}: ${truncate(d.error, 40)}`;
+                case 'consolidation.run':
+                    return `${d.task_type} → ${d.affected_count} memories`;
+                default:
+                    return JSON.stringify(d).slice(0, 60);
+            }
+        }
+
+        function renderDetails(event) {
+            const d = event.data || {};
+            let html = '<div class="detail-grid">';
+
+            switch (event.type) {
+                case 'memory.store':
+                    html += `
+                        <div class="detail-label">Memory ID</div>
+                        <div class="detail-value mono">${d.memory_id || '?'}</div>
+                        <div class="detail-label">Type</div>
+                        <div class="detail-value">${d.type || '?'} (${((d.type_confidence || 0) * 100).toFixed(0)}%)</div>
+                        <div class="detail-label">Importance</div>
+                        <div class="detail-value">${d.importance || '?'}</div>
+                        <div class="detail-label">Content</div>
+                        <div class="detail-value">${d.content || ''}</div>
+                        <div class="detail-label">Tags</div>
+                        <div class="detail-value tags">${renderTags(d.tags)}</div>
+                        <div class="detail-label">Elapsed</div>
+                        <div class="detail-value">${d.elapsed_ms}ms</div>
+                    `;
+                    break;
+
+                case 'memory.recall':
+                    html += `
+                        <div class="detail-label">Query</div>
+                        <div class="detail-value">${d.query || ''}</div>
+                        <div class="detail-label">Results</div>
+                        <div class="detail-value">${d.result_count} (${d.dedup_removed} dupes removed)</div>
+                        <div class="detail-label">Vector Search</div>
+                        <div class="detail-value">${d.vector_search ? 'Yes' : 'No'}</div>
+                        <div class="detail-label">Time Filter</div>
+                        <div class="detail-value">${d.has_time_filter ? 'Yes' : 'No'}</div>
+                        <div class="detail-label">Tag Filter</div>
+                        <div class="detail-value tags">${renderTags(d.tags_filter)}</div>
+                        <div class="detail-label">Elapsed</div>
+                        <div class="detail-value">${d.elapsed_ms}ms</div>
+                    `;
+                    if (d.stats) {
+                        html += `
+                            <div class="detail-label">Avg Length</div>
+                            <div class="detail-value">${d.stats.avg_length || 0}</div>
+                            <div class="detail-label">Score Range</div>
+                            <div class="detail-value">${d.stats.score_range?.[0]?.toFixed(2) || '?'} - ${d.stats.score_range?.[1]?.toFixed(2) || '?'}</div>
+                        `;
+                    }
+                    if (d.result_summaries?.length) {
+                        html += `
+                            <div class="detail-label">Top Results</div>
+                            <div class="detail-value">
+                                ${d.result_summaries.map(r =>
+                                    `<div style="margin-bottom:4px">${r.type} (${r.score?.toFixed(2)}) - ${r.content_length} chars, ${r.tags_count} tags</div>`
+                                ).join('')}
+                            </div>
+                        `;
+                    }
+                    break;
+
+                case 'memory.associate':
+                    html += `
+                        <div class="detail-label">Memory 1</div>
+                        <div class="detail-value mono">${d.memory1_id || '?'}</div>
+                        <div class="detail-label">Memory 2</div>
+                        <div class="detail-value mono">${d.memory2_id || '?'}</div>
+                        <div class="detail-label">Relation</div>
+                        <div class="detail-value">${d.relation_type || '?'}</div>
+                        <div class="detail-label">Strength</div>
+                        <div class="detail-value">${d.strength || '?'}</div>
+                    `;
+                    break;
+
+                case 'enrichment.complete':
+                    html += `
+                        <div class="detail-label">Memory ID</div>
+                        <div class="detail-value mono">${d.memory_id || '?'}</div>
+                        <div class="detail-label">Elapsed</div>
+                        <div class="detail-value">${d.elapsed_ms}ms</div>
+                        <div class="detail-label">Content</div>
+                        <div class="detail-value">${truncate(d.content, 200)}</div>
+                        <div class="detail-label">Tags Before</div>
+                        <div class="detail-value tags">${renderTags(d.tags_before)}</div>
+                        <div class="detail-label">Tags After</div>
+                        <div class="detail-value tags">${renderTags(d.tags_after)}</div>
+                        <div class="detail-label">Tags Added</div>
+                        <div class="detail-value tags">${renderTags(d.tags_added)}</div>
+                    `;
+                    if (d.entities) {
+                        html += `
+                            <div class="detail-label">Entities</div>
+                            <div class="detail-value">${Object.entries(d.entities).map(([k, v]) =>
+                                v?.length ? `${k}: ${v.join(', ')}` : ''
+                            ).filter(Boolean).join('<br>') || 'none'}</div>
+                        `;
+                    }
+                    if (d.temporal_links?.length) {
+                        html += `
+                            <div class="detail-label">Temporal Links</div>
+                            <div class="detail-value mono">${d.temporal_links.map(id => id.slice(0,8)).join(', ')}</div>
+                        `;
+                    }
+                    if (d.semantic_neighbors?.length) {
+                        html += `
+                            <div class="detail-label">Semantic Neighbors</div>
+                            <div class="detail-value mono">${d.semantic_neighbors.map(([id, score]) =>
+                                `${id.slice(0,8)} (${score.toFixed(2)})`
+                            ).join(', ')}</div>
+                        `;
+                    }
+                    if (d.summary) {
+                        html += `
+                            <div class="detail-label">Summary</div>
+                            <div class="detail-value">${d.summary}</div>
+                        `;
+                    }
+                    break;
+
+                case 'enrichment.failed':
+                    html += `
+                        <div class="detail-label">Memory ID</div>
+                        <div class="detail-value mono">${d.memory_id || '?'}</div>
+                        <div class="detail-label">Error</div>
+                        <div class="detail-value" style="color: var(--error)">${d.error || '?'}</div>
+                        <div class="detail-label">Attempt</div>
+                        <div class="detail-value">${d.attempt || '?'}</div>
+                        <div class="detail-label">Will Retry</div>
+                        <div class="detail-value">${d.will_retry ? 'Yes' : 'No'}</div>
+                    `;
+                    break;
+
+                case 'consolidation.run':
+                    html += `
+                        <div class="detail-label">Task Type</div>
+                        <div class="detail-value">${d.task_type || '?'}</div>
+                        <div class="detail-label">Affected</div>
+                        <div class="detail-value">${d.affected_count} memories</div>
+                        <div class="detail-label">Elapsed</div>
+                        <div class="detail-value">${d.elapsed_ms}ms</div>
+                        <div class="detail-label">Success</div>
+                        <div class="detail-value">${d.success ? 'Yes' : 'No'}</div>
+                        <div class="detail-label">Next Run</div>
+                        <div class="detail-value">${d.next_scheduled || '?'}</div>
+                    `;
+                    break;
+
+                default:
+                    html += `
+                        <div class="detail-label">Data</div>
+                        <div class="detail-value mono">${JSON.stringify(d)}</div>
+                    `;
+            }
+
+            html += '</div>';
+            html += `
+                <details class="json-toggle">
+                    <summary>Raw JSON</summary>
+                    <pre>${JSON.stringify(event, null, 2)}</pre>
+                </details>
+            `;
+            return html;
+        }
+
+        function getTypeClass(type) {
+            if (type.startsWith('memory.store')) return 'store';
+            if (type.startsWith('memory.recall')) return 'recall';
+            if (type.startsWith('memory.associate')) return 'associate';
+            if (type.startsWith('enrichment')) return 'enrichment';
+            if (type.startsWith('consolidation')) return 'consolidation';
+            if (type.startsWith('error')) return 'error';
+            return 'unknown';
+        }
+
+        function addEvent(event) {
+            // Remove empty state
+            const empty = document.getElementById('empty');
+            if (empty) empty.remove();
+
+            eventCount++;
+            eventCountEl.textContent = eventCount;
+
+            const typeClass = getTypeClass(event.type);
+            const div = document.createElement('div');
+            div.className = 'event';
+            div.innerHTML = `
+                <div class="event-header" onclick="this.parentElement.classList.toggle('open')">
+                    <span class="event-type type-${typeClass}">${event.type.split('.').pop()}</span>
+                    <span class="event-summary">${getSummary(event)}</span>
+                    <span class="event-time">${formatTime(event.timestamp)}</span>
+                    <span class="event-toggle">▶</span>
+                </div>
+                <div class="event-details">${renderDetails(event)}</div>
+            `;
+
+            eventsContainer.prepend(div);
+
+            // Limit to 200 events
+            while (eventsContainer.children.length > 200) {
+                eventsContainer.lastChild.remove();
+            }
+        }
+
+        function connect() {
+            statusEl.textContent = 'Connecting...';
+            statusEl.className = 'connecting';
+
+            const baseUrl = window.location.origin;
+            const es = new EventSource(`${baseUrl}/stream?token=${token}`);
+
+            es.onopen = () => {
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'connected';
+            };
+
+            es.onmessage = (e) => {
+                try {
+                    const event = JSON.parse(e.data);
+                    addEvent(event);
+                } catch (err) {
+                    console.error('Failed to parse event:', e.data);
+                }
+            };
+
+            es.onerror = () => {
+                statusEl.textContent = 'Reconnecting...';
+                statusEl.className = 'disconnected';
+                reconnectCount++;
+                reconnectCountEl.textContent = reconnectCount;
+            };
+        }
+
+        connect();
+    </script>
+</body>
+</html>

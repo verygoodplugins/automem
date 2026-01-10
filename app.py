@@ -110,7 +110,7 @@ except Exception:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")
 
 # Legacy blueprint placeholders for deprecated route definitions below.
 # These are not registered with the app and are safe to keep until full removal.
@@ -3821,6 +3821,12 @@ app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
 app.register_blueprint(graph_bp)
 app.register_blueprint(stream_bp)
+
+
+@app.route("/monitor")
+def monitor_page() -> Any:
+    """Serve the real-time SSE monitor dashboard."""
+    return app.send_static_file("monitor.html")
 
 
 if __name__ == "__main__":
