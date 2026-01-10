@@ -403,7 +403,7 @@ def stream_events(url: str, token: str) -> None:
                                     pass
                         elif line.startswith(":"):
                             # Keepalive comment - ignore silently
-                            pass
+                            console.print(f"[dim red]Malformed event data:[/] {full_data[:100]}")
 
         except KeyboardInterrupt:
             console.print("\n[bold]Disconnected.[/]")
