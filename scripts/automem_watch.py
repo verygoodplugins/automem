@@ -239,7 +239,13 @@ def print_enrichment_event(event: Event) -> None:
                     ids = [str(tid)[:8] for tid in temporal_links]
                     console.print(f"    temporal: {', '.join(ids)} ({len(ids)} memories)")
                 if semantic_neighbors:
-                    neighbor_strs = [f"{nid} ({score})" for nid, score in semantic_neighbors]
+                    neighbor_strs = []
+                    for item in semantic_neighbors:
+                        try:
+                            nid, score = item[0], item[1]
+                            neighbor_strs.append(f"{nid} ({score})")
+                        except (IndexError, TypeError):
+                            neighbor_strs.append(str(item)[:20])
                     console.print(f"    semantic: {', '.join(neighbor_strs)}")
                 if patterns:
                     for p in patterns:
