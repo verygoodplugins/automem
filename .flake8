@@ -1,0 +1,12 @@
+[flake8]
+max-line-length = 100
+select = E9,F63,F7,F82
+show_source = True
+extend-exclude =
+  .venv,
+  venv,
+  node_modules,
+  packages/graph-viewer/node_modules,
+  packages/graph-viewer/dist,
+  packages/graph-viewer/.vite,
+  tests/benchmarks
