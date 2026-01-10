@@ -31,6 +31,22 @@ def format_timestamp(ts: str) -> str:
     return ts[:12]
 
 
+def _safe_float(val: object, default: float = 0.0) -> float:
+    """Safely convert value to float."""
+    try:
+        return float(val) if val is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(val: object, default: int = 0) -> int:
+    """Safely convert value to int."""
+    try:
+        return int(float(val)) if val is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
 def print_store_event(event: dict) -> None:
     """Print a memory.store event with full content."""
     data = event.get("data", {})
@@ -39,12 +55,12 @@ def print_store_event(event: dict) -> None:
     console.print()
     console.print(f"[bold green]━━━ STORE[/] [dim]{ts}[/]")
 
-    # Memory info line
-    mem_id = data.get("memory_id", "?")[:8]
+    # Memory info line - defensive conversions
+    mem_id = str(data.get("memory_id", "?"))[:8]
     mem_type = data.get("type", "Memory")
-    type_conf = data.get("type_confidence", 0)
-    importance = data.get("importance", 0.5)
-    elapsed = data.get("elapsed_ms", 0)
+    type_conf = _safe_float(data.get("type_confidence"), 0.0)
+    importance = _safe_float(data.get("importance"), 0.5)
+    elapsed = _safe_int(data.get("elapsed_ms"), 0)
 
     console.print(
         f"  [cyan]id:[/] {mem_id}  "
@@ -95,22 +111,25 @@ def print_recall_event(event: dict) -> None:
     console.print()
     console.print(f"[bold cyan]━━━ RECALL[/] [dim]{ts}[/]")
 
-    # Query info
+    # Query info - defensive conversions
     query = data.get("query", "")
-    result_count = data.get("result_count", 0)
-    dedup = data.get("dedup_removed", 0)
-    elapsed = data.get("elapsed_ms", 0)
+    result_count = _safe_int(data.get("result_count"), 0)
+    dedup = _safe_int(data.get("dedup_removed"), 0)
+    elapsed = _safe_int(data.get("elapsed_ms"), 0)
 
     dedup_str = f" (dedup: {dedup})" if dedup else ""
     console.print(f'  [yellow]query:[/] "{query}"')
     console.print(f"  [yellow]results:[/] {result_count}{dedup_str}  [dim]{elapsed}ms[/]")
 
-    # Filters
+    # Filters - defensive check for tags_filter
     filters = []
     if data.get("has_time_filter"):
         filters.append("time")
-    if data.get("tags_filter"):
-        filters.append(f"tags({len(data['tags_filter'])})")
+    tags_filter = data.get("tags_filter")
+    if isinstance(tags_filter, (list, tuple, set)):
+        filters.append(f"tags({len(tags_filter)})")
+    elif tags_filter:
+        filters.append("tags(?)")
     if data.get("vector_search"):
         filters.append("vector")
     if filters:
@@ -136,16 +155,17 @@ def print_recall_event(event: dict) -> None:
             f"  [yellow]stats:[/] avg_len={avg_len} avg_tags={avg_tags} " f"score_range={score_str}"
         )
 
-    # Top results
+    # Top results - defensive field conversions
     summaries = data.get("result_summaries", [])
     if summaries:
         console.print("  [yellow]top results:[/]")
         for i, r in enumerate(summaries[:3], 1):
+            r_type = str(r.get("type", "?"))[:8]
+            r_score = _safe_float(r.get("score"), 0.0)
+            r_len = _safe_int(r.get("content_length"), 0)
+            r_tags = _safe_int(r.get("tags_count"), 0)
             console.print(
-                f"    #{i} [{r.get('type', '?'):8s}] "
-                f"score={r.get('score', 0):.2f} "
-                f"len={r.get('content_length', 0)} "
-                f"tags={r.get('tags_count', 0)}"
+                f"    #{i} [{r_type:8s}] " f"score={r_score:.2f} " f"len={r_len} " f"tags={r_tags}"
             )
 
 
