@@ -1142,9 +1142,9 @@ def require_api_token() -> None:
     if not API_TOKEN:
         return
 
-    # Allow unauthenticated health checks (supports blueprint endpoint names)
+    # Allow unauthenticated health checks and monitor page
     endpoint = request.endpoint or ""
-    if endpoint.endswith("health") or request.path == "/health":
+    if endpoint.endswith("health") or request.path in ("/health", "/monitor"):
         return
 
     token = _extract_api_token()

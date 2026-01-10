@@ -11,6 +11,8 @@
             --border: #30363d;
             --text: #c9d1d9;
             --muted: #8b949e;
+            --accent: #a371f7;
+            --accent-hover: #b687f8;
             --store: #238636;
             --recall: #1f6feb;
             --enrichment: #a371f7;
@@ -24,8 +26,119 @@
             background: var(--bg);
             color: var(--text);
             margin: 0;
-            padding: 20px;
+            padding: 0;
             line-height: 1.5;
+            min-height: 100vh;
+        }
+
+        /* Login Screen */
+        #login-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .login-logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: white;
+            margin-bottom: 24px;
+        }
+        .login-title {
+            font-size: 1.75rem;
+            font-weight: 600;
+            color: var(--accent);
+            margin: 0 0 8px;
+        }
+        .login-subtitle {
+            color: var(--muted);
+            margin: 0 0 32px;
+        }
+        .login-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .login-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1rem;
+            margin-bottom: 8px;
+        }
+        .login-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .login-input::placeholder {
+            color: var(--muted);
+        }
+        .login-hint {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin: 0 0 24px;
+        }
+        .login-btn {
+            width: 100%;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, var(--accent), #6366f1);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .login-btn:hover {
+            opacity: 0.9;
+        }
+        .login-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .login-error {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--error);
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: var(--error);
+            font-size: 0.9rem;
+            margin-bottom: 16px;
+            display: none;
+        }
+        .login-footer {
+            margin-top: 24px;
+            font-size: 0.85rem;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        /* Monitor Screen */
+        #monitor-screen {
+            display: none;
+            padding: 20px;
         }
         header {
             display: flex;
@@ -36,6 +149,11 @@
             border-bottom: 1px solid var(--border);
         }
         h1 { margin: 0; font-size: 1.5rem; }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
         #status {
             padding: 4px 12px;
             border-radius: 20px;
@@ -45,6 +163,20 @@
         #status.connected { background: var(--store); }
         #status.disconnected { background: var(--error); }
         #status.connecting { background: var(--consolidation); }
+        .disconnect-btn {
+            padding: 6px 12px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--muted);
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .disconnect-btn:hover {
+            border-color: var(--error);
+            color: var(--error);
+        }
 
         #events { display: flex; flex-direction: column; gap: 8px; }
 
@@ -177,50 +309,171 @@
     </style>
 </head>
 <body>
-    <header>
-        <div>
-            <h1>AutoMem Monitor</h1>
-            <div class="stats">
-                <span>Events: <span class="stat-value" id="event-count">0</span></span>
-                <span>Reconnects: <span class="stat-value" id="reconnect-count">0</span></span>
-            </div>
-        </div>
-        <div id="status" class="connecting">Connecting...</div>
-    </header>
+    <!-- Login Screen -->
+    <div id="login-screen">
+        <div class="login-logo">AM</div>
+        <h1 class="login-title">AutoMem Monitor</h1>
+        <p class="login-subtitle">Real-time memory service activity</p>
 
-    <div id="events">
-        <div id="empty">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            <p>Waiting for events...</p>
+        <div class="login-card">
+            <div id="login-error" class="login-error"></div>
+            <form id="login-form">
+                <label class="login-label">API Token</label>
+                <input type="password" id="token-input" class="login-input" placeholder="Enter your AutoMem API token" autocomplete="off">
+                <p class="login-hint">Your credentials are stored locally and never sent to third parties.</p>
+                <button type="submit" class="login-btn" id="connect-btn">Connect →</button>
+            </form>
+        </div>
+
+        <p class="login-footer">AutoMem Memory Service</p>
+    </div>
+
+    <!-- Monitor Screen -->
+    <div id="monitor-screen">
+        <header>
+            <div>
+                <h1>AutoMem Monitor</h1>
+                <div class="stats">
+                    <span>Events: <span class="stat-value" id="event-count">0</span></span>
+                    <span>Reconnects: <span class="stat-value" id="reconnect-count">0</span></span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div id="status" class="connecting">Connecting...</div>
+                <button class="disconnect-btn" id="disconnect-btn">Disconnect</button>
+            </div>
+        </header>
+
+        <div id="events">
+            <div id="empty">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <p>Waiting for events...</p>
+            </div>
         </div>
     </div>
 
     <script>
-        const params = new URLSearchParams(window.location.search);
-        let token = params.get('token') || localStorage.getItem('automem_token');
-
-        if (!token) {
-            token = prompt('Enter your AutoMem API token:');
-            if (!token) {
-                document.getElementById('empty').innerHTML = '<p>No token provided. Refresh to try again.</p>';
-                throw new Error('No token');
-            }
-        }
-        localStorage.setItem('automem_token', token);
-
-        // Remove token from URL for security
-        if (params.has('token')) {
-            window.history.replaceState({}, '', window.location.pathname);
-        }
-
+        // State
+        let eventSource = null;
         let eventCount = 0;
         let reconnectCount = 0;
-        const eventsContainer = document.getElementById('events');
+        let currentToken = null;
+
+        // Elements
+        const loginScreen = document.getElementById('login-screen');
+        const monitorScreen = document.getElementById('monitor-screen');
+        const loginForm = document.getElementById('login-form');
+        const tokenInput = document.getElementById('token-input');
+        const loginError = document.getElementById('login-error');
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
         const statusEl = document.getElementById('status');
+        const eventsContainer = document.getElementById('events');
         const eventCountEl = document.getElementById('event-count');
         const reconnectCountEl = document.getElementById('reconnect-count');
+
+        // Check for saved token on load
+        const savedToken = localStorage.getItem('automem_token');
+        if (savedToken) {
+            tryConnect(savedToken);
+        }
+
+        // Login form submit
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const token = tokenInput.value.trim();
+            if (!token) {
+                showError('Please enter your API token');
+                return;
+            }
+            tryConnect(token);
+        });
+
+        // Disconnect button
+        disconnectBtn.addEventListener('click', () => {
+            disconnect();
+            showLoginScreen();
+        });
+
+        function showLoginScreen(error = null) {
+            loginScreen.style.display = 'flex';
+            monitorScreen.style.display = 'none';
+            if (error) {
+                showError(error);
+            } else {
+                loginError.style.display = 'none';
+            }
+            connectBtn.disabled = false;
+            connectBtn.textContent = 'Connect →';
+        }
+
+        function showMonitorScreen() {
+            loginScreen.style.display = 'none';
+            monitorScreen.style.display = 'block';
+        }
+
+        function showError(message) {
+            loginError.textContent = message;
+            loginError.style.display = 'block';
+        }
+
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            localStorage.removeItem('automem_token');
+            currentToken = null;
+        }
+
+        function tryConnect(token) {
+            connectBtn.disabled = true;
+            connectBtn.textContent = 'Connecting...';
+            loginError.style.display = 'none';
+
+            currentToken = token;
+            const baseUrl = window.location.origin;
+
+            eventSource = new EventSource(`${baseUrl}/stream?token=${token}`);
+
+            // Track if we've successfully connected at least once
+            let hasConnected = false;
+
+            eventSource.onopen = () => {
+                hasConnected = true;
+                // Save token only after successful connection
+                localStorage.setItem('automem_token', token);
+                showMonitorScreen();
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'connected';
+            };
+
+            eventSource.onmessage = (e) => {
+                try {
+                    const event = JSON.parse(e.data);
+                    addEvent(event);
+                } catch (err) {
+                    console.error('Failed to parse event:', e.data);
+                }
+            };
+
+            eventSource.onerror = () => {
+                if (!hasConnected) {
+                    // Never connected - likely auth failure
+                    eventSource.close();
+                    eventSource = null;
+                    showLoginScreen('Invalid token or connection failed');
+                } else {
+                    // Was connected, now reconnecting
+                    statusEl.textContent = 'Reconnecting...';
+                    statusEl.className = 'disconnected';
+                    reconnectCount++;
+                    reconnectCountEl.textContent = reconnectCount;
+                }
+            };
+        }
 
         function formatTime(ts) {
             if (!ts) return '';
@@ -459,37 +712,6 @@
                 eventsContainer.lastChild.remove();
             }
         }
-
-        function connect() {
-            statusEl.textContent = 'Connecting...';
-            statusEl.className = 'connecting';
-
-            const baseUrl = window.location.origin;
-            const es = new EventSource(`${baseUrl}/stream?token=${token}`);
-
-            es.onopen = () => {
-                statusEl.textContent = 'Connected';
-                statusEl.className = 'connected';
-            };
-
-            es.onmessage = (e) => {
-                try {
-                    const event = JSON.parse(e.data);
-                    addEvent(event);
-                } catch (err) {
-                    console.error('Failed to parse event:', e.data);
-                }
-            };
-
-            es.onerror = () => {
-                statusEl.textContent = 'Reconnecting...';
-                statusEl.className = 'disconnected';
-                reconnectCount++;
-                reconnectCountEl.textContent = reconnectCount;
-            };
-        }
-
-        connect();
     </script>
 </body>
 </html>
