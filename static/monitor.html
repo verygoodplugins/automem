@@ -436,7 +436,7 @@
             currentToken = token;
             const baseUrl = window.location.origin;
 
-            eventSource = new EventSource(`${baseUrl}/stream?token=${token}`);
+            eventSource = new EventSource(`${baseUrl}/stream?api_key=${token}`);
 
             // Track if we've successfully connected at least once
             let hasConnected = false;
