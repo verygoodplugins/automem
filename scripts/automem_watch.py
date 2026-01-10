@@ -360,9 +360,20 @@ def stream_events(url: str, token: str) -> None:
     while True:
         try:
             # Explicit timeout: finite connect/write, infinite read for SSE
-            timeout = httpx.Timeout(connect=10.0, read=None, write=10.0)
+            timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
             with httpx.Client(timeout=timeout) as client:
                 with client.stream("GET", f"{url}/stream", headers=headers) as resp:
+                    # Differentiate auth errors from transient errors
+                    if resp.status_code in (401, 403):
+                        console.print(f"[red]Authentication failed (HTTP {resp.status_code})[/]")
+                        console.print("[dim]Check your API token[/]")
+                        break
+                    if resp.status_code >= 500:
+                        raise httpx.HTTPStatusError(
+                            f"Server error {resp.status_code}",
+                            request=resp.request,
+                            response=resp,
+                        )
                     if resp.status_code != 200:
                         console.print(f"[red]HTTP {resp.status_code}[/]")
                         break
@@ -372,21 +383,33 @@ def stream_events(url: str, token: str) -> None:
                     else:
                         console.print("[green]Connected[/]")
 
+                    # SSE multi-line data buffer (per RFC 8895)
+                    data_buffer: list[str] = []
+
                     for line in resp.iter_lines():
-                        if line.startswith("data: "):
-                            try:
-                                event = json.loads(line[6:])
-                                process_event(event)
-                            except json.JSONDecodeError:
-                                pass
+                        if line.startswith("data:"):
+                            # Accumulate data lines (strip "data:" or "data: " prefix)
+                            payload = line[5:].lstrip(" ") if len(line) > 5 else ""
+                            data_buffer.append(payload)
+                        elif line == "":
+                            # Empty line = end of event, dispatch buffered data
+                            if data_buffer:
+                                full_data = "\n".join(data_buffer)
+                                data_buffer.clear()
+                                try:
+                                    event = json.loads(full_data)
+                                    process_event(event)
+                                except json.JSONDecodeError:
+                                    pass
                         elif line.startswith(":"):
-                            # Keepalive - ignore silently
+                            # Keepalive comment - ignore silently
                             pass
 
         except KeyboardInterrupt:
             console.print("\n[bold]Disconnected.[/]")
             break
-        except Exception as e:
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            # Network/transient errors - retry
             reconnect_count += 1
             console.print(f"[red]Connection error:[/] {e}")
             console.print(f"[dim]Reconnecting in 5s... (attempt #{reconnect_count})[/]")
