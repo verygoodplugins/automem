@@ -1,0 +1,122 @@
+name: Auto-Fix with Codex
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Custom instructions (optional)'
+        required: false
+        type: string
+      branch:
+        description: 'Branch to fix (defaults to current)'
+        required: false
+        type: string
+
+jobs:
+  auto-fix:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+
+    steps:
+      - name: Determine branch
+        id: branch
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            BRANCH="${{ inputs.branch || github.ref_name }}"
+          else
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+          fi
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "🎯 Target branch: $BRANCH"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.branch.outputs.branch }}
+          fetch-depth: 0
+
+      - name: Setup Codex Auth
+        run: |
+          mkdir -p ~/.codex
+          echo '${{ secrets.CODEX_AUTH_JSON }}' > ~/.codex/auth.json
+
+      - name: Gather failure context
+        id: context
+        if: github.event_name == 'workflow_run'
+        run: |
+          echo "📋 Fetching CI failure logs..."
+          gh run view ${{ github.event.workflow_run.id }} --log-failed > /tmp/ci-failures.log 2>&1 || true
+
+          echo "📋 Fetching CodeRabbit comments..."
+          PR_NUMBER=$(gh pr list --head "${{ steps.branch.outputs.branch }}" --json number -q '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr view "$PR_NUMBER" --json comments -q '.comments[] | select(.author.login == "coderabbitai") | .body' > /tmp/coderabbit.txt 2>&1 || true
+          fi
+
+          echo "# CI Failure Context" > /tmp/context.md
+          if [ -s /tmp/ci-failures.log ]; then
+            echo "## Test Failures" >> /tmp/context.md
+            echo '```' >> /tmp/context.md
+            tail -200 /tmp/ci-failures.log >> /tmp/context.md
+            echo '```' >> /tmp/context.md
+          fi
+          if [ -s /tmp/coderabbit.txt ]; then
+            echo "## CodeRabbit Comments" >> /tmp/context.md
+            cat /tmp/coderabbit.txt >> /tmp/context.md
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare prompt
+        run: |
+          if [ -n "${{ inputs.prompt }}" ]; then
+            echo "${{ inputs.prompt }}" > /tmp/prompt.md
+          elif [ -f ".github/codex/prompts/fix-ci.md" ]; then
+            cat .github/codex/prompts/fix-ci.md > /tmp/prompt.md
+          else
+            cat > /tmp/prompt.md << 'PROMPT'
+          Fix the CI failures in this repository.
+          Make minimal, surgical changes only.
+          PROMPT
+          fi
+
+          if [ -f /tmp/context.md ]; then
+            echo "" >> /tmp/prompt.md
+            echo "---" >> /tmp/prompt.md
+            cat /tmp/context.md >> /tmp/prompt.md
+          fi
+
+      - name: Run Codex
+        uses: openai/codex-action@v1
+        with:
+          prompt-file: /tmp/prompt.md
+          codex-args: '["--full-auto"]'
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            git diff --stat
+          fi
+
+      - name: Commit and push
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "codex[bot]"
+          git config user.email "codex[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "fix: auto-fix CI failures [skip ci]"
+          git push
