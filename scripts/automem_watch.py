@@ -53,15 +53,21 @@ def print_store_event(event: dict) -> None:
         f"[dim]{elapsed}ms[/]"
     )
 
-    # Tags
+    # Tags - coerce to strings for safety
     tags = data.get("tags", [])
     if tags:
-        console.print(f"  [cyan]tags:[/] {', '.join(tags)}")
+        safe_tags = [str(t) for t in tags]
+        console.print(f"  [cyan]tags:[/] {', '.join(safe_tags)}")
 
-    # Metadata
+    # Metadata - truncate large values
     metadata = data.get("metadata", {})
     if metadata:
-        meta_preview = ", ".join(f"{k}={v}" for k, v in list(metadata.items())[:5])
+
+        def safe_val(v: object, max_len: int = 50) -> str:
+            s = str(v) if isinstance(v, (str, int, float, bool)) else repr(v)
+            return s[:max_len] + "..." if len(s) > max_len else s
+
+        meta_preview = ", ".join(f"{k}={safe_val(v)}" for k, v in list(metadata.items())[:5])
         if len(metadata) > 5:
             meta_preview += f", ... (+{len(metadata) - 5} more)"
         console.print(f"  [cyan]metadata:[/] {{{meta_preview}}}")
@@ -110,15 +116,24 @@ def print_recall_event(event: dict) -> None:
     if filters:
         console.print(f"  [yellow]filters:[/] {', '.join(filters)}")
 
-    # Stats
+    # Stats - defensive score_range handling
     stats = data.get("stats", {})
     if stats:
         avg_len = stats.get("avg_length", 0)
         avg_tags = stats.get("avg_tags", 0)
-        score_range = stats.get("score_range", [0, 0])
+        score_range = stats.get("score_range", [])
+
+        # Safely format score range
+        try:
+            if len(score_range) >= 2:
+                score_str = f"{float(score_range[0]):.2f}-{float(score_range[1]):.2f}"
+            else:
+                score_str = "n/a"
+        except (TypeError, ValueError):
+            score_str = "n/a"
+
         console.print(
-            f"  [yellow]stats:[/] avg_len={avg_len} avg_tags={avg_tags} "
-            f"score_range={score_range[0]:.2f}-{score_range[1]:.2f}"
+            f"  [yellow]stats:[/] avg_len={avg_len} avg_tags={avg_tags} " f"score_range={score_str}"
         )
 
     # Top results
@@ -311,7 +326,9 @@ def stream_events(url: str, token: str) -> None:
 
     while True:
         try:
-            with httpx.Client(timeout=None) as client:
+            # Explicit timeout: finite connect/write, infinite read for SSE
+            timeout = httpx.Timeout(connect=10.0, read=None, write=10.0)
+            with httpx.Client(timeout=timeout) as client:
                 with client.stream("GET", f"{url}/stream", headers=headers) as resp:
                     if resp.status_code != 200:
                         console.print(f"[red]HTTP {resp.status_code}[/]")
