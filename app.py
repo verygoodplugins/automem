@@ -31,6 +31,11 @@ from flask import Blueprint, Flask, abort, jsonify, request
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
+try:
+    from qdrant_client.http.exceptions import UnexpectedResponse
+except ImportError:  # Allow tests to import without full qdrant client installed
+    UnexpectedResponse = Exception  # type: ignore[misc,assignment]
+
 try:  # Allow tests to import without full qdrant client installed
     from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
 except Exception:  # pragma: no cover - degraded import path
@@ -780,6 +785,13 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             return None
 
         try:
+            # Use appropriate token parameter based on model family
+            if CLASSIFICATION_MODEL.startswith("o"):  # o-series (o1, o3, etc.)
+                token_param = {"max_completion_tokens": 50}
+            elif CLASSIFICATION_MODEL.startswith("gpt-5"):  # gpt-5 family
+                token_param = {"max_output_tokens": 50}
+            else:  # gpt-4o-mini, gpt-4, etc.
+                token_param = {"max_tokens": 50}
             response = state.openai_client.chat.completions.create(
                 model=CLASSIFICATION_MODEL,
                 messages=[
@@ -788,7 +800,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
-                max_tokens=50,
+                **token_param,
             )
 
             result = json.loads(response.choices[0].message.content)
@@ -2183,6 +2195,14 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
                     "metadata": metadata,
                 },
             )
+        except UnexpectedResponse as exc:
+            # 404 means embedding upload hasn't completed yet (race condition)
+            if exc.status_code == 404:
+                logger.debug(
+                    "Qdrant payload sync skipped - point not yet uploaded: %s", memory_id[:8]
+                )
+            else:
+                logger.warning("Qdrant payload sync failed (%d): %s", exc.status_code, memory_id)
         except Exception:
             logger.exception("Failed to sync Qdrant payload for enriched memory %s", memory_id)
 
