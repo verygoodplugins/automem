@@ -8,12 +8,14 @@ Express service that bridges the AutoMem HTTP API to MCP over SSE and now expose
 - `GET /health`: Basic health probe.
 
 ## Env Vars
-- `AUTOMEM_ENDPOINT` (default `http://127.0.0.1:8001`) – AutoMem HTTP base URL.
+- `AUTOMEM_API_URL` (default `http://127.0.0.1:8001`) – AutoMem HTTP base URL.
 - `AUTOMEM_API_TOKEN` – Bearer token for AutoMem HTTP calls (required for Alexa and MCP).
 - `PORT` (optional) – Listener port (default 8080).
 
+> **Note**: `AUTOMEM_ENDPOINT` is still supported as a legacy fallback but `AUTOMEM_API_URL` is preferred.
+
 Overrides for testing (Alexa endpoint):
-- `?endpoint=` query param or `endpoint` field in the POST body will override `AUTOMEM_ENDPOINT`.
+- `?endpoint=` query param or `endpoint` field in the POST body will override `AUTOMEM_API_URL`.
 - `api_key` query param or `Authorization: Bearer ...` / `X-API-Key` header will override `AUTOMEM_API_TOKEN`.
 
 ## Alexa Notes

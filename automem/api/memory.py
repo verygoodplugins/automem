@@ -7,6 +7,15 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
 
+from automem.config import (
+    CLASSIFICATION_MODEL,
+    MEMORY_AUTO_SUMMARIZE,
+    MEMORY_CONTENT_HARD_LIMIT,
+    MEMORY_CONTENT_SOFT_LIMIT,
+    MEMORY_SUMMARY_TARGET_LENGTH,
+)
+from automem.utils.text import should_summarize_content, summarize_content
+
 
 def create_memory_blueprint(
     store_memory: Callable[[], Any],
@@ -64,6 +73,7 @@ def create_memory_blueprint_full(
     state: Any,
     logger: Any,
     on_access: Optional[Callable[[List[str]], None]] = None,
+    get_openai_client: Optional[Callable[[], Any]] = None,
 ) -> Blueprint:
     bp = Blueprint("memory", __name__)
 
@@ -77,6 +87,47 @@ def create_memory_blueprint_full(
         content = (payload.get("content") or "").strip()
         if not content:
             abort(400, description="'content' is required")
+
+        # Content size governance: check if summarization or rejection is needed
+        original_content: Optional[str] = None
+        content_action = should_summarize_content(
+            content, MEMORY_CONTENT_SOFT_LIMIT, MEMORY_CONTENT_HARD_LIMIT
+        )
+
+        if content_action == "reject":
+            abort(
+                400,
+                description=f"Content exceeds maximum length of {MEMORY_CONTENT_HARD_LIMIT} characters "
+                f"({len(content)} provided). Please split into smaller memories or summarize.",
+            )
+
+        if content_action == "summarize" and MEMORY_AUTO_SUMMARIZE:
+            openai_client = get_openai_client() if get_openai_client else None
+            if openai_client:
+                summary = summarize_content(
+                    content,
+                    openai_client,
+                    CLASSIFICATION_MODEL,
+                    MEMORY_SUMMARY_TARGET_LENGTH,
+                )
+                if summary:
+                    original_content = content
+                    content = summary
+                    logger.info(
+                        "Auto-summarized oversized memory: %d -> %d chars",
+                        len(original_content),
+                        len(content),
+                    )
+                else:
+                    logger.warning(
+                        "Auto-summarization failed for %d char content, storing as-is",
+                        len(content),
+                    )
+            else:
+                logger.warning(
+                    "Content exceeds soft limit (%d chars) but OpenAI client unavailable for summarization",
+                    len(content),
+                )
 
         tags = normalize_tags(payload.get("tags"))
         tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
@@ -92,6 +143,13 @@ def create_memory_blueprint_full(
             metadata = metadata_raw
         else:
             abort(400, description="'metadata' must be an object")
+
+        # If content was summarized, preserve original in metadata for audit trail
+        if original_content:
+            metadata["original_content"] = original_content
+            metadata["was_summarized"] = True
+            metadata["original_length"] = len(original_content)
+
         metadata_json = json.dumps(metadata, default=str)
 
         # Accept explicit type/confidence or classify automatically
@@ -267,6 +325,13 @@ def create_memory_blueprint_full(
             "last_accessed": last_accessed,
             "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
         }
+
+        # Include summarization info in response
+        if original_content:
+            response["summarized"] = True
+            response["original_length"] = len(original_content)
+            response["summarized_length"] = len(content)
+
         logger.info(
             "memory_stored",
             extra={

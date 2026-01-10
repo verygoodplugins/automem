@@ -32,6 +32,11 @@ from flask_cors import CORS
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
+try:
+    from qdrant_client.http.exceptions import UnexpectedResponse
+except ImportError:  # Allow tests to import without full qdrant client installed
+    UnexpectedResponse = Exception  # type: ignore[misc,assignment]
+
 try:  # Allow tests to import without full qdrant client installed
     from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
 except Exception:  # pragma: no cover - degraded import path
@@ -65,6 +70,9 @@ try:
     from openai import OpenAI  # type: ignore
 except ImportError:
     OpenAI = None  # type: ignore
+
+# SSE streaming for real-time observability
+from automem.api.stream import create_stream_blueprint, emit_event
 
 # Import only the interface; import backends lazily in init_embedding_provider()
 from automem.embedding.provider import EmbeddingProvider
@@ -125,14 +133,19 @@ from automem.config import (
     API_TOKEN,
     CLASSIFICATION_MODEL,
     COLLECTION_NAME,
+    CONSOLIDATION_ARCHIVE_THRESHOLD,
     CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
     CONSOLIDATION_CONTROL_LABEL,
     CONSOLIDATION_CONTROL_NODE_ID,
     CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
     CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
     CONSOLIDATION_DECAY_INTERVAL_SECONDS,
+    CONSOLIDATION_DELETE_THRESHOLD,
     CONSOLIDATION_FORGET_INTERVAL_SECONDS,
+    CONSOLIDATION_GRACE_PERIOD_DAYS,
     CONSOLIDATION_HISTORY_LIMIT,
+    CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+    CONSOLIDATION_PROTECTED_TYPES,
     CONSOLIDATION_RUN_LABEL,
     CONSOLIDATION_TASK_FIELDS,
     CONSOLIDATION_TICK_SECONDS,
@@ -356,6 +369,18 @@ def _graph_trending_results(
 ) -> List[Dict[str, Any]]:
     """Return high-importance memories when no specific query is supplied."""
     try:
+        sort_param = (
+            ((request.args.get("sort") or request.args.get("order_by") or "score") or "")
+            .strip()
+            .lower()
+        )
+        order_by = {
+            "time_asc": "m.timestamp ASC, m.importance DESC",
+            "time_desc": "m.timestamp DESC, m.importance DESC",
+            "updated_asc": "coalesce(m.updated_at, m.timestamp) ASC, m.importance DESC",
+            "updated_desc": "coalesce(m.updated_at, m.timestamp) DESC, m.importance DESC",
+        }.get(sort_param, "m.importance DESC, m.timestamp DESC")
+
         where_clauses = ["coalesce(m.archived, false) = false"]
         params: Dict[str, Any] = {"limit": limit}
         if start_time:
@@ -374,7 +399,7 @@ def _graph_trending_results(
             MATCH (m:Memory)
             WHERE {' AND '.join(where_clauses)}
             RETURN m
-            ORDER BY m.importance DESC, m.timestamp DESC
+            ORDER BY {order_by}
             LIMIT $limit
         """
         result = graph.query(query, params)
@@ -767,6 +792,13 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             return None
 
         try:
+            # Use appropriate token parameter based on model family
+            if CLASSIFICATION_MODEL.startswith("o"):  # o-series (o1, o3, etc.)
+                token_param = {"max_completion_tokens": 50}
+            elif CLASSIFICATION_MODEL.startswith("gpt-5"):  # gpt-5 family
+                token_param = {"max_output_tokens": 50}
+            else:  # gpt-4o-mini, gpt-4, etc.
+                token_param = {"max_tokens": 50}
             response = state.openai_client.chat.completions.create(
                 model=CLASSIFICATION_MODEL,
                 messages=[
@@ -775,7 +807,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.3,
-                max_tokens=50,
+                **token_param,
             )
 
             result = json.loads(response.choices[0].message.content)
@@ -1464,13 +1496,19 @@ def update_last_accessed(memory_ids: List[str]) -> None:
 
 def _load_control_record(graph: Any) -> Dict[str, Any]:
     """Fetch or create the consolidation control node."""
+    bootstrap_timestamp = utc_now()
+    bootstrap_fields = sorted(set(CONSOLIDATION_TASK_FIELDS.values()))
+    bootstrap_set_clause = ",\n                ".join(
+        f"c.{field} = coalesce(c.{field}, $now)" for field in bootstrap_fields
+    )
     try:
         result = graph.query(
             f"""
             MERGE (c:{CONSOLIDATION_CONTROL_LABEL} {{id: $id}})
+            SET {bootstrap_set_clause}
             RETURN c
             """,
-            {"id": CONSOLIDATION_CONTROL_NODE_ID},
+            {"id": CONSOLIDATION_CONTROL_NODE_ID, "now": bootstrap_timestamp},
         )
     except Exception:
         logger.exception("Failed to load consolidation control record")
@@ -1608,7 +1646,7 @@ def _persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:
 
 def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
     vector_store = get_qdrant_client()
-    consolidator = MemoryConsolidator(graph, vector_store)
+    consolidator = _build_consolidator_from_config(graph, vector_store)
     scheduler = ConsolidationScheduler(consolidator)
     _apply_scheduler_overrides(scheduler)
 
@@ -1622,6 +1660,18 @@ def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
     return scheduler
 
 
+def _build_consolidator_from_config(graph: Any, vector_store: Any) -> MemoryConsolidator:
+    return MemoryConsolidator(
+        graph,
+        vector_store,
+        delete_threshold=CONSOLIDATION_DELETE_THRESHOLD,
+        archive_threshold=CONSOLIDATION_ARCHIVE_THRESHOLD,
+        grace_period_days=CONSOLIDATION_GRACE_PERIOD_DAYS,
+        importance_protection_threshold=CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+        protected_types=set(CONSOLIDATION_PROTECTED_TYPES),
+    )
+
+
 def _run_consolidation_tick() -> None:
     graph = get_memory_graph()
     if graph is None:
@@ -1632,11 +1682,44 @@ def _run_consolidation_tick() -> None:
         return
 
     try:
+        tick_start = time.perf_counter()
         results = scheduler.run_scheduled_tasks(
             decay_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD
         )
         for result in results:
             _persist_consolidation_run(graph, result)
+
+            # Emit SSE event for real-time monitoring
+            task_type = result.get("mode", "unknown")
+            steps = result.get("steps", {})
+            affected_count = 0
+
+            # Count affected memories from each step
+            if "decay" in steps:
+                affected_count += steps["decay"].get("updated", 0)
+            if "creative" in steps:
+                affected_count += steps["creative"].get("created", 0)
+            if "cluster" in steps:
+                affected_count += steps["cluster"].get("meta_memories_created", 0)
+            if "forget" in steps:
+                affected_count += steps["forget"].get("archived", 0)
+                affected_count += steps["forget"].get("deleted", 0)
+
+            elapsed_ms = int((time.perf_counter() - tick_start) * 1000)
+            next_runs = scheduler.get_next_runs()
+
+            emit_event(
+                "consolidation.run",
+                {
+                    "task_type": task_type,
+                    "affected_count": affected_count,
+                    "elapsed_ms": elapsed_ms,
+                    "success": result.get("success", False),
+                    "next_scheduled": next_runs.get(task_type, "unknown"),
+                    "steps": list(steps.keys()),
+                },
+                utc_now,
+            )
     except Exception:
         logger.exception("Consolidation scheduler tick failed")
 
@@ -1687,13 +1770,46 @@ def enrichment_worker() -> None:
                 state.enrichment_pending.discard(job.memory_id)
                 state.enrichment_inflight.add(job.memory_id)
 
+            enrich_start = time.perf_counter()
+            emit_event(
+                "enrichment.start",
+                {
+                    "memory_id": job.memory_id,
+                    "attempt": job.attempt + 1,
+                },
+                utc_now,
+            )
+
             try:
                 processed = enrich_memory(job.memory_id, forced=job.forced)
                 state.enrichment_stats.record_success(job.memory_id)
+                elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
+                emit_event(
+                    "enrichment.complete",
+                    {
+                        "memory_id": job.memory_id,
+                        "success": True,
+                        "elapsed_ms": elapsed_ms,
+                        "skipped": not processed,
+                    },
+                    utc_now,
+                )
                 if not processed:
                     logger.debug("Enrichment skipped for %s (already processed)", job.memory_id)
             except Exception as exc:  # pragma: no cover - background thread
                 state.enrichment_stats.record_failure(str(exc))
+                elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
+                emit_event(
+                    "enrichment.failed",
+                    {
+                        "memory_id": job.memory_id,
+                        "error": str(exc)[:100],
+                        "attempt": job.attempt + 1,
+                        "elapsed_ms": elapsed_ms,
+                        "will_retry": job.attempt + 1 < ENRICHMENT_MAX_ATTEMPTS,
+                    },
+                    utc_now,
+                )
                 logger.exception("Failed to enrich memory %s", job.memory_id)
                 if job.attempt + 1 < ENRICHMENT_MAX_ATTEMPTS:
                     time.sleep(ENRICHMENT_FAILURE_BACKOFF_SECONDS)
@@ -2032,6 +2148,8 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     if entity_tags:
         tags = list(dict.fromkeys(tags + sorted(entity_tags)))
 
+    tag_prefixes = _compute_tag_prefixes(tags)
+
     temporal_links = find_temporal_relationships(graph, memory_id)
     pattern_info = detect_patterns(graph, memory_id, content)
     semantic_neighbors = link_semantic_neighbors(graph, memory_id)
@@ -2062,6 +2180,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         "id": memory_id,
         "metadata": json.dumps(metadata, default=str),
         "tags": tags,
+        "tag_prefixes": tag_prefixes,
         "summary": summary,
         "enriched_at": utc_now(),
     }
@@ -2071,6 +2190,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         MATCH (m:Memory {id: $id})
         SET m.metadata = $metadata,
             m.tags = $tags,
+            m.tag_prefixes = $tag_prefixes,
             m.summary = $summary,
             m.enriched = true,
             m.enriched_at = $enriched_at,
@@ -2078,6 +2198,29 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         """,
         update_payload,
     )
+
+    qdrant_client = get_qdrant_client()
+    if qdrant_client is not None:
+        try:
+            qdrant_client.set_payload(
+                collection_name=COLLECTION_NAME,
+                points=[memory_id],
+                payload={
+                    "tags": tags,
+                    "tag_prefixes": tag_prefixes,
+                    "metadata": metadata,
+                },
+            )
+        except UnexpectedResponse as exc:
+            # 404 means embedding upload hasn't completed yet (race condition)
+            if exc.status_code == 404:
+                logger.debug(
+                    "Qdrant payload sync skipped - point not yet uploaded: %s", memory_id[:8]
+                )
+            else:
+                logger.warning("Qdrant payload sync failed (%d): %s", exc.status_code, memory_id)
+        except Exception:
+            logger.exception("Failed to sync Qdrant payload for enriched memory %s", memory_id)
 
     logger.debug(
         "Enriched memory %s (temporal=%s, patterns=%s, semantic=%s)",
@@ -2559,6 +2702,21 @@ def store_memory() -> Any:
         },
     )
 
+    # Emit SSE event for real-time monitoring
+    emit_event(
+        "memory.store",
+        {
+            "id": memory_id,
+            "content_preview": content[:100] + "..." if len(content) > 100 else content,
+            "type": memory_type,
+            "importance": importance,
+            "tags": tags[:5],
+            "size_bytes": len(content),
+            "elapsed_ms": int(response["query_time_ms"]),
+        },
+        utc_now,
+    )
+
     return jsonify(response), 201
 
 
@@ -2808,7 +2966,7 @@ def recall_memories() -> Any:
     # Delegate implementation to recall blueprint module (kept for backward-compatibility)
     from automem.api.recall import handle_recall  # local import to avoid cycles
 
-    return handle_recall(
+    response = handle_recall(
         get_memory_graph,
         get_qdrant_client,
         _normalize_tag_list,
@@ -2826,6 +2984,32 @@ def recall_memories() -> Any:
         relation_limit=RECALL_RELATION_LIMIT,
         expansion_limit_default=RECALL_EXPANSION_LIMIT,
     )
+
+    # Emit SSE event for real-time monitoring
+    elapsed_ms = int((time.perf_counter() - query_start) * 1000)
+    result_count = 0
+    try:
+        # Response is either a tuple (response, status) or Response object
+        resp_data = response[0] if isinstance(response, tuple) else response
+        if hasattr(resp_data, "get_json"):
+            data = resp_data.get_json(silent=True) or {}
+            result_count = len(data.get("memories", []))
+    except Exception as e:
+        logger.debug("Failed to parse response for result_count", exc_info=e)
+
+    emit_event(
+        "memory.recall",
+        {
+            "query": query_text[:50] if query_text else "(no query)",
+            "limit": limit,
+            "result_count": result_count,
+            "elapsed_ms": elapsed_ms,
+            "tags": tag_filters[:3] if tag_filters else [],
+        },
+        utc_now,
+    )
+
+    return response
 
 
 @memory_bp.route("/associate", methods=["POST"])
@@ -3508,6 +3692,7 @@ memory_bp = create_memory_blueprint_full(
     state,
     logger,
     update_last_accessed,
+    get_openai_client,
 )
 
 admin_bp = create_admin_blueprint_full(
@@ -3527,7 +3712,7 @@ admin_bp = create_admin_blueprint_full(
 consolidation_bp = create_consolidation_blueprint_full(
     get_memory_graph,
     get_qdrant_client,
-    MemoryConsolidator,
+    _build_consolidator_from_config,
     _persist_consolidation_run,
     _build_scheduler_from_graph,
     _load_recent_runs,
@@ -3545,6 +3730,10 @@ graph_bp = create_graph_blueprint(
     logger,
 )
 
+stream_bp = create_stream_blueprint(
+    require_api_token=require_api_token,
+)
+
 app.register_blueprint(health_bp)
 app.register_blueprint(enrichment_bp)
 app.register_blueprint(memory_bp)
@@ -3552,6 +3741,7 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
 app.register_blueprint(graph_bp)
+app.register_blueprint(stream_bp)
 
 # Register optional viewer blueprint (serves the Graph Viewer SPA)
 if is_viewer_enabled():

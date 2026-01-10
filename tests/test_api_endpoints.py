@@ -135,7 +135,7 @@ class MockGraph:
             return SimpleNamespace(result_set=[])
 
         return_m_line = "RETURN m\n" in query or "RETURN m\r" in query
-        if "MATCH (m:Memory)" in query and return_m_line and "ORDER BY m.importance DESC" in query:
+        if "MATCH (m:Memory)" in query and return_m_line and "ORDER BY" in query:
             results = list(self.memories.values())
             tag_filters = [tag.lower() for tag in params.get("tag_filters", [])]
             if tag_filters:
@@ -152,13 +152,39 @@ class MockGraph:
                     ):
                         filtered.append(mem)
                 results = filtered
-            results.sort(
-                key=lambda mem: (
-                    float(mem.get("importance") or 0.0),
-                    str(mem.get("timestamp") or ""),
-                ),
-                reverse=True,
-            )
+
+            def _timestamp_key(mem: dict) -> str:
+                if "coalesce(m.updated_at, m.timestamp)" in query:
+                    return str(mem.get("updated_at") or mem.get("timestamp") or "")
+                return str(mem.get("timestamp") or "")
+
+            def _importance(mem: dict) -> float:
+                try:
+                    return float(mem.get("importance") or 0.0)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            if "ORDER BY m.timestamp ASC" in query:
+                results.sort(
+                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)), reverse=False
+                )
+            elif "ORDER BY m.timestamp DESC" in query:
+                results.sort(key=lambda mem: (_timestamp_key(mem), _importance(mem)), reverse=True)
+            elif "ORDER BY coalesce(m.updated_at, m.timestamp) ASC" in query:
+                results.sort(
+                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)), reverse=False
+                )
+            elif "ORDER BY coalesce(m.updated_at, m.timestamp) DESC" in query:
+                results.sort(key=lambda mem: (_timestamp_key(mem), _importance(mem)), reverse=True)
+            else:
+                results.sort(
+                    key=lambda mem: (
+                        _importance(mem),
+                        _timestamp_key(mem),
+                    ),
+                    reverse=True,
+                )
+
             limit = params.get("limit", len(results))
             limited = results[:limit]
             return SimpleNamespace(

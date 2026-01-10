@@ -8,10 +8,66 @@ Complete guide to deploying AutoMem on Railway with persistent storage, backups,
 
 This template automatically sets up:
 
-- ✅ AutoMem Flask API with health checks
-- ✅ FalkorDB with **persistent volumes** and password protection
-- ✅ Automatic secret generation
-- ✅ Service networking configured
+- ✅ **memory-service** — AutoMem Flask API with health checks
+- ✅ **falkordb** — Graph database with **persistent volumes** and password protection
+- ✅ **mcp-sse-server** — MCP bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
+- ✅ Automatic secret generation and service networking
+
+```mermaid
+flowchart TB
+    subgraph internet [Public Internet]
+        Users[AI Clients<br/>Direct API]
+        CloudAI[Cloud AI Platforms<br/>ChatGPT, Claude.ai, ElevenLabs]
+        Local[Local Tools<br/>Cursor, Claude Desktop]
+    end
+
+    subgraph railway [Railway Project]
+        subgraph mcpbridge [MCP Bridge Service]
+            MCPServer[MCP Bridge<br/>Streamable HTTP<br/>Port 8080]
+            MCPDomain[Public Domain<br/>mcp.up.railway.app]
+        end
+
+        subgraph api [memory-service Service]
+            FlaskAPI[Flask API<br/>Port 8001]
+            APIDomain[Public Domain<br/>automem.up.railway.app]
+
+            Enrichment[Enrichment Pipeline]
+            Consolidation[Consolidation Engine]
+        end
+
+        subgraph db [falkordb Service]
+            FalkorDB[(FalkorDB<br/>Port 6379)]
+            Volume[Persistent Volume<br/>/var/lib/falkordb/data]
+            TCPProxy[TCP Proxy<br/>Public access]
+        end
+
+        subgraph external [External Services]
+            QdrantCloud[(Qdrant Cloud<br/>Vector DB)]
+            OpenAI[OpenAI API<br/>Embeddings]
+        end
+    end
+
+    Users -->|HTTPS| APIDomain
+    CloudAI -->|Streamable HTTP| MCPDomain
+    Local -->|HTTPS| APIDomain
+
+    MCPDomain --> MCPServer
+    APIDomain --> FlaskAPI
+
+    MCPServer -->|Internal<br/>memory-service.railway.internal:8001| FlaskAPI
+
+    FlaskAPI -->|Internal<br/>falkordb.railway.internal:6379| FalkorDB
+    FlaskAPI --> QdrantCloud
+    FlaskAPI --> OpenAI
+
+    Enrichment --> FalkorDB
+    Enrichment --> QdrantCloud
+    Consolidation --> FalkorDB
+
+    FalkorDB --> Volume
+
+    TCPProxy -.->|Optional<br/>External access| FalkorDB
+```
 
 ---
 
@@ -24,13 +80,15 @@ After deploying, complete these steps to fully configure AutoMem:
 1. **Go to `memory-service` → Variables**
 2. **Set these variables:**
 
-| Variable | Required | How to Get |
-|----------|----------|------------|
-| `OPENAI_API_KEY` | Yes* | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `QDRANT_URL` | Recommended | [cloud.qdrant.io](https://cloud.qdrant.io) (free 1GB tier) |
-| `QDRANT_API_KEY` | With Qdrant | From Qdrant Cloud dashboard |
+| Variable         | Required    | How to Get                                                           |
+| ---------------- | ----------- | -------------------------------------------------------------------- |
+| `OPENAI_API_KEY` | Yes\*       | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `QDRANT_URL`     | Recommended | See [Qdrant Setup Guide](QDRANT_SETUP.md)                            |
+| `QDRANT_API_KEY` | With Qdrant | See [Qdrant Setup Guide](QDRANT_SETUP.md)                            |
 
-*Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
+\*Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
+
+👉 **First time with Qdrant?** Follow the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step collection setup.
 
 3. **Redeploy** the memory-service after adding variables.
 
@@ -47,20 +105,29 @@ curl -X POST "https://your-automem.up.railway.app/memory" \
   -d '{"content": "Test memory from Railway", "tags": ["test"]}'
 ```
 
-### Optional: Add SSE Bridge for Cloud AI Platforms
+### MCP Bridge (Included)
 
-If you want to use AutoMem with **ChatGPT**, **Claude.ai**, **Claude Mobile**, or **ElevenLabs**:
+The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
 
-👉 **See [MCP_SSE.md](MCP_SSE.md)** for setup instructions.
+| Platform          | How to Connect                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| **ChatGPT**       | Settings → Connectors → Add Server → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN` |
+| **Claude.ai**     | Settings → MCP → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN`                     |
+| **Claude Mobile** | Settings → MCP Servers → same URL as above                                                     |
+| **ElevenLabs**    | Agent config → MCP → same URL (or use Authorization header)                                    |
 
-The SSE bridge is **not needed** for:
-- Cursor IDE (use local `mcp-automem` package)
-- Claude Desktop (use local `mcp-automem` package)
-- Direct API access
+👉 **See [MCP_SSE.md](MCP_SSE.md)** for detailed setup per platform.
+
+**Don't need the MCP bridge?** If you only use Cursor, Claude Desktop, or direct API access:
+
+1. Go to Railway Dashboard → `mcp-sse-server` service
+2. Click the three dots menu → **Delete Service**
+3. This saves ~$2-3/month and has no impact on the core memory API
 
 ### Get Your API Tokens
 
 Your tokens were auto-generated during deployment. Find them in:
+
 - Railway Dashboard → `memory-service` → Variables
 - Look for `AUTOMEM_API_TOKEN` and `ADMIN_API_TOKEN`
 
@@ -347,17 +414,19 @@ This will:
 
 **Service Sizing**:
 
-- **AutoMem API**: 512MB RAM, 0.5 vCPU (~$5/mo)
+- **memory-service**: 512MB RAM, 0.5 vCPU (~$5/mo)
 - **FalkorDB**: 1GB RAM, 1 vCPU + 2GB volume (~$10/mo)
+- **mcp-sse-server**: 256MB RAM, 0.25 vCPU (~$2-3/mo)
 - **Qdrant Cloud**: Free tier (1GB) or $25/mo (10GB)
 
-**Total**: ~$15-35/month depending on usage
+**Total**: ~$17-40/month depending on usage
 
 **Cost Saving Tips**:
 
 - Use Qdrant Cloud free tier initially
 - Start with smaller FalkorDB volume (1GB)
 - Use Railway's usage-based pricing (scales down when idle)
+- **Remove mcp-sse-server** if you only use Cursor/Claude Desktop (saves ~$2-3/mo)
 
 ---
 
@@ -407,7 +476,7 @@ Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
    - Check startup logs should show: `* Running on http://[::1]:8001`
 
 3. **Wrong internal hostname**:
-   - Verify `AUTOMEM_ENDPOINT` in SSE service matches memory-service's `RAILWAY_PRIVATE_DOMAIN`
+   - Verify `AUTOMEM_API_URL` in SSE service matches memory-service's `RAILWAY_PRIVATE_DOMAIN`
    - Should be: `http://memory-service.railway.internal:8001`
 
 ### Variable Reference Issues

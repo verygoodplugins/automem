@@ -10,6 +10,41 @@ AutoMem includes three layers of data protection:
 2. **Dual Storage** - Data stored in both FalkorDB (graph) and Qdrant (vectors)
 3. **Automated Backups** - Scheduled exports to compressed JSON + optional S3 upload
 
+```mermaid
+flowchart TB
+    subgraph layer1 [Layer 1: Persistent Volumes]
+        RailwayVol[Railway Volume Snapshots<br/>Automatic every 24h<br/>One-click restore]
+    end
+
+    subgraph layer2 [Layer 2: Dual Storage]
+        FalkorDB[(FalkorDB<br/>Graph Database<br/>Canonical record)]
+        Qdrant[(Qdrant<br/>Vector Database<br/>Semantic search)]
+
+        FalkorDB <-->|Redundancy| Qdrant
+    end
+
+    subgraph layer3 [Layer 3: Automated Backups]
+        Script[Backup Scripts<br/>Compressed JSON]
+        Local[Local Backups<br/>./backups/]
+        S3[S3 Cloud Storage<br/>Cross-region]
+        GitHub[GitHub Actions<br/>Free tier]
+
+        Script --> Local
+        Script --> S3
+        GitHub --> Script
+    end
+
+    layer1 --> layer2
+    layer2 --> layer3
+
+    Recovery[Recovery Options]
+
+    RailwayVol -.->|Quick restore| Recovery
+    Qdrant -.->|Rebuild FalkorDB| Recovery
+    Local -.->|Full restore| Recovery
+    S3 -.->|Disaster recovery| Recovery
+```
+
 ---
 
 ## Health Monitoring
@@ -86,18 +121,21 @@ python scripts/health_monitor.py \
 **Already configured!** If you're using Railway, your FalkorDB service has automatic volume backups enabled.
 
 **Features:**
+
 - ✅ Automatic snapshots (default: every 24 hours)
 - ✅ One-click restore from Railway dashboard
 - ✅ Included with Railway Pro (no extra cost)
 - ✅ Instant volume snapshots
 
 **Access backups:**
+
 1. Railway Dashboard → `falkordb` service
 2. Click "Backups" tab
 3. View backup history and schedule
 4. Click "Restore" to recover from any snapshot
 
 **Limitations:**
+
 - Only backs up FalkorDB (not Qdrant)
 - Platform-locked (can't export/download)
 - Use for quick recovery; combine with script backups for full protection
@@ -152,25 +190,90 @@ GitHub Actions is the simplest way to automate backups - free and doesn't consum
 
 1. **Workflow file already exists:** `.github/workflows/backup.yml`
 
-2. **Add GitHub secrets:**
+2. **Enable TCP Proxy on FalkorDB** (required for external access):
+
+   ⚠️ **Critical**: GitHub Actions runners are external to Railway's network. They cannot use internal hostnames like `falkordb.railway.internal`. You must enable TCP Proxy for external connectivity.
+
+   - Railway Dashboard → `falkordb` service
+   - Settings → Networking → **Enable TCP Proxy**
+   - Note the public endpoint: `monorail.proxy.rlwy.net:12345` (example)
+
+   ```mermaid
+   flowchart LR
+       subgraph railway [Railway Network]
+           FalkorDB[(FalkorDB<br/>:6379)]
+           TCPProxy[TCP Proxy<br/>monorail.proxy.rlwy.net:12345]
+       end
+
+       subgraph external [External]
+           GHA[GitHub Actions]
+           Local[Local Dev]
+       end
+
+       GHA -->|Public Internet| TCPProxy
+       Local -->|Public Internet| TCPProxy
+       TCPProxy -->|Internal| FalkorDB
+   ```
+
+3. **Add GitHub secrets:**
+
    - Go to: GitHub repo → Settings → Secrets and variables → Actions
    - Add these secrets:
+
+     ```bash
+     FALKORDB_HOST         = monorail.proxy.rlwy.net   # TCP Proxy domain (NOT .railway.internal!)
+     FALKORDB_PORT         = 12345                      # TCP Proxy port (NOT 6379!)
+     FALKORDB_PASSWORD     = (from Railway FalkorDB service variables)
+     QDRANT_URL            = (your Qdrant Cloud URL)
+     QDRANT_API_KEY        = (your Qdrant Cloud API key)
      ```
-     FALKORDB_HOST         = your-host.proxy.rlwy.net (your Railway TCP proxy)
-     FALKORDB_PORT         = 12345 (your Railway TCP proxy port)
-     FALKORDB_PASSWORD     = (from Railway)
-     QDRANT_URL            = (from Railway)
-     QDRANT_API_KEY        = (from Railway)
-     ```
+
    - Optional for S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
 
-3. **Push and test:**
+   **Where to find TCP Proxy details:**
+
+   - Railway Dashboard → `falkordb` service → Settings → Networking
+   - Look for "TCP Proxy" section → shows `RAILWAY_TCP_PROXY_DOMAIN` and `RAILWAY_TCP_PROXY_PORT`
+
+4. **Push and test:**
+
    ```bash
    git push origin main
    ```
+
    - Go to Actions tab → "AutoMem Backup" → Run workflow
 
 **Runs every 6 hours automatically.** Free tier: 2000 minutes/month.
+
+### Troubleshooting GitHub Actions Backup
+
+#### Error: "Connection reset by peer" (error 104)
+
+This means GitHub Actions can't connect to FalkorDB. Common causes:
+
+1. **TCP Proxy not enabled**: Enable it in Railway Dashboard → `falkordb` → Settings → Networking
+2. **Wrong host/port in secrets**: Must use TCP proxy endpoint, not internal hostname
+3. **Firewall**: Railway TCP Proxy should be accessible from anywhere, but check if your Railway plan has restrictions
+
+**Verify your setup:**
+
+```bash
+# Test from your local machine (should work if TCP proxy is enabled)
+redis-cli -h monorail.proxy.rlwy.net -p 12345 -a YOUR_PASSWORD ping
+# Should return: PONG
+
+# If redis-cli is not installed:
+# macOS:   brew install redis
+# Ubuntu:  sudo apt-get install redis-tools
+# Windows: choco install redis
+```
+
+**Debug checklist:**
+
+- [ ] TCP Proxy is enabled on FalkorDB service
+- [ ] `FALKORDB_HOST` secret uses TCP proxy domain (e.g., `monorail.proxy.rlwy.net`)
+- [ ] `FALKORDB_PORT` secret uses TCP proxy port (e.g., `12345`), NOT `6379`
+- [ ] `FALKORDB_PASSWORD` matches the password in FalkorDB service variables
 
 ---
 
@@ -189,6 +292,7 @@ railway up --service backup-service
 ```
 
 Then configure in Railway dashboard:
+
 - Set Builder to Dockerfile
 - Dockerfile Path: `scripts/Dockerfile.backup`
 - Add environment variables (same as memory-service)
@@ -200,6 +304,34 @@ Then configure in Railway dashboard:
 ---
 
 ## Backup Restoration
+
+```mermaid
+flowchart TD
+    Start{What data<br/>is lost?}
+
+    Start -->|Only FalkorDB| QdrantCheck{Is Qdrant<br/>intact?}
+    Start -->|Only Qdrant| BackupCheck1{Have recent<br/>backups?}
+    Start -->|Both databases| BackupCheck2{Have recent<br/>backups?}
+    Start -->|None just testing| NoAction[No action needed]
+
+    QdrantCheck -->|Yes| RecoverQdrant[Use recover_from_qdrant.py<br/>⚡ Fastest 5-10 min]
+    QdrantCheck -->|No| BackupCheck3{Have backups?}
+
+    BackupCheck1 -->|Yes| RestoreQdrant[Restore Qdrant from backup<br/>Then rebuild FalkorDB<br/>⏱️ 15-30 min]
+    BackupCheck1 -->|No| DataLoss1[⚠️ Partial data loss<br/>Rebuild from remaining data]
+
+    BackupCheck2 -->|Yes Railway| RailwayRestore[Railway volume restore<br/>FalkorDB only<br/>⏱️ 5 min]
+    BackupCheck2 -->|Yes S3/Local| FullRestore[Full restore from backups<br/>1. Restore Qdrant<br/>2. Rebuild FalkorDB<br/>⏱️ 20-40 min]
+    BackupCheck2 -->|No| DataLoss2[⚠️ Complete data loss<br/>Start fresh]
+
+    BackupCheck3 -->|Yes| FullRestore
+    BackupCheck3 -->|No| DataLoss3[⚠️ Complete data loss<br/>Start fresh]
+
+    RecoverQdrant --> Verify[Verify data integrity<br/>Check memory count]
+    RestoreQdrant --> Verify
+    RailwayRestore --> Verify
+    FullRestore --> Verify
+```
 
 ### Restore from Qdrant (Fastest)
 
@@ -244,6 +376,7 @@ curl https://your-automem-deployment.up.railway.app/health | jq
 ```
 
 Response:
+
 ```json
 {
   "status": "healthy",
@@ -257,6 +390,7 @@ Response:
 ### Railway Dashboard
 
 Monitor your services:
+
 - **Metrics**: CPU, memory, network usage
 - **Logs**: Real-time log streaming
 - **Deployments**: Build history and status
@@ -267,10 +401,12 @@ Monitor your services:
 Set up external monitoring with:
 
 1. **UptimeRobot** - Free HTTP monitoring
+
    - Monitor: `https://your-automem-deployment.up.railway.app/health`
    - Alert when status != "healthy"
 
 2. **Better Uptime** - Advanced monitoring
+
    - HTTP checks + keyword monitoring
    - SMS/Slack/Email alerts
 
@@ -284,16 +420,19 @@ Set up external monitoring with:
 ## Backup Schedule Recommendations
 
 ### For Personal Use
+
 - **Health checks**: Every 5 minutes (alert-only)
 - **Backups**: Every 24 hours, keep 7 days
 - **Recovery**: Manual trigger
 
 ### For Team Use
+
 - **Health checks**: Every 2 minutes (with auto-recovery)
 - **Backups**: Every 6 hours, keep 14 days + S3
 - **Recovery**: Automatic on critical drift
 
 ### For Production Use
+
 - **Health checks**: Every 30 seconds (with auto-recovery)
 - **Backups**: Every 1 hour, keep 30 days + S3 + cross-region replication
 - **Recovery**: Automatic with alerts
@@ -344,11 +483,13 @@ The health monitor sends JSON payloads:
 ## Cost Estimates
 
 ### Railway (Hobby Plan - $5/month)
+
 - ✅ Main API service
 - ✅ FalkorDB service with 1GB volume
 - ❌ Not enough resources for monitoring service
 
 ### Railway (Pro Plan - $20/month)
+
 - ✅ Main API service (~$5)
 - ✅ FalkorDB service (~$10)
 - ✅ Health monitoring service (~$2)
@@ -356,12 +497,14 @@ The health monitor sends JSON payloads:
 - **Total**: ~$18/month
 
 ### Railway + External Services (Hybrid)
+
 - Railway Pro for main services (~$15)
 - GitHub Actions for backups (free)
 - UptimeRobot for monitoring (free)
 - **Total**: ~$15/month
 
 ### AWS S3 Backup Costs
+
 - **Storage**: ~$0.023/GB/month (Standard)
 - **Requests**: ~$0.005/1000 PUTs
 - **Example**: 100MB backup every 6 hours = ~$0.30/month
@@ -375,11 +518,13 @@ The health monitor sends JSON payloads:
 **Problem**: FalkorDB and Qdrant counts don't match
 
 **Causes**:
+
 - In-flight writes during check (normal, <1% drift)
 - Failed writes to one store (>5% drift - warning)
 - Data loss event (>50% drift - critical)
 
 **Solution**:
+
 ```bash
 # Check health details
 python scripts/health_monitor.py --once
@@ -393,6 +538,7 @@ python scripts/recover_from_qdrant.py
 **Problem**: Backup script fails with connection error
 
 **Solution**:
+
 ```bash
 # Test connections
 curl https://your-automem-deployment.up.railway.app/health
@@ -410,6 +556,7 @@ python scripts/backup_automem.py
 **Problem**: Backup created but S3 upload failed
 
 **Solution**:
+
 ```bash
 # Check AWS credentials
 aws s3 ls s3://my-automem-backups/

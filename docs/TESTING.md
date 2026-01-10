@@ -26,6 +26,44 @@ make test-live
 
 ## Test Types
 
+```mermaid
+flowchart TD
+    Start{What are you<br/>testing?}
+
+    Start -->|Code changes| CodeCheck{Changed<br/>API/DB logic?}
+    Start -->|Pre-commit| PreCommit[Run: make test<br/>✅ Unit tests only<br/>⚡ Fast 10s]
+    Start -->|Before deploy| PreDeploy{Have Railway<br/>deployed?}
+    Start -->|Benchmarking| Benchmark[Run: make test-locomo<br/>📊 LoCoMo benchmark<br/>⏱️ 15-25 min]
+
+    CodeCheck -->|No just refactor| PreCommit
+    CodeCheck -->|Yes API/DB changes| Integration{Need real<br/>services?}
+
+    Integration -->|Yes| Docker{Have Docker<br/>running?}
+    Integration -->|No mock is fine| PreCommit
+
+    Docker -->|Yes| LocalIntegration[Run: make test-integration<br/>🐳 Local Docker stack<br/>⏱️ 60s]
+    Docker -->|No| LiveCheck{Have Railway<br/>access?}
+
+    PreDeploy -->|Yes| LiveIntegration[Run: make test-live<br/>☁️ Test against Railway<br/>⏱️ 90s]
+    PreDeploy -->|No| LocalIntegration
+
+    LiveCheck -->|Yes| LiveIntegration
+    LiveCheck -->|No| SetupDocker[Set up Docker first<br/>docker-compose up]
+
+    SetupDocker --> LocalIntegration
+
+    LocalIntegration --> Success{Tests pass?}
+    LiveIntegration --> Success
+    PreCommit --> Success
+    Benchmark --> BenchSuccess{Score acceptable?}
+
+    Success -->|Yes| Commit[✅ Safe to commit/deploy]
+    Success -->|No| Debug[🔍 Debug failures<br/>Check logs]
+
+    BenchSuccess -->|Yes| Commit
+    BenchSuccess -->|No| Optimize[🔧 Optimize recall logic]
+```
+
 ### 1. Unit Tests
 **Command**: `make test`
 
