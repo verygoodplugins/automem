@@ -1,5 +1,6 @@
 # requirements.txt - Updated versions for 2024/2025
 flask==3.0.3
+flask-cors==4.0.0
 falkordb==1.0.9
 qdrant-client==1.11.3
 python-dotenv==1.0.1
