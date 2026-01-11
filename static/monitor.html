@@ -473,6 +473,7 @@
             <span class="stat">Errors: <span class="stat-value" id="error-count">0</span></span>
             <span class="stat">Avg Latency: <span class="stat-value" id="avg-latency">—</span></span>
             <span class="stat">Reconnects: <span class="stat-value" id="reconnect-count">0</span></span>
+            <span class="stat" id="log-status-stat" style="margin-left: auto;">📁 <span id="log-status-text">—</span></span>
         </div>
 
         <!-- Filter Bar -->
@@ -601,13 +602,15 @@
 
             let hasConnected = false;
 
-            eventSource.onopen = () => {
+            eventSource.onopen = async () => {
                 hasConnected = true;
                 localStorage.setItem('automem_token', token);
                 showMonitorScreen();
                 statusBadge.textContent = 'Connected';
                 statusBadge.className = 'status-badge connected';
                 fetchSystemStatus();
+                fetchLogStatus();
+                await fetchEventHistory();  // Hydrate from log file
                 statusRefreshInterval = setInterval(fetchSystemStatus, 30000);
             };
 
@@ -651,6 +654,53 @@
             } catch (err) {
                 console.error('Failed to fetch status:', err);
             }
+        }
+
+        async function fetchEventHistory() {
+            if (!currentToken) return;
+            const headers = { 'X-API-Key': currentToken };
+
+            try {
+                const resp = await fetch('/stream/history?limit=100', { headers });
+                if (!resp.ok) return;
+                const { events } = await resp.json();
+                if (events?.length) {
+                    // Add historical events (oldest first, so they appear in correct order)
+                    events.forEach(event => addEvent(event, true));
+                    console.log(`Loaded ${events.length} historical events`);
+                }
+            } catch (err) {
+                console.log('No event history available');
+            }
+        }
+
+        async function fetchLogStatus() {
+            if (!currentToken) return;
+            const headers = { 'X-API-Key': currentToken };
+
+            try {
+                const resp = await fetch('/stream/log-status', { headers });
+                if (!resp.ok) return;
+                const status = await resp.json();
+                const el = document.getElementById('log-status-text');
+                if (status.enabled) {
+                    el.textContent = `${status.event_count} events (${formatBytes(status.size_bytes)})`;
+                    el.style.color = 'var(--text)';
+                } else {
+                    el.textContent = 'disabled';
+                    el.style.color = 'var(--muted)';
+                }
+            } catch (err) {
+                document.getElementById('log-status-text').textContent = '—';
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
         }
 
         function updateHealthCard(h) {
@@ -907,7 +957,7 @@
             return html;
         }
 
-        function addEvent(event) {
+        function addEvent(event, isHistorical = false) {
             // Remove empty state
             if (emptyState) emptyState.remove();
 
@@ -944,8 +994,9 @@
             const perfType = event.type.includes('enrich') ? 'enrichment' : event.type.includes('recall') ? 'recall' : 'store';
 
             const card = document.createElement('div');
-            card.className = `event-card${isError ? ' error' : ''}`;
+            card.className = `event-card${isError ? ' error' : ''}${isHistorical ? ' historical' : ''}`;
             card.dataset.category = category;
+            if (isHistorical) card.style.animation = 'none';  // Skip animation for historical events
 
             const hidden = currentFilter !== 'all' && currentFilter !== category;
             if (hidden) card.classList.add('hidden');
