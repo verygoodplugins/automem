@@ -67,6 +67,15 @@ The API (`app.py`) provides 13 endpoints:
 ### Health
 - `GET /health` - Service health check with database connectivity status
 
+### Streaming (SSE)
+- `GET /stream` - Server-Sent Events endpoint for real-time event streaming (requires auth)
+- `GET /stream/status` - Return current subscriber count
+- `GET /stream/history` - Return cached events from log file for monitor hydration
+- `GET /stream/log-status` - Return event log status (enabled, path, size, count)
+
+### Web UI
+- `GET /monitor` - Unified operations dashboard (serves static HTML)
+
 ## Architecture
 
 ### Data Flow
@@ -230,6 +239,10 @@ ENRICHMENT_IDLE_SLEEP_SECONDS=2               # Worker sleep when idle
 ENRICHMENT_FAILURE_BACKOFF_SECONDS=5          # Backoff between retries
 ENRICHMENT_ENABLE_SUMMARIES=true              # Toggle automatic summary creation
 ENRICHMENT_SPACY_MODEL=en_core_web_sm         # spaCy model for entity extraction
+
+# Event logging (for /monitor history hydration)
+AUTOMEM_EVENT_LOG=                            # Path to JSONL log file (empty = disabled)
+AUTOMEM_EVENT_LOG_MAX=500                     # Max events to retain before truncation
 ```
 
 Install spaCy locally to improve entity extraction:
