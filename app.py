@@ -1030,9 +1030,12 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
 class EnrichmentStats:
     processed_total: int = 0
     successes: int = 0
+    skips: int = 0
     failures: int = 0
     last_success_id: Optional[str] = None
     last_success_at: Optional[str] = None
+    last_skip_id: Optional[str] = None
+    last_skip_at: Optional[str] = None
     last_error: Optional[str] = None
     last_error_at: Optional[str] = None
 
@@ -1041,6 +1044,12 @@ class EnrichmentStats:
         self.successes += 1
         self.last_success_id = memory_id
         self.last_success_at = utc_now()
+
+    def record_skip(self, memory_id: str) -> None:
+        self.processed_total += 1
+        self.skips += 1
+        self.last_skip_id = memory_id
+        self.last_skip_at = utc_now()
 
     def record_failure(self, error: str) -> None:
         self.processed_total += 1
@@ -1052,9 +1061,12 @@ class EnrichmentStats:
         return {
             "processed_total": self.processed_total,
             "successes": self.successes,
+            "skips": self.skips,
             "failures": self.failures,
             "last_success_id": self.last_success_id,
             "last_success_at": self.last_success_at,
+            "last_skip_id": self.last_skip_id,
+            "last_skip_at": self.last_skip_at,
             "last_error": self.last_error,
             "last_error_at": self.last_error_at,
         }
@@ -1146,6 +1158,8 @@ def require_api_token() -> None:
 
     # Allow unauthenticated health checks and monitor page
     endpoint = request.endpoint or ""
+    if endpoint == "static" or request.path.startswith("/static/"):
+        return
     if endpoint.endswith("health") or request.path in ("/health", "/monitor"):
         return
 
@@ -1768,7 +1782,10 @@ def enrichment_worker() -> None:
 
             try:
                 result = enrich_memory(job.memory_id, forced=job.forced)
-                state.enrichment_stats.record_success(job.memory_id)
+                if result.get("processed", False):
+                    state.enrichment_stats.record_success(job.memory_id)
+                else:
+                    state.enrichment_stats.record_skip(job.memory_id)
                 elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
 
                 emit_event(
@@ -3035,17 +3052,22 @@ def recall_memories() -> Any:
 
             # Build result summaries for top 10 results
             for r in results[:10]:
-                mem = r.get("memory", {})
+                mem = r.get("memory") or {}
+                if not isinstance(mem, dict):
+                    mem = {}
+                tags_list = mem.get("tags") or []
                 result_summaries.append(
                     {
                         "id": str(r.get("id", ""))[:8],
                         "score": round(float(r.get("final_score", 0)), 3),
                         "type": mem.get("type", "?"),
                         "content_length": len(mem.get("content", "")),
-                        "tags_count": len(mem.get("tags", [])),
+                        "tags_count": (
+                            len(tags_list) if isinstance(tags_list, (list, tuple)) else 0
+                        ),
                     }
                 )
-    except Exception as e:
+    except (TypeError, ValueError, AttributeError) as e:
         logger.debug("Failed to parse response for result_count", exc_info=e)
 
     # Compute aggregate stats

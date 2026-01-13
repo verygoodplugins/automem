@@ -430,7 +430,7 @@ def stream_events(url: str, token: str, max_reconnects: int = 0) -> None:
             if is_ssl_error:
                 consecutive_ssl_errors += 1
                 # Exponential backoff for SSL errors: 2s, 4s, 8s, 16s, max 30s
-                backoff = min(30, 2 ** min(consecutive_ssl_errors, 4))
+                backoff = min(30, 2**consecutive_ssl_errors)
                 console.print(
                     f"[yellow]SSL connection reset[/] [dim](Railway LB, backoff {backoff}s)[/]"
                 )

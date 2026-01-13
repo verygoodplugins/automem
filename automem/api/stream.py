@@ -10,7 +10,9 @@ Optionally logs events to a JSONL file for persistence (env: AUTOMEM_EVENT_LOG).
 from __future__ import annotations
 
 import json
+import logging
 import os
+from collections import deque
 from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Lock
@@ -26,6 +28,25 @@ _subscribers_lock = Lock()
 _event_log_path = os.getenv("AUTOMEM_EVENT_LOG", "")
 _event_log_max = int(os.getenv("AUTOMEM_EVENT_LOG_MAX", "500"))
 _event_log_lock = Lock()
+_logger = logging.getLogger(__name__)
+
+
+def _get_event_log_path() -> Path | None:
+    if not _event_log_path:
+        return None
+
+    raw_path = Path(_event_log_path)
+    if not raw_path.is_absolute():
+        if ".." in raw_path.parts:
+            _logger.warning("Refusing AUTOMEM_EVENT_LOG path traversal: %s", _event_log_path)
+            return None
+        raw_path = Path.cwd() / raw_path
+
+    try:
+        return raw_path.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        _logger.warning("Invalid AUTOMEM_EVENT_LOG path %s: %s", _event_log_path, exc)
+        return None
 
 
 def _write_event_to_log(event: Dict[str, Any]) -> None:
@@ -33,32 +54,36 @@ def _write_event_to_log(event: Dict[str, Any]) -> None:
 
     Thread-safe. Only writes if AUTOMEM_EVENT_LOG is set.
     """
-    if not _event_log_path:
+    path = _get_event_log_path()
+    if path is None:
         return
 
     with _event_log_lock:
-        path = Path(_event_log_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            _logger.warning("Failed to create event log directory %s: %s", path.parent, exc)
+            return
 
-        # Read existing events
-        events = []
+        events: deque[str] = deque(maxlen=max(_event_log_max, 1))
         if path.exists():
             try:
                 with open(path, "r") as f:
-                    events = [line.strip() for line in f if line.strip()]
-            except Exception:
-                events = []
+                    for line in f:
+                        stripped = line.strip()
+                        if stripped:
+                            events.append(stripped)
+            except OSError as exc:
+                _logger.warning("Failed to read event log %s: %s", path, exc)
 
         # Append new event
         events.append(json.dumps(event))
 
-        # Truncate to max
-        if len(events) > _event_log_max:
-            events = events[-_event_log_max:]
-
-        # Write back
-        with open(path, "w") as f:
-            f.write("\n".join(events) + "\n")
+        try:
+            with open(path, "w") as f:
+                f.write("\n".join(events) + "\n")
+        except OSError as exc:
+            _logger.warning("Failed to write event log %s: %s", path, exc)
 
 
 def emit_event(event_type: str, data: Dict[str, Any], utc_now: Callable[[], str]) -> None:
@@ -106,10 +131,10 @@ def get_event_history(limit: int = 100) -> List[Dict[str, Any]]:
     Returns:
         List of event dictionaries, oldest first
     """
-    if not _event_log_path:
+    path = _get_event_log_path()
+    if path is None:
         return []
 
-    path = Path(_event_log_path)
     if not path.exists():
         return []
 
@@ -119,7 +144,8 @@ def get_event_history(limit: int = 100) -> List[Dict[str, Any]]:
                 lines = [line.strip() for line in f if line.strip()]
             # Return last N events
             return [json.loads(line) for line in lines[-limit:]]
-        except Exception:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            _logger.warning("Failed to load event history from %s: %s", path, exc)
             return []
 
 
@@ -129,23 +155,22 @@ def get_log_status() -> Dict[str, Any]:
     Returns:
         Dict with enabled, path, size_bytes, event_count, max_events
     """
-    enabled = bool(_event_log_path)
+    path = _get_event_log_path()
+    enabled = bool(path)
     size = 0
     count = 0
 
-    if enabled:
-        path = Path(_event_log_path)
-        if path.exists():
-            try:
-                size = path.stat().st_size
-                with open(path, "r") as f:
-                    count = sum(1 for line in f if line.strip())
-            except Exception:
-                pass
+    if path and path.exists():
+        try:
+            size = path.stat().st_size
+            with open(path, "r") as f:
+                count = sum(1 for line in f if line.strip())
+        except OSError:
+            pass
 
     return {
         "enabled": enabled,
-        "path": _event_log_path or None,
+        "path": str(path) if path else None,
         "size_bytes": size,
         "event_count": count,
         "max_events": _event_log_max,

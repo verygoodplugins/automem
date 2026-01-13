@@ -505,16 +505,70 @@
             enrichment: { warn: 2000, slow: 5000 },
             contentSize: { warn: 1000, large: 2000 },
             typeConfidence: { low: 0.5 }
-        };
+	        };
 
-        // State
-        let eventSource = null;
-        let currentToken = null;
-        let eventHistory = [];
-        let errorCount = 0;
-        let reconnectCount = 0;
-        let currentFilter = 'all';
-        let statusRefreshInterval = null;
+	        // State
+	        let sseAbortController = null;
+	        let currentToken = null;
+	        let eventHistory = [];
+	        let errorCount = 0;
+	        let reconnectCount = 0;
+	        let currentFilter = 'all';
+	        let statusRefreshInterval = null;
+
+	        function escapeHtml(text) {
+	            const div = document.createElement('div');
+	            div.textContent = text == null ? '' : String(text);
+	            return div.innerHTML;
+	        }
+
+	        function sleep(ms) {
+	            return new Promise(resolve => setTimeout(resolve, ms));
+	        }
+
+	        async function readSseStream(stream, onMessage, signal) {
+	            const reader = stream.getReader();
+	            const decoder = new TextDecoder('utf-8');
+	            let buffer = '';
+	            let eventName = '';
+	            let dataBuffer = '';
+
+	            while (true) {
+	                if (signal?.aborted) {
+	                    try { reader.cancel(); } catch (_) {}
+	                    return;
+	                }
+	                const { value, done } = await reader.read();
+	                if (done) break;
+
+	                buffer += decoder.decode(value, { stream: true });
+	                const lines = buffer.split(/\r?\n/);
+	                buffer = lines.pop() || '';
+
+	                for (const line of lines) {
+	                    if (line === '') {
+	                        if (dataBuffer) {
+	                            const payload = dataBuffer.endsWith('\n') ? dataBuffer.slice(0, -1) : dataBuffer;
+	                            onMessage(payload, eventName || 'message');
+	                        }
+	                        eventName = '';
+	                        dataBuffer = '';
+	                        continue;
+	                    }
+	                    if (line.startsWith(':')) {
+	                        continue;
+	                    }
+	                    if (line.startsWith('event:')) {
+	                        eventName = line.slice(6).trim();
+	                        continue;
+	                    }
+	                    if (line.startsWith('data:')) {
+	                        dataBuffer += line.slice(5).replace(/^\s*/, '') + '\n';
+	                        continue;
+	                    }
+	                }
+	            }
+	        }
 
         // Elements
         const loginScreen = document.getElementById('login-screen');
@@ -578,64 +632,109 @@
             loginError.style.display = 'block';
         }
 
-        function disconnect() {
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
-            }
-            if (statusRefreshInterval) {
-                clearInterval(statusRefreshInterval);
-                statusRefreshInterval = null;
-            }
-            localStorage.removeItem('automem_token');
+	        function disconnect() {
+	            if (sseAbortController) {
+	                sseAbortController.abort();
+	                sseAbortController = null;
+	            }
+	            if (statusRefreshInterval) {
+	                clearInterval(statusRefreshInterval);
+	                statusRefreshInterval = null;
+	            }
+	            localStorage.removeItem('automem_token');
             currentToken = null;
         }
 
-        function tryConnect(token) {
-            connectBtn.disabled = true;
-            connectBtn.textContent = 'Connecting...';
-            loginError.style.display = 'none';
-            currentToken = token;
+	        function tryConnect(token) {
+	            connectBtn.disabled = true;
+	            connectBtn.textContent = 'Connecting...';
+	            loginError.style.display = 'none';
+	            currentToken = token;
 
-            const baseUrl = window.location.origin;
-            eventSource = new EventSource(`${baseUrl}/stream?api_key=${token}`);
+	            const baseUrl = window.location.origin;
+	            let hasConnected = false;
+	            let backoffMs = 1000;
 
-            let hasConnected = false;
+	            if (sseAbortController) {
+	                sseAbortController.abort();
+	                sseAbortController = null;
+	            }
+	            const controller = new AbortController();
+	            sseAbortController = controller;
 
-            eventSource.onopen = async () => {
-                hasConnected = true;
-                localStorage.setItem('automem_token', token);
-                showMonitorScreen();
-                statusBadge.textContent = 'Connected';
-                statusBadge.className = 'status-badge connected';
-                fetchSystemStatus();
-                fetchLogStatus();
-                await fetchEventHistory();  // Hydrate from log file
-                statusRefreshInterval = setInterval(fetchSystemStatus, 30000);
-            };
+	            const onOpen = async (isReconnect) => {
+	                if (!isReconnect) {
+	                    localStorage.setItem('automem_token', token);
+	                    showMonitorScreen();
+	                }
+	                statusBadge.textContent = 'Connected';
+	                statusBadge.className = 'status-badge connected';
+	                fetchSystemStatus();
+	                fetchLogStatus();
+	                if (!statusRefreshInterval) {
+	                    statusRefreshInterval = setInterval(fetchSystemStatus, 30000);
+	                }
+	                if (!isReconnect) {
+	                    await fetchEventHistory();  // Hydrate from log file
+	                }
+	            };
 
-            eventSource.onmessage = (e) => {
-                try {
-                    const event = JSON.parse(e.data);
-                    addEvent(event);
-                } catch (err) {
-                    console.error('Failed to parse event:', e.data);
-                }
-            };
+	            const onMessage = (payload) => {
+	                try {
+	                    const event = JSON.parse(payload);
+	                    addEvent(event);
+	                } catch (err) {
+	                    console.error('Failed to parse event:', payload);
+	                }
+	            };
 
-            eventSource.onerror = () => {
-                if (!hasConnected) {
-                    eventSource.close();
-                    eventSource = null;
-                    showLoginScreen('Invalid token or connection failed');
-                } else {
-                    statusBadge.textContent = 'Reconnecting...';
-                    statusBadge.className = 'status-badge disconnected';
-                    reconnectCount++;
-                    document.getElementById('reconnect-count').textContent = reconnectCount;
-                }
-            };
-        }
+	            const connectOnce = async (isReconnect) => {
+	                const headers = {
+	                    'Accept': 'text/event-stream',
+	                    'Authorization': `Bearer ${token}`,
+	                };
+	                const resp = await fetch(`${baseUrl}/stream`, {
+	                    headers,
+	                    signal: controller.signal,
+	                    cache: 'no-store',
+	                });
+	                if (!resp.ok) {
+	                    throw new Error(`HTTP ${resp.status}`);
+	                }
+	                if (!hasConnected) {
+	                    hasConnected = true;
+	                }
+	                await onOpen(isReconnect);
+	                await readSseStream(resp.body, onMessage, controller.signal);
+	            };
+
+	            (async () => {
+	                while (!controller.signal.aborted && currentToken === token) {
+	                    try {
+	                        await connectOnce(hasConnected);
+	                        if (controller.signal.aborted) return;
+	                        throw new Error('Stream ended');
+	                    } catch (err) {
+	                        if (controller.signal.aborted) return;
+	                        if (!hasConnected) {
+	                            showLoginScreen('Invalid token or connection failed');
+	                            connectBtn.disabled = false;
+	                            connectBtn.textContent = 'Connect →';
+	                            currentToken = null;
+	                            sseAbortController = null;
+	                            return;
+	                        }
+	                        statusBadge.textContent = 'Reconnecting...';
+	                        statusBadge.className = 'status-badge disconnected';
+	                        reconnectCount++;
+	                        document.getElementById('reconnect-count').textContent = reconnectCount;
+	                        await sleep(backoffMs);
+	                        backoffMs = Math.min(backoffMs * 2, 30000);
+	                    }
+	                }
+	            })();
+
+	        }
 
         async function fetchSystemStatus() {
             if (!currentToken) return;
@@ -815,55 +914,55 @@
             return badges;
         }
 
-        function getSummary(event) {
-            const d = event.data || {};
-            const type = event.type;
+	        function getSummary(event) {
+	            const d = event.data || {};
+	            const type = event.type;
 
-            switch (type) {
-                case 'memory.store':
-                    return truncate(d.content, 60) || d.memory_id?.slice(0, 8);
-                case 'memory.recall':
-                    return `"${truncate(d.query, 40)}" → ${d.result_count || 0} results`;
-                case 'memory.associate':
-                    return `${d.memory1_id?.slice(0,8)} → ${d.memory2_id?.slice(0,8)} (${d.relation_type})`;
-                case 'enrichment.start':
-                    return `${d.memory_id?.slice(0,8)} attempt ${d.attempt || 1}`;
-                case 'enrichment.complete':
-                    const tagsAdded = d.tags_added?.length || 0;
-                    return `${d.memory_id?.slice(0,8)} enriched` + (tagsAdded ? ` (+${tagsAdded} tags)` : '');
-                case 'enrichment.failed':
-                    return `${d.memory_id?.slice(0,8)}: ${truncate(d.error, 50)}`;
-                case 'consolidation.run':
-                    return `${d.task_type} → ${d.affected_count || 0} memories`;
-                default:
-                    return truncate(JSON.stringify(d), 60);
-            }
-        }
+	            switch (type) {
+	                case 'memory.store':
+	                    return escapeHtml(truncate(d.content, 60) || String(d.memory_id || '').slice(0, 8));
+	                case 'memory.recall':
+	                    return escapeHtml(`"${truncate(d.query, 40)}" → ${d.result_count || 0} results`);
+	                case 'memory.associate':
+	                    return escapeHtml(`${String(d.memory1_id || '').slice(0,8)} → ${String(d.memory2_id || '').slice(0,8)} (${d.relation_type})`);
+	                case 'enrichment.start':
+	                    return escapeHtml(`${String(d.memory_id || '').slice(0,8)} attempt ${d.attempt || 1}`);
+	                case 'enrichment.complete':
+	                    const tagsAdded = d.tags_added?.length || 0;
+	                    return escapeHtml(`${String(d.memory_id || '').slice(0,8)} enriched` + (tagsAdded ? ` (+${tagsAdded} tags)` : ''));
+	                case 'enrichment.failed':
+	                    return escapeHtml(`${String(d.memory_id || '').slice(0,8)}: ${truncate(d.error, 50)}`);
+	                case 'consolidation.run':
+	                    return escapeHtml(`${d.task_type} → ${d.affected_count || 0} memories`);
+	                default:
+	                    return escapeHtml(truncate(JSON.stringify(d), 60));
+	            }
+	        }
 
         function renderEventBody(event) {
             const d = event.data || {};
             const type = event.type;
             let html = '';
 
-            switch (type) {
-                case 'memory.store':
-                    html += `<div class="event-row">
-                        <span class="event-field"><span class="field-label">Type:</span> <span class="field-value">${d.type || 'Memory'} (${Math.round((d.type_confidence || 0) * 100)}%)</span></span>
-                        <span class="event-field"><span class="field-label">Importance:</span> <span class="field-value">${d.importance || 0}</span></span>
-                        <span class="event-field"><span class="field-label">Size:</span> <span class="field-value">${d.content?.length || 0} chars</span></span>
-                    </div>`;
-                    if (d.content) {
-                        html += `<div class="content-preview">${truncate(d.content, 200)}</div>`;
-                    }
-                    if (d.tags?.length) {
-                        html += `<div class="tags-list">${d.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>`;
-                    }
-                    break;
+	            switch (type) {
+	                case 'memory.store':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Type:</span> <span class="field-value">${escapeHtml(d.type || 'Memory')} (${Math.round((d.type_confidence || 0) * 100)}%)</span></span>
+	                        <span class="event-field"><span class="field-label">Importance:</span> <span class="field-value">${d.importance || 0}</span></span>
+	                        <span class="event-field"><span class="field-label">Size:</span> <span class="field-value">${d.content?.length || 0} chars</span></span>
+	                    </div>`;
+	                    if (d.content) {
+	                        html += `<div class="content-preview">${escapeHtml(truncate(d.content, 200))}</div>`;
+	                    }
+	                    if (d.tags?.length) {
+	                        html += `<div class="tags-list">${d.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>`;
+	                    }
+	                    break;
 
-                case 'memory.recall':
-                    html += `<div class="event-row">
-                        <span class="event-field"><span class="field-label">Query:</span> <span class="field-value">"${truncate(d.query, 50)}"</span></span>
-                    </div>`;
+	                case 'memory.recall':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Query:</span> <span class="field-value">"${escapeHtml(truncate(d.query, 50))}"</span></span>
+	                    </div>`;
                     html += `<div class="event-row">
                         <span class="event-field"><span class="field-label">Results:</span> <span class="field-value">${d.result_count || 0}</span></span>
                         <span class="event-field"><span class="field-label">Vector:</span> <span class="field-value">${d.vector_search ? '✓' : '✗'}</span></span>
@@ -875,84 +974,84 @@
                             <span class="event-field"><span class="field-label">Avg length:</span> <span class="field-value">${Math.round(d.stats.avg_length || 0)} chars</span></span>
                         </div>`;
                     }
-                    if (d.tags_filter?.length) {
-                        html += `<div class="tags-list">${d.tags_filter.map(t => `<span class="tag">${t}</span>`).join('')}</div>`;
-                    }
-                    break;
+	                    if (d.tags_filter?.length) {
+	                        html += `<div class="tags-list">${d.tags_filter.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>`;
+	                    }
+	                    break;
 
-                case 'enrichment.complete':
-                    if (d.tags_added?.length) {
-                        html += `<div class="tags-list">${d.tags_added.map(t => `<span class="tag added">+${t}</span>`).join('')}</div>`;
-                    }
-                    if (d.entities && Object.keys(d.entities).length) {
-                        html += `<div class="event-row" style="margin-top:8px;">`;
-                        for (const [cat, vals] of Object.entries(d.entities)) {
-                            if (vals?.length) {
-                                html += `<span class="event-field"><span class="field-label">${cat}:</span> <span class="field-value">${vals.join(', ')}</span></span>`;
-                            }
-                        }
-                        html += `</div>`;
-                    }
+	                case 'enrichment.complete':
+	                    if (d.tags_added?.length) {
+	                        html += `<div class="tags-list">${d.tags_added.map(t => `<span class="tag added">+${escapeHtml(t)}</span>`).join('')}</div>`;
+	                    }
+	                    if (d.entities && Object.keys(d.entities).length) {
+	                        html += `<div class="event-row" style="margin-top:8px;">`;
+	                        for (const [cat, vals] of Object.entries(d.entities)) {
+	                            if (vals?.length) {
+	                                html += `<span class="event-field"><span class="field-label">${escapeHtml(cat)}:</span> <span class="field-value">${escapeHtml(vals.join(', '))}</span></span>`;
+	                            }
+	                        }
+	                        html += `</div>`;
+	                    }
                     if (d.temporal_links?.length || d.semantic_neighbors?.length) {
                         html += `<div class="links-section">`;
-                        if (d.temporal_links?.length) {
-                            const ids = d.temporal_links.map(id => String(id).slice(0,8));
-                            html += `<div class="link-row"><span class="link-type">temporal:</span> <span class="link-value">${ids.join(', ')}</span></div>`;
-                        }
-                        if (d.semantic_neighbors?.length) {
-                            const neighbors = d.semantic_neighbors.map(item => {
-                                const [id, score] = Array.isArray(item) ? item : [item, null];
-                                return `<span class="link-value">${String(id).slice(0,8)}</span>` + (score ? ` <span class="link-score">(${Number(score).toFixed(2)})</span>` : '');
-                            });
-                            html += `<div class="link-row"><span class="link-type">semantic:</span> ${neighbors.join(', ')}</div>`;
-                        }
-                        html += `</div>`;
-                    }
-                    if (d.patterns_detected?.length) {
-                        html += `<div class="event-row" style="margin-top:8px;">`;
-                        for (const p of d.patterns_detected) {
-                            html += `<span class="event-field"><span class="field-label">pattern:</span> <span class="field-value">${p.type} (${p.similar_memories} similar)</span></span>`;
-                        }
-                        html += `</div>`;
-                    }
-                    break;
+	                        if (d.temporal_links?.length) {
+	                            const ids = d.temporal_links.map(id => String(id).slice(0,8));
+	                            html += `<div class="link-row"><span class="link-type">temporal:</span> <span class="link-value">${escapeHtml(ids.join(', '))}</span></div>`;
+	                        }
+	                        if (d.semantic_neighbors?.length) {
+	                            const neighbors = d.semantic_neighbors.map(item => {
+	                                const [id, score] = Array.isArray(item) ? item : [item, null];
+	                                return `<span class="link-value">${escapeHtml(String(id).slice(0,8))}</span>` + (score ? ` <span class="link-score">(${Number(score).toFixed(2)})</span>` : '');
+	                            });
+	                            html += `<div class="link-row"><span class="link-type">semantic:</span> ${neighbors.join(', ')}</div>`;
+	                        }
+	                        html += `</div>`;
+	                    }
+	                    if (d.patterns_detected?.length) {
+	                        html += `<div class="event-row" style="margin-top:8px;">`;
+	                        for (const p of d.patterns_detected) {
+	                            html += `<span class="event-field"><span class="field-label">pattern:</span> <span class="field-value">${escapeHtml(p.type)} (${p.similar_memories} similar)</span></span>`;
+	                        }
+	                        html += `</div>`;
+	                    }
+	                    break;
 
-                case 'enrichment.failed':
-                    html += `<div class="error-message">${d.error || 'Unknown error'}</div>`;
-                    html += `<div class="event-row" style="margin-top:8px;">
-                        <span class="event-field"><span class="field-label">Attempt:</span> <span class="field-value">${d.attempt || '?'}</span></span>
-                        <span class="event-field"><span class="field-label">Will retry:</span> <span class="field-value">${d.will_retry ? 'Yes' : 'No'}</span></span>
-                    </div>`;
-                    break;
+	                case 'enrichment.failed':
+	                    html += `<div class="error-message">${escapeHtml(d.error || 'Unknown error')}</div>`;
+	                    html += `<div class="event-row" style="margin-top:8px;">
+	                        <span class="event-field"><span class="field-label">Attempt:</span> <span class="field-value">${d.attempt || '?'}</span></span>
+	                        <span class="event-field"><span class="field-label">Will retry:</span> <span class="field-value">${d.will_retry ? 'Yes' : 'No'}</span></span>
+	                    </div>`;
+	                    break;
 
-                case 'memory.associate':
-                    html += `<div class="event-row">
-                        <span class="event-field"><span class="field-label">From:</span> <span class="field-value mono">${d.memory1_id || '?'}</span></span>
-                        <span class="event-field"><span class="field-label">To:</span> <span class="field-value mono">${d.memory2_id || '?'}</span></span>
-                    </div>`;
-                    html += `<div class="event-row">
-                        <span class="event-field"><span class="field-label">Type:</span> <span class="field-value">${d.relation_type || '?'}</span></span>
-                        <span class="event-field"><span class="field-label">Strength:</span> <span class="field-value">${d.strength || '?'}</span></span>
-                    </div>`;
-                    break;
+	                case 'memory.associate':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">From:</span> <span class="field-value mono">${escapeHtml(d.memory1_id || '?')}</span></span>
+	                        <span class="event-field"><span class="field-label">To:</span> <span class="field-value mono">${escapeHtml(d.memory2_id || '?')}</span></span>
+	                    </div>`;
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Type:</span> <span class="field-value">${escapeHtml(d.relation_type || '?')}</span></span>
+	                        <span class="event-field"><span class="field-label">Strength:</span> <span class="field-value">${d.strength || '?'}</span></span>
+	                    </div>`;
+	                    break;
 
-                case 'consolidation.run':
-                    html += `<div class="event-row">
-                        <span class="event-field"><span class="field-label">Task:</span> <span class="field-value">${d.task_type || '?'}</span></span>
-                        <span class="event-field"><span class="field-label">Affected:</span> <span class="field-value">${d.affected_count || 0} memories</span></span>
-                        <span class="event-field"><span class="field-label">Success:</span> <span class="field-value">${d.success ? '✓' : '✗'}</span></span>
-                    </div>`;
-                    break;
+	                case 'consolidation.run':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Task:</span> <span class="field-value">${escapeHtml(d.task_type || '?')}</span></span>
+	                        <span class="event-field"><span class="field-label">Affected:</span> <span class="field-value">${d.affected_count || 0} memories</span></span>
+	                        <span class="event-field"><span class="field-label">Success:</span> <span class="field-value">${d.success ? '✓' : '✗'}</span></span>
+	                    </div>`;
+	                    break;
 
-                default:
-                    html += `<div class="event-row"><span class="field-value mono">${JSON.stringify(d)}</span></div>`;
-            }
+	                default:
+	                    html += `<div class="event-row"><span class="field-value mono">${escapeHtml(JSON.stringify(d))}</span></div>`;
+	            }
 
-            // Raw JSON toggle
-            html += `<details class="json-toggle">
-                <summary>Raw JSON</summary>
-                <pre>${JSON.stringify(event, null, 2)}</pre>
-            </details>`;
+	            // Raw JSON toggle
+	            html += `<details class="json-toggle">
+	                <summary>Raw JSON</summary>
+	                <pre>${escapeHtml(JSON.stringify(event, null, 2))}</pre>
+	            </details>`;
 
             return html;
         }
@@ -987,9 +1086,9 @@
 
             // Create event card
             const category = getEventCategory(event.type);
-            const typeClass = getTypeClass(event.type);
-            const typeName = event.type.split('.').pop().toUpperCase();
-            const d = event.data || {};
+	            const typeClass = getTypeClass(event.type);
+	            const typeName = event.type.split('.').pop().toUpperCase();
+	            const d = event.data || {};
             const ms = d.elapsed_ms;
             const perfType = event.type.includes('enrich') ? 'enrichment' : event.type.includes('recall') ? 'recall' : 'store';
 
@@ -1001,14 +1100,14 @@
             const hidden = currentFilter !== 'all' && currentFilter !== category;
             if (hidden) card.classList.add('hidden');
 
-            card.innerHTML = `
-                <div class="event-header" onclick="this.parentElement.classList.toggle('open')">
-                    <span class="event-type type-${typeClass}">${typeName}</span>
-                    <span class="event-summary">${getSummary(event)}${getQualityBadges(d, event.type)}</span>
-                    ${getPerfBadge(ms, perfType)}
-                    <span class="event-time">${formatTime(event.timestamp)}</span>
-                    <span class="event-toggle">▶</span>
-                </div>
+	            card.innerHTML = `
+	                <div class="event-header" onclick="this.parentElement.classList.toggle('open')">
+	                    <span class="event-type type-${typeClass}">${escapeHtml(typeName)}</span>
+	                    <span class="event-summary">${getSummary(event)}${getQualityBadges(d, event.type)}</span>
+	                    ${getPerfBadge(ms, perfType)}
+	                    <span class="event-time">${formatTime(event.timestamp)}</span>
+	                    <span class="event-toggle">▶</span>
+	                </div>
                 <div class="event-body">${renderEventBody(event)}</div>
             `;
 
