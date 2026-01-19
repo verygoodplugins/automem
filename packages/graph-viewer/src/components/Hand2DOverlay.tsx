@@ -35,12 +35,16 @@ interface Hand2DOverlayProps {
   gestureState: GestureState
   enabled?: boolean
   lock?: HandLockState
+  leftLock?: { mode: 'idle' } | { mode: 'candidate'; frames: number } | { mode: 'locked' }
+  rightLock?: { mode: 'idle' } | { mode: 'candidate'; frames: number } | { mode: 'locked' }
 }
 
 export function Hand2DOverlay({
   gestureState,
   enabled = true,
-  lock,
+  lock: _lock, // Legacy single-hand lock (deprecated, use leftLock/rightLock)
+  leftLock,
+  rightLock,
 }: Hand2DOverlayProps) {
   // Track smoothed hand positions with ghost effect
   const [leftSmoothed, setLeftSmoothed] = useState<SmoothedHand | null>(null)
@@ -144,20 +148,19 @@ export function Hand2DOverlay({
 
   if (!enabled || !gestureState.isTracking) return null
 
-  // Visibility gating:
-  // - Non-acquired hands should be *extremely* faint to avoid the "desk hand blur" problem.
-  // - Locked hand is bright.
-  const lockMode = lock?.mode ?? 'idle'
-  const lockedHand =
-    lock?.mode === 'locked'
-      ? lock.hand
-      : lock?.mode === 'candidate'
-        ? lock.hand
-        : null
-  const baseOpacity =
-    lockMode === 'locked' ? 0.85 :
-    lockMode === 'candidate' ? 0.25 :
-    0.06
+  // Per-hand visibility: each hand has its own lock state
+  // - Locked = bright (0.85)
+  // - Candidate = medium (0.25)
+  // - Idle = faint (0.06)
+  const getHandOpacity = (handLock?: { mode: string }) => {
+    const mode = handLock?.mode ?? 'idle'
+    return mode === 'locked' ? 0.85 :
+           mode === 'candidate' ? 0.25 :
+           0.06
+  }
+
+  const leftOpacity = getHandOpacity(leftLock)
+  const rightOpacity = getHandOpacity(rightLock)
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -166,63 +169,27 @@ export function Hand2DOverlay({
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
       >
-        {/* Define filters and gradients */}
-        <defs>
-          {/* Ghost glow filter */}
-          <filter id="ghost-glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="0.8" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
 
-          {/* Grip glow filter */}
-          <filter id="grip-glow" x="-100%" y="-100%" width="300%" height="300%">
-            <feGaussianBlur stdDeviation="1.5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-
-          {/* Gradient for 3D depth effect - cyan */}
-          <radialGradient id="hand-gradient-cyan" cx="50%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#4ecdc4" stopOpacity="0.6" />
-            <stop offset="100%" stopColor="#2a7a75" stopOpacity="0.2" />
-          </radialGradient>
-
-          {/* Gradient for 3D depth effect - magenta */}
-          <radialGradient id="hand-gradient-magenta" cx="50%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#f72585" stopOpacity="0.6" />
-            <stop offset="100%" stopColor="#a01850" stopOpacity="0.2" />
-          </radialGradient>
-        </defs>
-
-        {/* Left hand - cyan ghost */}
+        {/* Left hand - cyan lines */}
         {leftSmoothed && (
-          <g opacity={leftSmoothed.opacity} filter="url(#ghost-glow)">
-            <GhostHand
+          <g opacity={leftSmoothed.opacity}>
+            <LineHand
               landmarks={leftSmoothed.landmarks}
               color="#4ecdc4"
-              gradientId="hand-gradient-cyan"
               isGhost={leftSmoothed.isGhost}
-              opacityMultiplier={baseOpacity * (lockedHand && lockedHand !== 'left' ? 0.08 : 1)}
+              opacityMultiplier={leftOpacity}
             />
           </g>
         )}
 
-        {/* Right hand - magenta ghost */}
+        {/* Right hand - magenta lines */}
         {rightSmoothed && (
-          <g opacity={rightSmoothed.opacity} filter="url(#ghost-glow)">
-            <GhostHand
+          <g opacity={rightSmoothed.opacity}>
+            <LineHand
               landmarks={rightSmoothed.landmarks}
               color="#f72585"
-              gradientId="hand-gradient-magenta"
               isGhost={rightSmoothed.isGhost}
-              opacityMultiplier={baseOpacity * (lockedHand && lockedHand !== 'right' ? 0.08 : 1)}
+              opacityMultiplier={rightOpacity}
             />
           </g>
         )}
@@ -231,92 +198,63 @@ export function Hand2DOverlay({
   )
 }
 
-interface GhostHandProps {
+interface LineHandProps {
   landmarks: { x: number; y: number; z: number }[]
   color: string
-  gradientId: string
   isGhost?: boolean
   opacityMultiplier?: number
 }
 
-type Point2 = { x: number; y: number }
-
 /**
- * MasterHand - Smash Bros Master Hand / Crazy Hand style
- * Volumetric filled shapes with soft gradients and ambient occlusion
- *
- * Z-AXIS: "Reach Through Screen" Paradigm
- * - Hand moves TOWARD camera → Virtual hand goes INTO the scene (smaller, recedes)
- * - Hand moves AWAY from camera → Virtual hand comes OUT of the scene (larger, approaches)
- * This creates the feeling of reaching through a portal into the 3D world.
+ * LineHand - Minimal line-based hand visualization
+ * Just lines connecting joints with small dots at key points.
+ * Clean, intuitive, and non-distracting.
  */
-function GhostHand({
+function LineHand({
   landmarks,
-  color: _color,
-  gradientId: _gradientId,
+  color,
   isGhost = false,
   opacityMultiplier = 1,
-}: GhostHandProps) {
+}: LineHandProps) {
   const wristZ = landmarks[0].z || 0
 
-  // Detect if Z is in meters (LiDAR) vs normalized (MediaPipe-style).
-  // With iPhone LiDAR we use worldLandmarks.z in meters, which is positive (e.g. 0.3..2.0).
+  // Detect if Z is in meters (LiDAR) vs normalized (MediaPipe-style)
   const isMeters = wristZ >= 0.1 && wristZ <= 8.0
 
-  // Z-AXIS INVERSION: "Reach Through Portal" Paradigm
-  // Physical hand closer to camera → Virtual hand appears SMALLER (receding into scene)
-  // Physical hand farther from camera → Virtual hand appears LARGER (coming out of scene)
-  //
-  // This creates the illusion that you're reaching THROUGH the screen INTO the 3D world.
-  // Convention for all sources (MediaPipe, iPhone LiDAR):
-  //   negative Z = closer to camera
-  //   positive Z = farther from camera
-
+  // Depth-based scaling (reach through portal paradigm)
   let scaleFactor = 1.0
-  let depthOpacity = 1.0  // Additional opacity based on depth
+  let depthOpacity = 1.0
 
   if (isMeters) {
-    // LiDAR in meters (positive): ~0.25m (very close) .. ~1.10m (arm's length / comfy)
-    // Portal mapping: close -> small, far -> large (strong enough to overcome perspective scaling)
     const t = Math.max(0, Math.min(1, (wristZ - 0.25) / 0.85))
-    scaleFactor = 0.25 + t * 1.55        // 0.25 (close) .. 1.80 (far)
-    depthOpacity = 0.55 + t * 0.45       // 0.55 (close) .. 1.00 (far)
+    scaleFactor = 0.4 + t * 1.2
+    depthOpacity = 0.6 + t * 0.4
   } else {
-    // MediaPipe normalized: positive Z = FARTHER from camera, negative Z = CLOSER
-    // Typical range: -0.25 (close) to +0.15 (far)
-    // "Reach through screen": Close → small/faint, Far → large/bright
     const t = Math.max(0, Math.min(1, (wristZ + 0.25) / 0.35))
-    scaleFactor = 0.25 + t * 1.55        // 0.25 (close) .. 1.80 (far)
-    depthOpacity = 0.55 + t * 0.45       // 0.55 (close) .. 1.00 (far)
+    scaleFactor = 0.4 + t * 1.2
+    depthOpacity = 0.6 + t * 0.4
   }
 
-  // Apply the depth opacity to the overall opacity multiplier
-  const effectiveOpacityMultiplier = opacityMultiplier * depthOpacity
+  const effectiveOpacity = opacityMultiplier * depthOpacity * (isGhost ? 0.5 : 0.9)
+  const clampedScale = Math.max(0.4, Math.min(1.8, scaleFactor))
 
-  const clampedScale = Math.max(0.3, Math.min(2.0, scaleFactor))
-
-  // "Reach Through Portal" X-axis: Keep the natural webcam mirror
-  // This makes the virtual hand appear ON THE OTHER SIDE of the screen
-  // When you point at the camera, the virtual finger points INTO the 3D scene
+  // Convert landmarks to SVG coordinates
   const toSvg = (lm: { x: number; y: number }) => ({
     x: lm.x * 100,
     y: lm.y * 100,
   })
 
-  // IMPORTANT: apply portal scaling to the landmark positions (not just stroke widths),
-  // otherwise the overlay will behave like a normal camera feed (closer = bigger).
   const rawPoints = landmarks.map(toSvg)
-  const cx = rawPoints[0]?.x ?? 50 // scale around wrist so position stays intuitive
+  const cx = rawPoints[0]?.x ?? 50
   const cy = rawPoints[0]?.y ?? 50
 
-  // Extra depth warp per-landmark: makes "pointing at the screen" read as pointing *into* the scene.
-  // (Index tip physically closer than wrist should appear *deeper* / smaller in the portal model.)
+  // Apply depth warp per-landmark
   const warpGain = isMeters ? 2.2 : 6.0
   const clampRange = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
 
   const points = rawPoints.map((p, i) => {
     const zi = landmarks[i]?.z ?? wristZ
-    const dz = zi - wristZ // meters or normalized depending on source
+    const dz = zi - wristZ
     const pointScale = clampRange(1 + dz * warpGain, 0.65, 1.45)
     const s = clampedScale * pointScale
     return {
@@ -324,225 +262,121 @@ function GhostHand({
       y: cy + (p.y - cy) * s,
     }
   })
-  const gloveOpacity = (isGhost ? 0.5 : 0.85) * effectiveOpacityMultiplier
 
-  // Finger width based on scale - fatter fingers for Master Hand look
-  const fingerWidth = 1.8 * clampedScale
+  // Line thickness based on scale
+  const lineWidth = 0.25 * clampedScale
+  const jointRadius = 0.4 * clampedScale
+  const tipRadius = 0.5 * clampedScale
 
-  // Unique ID for this hand's gradients/filters
-  const handId = Math.round(points[0].x * 10)
+  // Finger bone connections: each finger is a chain of joints
+  const fingerChains = [
+    [0, 1, 2, 3, 4],       // Thumb: wrist -> CMC -> MCP -> IP -> tip
+    [0, 5, 6, 7, 8],       // Index: wrist -> MCP -> PIP -> DIP -> tip
+    [0, 9, 10, 11, 12],    // Middle
+    [0, 13, 14, 15, 16],   // Ring
+    [0, 17, 18, 19, 20],   // Pinky
+  ]
 
-  // Helper: get perpendicular offset for finger width
-  const getPerpendicular = (p1: Point2, p2: Point2, width: number) => {
-    const dx = p2.x - p1.x
-    const dy = p2.y - p1.y
-    const len = Math.sqrt(dx * dx + dy * dy) || 1
-    return { x: -dy / len * width, y: dx / len * width }
-  }
-
-  // Create filled finger shape (capsule/sausage shape)
-  const createFingerShape = (indices: number[], width: number) => {
-    const pts = indices.map(i => points[i])
-    if (pts.length < 2) return ''
-
-    // Build outline going down one side and back up the other
-    const leftSide: string[] = []
-    const rightSide: string[] = []
-
-    for (let i = 0; i < pts.length - 1; i++) {
-      const perp = getPerpendicular(pts[i], pts[i + 1], width)
-      leftSide.push(`${pts[i].x + perp.x},${pts[i].y + perp.y}`)
-      rightSide.unshift(`${pts[i].x - perp.x},${pts[i].y - perp.y}`)
-    }
-
-    // Add rounded tip
-    const lastPt = pts[pts.length - 1]
-    const prevPt = pts[pts.length - 2]
-    const tipPerp = getPerpendicular(prevPt, lastPt, width)
-
-    // Rounded end cap using arc
-    const tipLeft = `${lastPt.x + tipPerp.x},${lastPt.y + tipPerp.y}`
-    const tipRight = `${lastPt.x - tipPerp.x},${lastPt.y - tipPerp.y}`
-
-    return `M ${leftSide[0]} L ${leftSide.join(' L ')} L ${tipLeft} A ${width} ${width} 0 0 1 ${tipRight} L ${rightSide.join(' L ')} Z`;
-  }
-
-  // Create palm shape connecting all finger bases
-  const createPalmShape = () => {
-    // Palm outline: wrist -> thumb base -> around finger bases -> back to wrist
-    const wrist = points[0]
-    const thumbBase = points[1]
-    const indexBase = points[5]
-    const middleBase = points[9]
-    const ringBase = points[13]
-    const pinkyBase = points[17]
-
-    // Offset points outward for palm width
-    const palmWidth = fingerWidth * 1.2
-
-    return `
-      M ${wrist.x} ${wrist.y + palmWidth}
-      Q ${thumbBase.x - palmWidth} ${thumbBase.y} ${thumbBase.x} ${thumbBase.y - palmWidth * 0.5}
-      L ${indexBase.x - palmWidth * 0.3} ${indexBase.y - palmWidth * 0.5}
-      Q ${(indexBase.x + middleBase.x) / 2} ${Math.min(indexBase.y, middleBase.y) - palmWidth * 0.8}
-        ${middleBase.x} ${middleBase.y - palmWidth * 0.5}
-      Q ${(middleBase.x + ringBase.x) / 2} ${Math.min(middleBase.y, ringBase.y) - palmWidth * 0.6}
-        ${ringBase.x} ${ringBase.y - palmWidth * 0.5}
-      Q ${(ringBase.x + pinkyBase.x) / 2} ${Math.min(ringBase.y, pinkyBase.y) - palmWidth * 0.5}
-        ${pinkyBase.x + palmWidth * 0.3} ${pinkyBase.y - palmWidth * 0.3}
-      L ${pinkyBase.x + palmWidth * 0.5} ${pinkyBase.y + palmWidth * 0.5}
-      Q ${wrist.x + palmWidth * 1.5} ${(wrist.y + pinkyBase.y) / 2}
-        ${wrist.x} ${wrist.y + palmWidth}
-      Z
-    `;
-  }
-
-  // Finger definitions: [landmark indices]
-  const fingers = [
-    { indices: [1, 2, 3, 4], width: fingerWidth * 0.9 },      // Thumb (slightly thinner)
-    { indices: [5, 6, 7, 8], width: fingerWidth },            // Index
-    { indices: [9, 10, 11, 12], width: fingerWidth * 1.05 },  // Middle (slightly thicker)
-    { indices: [13, 14, 15, 16], width: fingerWidth * 0.95 }, // Ring
-    { indices: [17, 18, 19, 20], width: fingerWidth * 0.85 }, // Pinky (thinnest)
+  // Palm connections (connect finger bases)
+  const palmConnections = [
+    [5, 9], [9, 13], [13, 17], // Across top of palm
+    [1, 5],                    // Thumb to index
   ]
 
   return (
-    <g opacity={gloveOpacity}>
-      {/* Definitions */}
+    <g opacity={effectiveOpacity}>
+      {/* Glow filter for the lines */}
       <defs>
-        {/* Main hand gradient - white to soft lavender */}
-        <radialGradient id={`hand-fill-${handId}`} cx="30%" cy="25%" r="80%">
-          <stop offset="0%" stopColor="#ffffff" />
-          <stop offset="40%" stopColor="#f5f5fa" />
-          <stop offset="70%" stopColor="#e8e8f0" />
-          <stop offset="100%" stopColor="#d8d8e5" />
-        </radialGradient>
-
-        {/* Ambient occlusion gradient for creases */}
-        <radialGradient id={`ao-gradient-${handId}`} cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#000000" stopOpacity="0" />
-          <stop offset="70%" stopColor="#000000" stopOpacity="0.1" />
-          <stop offset="100%" stopColor="#000000" stopOpacity="0.25" />
-        </radialGradient>
-
-        {/* Rim light gradient */}
-        <linearGradient id={`rim-light-${handId}`} x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.8" />
-          <stop offset="50%" stopColor="#ffffff" stopOpacity="0.1" />
-          <stop offset="100%" stopColor="#ffffff" stopOpacity="0.4" />
-        </linearGradient>
-
-        {/* Soft blur for glow effect */}
-        <filter id={`hand-glow-${handId}`} x="-30%" y="-30%" width="160%" height="160%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="0.5" result="blur" />
+        <filter id={`line-glow-${color}`} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="0.3" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
-
-        {/* Drop shadow */}
-        <filter id={`hand-shadow-${handId}`} x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0.3" dy="0.5" stdDeviation="0.8" floodColor="#000000" floodOpacity="0.3" />
-        </filter>
       </defs>
 
-      {/* Shadow layer */}
-      <g filter={`url(#hand-shadow-${handId})`}>
-        {/* Palm base shape */}
-        <path d={createPalmShape()} fill={`url(#hand-fill-${handId})`} />
-
-        {/* Fingers - rendered back to front for proper overlapping */}
-        {[...fingers].reverse().map((finger, idx) => (
-          <path
-            key={`finger-base-${idx}`}
-            d={createFingerShape(finger.indices, finger.width)}
-            fill={`url(#hand-fill-${handId})`}
-          />
-        ))}
-      </g>
-
-      {/* Ambient occlusion in creases (between fingers) */}
-      {[5, 9, 13].map((baseIdx, idx) => {
-        const p1 = points[baseIdx]
-        const p2 = points[baseIdx + 4]
-        return (
-          <ellipse
-            key={`ao-${idx}`}
-            cx={(p1.x + p2.x) / 2}
-            cy={(p1.y + p2.y) / 2 - fingerWidth * 0.3}
-            rx={fingerWidth * 0.6}
-            ry={fingerWidth * 0.4}
-            fill={`url(#ao-gradient-${handId})`}
-            opacity={0.5}
-          />
-        )
-      })}
-
-      {/* Knuckle definition shadows */}
-      {KNUCKLES.map((idx) => {
-        const p = points[idx]
-        return (
-          <circle
-            key={`knuckle-shadow-${idx}`}
-            cx={p.x}
-            cy={p.y + fingerWidth * 0.2}
-            r={fingerWidth * 0.5}
-            fill="#000000"
-            opacity={0.08}
-          />
-        )
-      })}
-
-      {/* Highlight layer - rim lighting effect */}
-      <g filter={`url(#hand-glow-${handId})`}>
-        {/* Palm highlight */}
-        <path
-          d={createPalmShape()}
-          fill="none"
-          stroke={`url(#rim-light-${handId})`}
-          strokeWidth={0.3 * clampedScale}
-        />
-
-        {/* Finger highlights */}
-        {fingers.map((finger, idx) => (
-          <path
-            key={`finger-highlight-${idx}`}
-            d={createFingerShape(finger.indices, finger.width * 0.7)}
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth={0.2 * clampedScale}
-            strokeOpacity={0.4}
-          />
+      <g filter={`url(#line-glow-${color})`}>
+        {/* Finger bones */}
+        {fingerChains.map((chain, fingerIdx) => (
+          <g key={`finger-${fingerIdx}`}>
+            {chain.slice(1).map((jointIdx, i) => {
+              const prevIdx = chain[i]
+              const p1 = points[prevIdx]
+              const p2 = points[jointIdx]
+              return (
+                <line
+                  key={`bone-${fingerIdx}-${i}`}
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke={color}
+                  strokeWidth={lineWidth}
+                  strokeLinecap="round"
+                />
+              )
+            })}
+          </g>
         ))}
 
-        {/* Fingertip highlights - small specular dots */}
+        {/* Palm connections */}
+        {palmConnections.map(([i1, i2], idx) => {
+          const p1 = points[i1]
+          const p2 = points[i2]
+          return (
+            <line
+              key={`palm-${idx}`}
+              x1={p1.x}
+              y1={p1.y}
+              x2={p2.x}
+              y2={p2.y}
+              stroke={color}
+              strokeWidth={lineWidth * 0.8}
+              strokeLinecap="round"
+              strokeOpacity={0.6}
+            />
+          )
+        })}
+
+        {/* Joint dots (knuckles) */}
+        {KNUCKLES.map((idx) => {
+          const p = points[idx]
+          return (
+            <circle
+              key={`joint-${idx}`}
+              cx={p.x}
+              cy={p.y}
+              r={jointRadius}
+              fill={color}
+              fillOpacity={0.7}
+            />
+          )
+        })}
+
+        {/* Fingertip dots (brighter) */}
         {FINGERTIPS.map((idx) => {
           const p = points[idx]
           return (
             <circle
-              key={`tip-highlight-${idx}`}
-              cx={p.x - fingerWidth * 0.15}
-              cy={p.y - fingerWidth * 0.15}
-              r={fingerWidth * 0.2}
-              fill="#ffffff"
-              opacity={0.7}
+              key={`tip-${idx}`}
+              cx={p.x}
+              cy={p.y}
+              r={tipRadius}
+              fill={color}
             />
           )
         })}
-      </g>
 
-      {/* Wrist cuff */}
-      <ellipse
-        cx={points[0].x}
-        cy={points[0].y + fingerWidth * 0.5}
-        rx={fingerWidth * 1.5}
-        ry={fingerWidth * 0.8}
-        fill="none"
-        stroke="#ffffff"
-        strokeWidth={fingerWidth * 0.4}
-        opacity={0.3}
-      />
+        {/* Wrist dot */}
+        <circle
+          cx={points[0].x}
+          cy={points[0].y}
+          r={jointRadius * 1.2}
+          fill={color}
+          fillOpacity={0.5}
+        />
+      </g>
     </g>
   )
 }

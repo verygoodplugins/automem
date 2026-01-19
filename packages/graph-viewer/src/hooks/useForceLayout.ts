@@ -23,6 +23,7 @@ interface UseForceLayoutOptions {
   forceConfig?: ForceConfig
   useServerPositions?: boolean  // If true, use pre-computed x,y,z from server (UMAP)
   seedMode?: ClusterMode
+  clusterStrength?: number  // Strength of force pulling nodes to cluster centroids (0-1)
 }
 
 interface LayoutState {
@@ -91,13 +92,145 @@ function getFibonacciPosition(index: number, total: number, radius: number) {
   }
 }
 
+// Compute cluster assignments based on mode
+function computeClusterAssignments(
+  nodes: SimulationNode[],
+  edges: GraphEdge[],
+  mode: ClusterMode
+): Map<string, string> {
+  const assignments = new Map<string, string>()
+
+  if (mode === 'none') {
+    return assignments
+  }
+
+  if (mode === 'tags') {
+    for (const node of nodes) {
+      assignments.set(node.id, getPrimaryTag(node))
+    }
+    return assignments
+  }
+
+  if (mode === 'type') {
+    for (const node of nodes) {
+      assignments.set(node.id, node.type)
+    }
+    return assignments
+  }
+
+  // Semantic mode: use connected components based on edge strength
+  if (mode === 'semantic') {
+    const MIN_STRENGTH = 0.25
+    const nodeSet = new Set(nodes.map(n => n.id))
+
+    // Build adjacency list for nodes connected by strong edges
+    const adjacency = new Map<string, Set<string>>()
+    for (const node of nodes) {
+      adjacency.set(node.id, new Set())
+    }
+    for (const edge of edges) {
+      if (edge.strength >= MIN_STRENGTH && nodeSet.has(edge.source) && nodeSet.has(edge.target)) {
+        adjacency.get(edge.source)?.add(edge.target)
+        adjacency.get(edge.target)?.add(edge.source)
+      }
+    }
+
+    // Find connected components using BFS
+    const visited = new Set<string>()
+    let componentId = 0
+    for (const node of nodes) {
+      if (visited.has(node.id)) continue
+
+      const queue = [node.id]
+      const clusterId = `semantic-${componentId++}`
+
+      while (queue.length > 0) {
+        const current = queue.shift()!
+        if (visited.has(current)) continue
+        visited.add(current)
+        assignments.set(current, clusterId)
+
+        for (const neighbor of adjacency.get(current) || []) {
+          if (!visited.has(neighbor)) {
+            queue.push(neighbor)
+          }
+        }
+      }
+    }
+    return assignments
+  }
+
+  return assignments
+}
+
+// Custom cluster force - pulls nodes toward their cluster centroid
+function createClusterForce(
+  nodes: SimulationNode[],
+  clusterMap: Map<string, string>,
+  strength: number
+) {
+  // Return force function that d3-force will call on each tick
+  return function (alpha: number) {
+    if (strength <= 0 || clusterMap.size === 0) return
+
+    // Calculate cluster centroids
+    const centroids = new Map<string, { x: number; y: number; z: number; count: number }>()
+
+    for (const node of nodes) {
+      const clusterId = clusterMap.get(node.id)
+      if (!clusterId) continue
+
+      let c = centroids.get(clusterId)
+      if (!c) {
+        c = { x: 0, y: 0, z: 0, count: 0 }
+        centroids.set(clusterId, c)
+      }
+
+      c.x += node.x || 0
+      c.y += node.y || 0
+      c.z += node.z || 0
+      c.count++
+    }
+
+    // Normalize centroids
+    for (const c of centroids.values()) {
+      if (c.count > 0) {
+        c.x /= c.count
+        c.y /= c.count
+        c.z /= c.count
+      }
+    }
+
+    // Apply force toward centroid
+    for (const node of nodes) {
+      const clusterId = clusterMap.get(node.id)
+      if (!clusterId) continue
+
+      const centroid = centroids.get(clusterId)
+      if (!centroid || centroid.count <= 1) continue
+
+      // Apply force proportional to distance from centroid
+      const dx = centroid.x - (node.x || 0)
+      const dy = centroid.y - (node.y || 0)
+      const dz = centroid.z - (node.z || 0)
+
+      // Use strength scaled by alpha (d3 convention)
+      const k = strength * alpha
+      node.vx = (node.vx || 0) + dx * k
+      node.vy = (node.vy || 0) + dy * k
+      node.vz = (node.vz || 0) + dz * k
+    }
+  }
+}
+
 // Helper to run the force simulation (pure function, no React)
 function computeLayout(
   nodes: GraphNode[],
   edges: GraphEdge[],
   forceConfig: ForceConfig,
   existingNodes: SimulationNode[],
-  seedMode: ClusterMode
+  seedMode: ClusterMode,
+  clusterStrength: number
 ): SimulationNode[] {
   const normalizedSeedMode = seedMode === 'semantic' ? 'none' : seedMode
   const useGroupedSeeds = normalizedSeedMode === 'tags' || normalizedSeedMode === 'type'
@@ -214,6 +347,12 @@ function computeLayout(
     .alphaDecay(0.02)
     .velocityDecay(0.3)
 
+  // Add custom cluster cohesion force if strength > 0
+  if (clusterStrength > 0 && seedMode !== 'none') {
+    const clusterMap = computeClusterAssignments(simNodes, edges, seedMode)
+    simulation.force('cluster', createClusterForce(simNodes, clusterMap, clusterStrength))
+  }
+
   // Store simulation reference in cache for reheat
   layoutCache.simulation = simulation
 
@@ -233,6 +372,7 @@ export function useForceLayout({
   forceConfig = DEFAULT_FORCE_CONFIG,
   useServerPositions = false,
   seedMode = 'tags',
+  clusterStrength = 0.3,
 }: UseForceLayoutOptions): LayoutState & { reheat: () => void } {
   const [isSimulating, setIsSimulating] = useState(false)
 
@@ -284,7 +424,8 @@ export function useForceLayout({
       edges,
       forceConfig,
       reusePositions ? layoutCache.nodes : [],
-      seedMode
+      seedMode,
+      clusterStrength
     )
 
     // Update cache
@@ -293,7 +434,7 @@ export function useForceLayout({
     layoutCache.seedMode = seedMode
 
     return computed
-  }, [nodes, edges, forceConfig, useServerPositions, seedMode])
+  }, [nodes, edges, forceConfig, useServerPositions, seedMode, clusterStrength])
 
   // Reheat function uses module-level cache
   const reheat = useCallback(() => {

@@ -17,7 +17,8 @@
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react'
 import { Canvas, useFrame, useThree, ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Text, Billboard } from '@react-three/drei'
-import { XR, createXRStore } from '@react-three/xr'
+// XR support disabled - button was showing even on non-VR devices
+// import { XR, createXRStore } from '@react-three/xr'
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useForceLayout } from '../hooks/useForceLayout'
@@ -37,7 +38,7 @@ import { DEFAULT_FORCE_CONFIG, DEFAULT_DISPLAY_CONFIG, DEFAULT_CLUSTER_CONFIG, D
 import { useClusterDetection } from '../hooks/useClusterDetection'
 import { useFocusMode, type NodeFocusState } from '../hooks/useFocusMode'
 import { ClusterBoundaries } from './ClusterBoundaries'
-import { SelectionHighlight, ConnectedPathsHighlight, PinchPreSelectHighlight } from './SelectionHighlight'
+import { SelectionHighlight, PinchPreSelectHighlight } from './SelectionHighlight'
 import { getEdgeStyle } from '../lib/edgeStyles'
 import { EdgeParticles } from './EdgeParticles'
 import { MiniMap } from './MiniMap'
@@ -63,8 +64,8 @@ const SPHERE_SEGMENTS = 12 // Reduced from 32 - good enough for small spheres
 const LABEL_DISTANCE_THRESHOLD = 80 // Only show labels for nodes within this distance
 const MAX_VISIBLE_LABELS = 10 // Maximum labels to show at once (for LOD)
 
-// XR store for WebXR (Quest VR support)
-const xrStore = createXRStore()
+// XR store for WebXR disabled - button was showing even on non-VR devices
+// const xrStore = createXRStore()
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -162,7 +163,6 @@ export function GraphCanvas({
   const [layoutNodesForMiniMap, setLayoutNodesForMiniMap] = useState<SimulationNode[]>([])
   // Bimanual grab state for visual feedback
   const [bimanualActive, setBimanualActive] = useState(false)
-  const [isVrSupported, setIsVrSupported] = useState(false)
   const navigateToRef = useRef<((x: number, y: number) => void) | null>(null)
 
   const handleMiniMapNavigate = useCallback((x: number, y: number) => {
@@ -182,28 +182,6 @@ export function GraphCanvas({
 
   // Get iPhone WebSocket URL (from URL param or default)
   const iphoneUrl = useIPhoneUrl()
-
-  useEffect(() => {
-    let active = true
-    if (typeof navigator === 'undefined' || !navigator.xr?.isSessionSupported) {
-      setIsVrSupported(false)
-      return () => {
-        active = false
-      }
-    }
-
-    navigator.xr.isSessionSupported('immersive-vr')
-      .then((supported) => {
-        if (active) setIsVrSupported(supported)
-      })
-      .catch(() => {
-        if (active) setIsVrSupported(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [])
 
   // MediaPipe hand tracking (webcam)
   const { gestureState: mediapipeState, isEnabled: mediapipeActive, videoElement } = useHandGestures({
@@ -254,7 +232,6 @@ export function GraphCanvas({
       style={{ background: 'linear-gradient(to bottom, #0a0a0f 0%, #0f0f18 100%)' }}
       frameloop={performanceMode ? 'demand' : 'always'}
     >
-      <XR store={xrStore}>
       <Scene
         nodes={nodes}
         edges={edges}
@@ -292,31 +269,10 @@ export function GraphCanvas({
           hasTagFilter={hasTagFilter}
           onBimanualGrabChange={setBimanualActive}
       />
-      </XR>
     </Canvas>
 
-      {/* VR Button - Enter Quest VR */}
-      {isVrSupported && (
-        <button
-          onClick={async () => {
-            console.log('VR button clicked')
-            if (!navigator.xr) {
-              alert('WebXR not supported. Need HTTPS?')
-              return
-            }
-            const supported = await navigator.xr.isSessionSupported('immersive-vr')
-            console.log('immersive-vr supported:', supported)
-            if (!supported) {
-              alert('immersive-vr not supported. Try HTTPS via ngrok.')
-              return
-            }
-            xrStore.enterVR()
-          }}
-          className="absolute top-4 right-4 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold rounded-lg shadow-lg transition-all duration-200 z-50"
-        >
-          🥽 Enter VR
-        </button>
-      )}
+      {/* VR Button - Only show when actually in an immersive XR session context (Quest browser, etc.) */}
+      {/* Disabled: isVrSupported returns true on desktop Chrome even without VR hardware */}
 
       {/* MiniMap Navigator */}
       <MiniMap
@@ -406,6 +362,7 @@ function Scene({
     forceConfig,
     useServerPositions: clusterConfig?.useUMAP,
     seedMode: clusterConfig.mode,
+    clusterStrength: clusterConfig.clusterStrength,
   })
 
   // DEBUG: Log node counts
@@ -433,16 +390,26 @@ function Scene({
     }
   }, [onReheatReady, reheat])
 
-  // Reset view function - centers the graph and resets rotation
+  // Reset view function - centers the graph and resets camera to initial position
   const resetView = useCallback(() => {
+    // Reset the graph group transform
     if (groupRef.current) {
       groupRef.current.position.set(0, 0, 0)
       groupRef.current.rotation.set(0, 0, 0)
     }
+    // Reset OrbitControls target and camera position
     if (controlsRef.current) {
-      controlsRef.current.reset()
+      controlsRef.current.target.set(0, 0, 0)
+      controlsRef.current.update()
     }
-  }, [])
+    // Reset camera to initial position
+    camera.position.set(0, 0, 150)
+    camera.lookAt(0, 0, 0)
+    // Stop any hand gesture inertia
+    grabVelocityRef.current.set(0, 0, 0)
+    inertiaActiveRef.current = false
+    bimanualAnchorRef.current = null
+  }, [camera])
 
   useEffect(() => {
     if (onResetViewReady) {
@@ -630,16 +597,6 @@ function Scene({
     return ids
   }, [selectedNode, edges])
 
-  // Get connected nodes for selection highlight
-  const connectedNodes = useMemo(() => {
-    if (!selectedNode) return []
-    const ids = new Set<string>()
-    edges.forEach((e) => {
-      if (e.source === selectedNode.id) ids.add(e.target)
-      if (e.target === selectedNode.id) ids.add(e.source)
-    })
-    return layoutNodes.filter(n => ids.has(n.id))
-  }, [selectedNode, edges, layoutNodes])
 
   // Get selected node from layout (with current position)
   const selectedLayoutNode = useMemo(() => {
@@ -1016,13 +973,7 @@ function Scene({
           />
         )}
 
-        {/* Connected paths highlight - particles flowing to connected nodes */}
-        {selectedNode && connectedNodes.length > 0 && (
-          <ConnectedPathsHighlight
-            selectedNode={selectedNode}
-            connectedNodes={connectedNodes}
-          />
-        )}
+        {/* Connected paths highlight disabled - edges are now brightened instead */}
 
         {/* LOD Labels - only for selected/hovered/nearby nodes */}
         {displayConfig.showLabels && (
@@ -1132,12 +1083,8 @@ function BatchedEdges({
         selectedNode &&
         (edge.source === selectedNode.id || edge.target === selectedNode.id)
 
-      const isDimmed =
-        (selectedNode &&
-        !connectedIds.has(edge.source) &&
-        !connectedIds.has(edge.target)) ||
-        // Dim non-path edges when path is active
-        (hasActivePath && !isInPath)
+      // Only dim for pathfinding - NOT for selection
+      const isDimmed = hasActivePath && !isInPath
 
       // Source vertex
       positions.push(sourceNode.x ?? 0, sourceNode.y ?? 0, sourceNode.z ?? 0)
@@ -1165,7 +1112,8 @@ function BatchedEdges({
       } else if (isDimmed) {
         alpha *= 0.1
       } else if (isHighlighted) {
-        alpha = Math.min(1, alpha * 1.5)
+        // Connected edges are much brighter
+        alpha = 1.0
       }
 
       // Apply alpha to color (approximate, since LineBasicMaterial doesn't support per-vertex alpha)
@@ -1415,8 +1363,8 @@ function InstancedNodes({
       // Tag cloud filtering - use refs for fresh values
       const isMatchingTagFilter = !hasTagFilterRef.current || (tagFilteredNodeIdsRef.current?.has(node.id) ?? true)
 
+      // Only dim for search, pathfinding, or tag filtering - NOT for selection
       const isDimmed = !!(
-        (selectedNode && !connectedIds.has(node.id)) ||
         (searchTerm && !matchingIds.has(node.id)) ||
         // Dim non-path nodes when path is active
         (hasActivePath && !isInPath) ||

@@ -58,6 +58,21 @@ export type HandLockState =
       clearHoldFrames: number
     }
 
+/** Per-hand lock state for dual-hand tracking */
+export type SingleHandLockState =
+  | { mode: 'idle' }
+  | { mode: 'candidate'; frames: number }
+  | {
+      mode: 'locked'
+      lockedAtMs: number
+      neutral: { x: number; y: number; depth: number }
+      grabbed: boolean
+      grabAnchor?: { x: number; y: number; depth: number }
+      lastSeenMs: number
+      pinchActivated: boolean
+      clearHoldFrames: number
+    }
+
 export interface CloudControlDeltas {
   /** zoom velocity (positive -> zoom in, negative -> zoom out) */
   zoom: number
@@ -260,15 +275,24 @@ export interface HandLockResult {
   clearRequested: boolean
   /** True when both hands are pinching (for bimanual manipulation) */
   bimanualPinch: boolean
+  /** True when both hands are locked (acquired) */
+  bothHandsLocked: boolean
   /** Metrics for left hand (for two-hand gestures) */
   leftMetrics: HandLockMetrics | null
   /** Metrics for right hand (for two-hand gestures) */
   rightMetrics: HandLockMetrics | null
+  /** Per-hand lock states for visual feedback */
+  leftLock: SingleHandLockState
+  rightLock: SingleHandLockState
 }
 
 export function useHandLockAndGrab(state: GestureState, enabled: boolean): HandLockResult {
   const lockRef = useRef<HandLockState>({ mode: 'idle', metrics: null })
   const bimanualPinchRef = useRef(false)
+
+  // Per-hand lock states for dual-hand tracking
+  const leftLockRef = useRef<SingleHandLockState>({ mode: 'idle' })
+  const rightLockRef = useRef<SingleHandLockState>({ mode: 'idle' })
 
   const nowMs = performance.now()
 
@@ -283,6 +307,62 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean): HandL
           : left.pinch >= BIMANUAL_PINCH_ON_THRESHOLD && right.pinch >= BIMANUAL_PINCH_ON_THRESHOLD
       : false
   bimanualPinchRef.current = bimanualPinch
+
+  // Per-hand lock state machine (independent acquisition for both hands)
+  const updateSingleHandLock = (
+    metrics: HandLockMetrics | null,
+    handData: { landmarks: { x: number; y: number; z?: number }[] } | null,
+    prevLock: SingleHandLockState
+  ): SingleHandLockState => {
+    if (!enabled || !metrics || !handData) {
+      // Hand not seen - check if we should persist lock briefly
+      if (prevLock.mode === 'locked') {
+        if (nowMs - prevLock.lastSeenMs <= LOCK_PERSIST_MS) {
+          return prevLock
+        }
+      }
+      return { mode: 'idle' }
+    }
+
+    if (prevLock.mode === 'locked') {
+      // Update last seen time
+      return { ...prevLock, lastSeenMs: nowMs }
+    }
+
+    if (prevLock.mode === 'candidate') {
+      if (isAcquirePose(metrics)) {
+        const frames = prevLock.frames + 1
+        if (frames >= ACQUIRE_FRAMES_REQUIRED) {
+          // Lock this hand!
+          const wrist = handData.landmarks[0]
+          return {
+            mode: 'locked',
+            lockedAtMs: nowMs,
+            neutral: { x: wrist?.x ?? 0.5, y: wrist?.y ?? 0.5, depth: metrics.depth },
+            grabbed: false,
+            pinchActivated: false,
+            lastSeenMs: nowMs,
+            clearHoldFrames: 0,
+          }
+        }
+        return { mode: 'candidate', frames }
+      }
+      // Lost acquire pose
+      return { mode: 'idle' }
+    }
+
+    // Idle mode
+    if (isAcquirePose(metrics)) {
+      return { mode: 'candidate', frames: 1 }
+    }
+    return { mode: 'idle' }
+  }
+
+  // Update per-hand lock states
+  leftLockRef.current = updateSingleHandLock(left, state.leftHand, leftLockRef.current)
+  rightLockRef.current = updateSingleHandLock(right, state.rightHand, rightLockRef.current)
+
+  const bothHandsLocked = leftLockRef.current.mode === 'locked' && rightLockRef.current.mode === 'locked'
 
   // Choose a hand to consider when not locked:
   // - Prefer a hand currently holding the acquire pose
@@ -491,7 +571,10 @@ export function useHandLockAndGrab(state: GestureState, enabled: boolean): HandL
   return {
     ...next,
     bimanualPinch,
+    bothHandsLocked,
     leftMetrics: left,
     rightMetrics: right,
+    leftLock: leftLockRef.current,
+    rightLock: rightLockRef.current,
   }
 }

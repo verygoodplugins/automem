@@ -83,11 +83,8 @@ export function WebcamPreview({
       // Clear canvas
       ctx.clearRect(0, 0, width, height)
 
-      // Draw video frame (mirrored for natural interaction)
-      ctx.save()
-      ctx.scale(-1, 1)
-      ctx.drawImage(videoElement, -width, 0, width, height)
-      ctx.restore()
+      // Draw video frame (unmirrored to match main 3D hand overlay)
+      ctx.drawImage(videoElement, 0, 0, width, height)
 
       // Draw hand skeletons
       const drawHand = (
@@ -111,10 +108,10 @@ export function WebcamPreview({
           const p2 = landmarks[end]
           if (!p1 || !p2) continue
 
-          // Mirror X coordinate to match video
-          const x1 = (1 - p1.x) * width
+          // Use raw coordinates to match main 3D hand overlay
+          const x1 = p1.x * width
           const y1 = p1.y * height
-          const x2 = (1 - p2.x) * width
+          const x2 = p2.x * width
           const y2 = p2.y * height
 
           ctx.beginPath()
@@ -126,7 +123,7 @@ export function WebcamPreview({
         // Draw landmark points
         for (let i = 0; i < landmarks.length; i++) {
           const lm = landmarks[i]
-          const x = (1 - lm.x) * width
+          const x = lm.x * width
           const y = lm.y * height
 
           // Larger dots for fingertips and wrist

@@ -1,8 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Settings, RotateCcw } from 'lucide-react'
-
-// Build version - update this when making significant changes
-const BUILD_VERSION = '2024-12-23-obsidian-settings-v1'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { useGraphSnapshot, useProjectedGraph } from './hooks/useGraphData'
 import { useAuth } from './hooks/useAuth'
@@ -298,7 +295,8 @@ export default function App() {
     }
   }, [recording.isRecording, recording.recordFrame, trackingInfo.hasLiDAR])
 
-  const { lock: handLock } = useHandLockAndGrab(gestureState, gestureControlEnabled)
+  const { lock: handLock, leftLock, rightLock, bothHandsLocked: _bothHandsLocked } = useHandLockAndGrab(gestureState, gestureControlEnabled)
+  // Note: _bothHandsLocked is available for bimanual navigation mode when both hands are acquired
 
   // Use either snapshot or projected endpoint based on UMAP setting
   const snapshotQuery = useGraphSnapshot({
@@ -675,39 +673,6 @@ export default function App() {
 
         <StatsBar stats={data?.stats} isLoading={isLoading} />
 
-        {/* Version indicator - helps verify deployment */}
-        <span className="text-xs text-slate-500 hidden lg:inline" title="Build version">
-          {BUILD_VERSION}
-        </span>
-
-        {/* Focus/Spotlight Mode Toggle */}
-        <button
-          onClick={handleToggleFocusMode}
-          className={`
-            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
-            ${focusModeEnabled
-              ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg shadow-amber-500/25'
-              : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
-            }
-          `}
-          title={focusModeEnabled ? 'Disable focus mode (F)' : 'Enable focus mode - spotlight selected node (F)'}
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 2v2" />
-            <path d="M12 20v2" />
-            <path d="M2 12h2" />
-            <path d="M20 12h2" />
-            <path d="m4.93 4.93 1.41 1.41" />
-            <path d="m17.66 17.66 1.41 1.41" />
-            <path d="m17.66 6.34 1.41-1.41" />
-            <path d="m4.93 19.07 1.41-1.41" />
-          </svg>
-          <span className="text-sm font-medium hidden sm:inline">
-            {focusModeEnabled ? 'Focus' : 'Focus'}
-          </span>
-        </button>
-
         {/* Performance Mode Toggle */}
         <button
           onClick={() => setPerformanceMode(!performanceMode)}
@@ -747,14 +712,7 @@ export default function App() {
         {/* Reset View */}
         <button
           onClick={() => resetViewFn?.()}
-          disabled={!resetViewFn}
-          className={`
-            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
-            ${resetViewFn
-              ? 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
-              : 'bg-white/5 text-slate-600 cursor-not-allowed'
-            }
-          `}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white"
           title="Reset view to center"
         >
           <RotateCcw className="w-5 h-5" />
@@ -856,7 +814,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         <PanelGroup direction="horizontal" className="flex-1">
           {/* Graph Canvas */}
-          <Panel defaultSize={settingsPanelOpen ? 50 : 75} minSize={40}>
+          <Panel defaultSize={selectedNode ? (settingsPanelOpen ? 50 : 75) : 100} minSize={40}>
             <div ref={canvasContainerRef} className="h-full relative">
               {isLoading && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
@@ -926,6 +884,8 @@ export default function App() {
                 gestureState={gestureState}
                 enabled={gestureControlEnabled}
                 lock={handLock}
+                leftLock={leftLock}
+                rightLock={rightLock}
               />
 
               {/* Gesture Debug Overlay */}
@@ -939,7 +899,7 @@ export default function App() {
                 videoElement={webcamVideoElement}
                 gestureState={gestureState}
                 visible={webcamPreviewVisible && gestureControlEnabled}
-                position="top-right"
+                position="top-left"
                 size="medium"
               />
 
@@ -1038,19 +998,21 @@ export default function App() {
             </div>
           </Panel>
 
-          {/* Resize Handle */}
-          <PanelResizeHandle className="w-1 bg-white/5 hover:bg-blue-500/50 transition-colors cursor-col-resize" />
-
-          {/* Inspector Panel */}
-          <Panel defaultSize={25} minSize={15} maxSize={40}>
-            <Inspector
-              node={selectedNode}
-              onClose={() => setSelectedNode(null)}
-              onNavigate={handleNodeSelect}
-              onStartPathfinding={pathfinding.startPathSelection}
-              isPathSelecting={pathfinding.isSelectingTarget}
-            />
-          </Panel>
+          {/* Resize Handle and Inspector Panel - only show when a memory is selected */}
+          {selectedNode && (
+            <>
+              <PanelResizeHandle className="w-1 bg-white/5 hover:bg-blue-500/50 transition-colors cursor-col-resize" />
+              <Panel defaultSize={25} minSize={15} maxSize={40}>
+                <Inspector
+                  node={selectedNode}
+                  onClose={() => setSelectedNode(null)}
+                  onNavigate={handleNodeSelect}
+                  onStartPathfinding={pathfinding.startPathSelection}
+                  isPathSelecting={pathfinding.isSelectingTarget}
+                />
+              </Panel>
+            </>
+          )}
         </PanelGroup>
 
         {/* Settings Panel (right-docked) */}
