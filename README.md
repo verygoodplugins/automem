@@ -14,6 +14,15 @@
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
+<a href="https://bags.fm/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS" target="_blank" rel="noopener">
+  <img
+    src="https://bags.sivaramp.com/embed/fee-badge-project/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS/light.svg"
+    alt="Token fees on Bags.fm"
+    width="320"
+    height="52"
+  />
+</a>
+
 # **AI Memory That Actually Learns**
 
 AutoMem is the **world's best-performing long-term memory system** for AI assistants. On December 2, 2025, AutoMem achieved **90.53% accuracy** on the LoCoMo benchmark (ACL 2024), beating the previous state-of-the-art by 2.29 points.
