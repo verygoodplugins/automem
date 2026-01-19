@@ -11,6 +11,11 @@ All notable changes to AutoMem will be documented in this file.
   - Solution: Use Railway TCP Proxy for external access to FalkorDB
   - Added pre-flight connectivity check with clear error messages and troubleshooting guidance
   - Updated documentation with TCP Proxy setup instructions
+- **Graph Viewer**:
+  - Disabled focus/spotlight mode UI (feature currently off)
+  - Only show “Enter XR” when WebXR is supported (secure context + `immersive-vr`)
+  - Improved bimanual pinch activation and smoothing for pan/zoom/rotate
+  - Fixed reset view callback wiring so Reset View works again
 
 ### Documentation
 

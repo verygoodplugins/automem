@@ -123,11 +123,9 @@ export default function App() {
   const [performanceMode, setPerformanceMode] = useState(false)
   const [settingsPanelOpen, setSettingsPanelOpen] = useState(false)
 
-  // Focus/Spotlight mode state
-  const [focusModeEnabled, setFocusModeEnabled] = useState(false)
-  const [focusTransition, setFocusTransition] = useState(0) // 0-1 for smooth transition
-  const focusTransitionRef = useRef<number>(0)
-  const focusAnimationRef = useRef<number | null>(null)
+  // Focus/Spotlight mode is currently disabled
+  const focusModeEnabled = false
+  const focusTransition = 0
 
   // Radial menu state
   const [radialMenuState, setRadialMenuState] = useState<{
@@ -155,15 +153,6 @@ export default function App() {
 
   // Tag cloud state
   const [tagCloudVisible, setTagCloudVisible] = useState(false)
-
-  // Cleanup focus animation on unmount
-  useEffect(() => {
-    return () => {
-      if (focusAnimationRef.current) {
-        cancelAnimationFrame(focusAnimationRef.current)
-      }
-    }
-  }, [])
 
   const [gestureState, setGestureState] = useState<GestureState>(DEFAULT_GESTURE_STATE)
 
@@ -567,44 +556,6 @@ export default function App() {
     setDisplayConfig(prev => ({ ...prev, showLabels: !prev.showLabels }))
   }, [])
 
-  // Focus mode toggle with smooth transition animation
-  const handleToggleFocusMode = useCallback(() => {
-    setFocusModeEnabled(prev => {
-      const newEnabled = !prev
-
-      // Cancel any existing animation
-      if (focusAnimationRef.current) {
-        cancelAnimationFrame(focusAnimationRef.current)
-      }
-
-      const startTime = performance.now()
-      const duration = 400 // 400ms transition
-      const startValue = focusTransitionRef.current
-      const endValue = newEnabled ? 1 : 0
-
-      const animate = (currentTime: number) => {
-        const elapsed = currentTime - startTime
-        const progress = Math.min(elapsed / duration, 1)
-
-        // Ease out cubic for smooth deceleration
-        const eased = 1 - Math.pow(1 - progress, 3)
-        const newTransition = startValue + (endValue - startValue) * eased
-
-        focusTransitionRef.current = newTransition
-        setFocusTransition(newTransition)
-
-        if (progress < 1) {
-          focusAnimationRef.current = requestAnimationFrame(animate)
-        } else {
-          focusAnimationRef.current = null
-        }
-      }
-
-      focusAnimationRef.current = requestAnimationFrame(animate)
-      return newEnabled
-    })
-  }, [])
-
   // Keyboard navigation
   const handleStartPathfindingFromKeyboard = useCallback(() => {
     if (selectedNode) {
@@ -617,9 +568,9 @@ export default function App() {
     selectedNode,
     onNodeSelect: handleNodeSelect,
     onReheat: handleReheat,
+    onResetView: resetViewFn ?? undefined,
     onToggleSettings: () => setSettingsPanelOpen(prev => !prev),
     onToggleLabels: handleToggleLabels,
-    onToggleFocus: handleToggleFocusMode,
     onSaveBookmark: handleSaveBookmark,
     onQuickNavigate: handleQuickNavigate,
     onStartPathfinding: handleStartPathfindingFromKeyboard,
@@ -673,34 +624,6 @@ export default function App() {
         <span className="text-xs text-slate-500 hidden lg:inline" title="Build version">
           {BUILD_VERSION}
         </span>
-
-        {/* Focus/Spotlight Mode Toggle */}
-        <button
-          onClick={handleToggleFocusMode}
-          className={`
-            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
-            ${focusModeEnabled
-              ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg shadow-amber-500/25'
-              : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
-            }
-          `}
-          title={focusModeEnabled ? 'Disable focus mode (F)' : 'Enable focus mode - spotlight selected node (F)'}
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M12 2v2" />
-            <path d="M12 20v2" />
-            <path d="M2 12h2" />
-            <path d="M20 12h2" />
-            <path d="m4.93 4.93 1.41 1.41" />
-            <path d="m17.66 17.66 1.41 1.41" />
-            <path d="m17.66 6.34 1.41-1.41" />
-            <path d="m4.93 19.07 1.41-1.41" />
-          </svg>
-          <span className="text-sm font-medium hidden sm:inline">
-            {focusModeEnabled ? 'Focus' : 'Focus'}
-          </span>
-        </button>
 
         {/* Performance Mode Toggle */}
         <button
@@ -872,8 +795,8 @@ export default function App() {
                 clusterConfig={clusterConfig}
                 relationshipVisibility={relationshipVisibility}
                 typeColors={data?.meta?.type_colors}
-                onReheatReady={setReheatFn}
-                onResetViewReady={setResetViewFn}
+                onReheatReady={(fn) => setReheatFn(() => fn)}
+                onResetViewReady={(fn) => setResetViewFn(() => fn)}
                 focusModeEnabled={focusModeEnabled}
                 focusTransition={focusTransition}
                 onCameraStateForBookmarks={setCameraStateForBookmarks}
@@ -1030,11 +953,9 @@ export default function App() {
           node={radialMenuState.node}
           position={radialMenuState.position}
           onClose={handleCloseRadialMenu}
-          onToggleFocus={handleToggleFocusMode}
           onStartPath={pathfinding.startPathSelection}
           onViewContent={handleViewNodeContent}
           onCopyId={handleCopyNodeId}
-          focusModeEnabled={focusModeEnabled}
         />
       )}
 

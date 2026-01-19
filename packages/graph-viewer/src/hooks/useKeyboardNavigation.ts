@@ -9,7 +9,6 @@ interface UseKeyboardNavigationOptions {
   onResetView?: () => void
   onToggleSettings?: () => void
   onToggleLabels?: () => void
-  onToggleFocus?: () => void
   onSaveBookmark?: () => void
   onQuickNavigate?: (index: number) => void
   onStartPathfinding?: () => void
@@ -37,7 +36,6 @@ export function useKeyboardNavigation({
   onResetView,
   onToggleSettings,
   onToggleLabels,
-  onToggleFocus,
   onSaveBookmark,
   onQuickNavigate,
   onStartPathfinding,
@@ -267,14 +265,6 @@ export function useKeyboardNavigation({
             }
           },
         },
-        f: {
-          description: 'Toggle focus mode',
-          action: () => {
-            if (!event.metaKey && !event.ctrlKey) {
-              onToggleFocus?.()
-            }
-          },
-        },
 
         // Help
         '?': {
@@ -291,7 +281,6 @@ export function useKeyboardNavigation({
             console.log('  Shift+R: Reset view')
             console.log('  ,: Toggle settings')
             console.log('  L: Toggle labels')
-            console.log('  F: Toggle focus mode')
             console.log('  Cmd+B: Save bookmark')
             console.log('  1-9: Quick navigate to bookmark')
           },
@@ -303,7 +292,7 @@ export function useKeyboardNavigation({
         shortcut.action()
       }
     },
-    [enabled, findNodeInDirection, navigateSequential, onNodeSelect, onReheat, onResetView, onToggleSettings, onToggleLabels, onToggleFocus, onSaveBookmark, onQuickNavigate, onStartPathfinding, onCancelPathfinding, isPathSelecting]
+    [enabled, findNodeInDirection, navigateSequential, onNodeSelect, onReheat, onResetView, onToggleSettings, onToggleLabels, onSaveBookmark, onQuickNavigate, onStartPathfinding, onCancelPathfinding, isPathSelecting]
   )
 
   // Attach event listener
@@ -329,7 +318,6 @@ export function useKeyboardNavigation({
       { key: 'Shift+R', description: 'Reset view' },
       { key: ',', description: 'Toggle settings' },
       { key: 'L', description: 'Toggle labels' },
-      { key: 'F', description: 'Toggle focus mode' },
       { key: 'Cmd+B', description: 'Save bookmark' },
       { key: '1-9', description: 'Quick navigate to bookmark' },
       { key: '?', description: 'Show help' },

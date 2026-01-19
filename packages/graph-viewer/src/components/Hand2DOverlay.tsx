@@ -145,19 +145,8 @@ export function Hand2DOverlay({
   if (!enabled || !gestureState.isTracking) return null
 
   // Visibility gating:
-  // - Non-acquired hands should be *extremely* faint to avoid the "desk hand blur" problem.
-  // - Locked hand is bright.
-  const lockMode = lock?.mode ?? 'idle'
-  const lockedHand =
-    lock?.mode === 'locked'
-      ? lock.hand
-      : lock?.mode === 'candidate'
-        ? lock.hand
-        : null
-  const baseOpacity =
-    lockMode === 'locked' ? 0.85 :
-    lockMode === 'candidate' ? 0.25 :
-    0.06
+  // Keep both hands visually consistent; only boost opacity when the user is actively interacting.
+  const baseOpacity = lock?.mode === 'locked' ? 0.85 : 0.18
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -209,7 +198,7 @@ export function Hand2DOverlay({
               color="#4ecdc4"
               gradientId="hand-gradient-cyan"
               isGhost={leftSmoothed.isGhost}
-              opacityMultiplier={baseOpacity * (lockedHand && lockedHand !== 'left' ? 0.08 : 1)}
+              opacityMultiplier={baseOpacity}
             />
           </g>
         )}
@@ -222,7 +211,7 @@ export function Hand2DOverlay({
               color="#f72585"
               gradientId="hand-gradient-magenta"
               isGhost={rightSmoothed.isGhost}
-              opacityMultiplier={baseOpacity * (lockedHand && lockedHand !== 'right' ? 0.08 : 1)}
+              opacityMultiplier={baseOpacity}
             />
           </g>
         )}

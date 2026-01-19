@@ -1,18 +1,15 @@
 /**
- * Hand Lock + Grab State Machine
+ * Hand Grab + Pinch Control (no explicit locking)
  *
- * Goal: Make gestures intentional.
- * - Hand is ignored until user presents an "open palm + spread fingers" pose (acquire).
- * - Once acquired, we maintain a lock for a short time even through partial landmark loss.
- * - In locked state, a closed fist ("grab") manipulates the cloud:
- *   - Pull toward body => zoom in (exponential response)
- *   - Push toward screen => zoom out (exponential response)
- *   - Move fist around screen => rotate cloud
+ * Goal: Make gestures feel direct.
+ * - No acquire/lock workflow; either hand can grab/pinch immediately.
+ * - Closed fist ("grab") manipulates the cloud via displacement deltas.
+ * - Pinch drives direct selection (hover + click via hysteresis).
  *
  * Works with either MediaPipe or iPhone-fed landmarks because it only needs GestureState.
  */
 
-import { useMemo, useRef } from 'react'
+import { useRef } from 'react'
 import type { GestureState } from './useHandGestures'
 
 type HandSide = 'left' | 'right'
@@ -72,10 +69,6 @@ export interface CloudControlDeltas {
 const DEFAULT_CONFIDENCE = 0.7
 
 // Tunables (these matter a lot for UX)
-const ACQUIRE_FRAMES_REQUIRED = 8
-const LOCK_PERSIST_MS = 2000  // 2 seconds before unlocking when hand leaves frame
-
-// Make acquisition VERY intentional: open palm + spread fingers + palm facing camera.
 const SPREAD_THRESHOLD = 0.78
 const PALM_FACING_THRESHOLD = 0.72
 
@@ -86,9 +79,14 @@ const GRAB_OFF_THRESHOLD = 0.45
 const PINCH_ON_THRESHOLD = 0.85
 const PINCH_OFF_THRESHOLD = 0.65
 
+// Pinch mode (hover) thresholds: allow hover while "half pinched"
+const PINCH_MODE_ON_THRESHOLD = 0.35
+const PINCH_MODE_OFF_THRESHOLD = 0.25
+
 // Two-hand navigation: both hands pinching
-const BIMANUAL_PINCH_ON_THRESHOLD = 0.75
-const BIMANUAL_PINCH_OFF_THRESHOLD = 0.55
+const BIMANUAL_PINCH_ON_THRESHOLD = 0.55
+const BIMANUAL_PINCH_OFF_THRESHOLD = 0.35
+const BIMANUAL_PINCH_GRACE_MS = 220
 
 // Clear selection: hold open palm for ~0.5 seconds
 const CLEAR_FRAMES_REQUIRED = 30
@@ -269,227 +267,207 @@ export interface HandLockResult {
 export function useHandLockAndGrab(state: GestureState, enabled: boolean): HandLockResult {
   const lockRef = useRef<HandLockState>({ mode: 'idle', metrics: null })
   const bimanualPinchRef = useRef(false)
+  const bimanualLastGoodMsRef = useRef(0)
+  const grabRef = useRef<{ left: boolean; right: boolean }>({ left: false, right: false })
+  const pinchModeRef = useRef<{ left: boolean; right: boolean }>({ left: false, right: false })
+  const pinchActivatedRef = useRef<{ left: boolean; right: boolean }>({ left: false, right: false })
+  const clearHoldFramesRef = useRef(0)
 
   const nowMs = performance.now()
 
   const right = enabled ? computeMetrics(state, 'right') : null
   const left = enabled ? computeMetrics(state, 'left') : null
 
-  // Bimanual pinch: both hands are pinching simultaneously (with hysteresis)
-  const bimanualPinch =
-    enabled && left && right
-      ? bimanualPinchRef.current
-          ? left.pinch >= BIMANUAL_PINCH_OFF_THRESHOLD && right.pinch >= BIMANUAL_PINCH_OFF_THRESHOLD
-          : left.pinch >= BIMANUAL_PINCH_ON_THRESHOLD && right.pinch >= BIMANUAL_PINCH_ON_THRESHOLD
-      : false
+  // Bimanual pinch: both hands pinching, with hysteresis + short grace to tolerate brief signal drops.
+  let bimanualPinch = false
+  if (enabled && left && right) {
+    const bothOn = left.pinch >= BIMANUAL_PINCH_ON_THRESHOLD && right.pinch >= BIMANUAL_PINCH_ON_THRESHOLD
+    const bothOff = left.pinch >= BIMANUAL_PINCH_OFF_THRESHOLD && right.pinch >= BIMANUAL_PINCH_OFF_THRESHOLD
+
+    if (!bimanualPinchRef.current) {
+      if (bothOn) {
+        bimanualPinch = true
+        bimanualLastGoodMsRef.current = nowMs
+      }
+    } else {
+      if (bothOff) {
+        bimanualPinch = true
+        bimanualLastGoodMsRef.current = nowMs
+      } else if (nowMs - bimanualLastGoodMsRef.current <= BIMANUAL_PINCH_GRACE_MS) {
+        bimanualPinch = true
+      }
+    }
+  } else {
+    bimanualLastGoodMsRef.current = 0
+  }
+
   bimanualPinchRef.current = bimanualPinch
 
-  // Choose a hand to consider when not locked:
-  // - Prefer a hand currently holding the acquire pose
-  // - Otherwise prefer right if present, else left
-  const rightAcquire = !!right && isAcquirePose(right)
-  const leftAcquire = !!left && isAcquirePose(left)
-  const chosenHand: HandSide | null =
-    rightAcquire ? 'right' : leftAcquire ? 'left' : right ? 'right' : left ? 'left' : null
-  const metrics = chosenHand === 'right' ? right : chosenHand === 'left' ? left : null
+  const noDeltas: CloudControlDeltas = { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }
 
-  const next = useMemo((): { lock: HandLockState; deltas: CloudControlDeltas; clearRequested: boolean } => {
-    const noDeltas = { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }
+  if (!enabled) {
+    lockRef.current = { mode: 'idle', metrics: null }
+    grabRef.current = { left: false, right: false }
+    pinchModeRef.current = { left: false, right: false }
+    pinchActivatedRef.current = { left: false, right: false }
+    clearHoldFramesRef.current = 0
+    return { lock: lockRef.current, deltas: noDeltas, clearRequested: false, bimanualPinch, leftMetrics: left, rightMetrics: right }
+  }
 
-    if (!enabled) {
-      lockRef.current = { mode: 'idle', metrics: null }
-      return { lock: lockRef.current, deltas: noDeltas, clearRequested: false }
+  // --- Per-hand hysteresis state ---
+  const nextGrabLeft =
+    !!left &&
+    (grabRef.current.left ? left.grab >= GRAB_OFF_THRESHOLD : left.grab >= GRAB_ON_THRESHOLD)
+  const nextGrabRight =
+    !!right &&
+    (grabRef.current.right ? right.grab >= GRAB_OFF_THRESHOLD : right.grab >= GRAB_ON_THRESHOLD)
+  grabRef.current = { left: nextGrabLeft, right: nextGrabRight }
+
+  const nextPinchModeLeft =
+    !bimanualPinch &&
+    !!left &&
+    !nextGrabLeft &&
+    (pinchModeRef.current.left ? left.pinch >= PINCH_MODE_OFF_THRESHOLD : left.pinch >= PINCH_MODE_ON_THRESHOLD)
+  const nextPinchModeRight =
+    !bimanualPinch &&
+    !!right &&
+    !nextGrabRight &&
+    (pinchModeRef.current.right ? right.pinch >= PINCH_MODE_OFF_THRESHOLD : right.pinch >= PINCH_MODE_ON_THRESHOLD)
+  pinchModeRef.current = { left: nextPinchModeLeft, right: nextPinchModeRight }
+
+  const nextPinchActivatedLeft =
+    !bimanualPinch &&
+    !!left &&
+    !nextGrabLeft &&
+    (pinchActivatedRef.current.left ? left.pinch >= PINCH_OFF_THRESHOLD : left.pinch >= PINCH_ON_THRESHOLD)
+  const nextPinchActivatedRight =
+    !bimanualPinch &&
+    !!right &&
+    !nextGrabRight &&
+    (pinchActivatedRef.current.right ? right.pinch >= PINCH_OFF_THRESHOLD : right.pinch >= PINCH_ON_THRESHOLD)
+  pinchActivatedRef.current = { left: nextPinchActivatedLeft, right: nextPinchActivatedRight }
+
+  // Choose active hand for single-hand interactions (grab > pinch > present)
+  const choosePreferredHand = (a: HandSide, b: HandSide) => {
+    // Prefer the hand with stronger intent signal; break ties to right for stability.
+    const aMetrics = a === 'left' ? left : right
+    const bMetrics = b === 'left' ? left : right
+    if (!aMetrics) return b
+    if (!bMetrics) return a
+
+    const aGrab = a === 'left' ? nextGrabLeft : nextGrabRight
+    const bGrab = b === 'left' ? nextGrabLeft : nextGrabRight
+    if (aGrab !== bGrab) return aGrab ? a : b
+
+    const aPinchMode = a === 'left' ? nextPinchModeLeft : nextPinchModeRight
+    const bPinchMode = b === 'left' ? nextPinchModeLeft : nextPinchModeRight
+    if (aPinchMode !== bPinchMode) return aPinchMode ? a : b
+
+    const aScore = Math.max(aMetrics.grab, aMetrics.pinch)
+    const bScore = Math.max(bMetrics.grab, bMetrics.pinch)
+    if (Math.abs(aScore - bScore) > 0.05) return aScore > bScore ? a : b
+
+    return 'right'
+  }
+
+  let activeHand: HandSide | null = null
+  if (!bimanualPinch && (nextGrabLeft || nextGrabRight)) {
+    activeHand = nextGrabLeft && nextGrabRight ? choosePreferredHand('left', 'right') : nextGrabLeft ? 'left' : 'right'
+  } else if (!bimanualPinch && (nextPinchModeLeft || nextPinchModeRight)) {
+    activeHand = nextPinchModeLeft && nextPinchModeRight ? choosePreferredHand('left', 'right') : nextPinchModeLeft ? 'left' : 'right'
+  } else {
+    activeHand = right ? 'right' : left ? 'left' : null
+  }
+
+  // Clear selection: hold acquire pose (open palm + spread + palm facing) for ~0.5s
+  const anyAcquirePose = (!!left && isAcquirePose(left)) || (!!right && isAcquirePose(right))
+  clearHoldFramesRef.current = anyAcquirePose ? clearHoldFramesRef.current + 1 : 0
+  const clearRequested = clearHoldFramesRef.current >= CLEAR_FRAMES_REQUIRED
+
+  if (!activeHand) {
+    lockRef.current = { mode: 'idle', metrics: null }
+    return { lock: lockRef.current, deltas: noDeltas, clearRequested, bimanualPinch, leftMetrics: left, rightMetrics: right }
+  }
+
+  const activeMetrics = activeHand === 'left' ? left : right
+  const activeHandData = activeHand === 'left' ? state.leftHand : state.rightHand
+
+  if (!activeMetrics || !activeHandData) {
+    lockRef.current = { mode: 'idle', metrics: activeMetrics ?? null }
+    return { lock: lockRef.current, deltas: noDeltas, clearRequested, bimanualPinch, leftMetrics: left, rightMetrics: right }
+  }
+
+  const wrist = activeHandData.landmarks[0]
+  const x = wrist?.x ?? 0.5
+  const y = wrist?.y ?? 0.5
+
+  const grabbed = activeHand === 'left' ? nextGrabLeft : nextGrabRight
+  const pinchMode = activeHand === 'left' ? nextPinchModeLeft : nextPinchModeRight
+  const pinchActivated = grabbed ? false : activeHand === 'left' ? nextPinchActivatedLeft : nextPinchActivatedRight
+
+  // Expose a single "active" state for consumers (GraphCanvas / overlays).
+  // We reuse the historical `mode: 'locked'` variant to avoid widespread type churn.
+  const prev = lockRef.current
+  const wasGrabbed = prev.mode === 'locked' && prev.hand === activeHand ? prev.grabbed : false
+  const isActive = grabbed || pinchMode
+
+  if (!isActive) {
+    lockRef.current = { mode: 'idle', metrics: activeMetrics }
+    return { lock: lockRef.current, deltas: noDeltas, clearRequested, bimanualPinch, leftMetrics: left, rightMetrics: right }
+  }
+
+  const deltas: CloudControlDeltas = { ...noDeltas }
+  let grabAnchor: { x: number; y: number; depth: number } | undefined
+
+  if (grabbed) {
+    const isFirstGrabFrame = !wasGrabbed
+    const prevAnchor =
+      prev.mode === 'locked' && prev.hand === activeHand ? prev.grabAnchor : undefined
+    grabAnchor = isFirstGrabFrame ? { x, y, depth: activeMetrics.depth } : prevAnchor ?? { x, y, depth: activeMetrics.depth }
+    deltas.grabStart = isFirstGrabFrame
+
+    // Calculate displacement from anchor (how far hand moved since grab started)
+    const dx = x - grabAnchor.x
+    const dy = y - grabAnchor.y
+    const dz = activeMetrics.depth - grabAnchor.depth
+
+    // PAN the world: displacement-based, not velocity
+    const PAN_GAIN = 300
+    deltas.panX = dx * PAN_GAIN
+    deltas.panY = dy * PAN_GAIN
+
+    // Depth -> Z translation
+    const DEPTH_PAN_GAIN = 250
+    deltas.panZ = dz * DEPTH_PAN_GAIN
+
+    // Gentle zoom based on depth
+    if (Math.abs(dz) > DEPTH_DEADZONE) {
+      deltas.zoom = dz * 0.5
     }
+  }
 
-    const prev = lockRef.current
+  const locked: HandLockState = {
+    mode: 'locked',
+    hand: activeHand,
+    metrics: activeMetrics,
+    lockedAtMs: prev.mode === 'locked' && prev.hand === activeHand ? prev.lockedAtMs : nowMs,
+    neutral:
+      prev.mode === 'locked' && prev.hand === activeHand
+        ? prev.neutral
+        : { x, y, depth: activeMetrics.depth },
+    grabbed,
+    grabAnchor: grabbed ? grabAnchor : undefined,
+    lastSeenMs: nowMs,
+    pinchActivated,
+    clearHoldFrames: clearHoldFramesRef.current,
+  }
 
-    // Locked mode: ONLY the locked hand can drive state; never switch to the other hand implicitly.
-    if (prev.mode === 'locked') {
-      const lockedMetrics = prev.hand === 'right' ? right : left
-      const handData = prev.hand === 'right' ? state.rightHand : state.leftHand
-
-      // Locked hand not currently seen
-      if (!lockedMetrics || !handData) {
-        // Persist lock briefly, but don't let another hand keep it alive.
-        if (nowMs - prev.lastSeenMs <= LOCK_PERSIST_MS) {
-          const persisted: HandLockState = { ...prev, metrics: prev.metrics }
-          lockRef.current = persisted
-          return { lock: persisted, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-        }
-        lockRef.current = { mode: 'idle', metrics: null }
-        return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-      }
-
-      const wrist = handData.landmarks[0]
-      const x = wrist?.x ?? prev.neutral.x
-      const y = wrist?.y ?? prev.neutral.y
-
-      // Grab hysteresis
-      const grabbed =
-        prev.grabbed
-          ? lockedMetrics.grab >= GRAB_OFF_THRESHOLD
-          : lockedMetrics.grab >= GRAB_ON_THRESHOLD
-
-      // Pinch hysteresis for selection ("pick the berry")
-      // Only activate when NOT grabbing (grab takes priority)
-      const pinchActivated = grabbed
-        ? false
-        : prev.pinchActivated
-          ? lockedMetrics.pinch >= PINCH_OFF_THRESHOLD
-          : lockedMetrics.pinch >= PINCH_ON_THRESHOLD
-
-      // Clear selection: hold acquire pose for ~0.5 seconds while locked
-      // Only track when NOT grabbing and NOT pinching (intentional open palm)
-      const isHoldingAcquirePose = isAcquirePose(lockedMetrics)
-      const clearHoldFrames =
-        !grabbed && !pinchActivated && isHoldingAcquirePose
-          ? (prev.clearHoldFrames ?? 0) + 1
-          : 0
-      const clearRequested = clearHoldFrames >= CLEAR_FRAMES_REQUIRED
-
-      const lock: HandLockState = {
-        ...prev,
-        metrics: lockedMetrics,
-        grabbed,
-        pinchActivated,
-        lastSeenMs: nowMs,
-        clearHoldFrames,
-      }
-
-      const deltas: CloudControlDeltas = { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }
-
-      if (grabbed) {
-        const isFirstGrabFrame = !prev.grabbed
-
-        if (isFirstGrabFrame) {
-          // First frame of grab - set anchor and signal to capture world position
-          lock.grabAnchor = { x, y, depth: lockedMetrics.depth }
-          deltas.grabStart = true
-          lockRef.current = lock
-          return { lock, deltas, clearRequested: false }
-        }
-
-        const anchor = prev.grabAnchor ?? { x, y, depth: lockedMetrics.depth }
-
-        // Calculate displacement from anchor (how far hand moved since grab started)
-        const dx = x - anchor.x  // hand moved right in screen space (0-1 normalized)
-        const dy = y - anchor.y  // hand moved down in screen space
-        const dz = lockedMetrics.depth - anchor.depth  // hand moved toward/away from camera
-
-        // PAN the world: displacement-based, not velocity
-        // Scale: moving hand across half the screen (~0.5) should move graph ~150 world units
-        // That's a reasonable "arm's reach" mapping
-        const PAN_GAIN = 300  // world units per full screen unit of hand movement
-
-        deltas.panX = dx * PAN_GAIN  // drag right = world moves right
-        deltas.panY = dy * PAN_GAIN   // drag down = world moves down (Y is flipped in screen coords)
-
-        // Depth -> Z translation
-        // Moving hand ~0.2 depth units should translate maybe 50-100 world units
-        const DEPTH_PAN_GAIN = 250
-        deltas.panZ = dz * DEPTH_PAN_GAIN
-
-        // Also apply zoom based on depth (optional, can remove if too much)
-        if (Math.abs(dz) > DEPTH_DEADZONE) {
-          deltas.zoom = dz * 0.5  // gentle zoom
-        }
-      } else {
-        lock.grabAnchor = undefined
-      }
-
-      lockRef.current = lock
-      return { lock, deltas, clearRequested }
-    }
-
-    // No hand seen
-    if (!chosenHand || !metrics) {
-      lockRef.current = { mode: 'idle', metrics: null }
-      return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-    }
-
-    // Hand seen: update FSM
-    if (prev.mode === 'idle') {
-      if (isAcquirePose(metrics)) {
-        const candidate: HandLockState = { mode: 'candidate', hand: chosenHand, metrics, frames: 1 }
-        lockRef.current = candidate
-        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-      }
-      const idle: HandLockState = { mode: 'idle', metrics }
-      lockRef.current = idle
-      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-    }
-
-    if (prev.mode === 'candidate') {
-      const candidateHand = prev.hand
-      const candidateMetrics = candidateHand === 'right' ? right : left
-      if (candidateMetrics && isAcquirePose(candidateMetrics)) {
-        const frames = prev.frames + 1
-        if (frames >= ACQUIRE_FRAMES_REQUIRED) {
-          // lock!
-          const handData = candidateHand === 'right' ? state.rightHand : state.leftHand
-          const wrist = handData?.landmarks[0]
-          const locked: HandLockState = {
-            mode: 'locked',
-            hand: candidateHand,
-            metrics: candidateMetrics,
-            lockedAtMs: nowMs,
-            neutral: { x: wrist?.x ?? 0.5, y: wrist?.y ?? 0.5, depth: candidateMetrics.depth },
-            grabbed: false,
-            pinchActivated: false,
-            lastSeenMs: nowMs,
-            clearHoldFrames: 0,
-          }
-          lockRef.current = locked
-          return { lock: locked, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-        }
-        const candidate: HandLockState = { mode: 'candidate', hand: candidateHand, metrics: candidateMetrics, frames }
-        lockRef.current = candidate
-        return { lock: candidate, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-      }
-      // lost candidate
-      const idle: HandLockState = { mode: 'idle', metrics }
-      lockRef.current = idle
-      return { lock: idle, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-    }
-
-    lockRef.current = { mode: 'idle', metrics }
-    return { lock: lockRef.current, deltas: { zoom: 0, panX: 0, panY: 0, panZ: 0, grabStart: false }, clearRequested: false }
-  }, [
-    enabled,
-    chosenHand,
-    // metrics is a new object each render; depend on its fields instead
-    metrics?.spread,
-    metrics?.palmFacing,
-    metrics?.point,
-    metrics?.pinch,
-    metrics?.grab,
-    metrics?.depth,
-    metrics?.confidence,
-    nowMs,
-    state.leftHand,
-    state.rightHand,
-    state.handsDetected,
-    state.grabStrength,
-    state.leftPinchRay,
-    state.rightPinchRay,
-    right?.spread,
-    right?.palmFacing,
-    right?.point,
-    right?.pinch,
-    right?.grab,
-    right?.depth,
-    right?.confidence,
-    left?.spread,
-    left?.palmFacing,
-    left?.point,
-    left?.pinch,
-    left?.grab,
-    left?.depth,
-    left?.confidence,
-  ])
+  lockRef.current = locked
 
   return {
-    ...next,
+    lock: lockRef.current,
+    deltas,
+    clearRequested,
     bimanualPinch,
     leftMetrics: left,
     rightMetrics: right,
