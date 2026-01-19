@@ -171,6 +171,8 @@ export function HandCursor({
 
   // Glow intensity
   const glowIntensity = hasTarget ? 0.6 : 0.3
+  const glowAlpha = Math.round(glowIntensity * 50) / 255
+  const cursorGlowColor = `hsla(${baseHue}, ${saturation}%, ${lightness}%, ${glowAlpha})`
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-40">
@@ -190,7 +192,7 @@ export function HandCursor({
             height: size * 3,
             left: '50%',
             top: '50%',
-            background: `radial-gradient(circle, ${cursorColor}${Math.round(glowIntensity * 50).toString(16).padStart(2, '0')} 0%, transparent 70%)`,
+            background: `radial-gradient(circle, ${cursorGlowColor} 0%, transparent 70%)`,
             filter: `blur(8px)`,
           }}
         />

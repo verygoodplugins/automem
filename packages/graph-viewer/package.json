@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "npx vite",
+    "dev": "vite",
     "dev:all": "node ./scripts/dev-all.mjs",
-    "build": "tsc -b && npx vite build",
-    "preview": "npx vite preview",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "start": "node server.mjs",
     "lint": "eslint ."
   },
   "dependencies": {
