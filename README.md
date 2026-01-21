@@ -14,7 +14,7 @@
 
 # **AI Memory That Actually Learns**
 
-AutoMem is a **production-grade long-term memory system** for AI assistants, achieving **90.53% accuracy** on the [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) (ACL 2024)—outperforming previous approaches like CORE (88.24%) and OpenAI's baseline (39%).
+AutoMem is a **production-grade long-term memory system** for AI assistants, achieving **90.53% accuracy** on the [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) (ACL 2024)—outperforming CORE (88.24%).
 
 **Deploy in 60 seconds:**
 
@@ -531,7 +531,6 @@ AutoMem saves you months of iteration:
 |--------|-------|
 | AutoMem | 90.53% |
 | CORE | 88.24% |
-| OpenAI baseline | 39% |
 
 Run the benchmark yourself: `make test-locomo`
 

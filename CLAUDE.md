@@ -42,7 +42,7 @@ make status          # Check deployment status
 
 ## API Endpoints
 
-The API (`app.py`) provides ~21 endpoints:
+The `automem/api` module provides **28 endpoints** (admin: 2, memory: 10, recall: 4, graph: 5, health: 1, enrichment: 2, consolidation: 2, stream: 2). Additionally, 12 legacy routes remain in `app.py` for backward compatibility—combined total of 40 if both sets are active.
 
 ### Core Memory Operations
 - `POST /memory` - Store a memory with content, tags, importance, metadata, and optional embedding
