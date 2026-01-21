@@ -42,7 +42,7 @@ make status          # Check deployment status
 
 ## API Endpoints
 
-The API (`app.py`) provides 13 endpoints:
+The `automem/api` module provides **28 endpoints** (admin: 2, memory: 10, recall: 4, graph: 5, health: 1, enrichment: 2, consolidation: 2, stream: 2). Additionally, 12 legacy routes remain in `app.py` for backward compatibility—combined total of 40 if both sets are active.
 
 ### Core Memory Operations
 - `POST /memory` - Store a memory with content, tags, importance, metadata, and optional embedding
@@ -216,11 +216,11 @@ EMBEDDING_PROVIDER=auto      # auto|openai|local|placeholder
 OPENAI_API_KEY=              # For OpenAI embeddings (optional)
 
 # Consolidation intervals (seconds)
-CONSOLIDATION_DECAY_INTERVAL_SECONDS=3600     # 1 hour
+CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD=0.3  # Only skip truly low-importance items
-CONSOLIDATION_CREATIVE_INTERVAL_SECONDS=3600  # 1 hour
-CONSOLIDATION_CLUSTER_INTERVAL_SECONDS=21600  # 6 hours
-CONSOLIDATION_FORGET_INTERVAL_SECONDS=86400   # 24 hours
+CONSOLIDATION_CREATIVE_INTERVAL_SECONDS=604800  # 1 week (default)
+CONSOLIDATION_CLUSTER_INTERVAL_SECONDS=2592000  # 1 month (default)
+CONSOLIDATION_FORGET_INTERVAL_SECONDS=0       # Disabled by default (set to enable)
 
 # Enrichment controls
 ENRICHMENT_MAX_ATTEMPTS=3                     # Retry attempts before giving up

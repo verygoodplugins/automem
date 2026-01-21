@@ -1,6 +1,6 @@
-# MCP Server Bridge
+# Remote MCP
 
-The MCP bridge exposes AutoMem as an MCP server over HTTPS, enabling cloud-based AI platforms to access your memories without local installation.
+The Remote MCP server exposes AutoMem over HTTPS, enabling cloud-based AI platforms to access your memories without local installation.
 
 ## Transport Options
 
