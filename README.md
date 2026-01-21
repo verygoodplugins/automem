@@ -1,57 +1,26 @@
-```text
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                                                                              ║
-║    █████╗ ██╗   ██╗████████╗ ██████╗ ███╗   ███╗███████╗███╗   ███╗        ║
-║   ██╔══██╗██║   ██║╚══██╔══╝██╔═══██╗████╗ ████║██╔════╝████╗ ████║        ║
-║   ███████║██║   ██║   ██║   ██║   ██║██╔████╔██║█████╗  ██╔████╔██║        ║
-║   ██╔══██║██║   ██║   ██║   ██║   ██║██║╚██╔╝██║██╔══╝  ██║╚██╔╝██║        ║
-║   ██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║ ╚═╝ ██║███████╗██║ ╚═╝ ██║        ║
-║   ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝        ║
-║                                                                              ║
-║        State-of-the-Art Conversational Memory • 90.53% LoCoMo Score         ║
-║              Graph + Vector Architecture • Research-Validated               ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-```
+<p align="center">
+  <img src="https://automem.ai/og-image.png" alt="AutoMem - Recall is Power" width="600" />
+</p>
 
-<a href="https://bags.fm/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS" target="_blank" rel="noopener">
-  <img
-    src="https://bags.sivaramp.com/embed/fee-badge-project/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS/light.svg"
-    alt="Token fees on Bags.fm"
-    width="320"
-    height="52"
-  />
-</a>
+<p align="center">
+  <strong>$AUTOMEM</strong>:
+  <a href="https://bags.fm/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS">Bags.fm</a> •
+  <a href="https://jup.ag/tokens/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS">Jupiter</a> •
+  <a href="https://photon-sol.tinyastro.io/en/lp/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS">Photon</a> •
+  <a href="https://dexscreener.com/solana/CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS">DEXScreener</a>
+</p>
+
+<p align="center"><code>CA: CV485ySXfgFiwLtbh815JRukH4r9ChLhddqsAaZKBAGS</code> (Solana)</p>
 
 # **AI Memory That Actually Learns**
 
-AutoMem is the **world's best-performing long-term memory system** for AI assistants. On December 2, 2025, AutoMem achieved **90.53% accuracy** on the LoCoMo benchmark (ACL 2024), beating the previous state-of-the-art by 2.29 points.
+AutoMem is a **production-grade long-term memory system** for AI assistants, achieving **90.53% accuracy** on the [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) (ACL 2024)—outperforming previous approaches like CORE (88.24%) and OpenAI's baseline (39%).
 
-**Deploy production-grade AI memory in 60 seconds:**
+**Deploy in 60 seconds:**
 
 ```bash
 railway up
 ```
-
----
-
-## 🎯 December 2, 2025 Update: State-of-the-Art Improved
-
-AutoMem achieved **90.53% accuracy** on the LoCoMo benchmark (ACL 2024)—the academic standard for long-term conversational memory. This makes AutoMem the **highest-performing memory system in the world**, beating:
-
-- **CORE** (heysol.ai): 88.24% (previous SOTA)
-- **OpenAI's baseline**: 39%
-- **+14.45 percentage points** improvement since baseline
-
-**Key breakthroughs:**
-
-- 🔗 **Entity-to-entity expansion** - Multi-hop reasoning via entity tag linking
-- 🌉 **Multi-hop bridge discovery** - Finds connecting memories across conversation threads
-- ⏰ **Temporal alignment scoring** - Understands time-aware queries ("what happened last year?")
-- 🎯 **9-component hybrid search** - Semantic + lexical + graph + temporal signals
-- 💯 **100% complex reasoning** - Perfect score on multi-step reasoning tasks
-
-**[Full benchmark results →](tests/benchmarks/BENCHMARK_2025-12-02.md)**
 
 ---
 
@@ -61,35 +30,31 @@ Your AI forgets everything between sessions. RAG dumps similar documents. Vector
 
 AutoMem gives AI assistants the ability to **remember, connect, and evolve** their understanding over time—just like human long-term memory.
 
-## What Makes AutoMem State-of-the-Art
+## How AutoMem Works
 
-**December 2, 2025**: AutoMem scored **90.53%** on LoCoMo—the academic benchmark for long-term conversational memory (ACL 2024). This beats:
+AutoMem combines two complementary storage systems:
 
-- **CORE (heysol.ai)**: 88.24% (previous SOTA)
-- **OpenAI's implementation**: 39%
-- **+14.45 points** improvement since baseline
+- **FalkorDB (Graph)** - Stores memories as nodes with typed relationships between them
+- **Qdrant (Vectors)** - Enables semantic similarity search via embeddings
 
-AutoMem is a **graph-vector memory service** built on peer-reviewed neuroscience and validated by academic benchmarks:
+This dual architecture lets you ask questions like "why did we choose PostgreSQL?" and get not just the memory, but the reasoning, preferences, and related decisions that informed it.
 
-### The System
+### Core Capabilities
 
-- 🧠 **Stores** memories with metadata, importance scores, temporal context, and semantic embeddings
-- 🔍 **Recalls** via 9-component hybrid search (vector + keyword + graph + temporal + lexical)
-- 🔗 **Connects** memories with 11 typed relationships (RELATES_TO, LEADS_TO, CONTRADICTS, etc.)
-- 🎯 **Learns** through automatic entity extraction, pattern detection, and consolidation cycles
-- 🌉 **Reasons** with multi-hop bridge discovery—finds connecting memories across conversation threads
-- ⚡ **Performs** with sub-100ms recall across thousands of memories
+- 🧠 **Store** memories with metadata, importance scores, and temporal context
+- 🔍 **Recall** via hybrid search combining semantic, keyword, graph, and temporal signals
+- 🔗 **Connect** memories with 11 typed relationships (RELATES_TO, LEADS_TO, CONTRADICTS, etc.)
+- 🎯 **Learn** through automatic entity extraction, pattern detection, and consolidation
+- ⚡ **Perform** with sub-100ms recall across thousands of memories
 
-### The Research
+### Research Foundation
 
-AutoMem implements breakthroughs from:
+AutoMem implements techniques from peer-reviewed memory research:
 
-- **HippoRAG 2** (Ohio State, 2025): Graph-vector hybrid matches human associative memory
+- **HippoRAG 2** (Ohio State, 2025): Graph-vector hybrid for associative memory
 - **A-MEM** (2025): Dynamic memory organization with Zettelkasten-inspired clustering
-- **MELODI** (DeepMind, 2024): 8x compression without quality loss via gist representations
-- **ReadAgent** (DeepMind, 2024): 20x context extension through episodic memory
-
-**We didn't just read the papers. We built the system they describe—and proved it works.**
+- **MELODI** (DeepMind, 2024): Compression via gist representations
+- **ReadAgent** (DeepMind, 2024): Context extension through episodic memory
 
 ## Architecture
 
@@ -181,9 +146,9 @@ Result: ✅ Finds the memory
 
 ## How It Works in Practice
 
-### Multi-Hop Bridge Discovery (November 2025 Breakthrough)
+### Multi-Hop Bridge Discovery
 
-The innovation that pushed AutoMem to SOTA: **path-based memory expansion** that discovers "bridge" memories connecting disparate conversation threads.
+When you ask a question, AutoMem doesn't just find relevant memories—it finds the **connections between them**. This is called bridge discovery: following graph relationships to surface memories that link your initial results together.
 
 ```mermaid
 graph TB
@@ -216,12 +181,11 @@ graph TB
 
 AutoMem finds the bridge that connects both decisions → Result: AI understands your architectural philosophy, not just isolated choices
 
-**Technical details:**
+**How to enable:**
 
-- Graph traversal finds memories connecting multiple seed results
-- Ranked by relation strength, temporal relevance, importance
-- Configurable with `expand_paths=true` (enabled by default)
-- Drives the **37.5% → ongoing improvement** in multi-hop reasoning
+- Set `expand_relations=true` in recall requests (enabled by default)
+- Control depth with `relation_limit` and `expansion_limit` parameters
+- Results are ranked by relation strength, temporal relevance, and importance
 
 ### Knowledge Graphs That Evolve
 
@@ -319,10 +283,10 @@ AutoMem uses [neuroscience-inspired](https://pmc.ncbi.nlm.nih.gov/articles/PMC46
 
 | Cycle        | Frequency | Purpose                                                              |
 | ------------ | --------- | -------------------------------------------------------------------- |
-| **Decay**    | Hourly    | Exponential relevance scoring (age, access, connections, importance) |
-| **Creative** | Hourly    | REM-like processing that discovers non-obvious connections           |
-| **Cluster**  | 6 hours   | Groups similar memories, generates meta-patterns                     |
-| **Forget**   | Daily     | Archives low-relevance (<0.2), deletes very old (<0.05)              |
+| **Decay**    | Daily     | Exponential relevance scoring (age, access, connections, importance) |
+| **Creative** | Weekly    | REM-like processing that discovers non-obvious connections           |
+| **Cluster**  | Monthly   | Groups similar memories, generates meta-patterns                     |
+| **Forget**   | Disabled  | Archives low-relevance (<0.2), deletes very old (<0.05) when enabled |
 
 **How it works:**
 
@@ -484,7 +448,7 @@ npm install -g @verygoodplugins/mcp-automem
 npx @verygoodplugins/mcp-automem setup
 ```
 
-**SSE Sidecar** (Cloud AI Platforms):
+**Remote MCP** (Cloud AI Platforms):
 
 Connect AutoMem to cloud AI platforms via HTTPS. Works with:
 
@@ -493,12 +457,12 @@ Connect AutoMem to cloud AI platforms via HTTPS. Works with:
 - **Claude mobile app**
 - **ElevenLabs Agents**
 
-See [MCP over SSE documentation](docs/MCP_SSE.md) for setup instructions.
+See [Remote MCP documentation](docs/MCP_SSE.md) for setup instructions.
 
 👉 **Resources**:
 
 - NPM bridge (local): https://www.npmjs.com/package/@verygoodplugins/mcp-automem
-- SSE setup guide: [docs/MCP_SSE.md](docs/MCP_SSE.md)
+- Remote MCP setup: [docs/MCP_SSE.md](docs/MCP_SSE.md)
 
 ### Direct API
 
@@ -514,7 +478,7 @@ response = requests.post(
 )
 ```
 
-## Why AutoMem Beats Everything Else
+## Comparison with Alternatives
 
 ### vs. Traditional RAG Systems
 
@@ -539,17 +503,17 @@ Vector databases match embeddings. AutoMem builds knowledge graphs:
 
 ### vs. Building Your Own
 
-AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
+AutoMem saves you months of iteration:
 
-- ✅ **Benchmark-proven** - 90.53% on LoCoMo (ACL 2024), beats funded competitors
+- ✅ **Benchmark-proven** - 90.53% on LoCoMo (ACL 2024)
 - ✅ **Research-validated** - Implements HippoRAG 2, A-MEM, MELODI, ReadAgent principles
 - ✅ **Production-ready** - Auth, admin tools, health monitoring, automated backups
 - ✅ **Battle-tested** - Enrichment pipeline, consolidation engine, retry logic, dual storage
 - ✅ **Open source** - MIT license, deploy anywhere, no vendor lock-in
 
-## Benchmark-Proven Performance
+## Benchmark Results
 
-### LoCoMo Benchmark Results (December 2, 2025)
+### LoCoMo Benchmark (ACL 2024)
 
 **90.53% overall accuracy** across 1,986 questions:
 
@@ -561,11 +525,13 @@ AutoMem delivers what took 12 days of iteration to achieve SOTA performance:
 | **Single-hop Recall**      | **79.79%** | Basic fact retrieval                    |
 | **Multi-hop Reasoning**    | **50.00%** | Connecting disparate memories (+12.5pp) |
 
-**Comparison:**
+**Comparison with other systems:**
 
-- CORE (previous SOTA): 88.24%
-- AutoMem: **90.53%** (+2.29 points)
-- OpenAI baseline: 39%
+| System | Score |
+|--------|-------|
+| AutoMem | 90.53% |
+| CORE | 88.24% |
+| OpenAI baseline | 39% |
 
 Run the benchmark yourself: `make test-locomo`
 
@@ -600,7 +566,7 @@ Run the benchmark yourself: `make test-locomo`
 
 - 📦 **[Installation Guide](INSTALLATION.md)** - Railway, Docker, development setup
 - 🔍 **[Qdrant Setup Guide](docs/QDRANT_SETUP.md)** - Step-by-step vector database configuration
-- 🌉 **[MCP over SSE Sidecar](docs/MCP_SSE.md)** - Expose AutoMem as an MCP server over SSE for ChatGPT/ElevenLabs
+- 🌉 **[Remote MCP](docs/MCP_SSE.md)** - Connect cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs) to AutoMem
 - 💾 **[Monitoring & Backups](docs/MONITORING_AND_BACKUPS.md)** - Health monitoring and automated backups
 - 🔧 **[API Reference](docs/API.md)** - All endpoints with examples
 - 🧪 **[Testing Guide](docs/TESTING.md)** - Unit, integration, live server, and LoCoMo benchmark tests
@@ -611,13 +577,16 @@ Run the benchmark yourself: `make test-locomo`
 ## Community & Support
 
 - 🌐 **[automem.ai](https://automem.ai)** - Official website
+- 💬 **[Discord](https://automem.ai/discord)** - Community chat
+- 🐦 **[X Community](https://x.com/i/communities/2013114118912225326)** - Follow updates
+- 📺 **[YouTube](https://www.youtube.com/@AutoJackBot)** - Tutorials and demos
 - 🐙 **[GitHub](https://github.com/verygoodplugins/automem)** - Source code
 - 📦 **[NPM MCP Bridge](https://www.npmjs.com/package/@verygoodplugins/mcp-automem)** - MCP integration
 - 🐛 **[Issues](https://github.com/verygoodplugins/automem/issues)** - Bug reports and feature requests
 
-## The Science Behind SOTA
+## Research Background
 
-AutoMem's **90.53% LoCoMo score** didn't come from hype—it came from implementing peer-reviewed neuroscience and graph theory:
+AutoMem's architecture is based on peer-reviewed research in memory systems and graph theory:
 
 ### [HippoRAG 2](https://arxiv.org/abs/2502.14802) (Ohio State, June 2025)
 
@@ -643,10 +612,6 @@ AutoMem's **90.53% LoCoMo score** didn't come from hype—it came from implement
 
 **AutoMem implementation**: Temporal relationship types (PRECEDED_BY, OCCURRED_BEFORE) and time-aware scoring that preserves conversation flow.
 
----
-
-**We didn't just read the papers. We built the system they describe—then validated it on academic benchmarks.**
-
 ## Contributing
 
 We welcome contributions! Please:
@@ -664,18 +629,14 @@ MIT - Because AI memory should be free.
 
 ---
 
-## Deploy State-of-the-Art Memory in 60 Seconds
+## Get Started
 
 ```bash
 railway up
 ```
 
-**AutoMem is the world's best-performing long-term memory system.**
-90.53% LoCoMo score. Open source. Research-validated. Production-ready.
-
-Transform your AI from a chatbot into a thinking partner that **actually remembers.**
+Open source. Research-validated. Production-ready.
 
 ---
 
-_Built by a solo developer. Validated by academic benchmarks. Beats well-funded competitors._
 _MIT License. Deploy anywhere. No vendor lock-in._

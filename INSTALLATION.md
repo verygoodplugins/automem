@@ -105,7 +105,7 @@ python -m spacy download en_core_web_sm
 
 **What this does:**
 
-- Creates AutoMem API + MCP SSE sidecar + FalkorDB services automatically
+- Creates AutoMem API + Remote MCP server + FalkorDB services automatically
 - Sets up persistent storage and volumes
 - Generates secure API tokens (`AUTOMEM_API_TOKEN`, `ADMIN_API_TOKEN`)
 - Configures internal networking (`FALKORDB_HOST`, `FALKORDB_PORT`)
@@ -281,7 +281,7 @@ curl -X POST https://your-automem.railway.app/memory \
 2. **Connect your AI tools** - Use your Railway URL in:
 
    - [AutoMem MCP Client](https://github.com/verygoodplugins/mcp-automem)
-   - Hosted MCP over SSE sidecar for ChatGPT/ElevenLabs: see docs/MCP_SSE.md
+   - Remote MCP for ChatGPT/Claude.ai/ElevenLabs: see docs/MCP_SSE.md
    - Claude Desktop, Cursor, Claude Code, etc.
 
 3. **Set up monitoring** (optional): See [Health Monitoring Guide](docs/HEALTH_MONITORING.md)
@@ -473,7 +473,7 @@ Store a new memory.
 | `confidence`    | float  | No       | Confidence in type 0.0-1.0 (default: `0.9` if type provided, auto-computed otherwise) |
 | `metadata`      | object | No       | Custom metadata (any JSON object)                                                     |
 | `timestamp`     | string | No       | ISO 8601 timestamp (default: current time)                                            |
-| `embedding`     | array  | No       | 768-dimensional vector (auto-generated if omitted)                                    |
+| `embedding`     | array  | No       | Vector embedding (auto-generated if omitted; default 3072d or 768d with small model)  |
 | `t_valid`       | string | No       | ISO timestamp when memory becomes valid                                               |
 | `t_invalid`     | string | No       | ISO timestamp when memory expires                                                     |
 | `updated_at`    | string | No       | ISO timestamp of last update (default: `timestamp`)                                   |

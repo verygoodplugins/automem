@@ -3,8 +3,11 @@
 This document lists the primary API endpoints and examples. All JSON responses include `status` and primary payload fields for LLM-friendliness.
 
 Authentication
-- Pass `Authorization: Bearer <AUTOMEM_API_TOKEN>` for all endpoints.
-- Admin endpoints also require `X-Admin-Token: <ADMIN_API_TOKEN>`.
+- All endpoints except `/health` require authentication via one of:
+  - `Authorization: Bearer <AUTOMEM_API_TOKEN>` header (recommended)
+  - `X-API-Key: <AUTOMEM_API_TOKEN>` header
+  - `?api_key=<AUTOMEM_API_TOKEN>` query parameter
+- Admin endpoints additionally require `X-Admin-Token: <ADMIN_API_TOKEN>` header.
 
 Health
 - GET `/health`

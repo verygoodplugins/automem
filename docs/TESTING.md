@@ -212,8 +212,7 @@ LoCoMo evaluates AI systems' ability to remember and reason across very long con
 4. **Open Domain** (Category 4) - General knowledge questions
 5. **Complex Reasoning** (Category 5) - Advanced inference tasks
 
-**State-of-the-Art**: CORE achieved 88.24% overall accuracy (June 2025)
-**Latest AutoMem run**: 90.53% overall accuracy (Dec 2, 2025) using multi-hop bridges + entity expansion + temporal alignment.
+**Comparison**: CORE achieved 88.24% (June 2025). AutoMem achieved 90.53%.
 
 ### Running the Benchmark
 
@@ -243,11 +242,11 @@ The benchmark takes approximately:
 
 Memory usage:
 - **FalkorDB**: ~6,000–10,000 nodes
-- **Qdrant**: ~6,000–10,000 vectors (768 dimensions)
+- **Qdrant**: ~6,000–10,000 vectors (3072 dimensions by default, or 768 with small model)
 
 ### Interpreting Results
 
-The benchmark outputs (example from December 2, 2025 run):
+Example benchmark output:
 ```text
 📊 FINAL RESULTS
 🎯 Overall Accuracy: 90.53% (1798/1986)
@@ -261,12 +260,12 @@ The benchmark outputs (example from December 2, 2025 run):
   Open Domain              : 95.84% (806/841)
   Complex Reasoning        : 100.00% (446/446)
 
-🏆 Comparison with CORE (SOTA):
+📊 Comparison:
   CORE: 88.24%
   AutoMem: 90.53%
-  🎉 AutoMem BEATS CORE by 2.29%!
+```
 
-Previous baseline (Nov 8, 2025): 76.08%. All benchmark reports live in `tests/benchmarks/`.
+All benchmark reports live in `tests/benchmarks/`.
 ```
 
 ### AutoMem's Advantages
