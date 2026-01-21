@@ -461,7 +461,7 @@ See [Remote MCP documentation](docs/MCP_SSE.md) for setup instructions.
 
 👉 **Resources**:
 
-- NPM bridge (local): https://www.npmjs.com/package/@verygoodplugins/mcp-automem
+- NPM bridge (local): [`@verygoodplugins/mcp-automem`](https://www.npmjs.com/package/@verygoodplugins/mcp-automem)
 - Remote MCP setup: [docs/MCP_SSE.md](docs/MCP_SSE.md)
 
 ### Direct API
