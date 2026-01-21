@@ -1,0 +1,232 @@
+import type { GraphSnapshot, GraphNeighbors, GraphStats } from '../lib/types'
+
+/**
+ * Detect if running in embedded mode (served from /viewer/ on same origin).
+ * In embedded mode, we use relative URLs and get token from URL hash.
+ */
+function isEmbeddedMode(): boolean {
+  return window.location.pathname.startsWith('/viewer')
+}
+
+function getEnvApiTarget(): string | null {
+  const raw = import.meta.env.VITE_API_TARGET
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  return trimmed.replace(/\/+$/, '')
+}
+
+/**
+ * Get token from URL hash (e.g., /viewer/#token=xxx).
+ * This keeps the token client-side only, never sent to server in URL.
+ */
+function getTokenFromHash(): string | null {
+  const hash = window.location.hash
+  if (!hash) return null
+  const params = new URLSearchParams(hash.slice(1))
+  return params.get('token')
+}
+
+function getApiBase(): string {
+  // Allow override via URL param for local dev against remote backend
+  const urlParams = new URLSearchParams(window.location.search)
+  const serverOverride = urlParams.get('server')
+  if (serverOverride) {
+    return serverOverride
+  }
+
+  const envTarget = getEnvApiTarget()
+  if (envTarget) {
+    return envTarget
+  }
+
+  if (isEmbeddedMode()) {
+    // In embedded mode, use relative URL (same origin)
+    return ''
+  }
+  return localStorage.getItem('automem_server') || 'https://automem.up.railway.app'
+}
+
+function getTokenFromQuery(): string | null {
+  const urlParams = new URLSearchParams(window.location.search)
+  return urlParams.get('token')
+}
+
+function getToken(): string | null {
+  // Priority: URL query param > URL hash > localStorage
+  return getTokenFromQuery() || getTokenFromHash() || localStorage.getItem('automem_token')
+}
+
+function getAuthHeaders(): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+  }
+}
+
+function addTokenToUrl(url: string): string {
+  const token = getToken()
+  if (!token) {
+    throw new Error('No API token configured')
+  }
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}api_key=${encodeURIComponent(token)}`
+}
+
+export function setServerConfig(serverUrl: string, token: string): void {
+  localStorage.setItem('automem_server', serverUrl)
+  localStorage.setItem('automem_token', token)
+}
+
+export function getServerConfig(): { serverUrl: string; token: string } | null {
+  // Check URL params first (for local dev against remote backend)
+  const urlParams = new URLSearchParams(window.location.search)
+  const serverOverride = urlParams.get('server')
+  const tokenOverride = urlParams.get('token')
+  if (serverOverride && tokenOverride) {
+    return { serverUrl: serverOverride, token: tokenOverride }
+  }
+
+  // In embedded mode, check for hash token
+  if (isEmbeddedMode()) {
+    const hashToken = getTokenFromHash()
+    if (hashToken) {
+      return { serverUrl: window.location.origin, token: hashToken }
+    }
+  }
+
+  const serverUrl = localStorage.getItem('automem_server')
+  const token = localStorage.getItem('automem_token')
+  if (!serverUrl || !token) return null
+  return { serverUrl, token }
+}
+
+export function isAuthenticated(): boolean {
+  return !!getToken()
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const text = await response.text()
+    let message = `API error: ${response.status}`
+    try {
+      const json = JSON.parse(text)
+      message = json.description || json.error || message
+    } catch {
+      message = text || message
+    }
+    throw new Error(message)
+  }
+  return response.json()
+}
+
+export interface SnapshotParams {
+  limit?: number
+  minImportance?: number
+  types?: string[]
+  since?: string
+}
+
+export interface ProjectedParams {
+  limit?: number
+  minImportance?: number
+  types?: string[]
+  nNeighbors?: number  // UMAP n_neighbors (default 15)
+  minDist?: number     // UMAP min_dist (default 0.1)
+  spread?: number      // UMAP spread (default 1.0)
+}
+
+export async function fetchGraphSnapshot(params: SnapshotParams = {}): Promise<GraphSnapshot> {
+  const searchParams = new URLSearchParams()
+
+  if (params.limit) searchParams.set('limit', String(params.limit))
+  if (params.minImportance) searchParams.set('min_importance', String(params.minImportance))
+  if (params.types?.length) searchParams.set('types', params.types.join(','))
+  if (params.since) searchParams.set('since', params.since)
+
+  const url = addTokenToUrl(`${getApiBase()}/graph/snapshot?${searchParams}`)
+  const response = await fetch(url)
+  return handleResponse<GraphSnapshot>(response)
+}
+
+export interface ProjectedSnapshot extends GraphSnapshot {
+  projection: {
+    method: string
+    n_neighbors: number
+    min_dist: number
+    spread: number
+    dimensions: number
+    umap_time_ms: number
+  }
+}
+
+export async function fetchProjectedGraph(params: ProjectedParams = {}): Promise<ProjectedSnapshot> {
+  const searchParams = new URLSearchParams()
+
+  if (params.limit) searchParams.set('limit', String(params.limit))
+  if (params.minImportance) searchParams.set('min_importance', String(params.minImportance))
+  if (params.types?.length) searchParams.set('types', params.types.join(','))
+  if (params.nNeighbors) searchParams.set('n_neighbors', String(params.nNeighbors))
+  if (params.minDist) searchParams.set('min_dist', String(params.minDist))
+  if (params.spread) searchParams.set('spread', String(params.spread))
+
+  const url = addTokenToUrl(`${getApiBase()}/graph/projected?${searchParams}`)
+  const response = await fetch(url)
+  return handleResponse<ProjectedSnapshot>(response)
+}
+
+export interface NeighborsParams {
+  depth?: number
+  includeSemantic?: boolean
+  semanticLimit?: number
+}
+
+export async function fetchGraphNeighbors(
+  memoryId: string,
+  params: NeighborsParams = {}
+): Promise<GraphNeighbors> {
+  const searchParams = new URLSearchParams()
+
+  if (params.depth) searchParams.set('depth', String(params.depth))
+  if (params.includeSemantic !== undefined) {
+    searchParams.set('include_semantic', String(params.includeSemantic))
+  }
+  if (params.semanticLimit) searchParams.set('semantic_limit', String(params.semanticLimit))
+
+  const url = addTokenToUrl(`${getApiBase()}/graph/neighbors/${memoryId}?${searchParams}`)
+  const response = await fetch(url)
+  return handleResponse<GraphNeighbors>(response)
+}
+
+export async function fetchGraphStats(): Promise<GraphStats> {
+  const url = addTokenToUrl(`${getApiBase()}/graph/stats`)
+  const response = await fetch(url)
+  return handleResponse<GraphStats>(response)
+}
+
+export async function updateMemory(
+  memoryId: string,
+  updates: { importance?: number; tags?: string[]; content?: string }
+): Promise<void> {
+  const url = addTokenToUrl(`${getApiBase()}/memory/${memoryId}`)
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(updates),
+  })
+  await handleResponse(response)
+}
+
+export async function deleteMemory(memoryId: string): Promise<void> {
+  const url = addTokenToUrl(`${getApiBase()}/memory/${memoryId}`)
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  })
+  await handleResponse(response)
+}
+
+export async function checkHealth(serverUrl?: string): Promise<{ status: string }> {
+  const base = serverUrl || getApiBase()
+  const response = await fetch(`${base}/health`)
+  return handleResponse(response)
+}
