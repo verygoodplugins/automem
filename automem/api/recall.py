@@ -8,8 +8,10 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
 
+from automem.api.stream import emit_event
 from automem.config import ALLOWED_RELATIONS, RECALL_EXPANSION_LIMIT, RECALL_RELATION_LIMIT
 from automem.utils.graph import _serialize_node
+from automem.utils.time import utc_now
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
     "coding-style",
@@ -1457,7 +1459,8 @@ def create_recall_blueprint(
 
     @bp.route("/recall", methods=["GET"])
     def recall_memories() -> Any:
-        return handle_recall(
+        query_start = time.perf_counter()
+        response = handle_recall(
             get_memory_graph,
             get_qdrant_client,
             normalize_tag_list,
@@ -1476,6 +1479,92 @@ def create_recall_blueprint(
             expansion_limit_default=RECALL_EXPANSION_LIMIT,
             on_access=on_access,
         )
+        elapsed_ms = int((time.perf_counter() - query_start) * 1000)
+
+        result_count = 0
+        dedup_removed = 0
+        tags_filter: List[str] = []
+        has_time_filter = False
+        vector_search_used = False
+        query_text = ""
+        result_summaries: List[Dict[str, Any]] = []
+
+        try:
+            data = response.get_json(silent=True) or {}
+            query_text = data.get("query") or ""
+            dedup_removed = int(data.get("dedup_removed") or 0)
+            tags_filter = data.get("tags") or []
+            has_time_filter = bool(data.get("time_window"))
+            vector_info = data.get("vector_search") or {}
+            vector_search_used = bool(vector_info.get("matched")) or (
+                bool(vector_info.get("enabled")) and bool(query_text)
+            )
+
+            results = data.get("results") or []
+            result_count = int(data.get("count") or len(results))
+
+            for r in results[:10]:
+                if not isinstance(r, dict):
+                    continue
+                memory = r.get("memory") or r.get("node") or {}
+                if not isinstance(memory, dict):
+                    memory = {}
+
+                tags_list = memory.get("tags") or []
+                score_raw = r.get("final_score", r.get("score", 0))
+                try:
+                    score_val = round(float(score_raw or 0), 3)
+                except (TypeError, ValueError):
+                    score_val = 0.0
+
+                result_summaries.append(
+                    {
+                        "id": str(r.get("id") or memory.get("id") or "")[:8],
+                        "score": score_val,
+                        "type": memory.get("type", "?"),
+                        "content_length": len(memory.get("content", "") or ""),
+                        "tags_count": len(tags_list) if isinstance(tags_list, (list, tuple)) else 0,
+                    }
+                )
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.debug("Failed to parse recall response for SSE stats", exc_info=exc)
+
+        avg_length = 0
+        avg_tags = 0
+        score_min = 0
+        score_max = 0
+        if result_summaries:
+            avg_length = int(
+                sum(r["content_length"] for r in result_summaries) / len(result_summaries)
+            )
+            avg_tags = round(
+                sum(r["tags_count"] for r in result_summaries) / len(result_summaries), 1
+            )
+            scores = [r["score"] for r in result_summaries]
+            score_min = min(scores)
+            score_max = max(scores)
+
+        emit_event(
+            "memory.recall",
+            {
+                "query": query_text,
+                "result_count": result_count,
+                "dedup_removed": dedup_removed,
+                "elapsed_ms": elapsed_ms,
+                "tags_filter": tags_filter if tags_filter else [],
+                "has_time_filter": has_time_filter,
+                "vector_search": vector_search_used,
+                "stats": {
+                    "avg_length": avg_length,
+                    "avg_tags": avg_tags,
+                    "score_range": [score_min, score_max],
+                },
+                "result_summaries": result_summaries[:3],
+            },
+            utc_now,
+        )
+
+        return response
 
     @bp.route("/startup-recall", methods=["GET"])
     def startup_recall() -> Any:

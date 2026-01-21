@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
 
+from automem.api.stream import emit_event
 from automem.config import (
     CLASSIFICATION_MODEL,
     MEMORY_AUTO_SUMMARIZE,
@@ -346,6 +347,23 @@ def create_memory_blueprint_full(
                 "enrichment_queued": bool(state.enrichment_queue),
             },
         )
+
+        emit_event(
+            "memory.store",
+            {
+                "memory_id": memory_id,
+                "content": content,
+                "type": memory_type,
+                "type_confidence": type_confidence,
+                "importance": importance,
+                "tags": tags,
+                "metadata": metadata,
+                "embedding_status": embedding_status,
+                "qdrant_status": qdrant_result,
+                "elapsed_ms": response["query_time_ms"],
+            },
+            utc_now,
+        )
         return jsonify(response), 201
 
     @bp.route("/memory/<memory_id>", methods=["PATCH"])
@@ -611,6 +629,18 @@ def create_memory_blueprint_full(
         for prop in relation_config.get("properties", []):
             if prop in relationship_props:
                 response[prop] = relationship_props[prop]
+
+        emit_event(
+            "memory.associate",
+            {
+                "memory1_id": memory1_id,
+                "memory2_id": memory2_id,
+                "relation_type": relation_type,
+                "strength": strength,
+                "properties": relationship_props,
+            },
+            utc_now,
+        )
         return jsonify(response), 201
 
     return bp

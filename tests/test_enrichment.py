@@ -108,8 +108,8 @@ def test_enrich_memory_updates_metadata(monkeypatch):
     fake_graph = FakeGraph()
     app.state.memory_graph = fake_graph
 
-    processed = app.enrich_memory("mem-1", forced=True)
-    assert processed is True
+    result = app.enrich_memory("mem-1", forced=True)
+    assert result.get("processed") is True
 
     assert fake_graph.temporal_calls, "Should create temporal relationships"
     assert fake_graph.pattern_calls, "Should update pattern nodes"
@@ -119,7 +119,7 @@ def test_enrich_memory_updates_metadata(monkeypatch):
     update_payload = fake_graph.update_calls[-1]
     metadata = json.loads(update_payload["metadata"])
     assert metadata["entities"]["projects"] == ["Launchpad"]
-    assert metadata["enrichment"]["temporal_links"] == 1
+    assert len(metadata["enrichment"]["temporal_links"]) == 1  # Now returns list of IDs
     assert metadata["enrichment"]["patterns_detected"]
     assert update_payload["summary"].startswith("Met with Alice")
     assert "entity:projects:launchpad" in update_payload["tags"]
