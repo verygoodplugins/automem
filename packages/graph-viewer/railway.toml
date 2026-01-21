@@ -1,7 +1,6 @@
 # railway.toml - Graph Viewer service configuration
 [build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+builder = "NIXPACKS"
 
 [deploy]
 restartPolicyType = "ON_FAILURE"
