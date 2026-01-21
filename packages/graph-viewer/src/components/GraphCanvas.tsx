@@ -271,8 +271,7 @@ export function GraphCanvas({
       />
     </Canvas>
 
-      {/* VR Button - Only show when actually in an immersive XR session context (Quest browser, etc.) */}
-      {/* Disabled: isVrSupported returns true on desktop Chrome even without VR hardware */}
+      {/* VR Button - Disabled: isVrSupported returns true on desktop Chrome even without VR hardware */}
 
       {/* MiniMap Navigator */}
       <MiniMap
@@ -408,7 +407,6 @@ function Scene({
     // Stop any hand gesture inertia
     grabVelocityRef.current.set(0, 0, 0)
     inertiaActiveRef.current = false
-    bimanualAnchorRef.current = null
   }, [camera])
 
   useEffect(() => {
@@ -628,12 +626,10 @@ function Scene({
 
   // Bimanual navigation: two-hand pinch to pan/zoom/rotate the cloud
   const wasBimanualRef = useRef(false)
-  const bimanualAnchorRef = useRef<{
+  const bimanualSmoothedRef = useRef<{
     distance: number
     angle: number
     center: { x: number; y: number }
-    worldPos: { x: number; y: number; z: number }
-    worldRotZ: number
   } | null>(null)
 
   // Direct pinch selection ("pick the berry")
@@ -658,9 +654,9 @@ function Scene({
 
     // --- Bimanual pinch: two-point transform (pan/zoom/rotate) ---
     if (bimanualPinch && leftMetrics && rightMetrics) {
-      const PAN_SPEED = 350 // world units per normalized screen unit
-      const ZOOM_SPEED = 320 // world units per ln(distance ratio)
-      const ROTATE_SPEED = 1.0 // radians per radian of pinch-line rotation
+      const PAN_SPEED = 420 // world units per normalized screen unit
+      const ZOOM_SPEED = 360 // world units per ln(distance ratio)
+      const ROTATE_SPEED = 1.1 // radians per radian of pinch-line rotation
 
       const left = leftMetrics.pinchPoint
       const right = rightMetrics.pinchPoint
@@ -688,46 +684,52 @@ function Scene({
 
       const angle = canonicalSegmentAngle(Math.atan2(dyUp, dx))
 
+      const safeDt = Math.max(1e-4, dt)
+      const smoothing = 1 - Math.exp(-20 * safeDt)
+      const follow = 1 - Math.exp(-55 * safeDt)
+
+      const prevSmooth =
+        wasBimanualRef.current && bimanualSmoothedRef.current
+          ? bimanualSmoothedRef.current
+          : { center, distance: Math.max(1e-4, distance), angle }
+
+      const nextSmooth = {
+        center: {
+          x: THREE.MathUtils.lerp(prevSmooth.center.x, center.x, smoothing),
+          y: THREE.MathUtils.lerp(prevSmooth.center.y, center.y, smoothing),
+        },
+        distance: THREE.MathUtils.lerp(prevSmooth.distance, Math.max(1e-4, distance), smoothing),
+        angle: prevSmooth.angle + normalizeDeltaPi(angle - prevSmooth.angle) * smoothing,
+      }
+
+      // First frame: initialize smoothing state but don't apply a jump.
       if (!wasBimanualRef.current) {
-        bimanualAnchorRef.current = {
-          distance: Math.max(1e-4, distance),
-          angle,
-          center,
-          worldPos: { x: group.position.x, y: group.position.y, z: group.position.z },
-          worldRotZ: group.rotation.z,
-        }
+        bimanualSmoothedRef.current = nextSmooth
+        wasBimanualRef.current = true
+        wasGrabbingRef.current = false
+        return
       }
 
-      const anchor = bimanualAnchorRef.current
-      if (anchor) {
-        const safeDt = Math.max(1e-4, dt)
-        const follow = 1 - Math.exp(-18 * safeDt)
+      bimanualSmoothedRef.current = nextSmooth
 
-        const panDx = center.x - anchor.center.x
-        const panDy = center.y - anchor.center.y
-        const rotationDelta = normalizeDeltaPi(angle - anchor.angle)
+      const panDx = nextSmooth.center.x - prevSmooth.center.x
+      const panDy = nextSmooth.center.y - prevSmooth.center.y
+      const rotationDelta = normalizeDeltaPi(nextSmooth.angle - prevSmooth.angle)
 
-        // Standard pinch zoom uses a distance ratio. log() makes it symmetric for in/out.
-        const distRatio = Math.max(1e-4, distance) / Math.max(1e-4, anchor.distance)
-        const zoomDelta = Math.log(distRatio)
+      const distRatio = Math.max(1e-4, nextSmooth.distance) / Math.max(1e-4, prevSmooth.distance)
+      const zoomDelta = Math.log(distRatio)
 
-        const targetX = anchor.worldPos.x + panDx * PAN_SPEED
-        const targetY = anchor.worldPos.y - panDy * PAN_SPEED
-        const targetZ = anchor.worldPos.z + zoomDelta * ZOOM_SPEED
-        const targetRotZ = anchor.worldRotZ + rotationDelta * ROTATE_SPEED
-
-        group.position.x = THREE.MathUtils.lerp(group.position.x, targetX, follow)
-        group.position.y = THREE.MathUtils.lerp(group.position.y, targetY, follow)
-        group.position.z = THREE.MathUtils.lerp(group.position.z, targetZ, follow)
-        group.rotation.z = THREE.MathUtils.lerp(group.rotation.z, targetRotZ, follow)
-      }
+      group.position.x += panDx * PAN_SPEED * follow
+      group.position.y -= panDy * PAN_SPEED * follow
+      group.position.z += zoomDelta * ZOOM_SPEED * follow
+      group.rotation.z += rotationDelta * ROTATE_SPEED * follow
 
       wasBimanualRef.current = true
       wasGrabbingRef.current = false
       return
     } else {
       wasBimanualRef.current = false
-      bimanualAnchorRef.current = null
+      bimanualSmoothedRef.current = null
     }
 
     // --- Grab: follow target with damping + inertial coast on release ---

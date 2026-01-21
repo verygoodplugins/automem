@@ -18,22 +18,36 @@ FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 # Consolidation scheduling defaults (seconds unless noted)
 CONSOLIDATION_TICK_SECONDS = int(os.getenv("CONSOLIDATION_TICK_SECONDS", "60"))
 CONSOLIDATION_DECAY_INTERVAL_SECONDS = int(
-    os.getenv("CONSOLIDATION_DECAY_INTERVAL_SECONDS", str(3600))
+    os.getenv("CONSOLIDATION_DECAY_INTERVAL_SECONDS", str(86400))
 )
 CONSOLIDATION_CREATIVE_INTERVAL_SECONDS = int(
-    os.getenv("CONSOLIDATION_CREATIVE_INTERVAL_SECONDS", str(3600))
+    os.getenv("CONSOLIDATION_CREATIVE_INTERVAL_SECONDS", str(604800))
 )
 CONSOLIDATION_CLUSTER_INTERVAL_SECONDS = int(
-    os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(21600))
+    os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(2592000))
 )
 CONSOLIDATION_FORGET_INTERVAL_SECONDS = int(
-    os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(86400))
+    os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(0))
 )
 _DECAY_THRESHOLD_RAW = os.getenv("CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD", "0.3").strip()
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD = (
     float(_DECAY_THRESHOLD_RAW) if _DECAY_THRESHOLD_RAW else None
 )
 CONSOLIDATION_HISTORY_LIMIT = int(os.getenv("CONSOLIDATION_HISTORY_LIMIT", "20"))
+
+# Memory protection configuration (prevents accidental data loss)
+CONSOLIDATION_DELETE_THRESHOLD = float(os.getenv("CONSOLIDATION_DELETE_THRESHOLD", "0.0"))
+CONSOLIDATION_ARCHIVE_THRESHOLD = float(os.getenv("CONSOLIDATION_ARCHIVE_THRESHOLD", "0.0"))
+CONSOLIDATION_GRACE_PERIOD_DAYS = int(os.getenv("CONSOLIDATION_GRACE_PERIOD_DAYS", "90"))
+CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD = float(
+    os.getenv("CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD", "0.7")
+)
+_PROTECTED_TYPES_RAW = os.getenv("CONSOLIDATION_PROTECTED_TYPES", "Decision,Insight").strip()
+CONSOLIDATION_PROTECTED_TYPES = (
+    frozenset(t.strip() for t in _PROTECTED_TYPES_RAW.split(",") if t.strip())
+    if _PROTECTED_TYPES_RAW
+    else frozenset()
+)
 CONSOLIDATION_CONTROL_LABEL = "ConsolidationControl"
 CONSOLIDATION_RUN_LABEL = "ConsolidationRun"
 CONSOLIDATION_CONTROL_NODE_ID = os.getenv("CONSOLIDATION_CONTROL_NODE_ID", "global")
@@ -70,6 +84,20 @@ CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
+
+# Memory content size limits (governs auto-summarization on store)
+# Soft limit: Content above this triggers auto-summarization
+MEMORY_CONTENT_SOFT_LIMIT = int(os.getenv("MEMORY_CONTENT_SOFT_LIMIT", "500"))
+# Hard limit: Content above this is rejected outright
+MEMORY_CONTENT_HARD_LIMIT = int(os.getenv("MEMORY_CONTENT_HARD_LIMIT", "2000"))
+# Enable/disable auto-summarization (if disabled, content above soft limit is stored as-is)
+MEMORY_AUTO_SUMMARIZE = os.getenv("MEMORY_AUTO_SUMMARIZE", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+# Target length for summarized content
+MEMORY_SUMMARY_TARGET_LENGTH = int(os.getenv("MEMORY_SUMMARY_TARGET_LENGTH", "300"))
 
 # Memory types for classification
 MEMORY_TYPES = {"Decision", "Pattern", "Preference", "Style", "Habit", "Insight", "Context"}

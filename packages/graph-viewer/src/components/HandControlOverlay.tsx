@@ -32,8 +32,8 @@ export function HandControlOverlay({
   const badge =
     lock.mode === 'locked'
       ? lock.grabbed
-        ? { text: 'GRABBED', color: 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30' }
-        : { text: 'LOCKED', color: 'bg-cyan-500/20 text-cyan-200 border-cyan-400/30' }
+        ? { text: `GRABBING (${lock.hand.toUpperCase()})`, color: 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30' }
+        : { text: `ACTIVE (${lock.hand.toUpperCase()})`, color: 'bg-cyan-500/20 text-cyan-200 border-cyan-400/30' }
       : lock.mode === 'candidate'
         ? { text: `ACQUIRING (${lock.frames})`, color: 'bg-yellow-500/20 text-yellow-200 border-yellow-400/30' }
         : { text: 'IDLE', color: 'bg-slate-500/20 text-slate-200 border-slate-400/30' }

@@ -377,3 +377,55 @@ def test_update_last_accessed_handles_none_graph(monkeypatch):
 
     # Should not raise, should be a no-op
     app.update_last_accessed(["some-id"])
+
+
+# ============================================================================
+# DateTime timezone handling tests (hotfix/production-bugs)
+# ============================================================================
+
+
+def test_parse_iso_datetime_naive_assumes_utc():
+    """Naive timestamps (no timezone) should be treated as UTC."""
+    from datetime import timezone
+
+    from automem.utils.time import _parse_iso_datetime
+
+    result = _parse_iso_datetime("2024-01-15T10:30:00")
+    assert result is not None
+    assert result.tzinfo == timezone.utc
+
+
+def test_parse_iso_datetime_aware_preserved():
+    """Timestamps with explicit timezone should preserve it."""
+    from datetime import timezone
+
+    from automem.utils.time import _parse_iso_datetime
+
+    # UTC with Z suffix
+    result = _parse_iso_datetime("2024-01-15T10:30:00Z")
+    assert result is not None
+    assert result.tzinfo == timezone.utc
+
+    # With explicit offset
+    result = _parse_iso_datetime("2024-01-15T10:30:00+05:30")
+    assert result is not None
+    assert result.tzinfo is not None
+
+
+def test_result_passes_filters_mixed_naive_aware():
+    """Filter comparison should work with mixed naive/aware timestamps."""
+    # Function expects result dict with "memory" key containing the timestamp
+    result = app._result_passes_filters(
+        result={"memory": {"timestamp": "2024-01-15T10:30:00"}},  # naive
+        start_time="2024-01-14T00:00:00Z",  # aware
+        end_time="2024-01-16T00:00:00Z",  # aware
+    )
+    assert result is True
+
+    # Should fail if outside range
+    result = app._result_passes_filters(
+        result={"memory": {"timestamp": "2024-01-13T10:30:00"}},  # naive, before start
+        start_time="2024-01-14T00:00:00Z",
+        end_time="2024-01-16T00:00:00Z",
+    )
+    assert result is False

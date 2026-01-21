@@ -90,8 +90,13 @@ AutoMem supports three embedding backends with automatic fallback.
 | `VECTOR_SIZE` | Embedding dimension | `3072` | `3072` (large), `768` (small) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `false` | `true` |
 
-**Note**: Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
-**Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script. By default the service fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption. To opt into legacy auto-detection (use the existing collection dimension), set `VECTOR_SIZE_AUTODETECT=true`.
+👉 **New to Qdrant?** See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
+
+**Notes**:
+- Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
+- **Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script.
+- By default the service fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption.
+- To opt into legacy auto-detection (use the existing collection dimension), set `VECTOR_SIZE_AUTODETECT=true`.
 
 ### API Server
 
@@ -131,13 +136,18 @@ Controls memory merging, pattern detection, and decay.
 | Variable | Description | Default | Unit |
 |----------|-------------|---------|------|
 | `CONSOLIDATION_TICK_SECONDS` | Check interval | `60` | seconds |
-| `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Decay check interval | `3600` | seconds |
-| `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Pattern detection interval | `3600` | seconds |
-| `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `21600` | seconds |
-| `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forget interval | `86400` | seconds |
+| `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Decay check interval | `86400` | seconds |
+| `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Pattern detection interval | `604800` | seconds |
+| `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `2592000` | seconds |
+| `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forget interval (`0` disables) | `0` | seconds |
 | `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Min importance to keep | `0.3` | 0-1 |
 | `CONSOLIDATION_HISTORY_LIMIT` | Max consolidation history | `20` | count |
 | `CONSOLIDATION_CONTROL_NODE_ID` | Control node identifier | `global` | string |
+| `CONSOLIDATION_DELETE_THRESHOLD` | Delete threshold (`0` disables) | `0.0` | 0-1 |
+| `CONSOLIDATION_ARCHIVE_THRESHOLD` | Archive threshold (`0` disables) | `0.0` | 0-1 |
+| `CONSOLIDATION_GRACE_PERIOD_DAYS` | Protect recent memories | `90` | days |
+| `CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD` | Protect high-importance memories | `0.7` | 0-1 |
+| `CONSOLIDATION_PROTECTED_TYPES` | Comma-separated protected types | `Decision,Insight` | string |
 
 ### Model Configuration
 
@@ -323,11 +333,12 @@ FALKORDB_HOST = (
 
 | Old Name | New Name | Status |
 |----------|----------|--------|
+| `AUTOMEM_ENDPOINT` | `AUTOMEM_API_URL` | Deprecated, use new name |
 | `MCP_MEMORY_HTTP_ENDPOINT` | `AUTOMEM_API_URL` | Deprecated, use new name |
 | `MCP_MEMORY_AUTO_DISCOVER` | - | Removed (unused) |
 | `DEVELOPMENT` | - | Removed (unused) |
 
-**Backward compatibility**: Old names still work but will show deprecation warnings.
+**Backward compatibility**: Old names still work as fallbacks.
 
 ---
 
