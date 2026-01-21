@@ -1,6 +1,4 @@
 # railway.toml - Graph Viewer service configuration
-[build]
-builder = "NIXPACKS"
 
 [deploy]
 restartPolicyType = "ON_FAILURE"
