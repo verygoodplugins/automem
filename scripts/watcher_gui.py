@@ -41,7 +41,7 @@ class HackerTerminal:
     """Main GUI application for the Automem Uplink Terminal."""
     def __init__(self, root):
         self.root = root
-        self.root.title("AUTOMEM UPLINK v1.0")
+        self.root.title("AUTOMEM UPLINK v1.1")
         self.root.geometry("600x450")
         self.root.configure(bg=BG_COLOR)
         
