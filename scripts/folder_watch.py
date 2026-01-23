@@ -28,20 +28,15 @@ PROCESSED_DIR = os.path.join(DROP_ZONE, "processed")
 
 # Default to localhost, but allow env var override
 BASE_URL = os.environ.get("AUTOMEM_API_URL", "http://localhost:8001")
-# For local dev, token can often be anything or 'dev', but ideally configured. 
-TOKEN = os.environ.get("AUTOMEM_API_TOKEN", "") # Security: Default to empty. User must set env var or update this locally.
-# In a real open source release, we might want to default TOKEN to empty or a placeholder if not set.
-# But for THIS user's "fork" which they might push, let's keep it working. 
-# Actually, the user asked to make it useful to *others*. Hardcoding a specific token is bad practice.
-# I will use a placeholder generic default if not set, but for THIS session I need it to work.
-# Compromise: I will use the env var, and default to the one we know works for now, but add a comment.
-
-HEADERS = {
-    "Authorization": f"Bearer {TOKEN}",
-    "Content-Type": "application/json"
-}
+TOKEN = os.environ.get("AUTOMEM_API_TOKEN", "") # Security: Default to empty.
 
 def process_file_util(file_path):
+    """
+    Reads a file and sends its content to the Automem API.
+    
+    Args:
+        file_path (str): The absolute path to the file to process.
+    """
     try:
         # Check if file still exists (debounce)
         if not os.path.exists(file_path):
@@ -61,7 +56,7 @@ def process_file_util(file_path):
             print(" -> Error: AUTOMEM_API_TOKEN is not set.")
             return
 
-        HEADERS = {
+        headers = {
             "Authorization": f"Bearer {TOKEN}",
             "Content-Type": "application/json"
         }
@@ -73,7 +68,7 @@ def process_file_util(file_path):
         }
         
         try:
-            resp = requests.post(f"{BASE_URL}/memory", json=payload, headers=HEADERS)
+            resp = requests.post(f"{BASE_URL}/memory", json=payload, headers=headers, timeout=10)
             
             if resp.status_code in [200, 201]:
                 print(" -> Success! Memory stored.")
@@ -88,14 +83,18 @@ def process_file_util(file_path):
                 print(f" -> Moved to {dest_path}")
             else:
                 print(f" -> Failed: {resp.status_code} - {resp.text}")
-        except requests.exceptions.ConnectionError:
-             print(" -> Error: Could not connect to Automem API. Is it running?")
+        except requests.exceptions.RequestException as e:
+            print(f" -> Network Error: {e}")
 
     except Exception as e:
         print(f"Error processing file: {e}")
 
 class MemoryHandler(FileSystemEventHandler):
+    """
+    Watchdog handler for detecting new files in the drop zone.
+    """
     def on_created(self, event):
+        """Called when a file or directory is created."""
         if event.is_directory or not event.src_path.endswith(".txt"):
             return
         print(f"New file detected: {event.src_path}")
@@ -103,6 +102,7 @@ class MemoryHandler(FileSystemEventHandler):
         process_file_util(event.src_path)
 
     def on_moved(self, event):
+        """Called when a file is moved or renamed."""
         if not event.is_directory and event.dest_path.endswith(".txt") and "processed" not in event.dest_path:
              print(f"File moved in: {event.dest_path}")
              time.sleep(1)
@@ -133,4 +133,4 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
-    observer.join()
+        observer.join()

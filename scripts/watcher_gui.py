@@ -17,24 +17,28 @@ FONT_FAMILY = "Consolas"
 FONT_SIZE = 10
 
 class TextRedirector(object):
+    """Redirects stdout/stderr to a Tkinter text widget."""
     def __init__(self, widget, tag="stdout"):
         self.widget = widget
         self.tag = tag
 
-    def write(self, str):
+    def write(self, text):
+        """Writes text to the widget."""
         try:
             self.widget.configure(state="normal")
-            self.widget.insert("end", str, (self.tag,))
+            self.widget.insert("end", text, (self.tag,))
             self.widget.see("end")
             self.widget.configure(state="disabled")
             self.widget.update_idletasks()
-        except:
+        except tk.TclError:
             pass
 
     def flush(self):
+        """Flush buffer (no-op)."""
         pass
 
 class HackerTerminal:
+    """Main GUI application for the Automem Uplink Terminal."""
     def __init__(self, root):
         self.root = root
         self.root.title("AUTOMEM UPLINK v1.0")
@@ -107,12 +111,14 @@ class HackerTerminal:
         self.running = False
         self.spinner_cycle = itertools.cycle(['|', '/', '-', '\\'])
         self.spinner_running = False
+        self._monitor_active = True
         
         # Start background tasks
         self.check_health()
         self.animate()
 
     def animate(self):
+        """Updates the ASCII spinner animation."""
         if self.spinner_running:
             self.spinner_label.configure(text=next(self.spinner_cycle))
         else:
@@ -122,28 +128,33 @@ class HackerTerminal:
             self.root.after(100, self.animate)
 
     def check_health(self):
-        def _check():
-            try:
-                resp = requests.get(f"{BASE_URL}/health", timeout=2)
-                if resp.status_code == 200:
-                    self.update_gui(lambda: self.brain_value.configure(text="[BRAIN: ONLINE]", fg=FG_COLOR))
-                else:
-                    self.update_gui(lambda: self.brain_value.configure(text=f"[BRAIN: ERR {resp.status_code}]", fg="red"))
-            except:
-                self.update_gui(lambda: self.brain_value.configure(text="[BRAIN: OFFLINE]", fg="red"))
-            
-            if not self.root_destroyed:
+        """Starts a background thread to check API health."""
+        def _check_loop():
+            while self._monitor_active:
+                if self.root_destroyed:
+                    break
+                    
+                try:
+                    resp = requests.get(f"{BASE_URL}/health", timeout=2)
+                    if resp.status_code == 200:
+                        self.update_gui(lambda: self.brain_value.configure(text="[BRAIN: ONLINE]", fg=FG_COLOR))
+                    else:
+                        self.update_gui(lambda: self.brain_value.configure(text=f"[BRAIN: ERR {resp.status_code}]", fg="red"))
+                except requests.exceptions.RequestException:
+                    self.update_gui(lambda: self.brain_value.configure(text="[BRAIN: OFFLINE]", fg="red"))
+                
                 # Poll every 10s
                 time.sleep(10)
-                _check()
 
-        threading.Thread(target=_check, daemon=True).start()
+        threading.Thread(target=_check_loop, daemon=True).start()
 
     def update_gui(self, func):
+        """Schedule a GUI update on the main thread."""
         if not self.root_destroyed:
             self.root.after(0, func)
 
     def start_watcher(self):
+        """Starts the filesystem observer."""
         if self.running:
             return
             
@@ -164,6 +175,7 @@ class HackerTerminal:
         print(f">> MONITORING SECTOR: {DROP_ZONE}")
 
     def stop_watcher(self):
+        """Stops the filesystem observer."""
         if not self.running or not self.observer:
             return
             
@@ -181,10 +193,11 @@ class HackerTerminal:
 
     @property
     def root_destroyed(self):
+        """Checks if the root window is destroyed."""
         try:
             self.root.winfo_exists()
             return False
-        except:
+        except tk.TclError:
             return True
 
 if __name__ == "__main__":
@@ -192,6 +205,7 @@ if __name__ == "__main__":
     app = HackerTerminal(root)
     
     def on_closing():
+        app._monitor_active = False # Signal thread to stop
         if app.running:
             app.stop_watcher()
         root.destroy()
