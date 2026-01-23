@@ -118,7 +118,11 @@ class HackerTerminal:
         self.animate()
 
     def animate(self):
-        """Updates the ASCII spinner animation."""
+        """
+        Updates the ASCII spinner animation on the UI.
+        
+        This method is scheduled to run every 100ms.
+        """
         if self.spinner_running:
             self.spinner_label.configure(text=next(self.spinner_cycle))
         else:
@@ -128,7 +132,11 @@ class HackerTerminal:
             self.root.after(100, self.animate)
 
     def check_health(self):
-        """Starts a background thread to check API health."""
+        """
+        Starts a background thread to check API health.
+        
+        This runs permanently while the app is open, polling the health endpoint.
+        """
         def _check_loop():
             while self._monitor_active:
                 if self.root_destroyed:
@@ -149,7 +157,12 @@ class HackerTerminal:
         threading.Thread(target=_check_loop, daemon=True).start()
 
     def update_gui(self, func):
-        """Schedule a GUI update on the main thread."""
+        """
+        Schedule a GUI update on the main thread safely.
+        
+        Args:
+            func (callable): The function to execute on the main thread.
+        """
         if not self.root_destroyed:
             self.root.after(0, func)
 
@@ -175,7 +188,11 @@ class HackerTerminal:
         print(f">> MONITORING SECTOR: {DROP_ZONE}")
 
     def stop_watcher(self):
-        """Stops the filesystem observer."""
+        """
+        Stops the filesystem observer and updates the UI state.
+        
+        This safely joins the observer thread.
+        """
         if not self.running or not self.observer:
             return
             

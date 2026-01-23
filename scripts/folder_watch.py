@@ -6,6 +6,13 @@ import sys
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+"""
+Automem Folder Watcher.
+
+This script monitors a specific directory ("Drop Zone") for new text files
+and automatically ingests them into the Automem API.
+"""
+
 # Force unbuffered output
 sys.stdout.reconfigure(encoding='utf-8')
 
