@@ -65,6 +65,8 @@ AutoMem uses dense vectors (OpenAI embeddings) for semantic search. Keyword matc
 *Click image to view full size*
 
 > **Using a smaller model?** If you set `EMBEDDING_MODEL=text-embedding-3-small`, use `768` dimensions instead and set `VECTOR_SIZE=768` in AutoMem.
+>
+> **Using FastEmbed or Ollama?** Set dimensions to match your local model output (e.g., 384/768/1024 for FastEmbed). Ollama model dimensions vary—verify with a test embedding and set `VECTOR_SIZE` accordingly.
 
 #### Payload Indexes (Recommended)
 
