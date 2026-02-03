@@ -250,6 +250,7 @@ def _result_passes_filters(
     tag_filters: Optional[List[str]] = None,
     tag_mode: str = "any",
     tag_match: str = "prefix",
+    exclude_tags: Optional[List[str]] = None,
 ) -> bool:
     memory = result.get("memory", {}) or {}
     timestamp = memory.get("timestamp")
@@ -319,6 +320,30 @@ def _result_passes_filters(
                 else:
                     if not _tags_start_with():
                         return False
+
+    # Apply exclude_tags filter - exclude if ANY excluded tag matches
+    if exclude_tags:
+        normalized_exclude = _prepare_tag_filters(exclude_tags)
+        if normalized_exclude:
+            tags = memory.get("tags") or []
+            lowered_tags = [
+                str(tag).strip().lower()
+                for tag in tags
+                if isinstance(tag, str) and str(tag).strip()
+            ]
+
+            # Check exact matches first
+            tag_set = set(lowered_tags)
+            if any(exclude_tag in tag_set for exclude_tag in normalized_exclude):
+                return False
+
+            # Check prefix matches
+            if any(
+                tag.startswith(exclude_tag)
+                for exclude_tag in normalized_exclude
+                for tag in lowered_tags
+            ):
+                return False
 
     return True
 

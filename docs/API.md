@@ -34,7 +34,8 @@ Memory
 
 Recall
 - GET `/recall`
-  - **Basic parameters**: `query`, `limit`, `tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
+  - **Basic parameters**: `query`, `limit`, `tags`, `exclude_tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
+    - `exclude_tags` - Comma-separated list or multiple params to exclude memories containing ANY of these tags. Supports both exact and prefix matching. Example: `exclude_tags=conversation_5` or `exclude_tags=temp,draft`
   - **Ordering**: `sort` (or `order_by`) supports:
     - `score` (default) - hybrid relevance/importance ranking
     - `time_desc` / `time_asc` - chronological ordering by `updated_at`/`timestamp` within the filter window (use for "what happened since X")
@@ -56,6 +57,18 @@ Recall
 ```bash
 # Get architecture decisions with related context, but filter out low-importance noise
 GET /recall?query=database%20architecture&expand_relations=true&expand_min_importance=0.5&expand_min_strength=0.3
+```
+
+**Exclude Tags Example:**
+```bash
+# Get long-term memories from all conversations EXCEPT the current one
+GET /recall?tags=user_1&exclude_tags=conversation_5&limit=3
+
+# Exclude multiple conversations
+GET /recall?tags=user_1&exclude_tags=conversation_5,conversation_6&limit=5
+
+# Exclude temporary/draft memories
+GET /recall?query=project%20plan&exclude_tags=temp,draft&limit=10
 ```
 
 - GET `/memories/{id}/related`
@@ -92,5 +105,6 @@ Consolidation
 
 Notes
 - Tag matching supports exact and prefix semantics; vector searches are filtered by tag conditions when provided.
+- Exclusion filtering (`exclude_tags`) removes any memory containing ANY of the excluded tags, supporting both exact and prefix matching.
 - Time filtering accepts ISO timestamps (`start`, `end`) or a natural expression via `time_query`.
 - Context hints boost matching preferences (e.g., Python coding style) and guarantee at least one anchor memory when applicable; responses echo what was applied via `context_priority`.
