@@ -1,394 +1,475 @@
 #!/usr/bin/env python3
-"""AutoMem real-time monitor - Terminal UI for observing memory service activity.
+"""AutoMem tail - Simple streaming log of memory operations.
 
 Usage:
-    python scripts/automem_watch.py --url https://automem.railway.app --token $AUTOMEM_API_TOKEN
+    python scripts/automem_watch.py --url https://automem.up.railway.app --token $AUTOMEM_API_TOKEN
     python scripts/automem_watch.py --url http://localhost:8001 --token dev
-
-Features:
-    - Real-time SSE event streaming
-    - Garbage pattern detection (short content, test data, duplicates, bursts)
-    - Consolidation monitoring with timing
-    - Auto-reconnect on connection loss
 """
 
 import argparse
-import hashlib
 import json
 import sys
-import threading
+import textwrap
 import time
-from collections import Counter, deque
-from datetime import datetime
-from typing import Deque, Dict, List, Optional, Set
+from typing import Any, Mapping
 
 try:
     import httpx
     from rich.console import Console
-    from rich.layout import Layout
-    from rich.live import Live
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.text import Text
+    from rich.syntax import Syntax
 except ImportError:
     print("Required dependencies missing. Install with:")
     print("  pip install rich httpx")
     sys.exit(1)
 
+console = Console()
 
-class GarbageDetector:
-    """Detect suspicious patterns in memory stores."""
-
-    SUSPICIOUS_KEYWORDS = {
-        "test",
-        "asdf",
-        "xxx",
-        "lorem",
-        "foo",
-        "bar",
-        "baz",
-        "debug",
-        "tmp",
-        "placeholder",
-        "example",
-        "sample",
-    }
-
-    def __init__(self, min_content_length: int = 10, burst_threshold: int = 5):
-        self.min_content_length = min_content_length
-        self.burst_threshold = burst_threshold
-        self.recent_hashes: Deque[str] = deque(maxlen=100)
-        self.warnings: Deque[str] = deque(maxlen=50)
-        self.counts: Counter = Counter()
-        self.burst_times: Deque[float] = deque(maxlen=20)
-
-    def analyze(self, event: Dict) -> Optional[str]:
-        """Analyze a memory.store event for garbage patterns."""
-        if event.get("type") != "memory.store":
-            return None
-
-        data = event.get("data", {})
-        content = data.get("content_preview", "")
-        now = time.time()
-
-        # Check: Burst detection (>N stores in 10 seconds)
-        self.burst_times.append(now)
-        recent_count = sum(1 for t in self.burst_times if now - t < 10)
-        if recent_count >= self.burst_threshold:
-            warning = f"Burst detected: {recent_count} stores in 10s"
-            self._record(warning, "burst")
-            # Don't return - continue checking other patterns
-
-        # Check: Very short content
-        if len(content) < self.min_content_length:
-            warning = f"Short ({len(content)} chars): '{content[:30]}'"
-            self._record(warning, "short_content")
-            return warning
-
-        # Check: Test/debug keywords
-        content_lower = content.lower()
-        for kw in self.SUSPICIOUS_KEYWORDS:
-            if kw in content_lower and len(content) < 50:
-                warning = f"Test keyword '{kw}': '{content[:40]}...'"
-                self._record(warning, "test_keyword")
-                return warning
-
-        # Check: No tags
-        tags = data.get("tags", [])
-        if not tags:
-            warning = f"No tags: '{content[:40]}...'"
-            self._record(warning, "no_tags")
-            return warning
-
-        # Check: Very low importance with generic content
-        importance = data.get("importance", 0.5)
-        if importance < 0.3 and data.get("type") == "Memory":
-            warning = f"Low importance ({importance}): '{content[:40]}...'"
-            self._record(warning, "low_importance")
-            return warning
-
-        # Check: Duplicate content (hash-based)
-        content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
-        if content_hash in self.recent_hashes:
-            warning = f"Duplicate hash: '{content[:40]}...'"
-            self._record(warning, "duplicate")
-            return warning
-        self.recent_hashes.append(content_hash)
-
-        return None
-
-    def _record(self, warning: str, category: str) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.warnings.appendleft(f"[{ts}] {warning}")
-        self.counts[category] += 1
+# Type alias for SSE event payloads
+Event = Mapping[str, Any]
 
 
-class AutoMemMonitor:
-    """Real-time monitor for AutoMem service."""
+def format_timestamp(ts: Any) -> str:
+    """Extract just the time from ISO timestamp."""
+    if ts is None:
+        return ""
+    ts = str(ts)
+    if "T" in ts:
+        return ts.split("T")[1][:12]
+    return ts[:12]
 
-    def __init__(self, url: str, token: str, min_content_length: int = 10):
-        self.url = url.rstrip("/")
-        self.token = token
-        self.events: Deque[Dict] = deque(maxlen=100)
-        self.errors: Deque[str] = deque(maxlen=20)
-        self.stats = {
-            "stores": 0,
-            "recalls": 0,
-            "enriched": 0,
-            "consolidated": 0,
-            "errors": 0,
-        }
-        self.garbage = GarbageDetector(min_content_length)
-        self.start_time = datetime.now()
-        self.connected = False
-        self.last_event_time: Optional[datetime] = None
-        self.consolidation_history: Deque[Dict] = deque(maxlen=10)
 
-    def connect(self):
-        """Connect to SSE stream and process events."""
-        headers = {"Authorization": f"Bearer {self.token}"}
+def _safe_float(val: object, default: float = 0.0) -> float:
+    """Safely convert value to float."""
+    try:
+        return float(val) if val is not None else default
+    except (TypeError, ValueError):
+        return default
 
-        with httpx.Client(timeout=None) as client:
-            with client.stream("GET", f"{self.url}/stream", headers=headers) as response:
-                if response.status_code != 200:
-                    raise Exception(f"HTTP {response.status_code}: {response.text[:100]}")
-                self.connected = True
-                for line in response.iter_lines():
-                    if line.startswith("data: "):
-                        try:
-                            event = json.loads(line[6:])
-                            self._process_event(event)
-                        except json.JSONDecodeError:
-                            pass
-                    elif line.startswith(":"):
-                        # Keepalive comment - ignore
-                        pass
 
-    def _process_event(self, event: Dict) -> None:
-        """Process an incoming event."""
-        self.last_event_time = datetime.now()
-        self.events.appendleft(event)
+def _safe_int(val: object, default: int = 0) -> int:
+    """Safely convert value to int."""
+    try:
+        return int(float(val)) if val is not None else default
+    except (TypeError, ValueError):
+        return default
 
-        event_type = event.get("type", "")
 
-        # Update stats
-        if event_type == "memory.store":
-            self.stats["stores"] += 1
-            # Check for garbage
-            warning = self.garbage.analyze(event)
-            if warning:
-                ts = datetime.now().strftime("%H:%M:%S")
-                self.errors.appendleft(f"[{ts}] [GARBAGE] {warning}")
-        elif event_type == "memory.recall":
-            self.stats["recalls"] += 1
-        elif event_type == "enrichment.complete":
-            self.stats["enriched"] += 1
-        elif event_type == "enrichment.failed":
-            self.stats["errors"] += 1
-            ts = datetime.now().strftime("%H:%M:%S")
-            err = event.get("data", {}).get("error", "unknown")[:50]
-            self.errors.appendleft(f"[{ts}] [ENRICH] {err}")
-        elif event_type == "consolidation.run":
-            self.stats["consolidated"] += 1
-            self.consolidation_history.appendleft(event.get("data", {}))
-        elif event_type == "error":
-            self.stats["errors"] += 1
-            ts = datetime.now().strftime("%H:%M:%S")
-            err = event.get("data", {}).get("error", "unknown")[:50]
-            self.errors.appendleft(f"[{ts}] [ERROR] {err}")
+def print_store_event(event: Event) -> None:
+    """Print a memory.store event with full content."""
+    data = event.get("data", {})
+    ts = format_timestamp(event.get("timestamp", ""))
 
-    def render(self) -> Layout:
-        """Render the TUI layout."""
-        layout = Layout()
+    console.print()
+    console.print(f"[bold green]━━━ STORE[/] [dim]{ts}[/]")
 
-        layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="main", ratio=2),
-            Layout(name="bottom", size=14),
-        )
+    # Memory info line - defensive conversions
+    mem_id = str(data.get("memory_id", "?"))[:8]
+    mem_type = data.get("type", "Memory")
+    type_conf = _safe_float(data.get("type_confidence"), 0.0)
+    importance = _safe_float(data.get("importance"), 0.5)
+    elapsed = _safe_int(data.get("elapsed_ms"), 0)
 
-        layout["main"].split_row(
-            Layout(name="events", ratio=2),
-            Layout(name="consolidation", ratio=1),
-        )
+    console.print(
+        f"  [cyan]id:[/] {mem_id}  "
+        f"[cyan]type:[/] {mem_type} ({type_conf:.2f})  "
+        f"[cyan]importance:[/] {importance}  "
+        f"[dim]{elapsed}ms[/]"
+    )
 
-        layout["bottom"].split_row(
-            Layout(name="stats", ratio=1),
-            Layout(name="garbage", ratio=1),
-            Layout(name="errors", ratio=1),
-        )
+    # Tags - coerce to strings for safety
+    tags = data.get("tags", [])
+    if tags:
+        safe_tags = [str(t) for t in tags]
+        console.print(f"  [cyan]tags:[/] {', '.join(safe_tags)}")
 
-        # Header
-        uptime = datetime.now() - self.start_time
-        uptime_str = (
-            f"{int(uptime.total_seconds() // 3600)}h {int((uptime.total_seconds() % 3600) // 60)}m"
-        )
-        status = "[green]Connected[/]" if self.connected else "[red]Disconnected[/]"
-        last_event = ""
-        if self.last_event_time:
-            ago = (datetime.now() - self.last_event_time).total_seconds()
-            if ago < 60:
-                last_event = f"  |  Last event: {int(ago)}s ago"
+    # Metadata - truncate large values
+    metadata = data.get("metadata", {})
+    if metadata:
+
+        def safe_val(v: object, max_len: int = 50) -> str:
+            s = str(v) if isinstance(v, (str, int, float, bool)) else repr(v)
+            return s[:max_len] + "..." if len(s) > max_len else s
+
+        meta_preview = ", ".join(f"{k}={safe_val(v)}" for k, v in list(metadata.items())[:5])
+        if len(metadata) > 5:
+            meta_preview += f", ... (+{len(metadata) - 5} more)"
+        console.print(f"  [cyan]metadata:[/] {{{meta_preview}}}")
+
+    # Embedding status
+    emb_status = data.get("embedding_status", "")
+    qdrant_status = data.get("qdrant_status", "")
+    if emb_status or qdrant_status:
+        console.print(f"  [cyan]embedding:[/] {emb_status}  [cyan]qdrant:[/] {qdrant_status}")
+
+    # Full content
+    content = data.get("content", "")
+    if content:
+        console.print("  [cyan]content:[/]")
+        # Wrap long content
+        wrapped = textwrap.fill(content, width=100, initial_indent="    ", subsequent_indent="    ")
+        console.print(f"[white]{wrapped}[/]")
+
+
+def print_recall_event(event: Event) -> None:
+    """Print a memory.recall event with query details and result summaries."""
+    data = event.get("data", {})
+    ts = format_timestamp(event.get("timestamp", ""))
+
+    console.print()
+    console.print(f"[bold cyan]━━━ RECALL[/] [dim]{ts}[/]")
+
+    # Query info - defensive conversions
+    query = data.get("query", "")
+    result_count = _safe_int(data.get("result_count"), 0)
+    dedup = _safe_int(data.get("dedup_removed"), 0)
+    elapsed = _safe_int(data.get("elapsed_ms"), 0)
+
+    dedup_str = f" (dedup: {dedup})" if dedup else ""
+    console.print(f'  [yellow]query:[/] "{query}"')
+    console.print(f"  [yellow]results:[/] {result_count}{dedup_str}  [dim]{elapsed}ms[/]")
+
+    # Filters - defensive check for tags_filter
+    filters = []
+    if data.get("has_time_filter"):
+        filters.append("time")
+    tags_filter = data.get("tags_filter")
+    if isinstance(tags_filter, (list, tuple, set)):
+        filters.append(f"tags({len(tags_filter)})")
+    elif tags_filter:
+        filters.append("tags(?)")
+    if data.get("vector_search"):
+        filters.append("vector")
+    if filters:
+        console.print(f"  [yellow]filters:[/] {', '.join(filters)}")
+
+    # Stats - defensive score_range handling
+    stats = data.get("stats", {})
+    if stats:
+        avg_len = stats.get("avg_length", 0)
+        avg_tags = stats.get("avg_tags", 0)
+        score_range = stats.get("score_range", [])
+
+        # Safely format score range
+        try:
+            if len(score_range) >= 2:
+                score_str = f"{float(score_range[0]):.2f}-{float(score_range[1]):.2f}"
             else:
-                last_event = f"  |  Last event: {int(ago // 60)}m ago"
+                score_str = "n/a"
+        except (TypeError, ValueError):
+            score_str = "n/a"
 
-        layout["header"].update(
-            Panel(
-                f"[bold]AutoMem Watch[/]  |  {self.url}  |  {status}  |  Uptime: {uptime_str}{last_event}",
-                style="bold white on blue",
+        console.print(
+            f"  [yellow]stats:[/] avg_len={avg_len} avg_tags={avg_tags} " f"score_range={score_str}"
+        )
+
+    # Top results - defensive field conversions
+    summaries = data.get("result_summaries", [])
+    if summaries:
+        console.print("  [yellow]top results:[/]")
+        for i, r in enumerate(summaries[:3], 1):
+            r_type = str(r.get("type", "?"))[:8]
+            r_score = _safe_float(r.get("score"), 0.0)
+            r_len = _safe_int(r.get("content_length"), 0)
+            r_tags = _safe_int(r.get("tags_count"), 0)
+            console.print(
+                f"    #{i} [{r_type:8s}] " f"score={r_score:.2f} " f"len={r_len} " f"tags={r_tags}"
             )
+
+
+def print_enrichment_event(event: Event) -> None:
+    """Print enrichment events with details."""
+    data = event.get("data", {})
+    ts = format_timestamp(event.get("timestamp", ""))
+    event_type = event.get("type", "")
+
+    mem_id = str(data.get("memory_id", "?"))[:8]
+
+    if event_type == "enrichment.start":
+        attempt = data.get("attempt", 1)
+        console.print(f"[dim]{ts}[/] [yellow]ENRICH[/] {mem_id} attempt {attempt}")
+
+    elif event_type == "enrichment.complete":
+        elapsed = data.get("elapsed_ms", 0)
+
+        if data.get("skipped"):
+            reason = data.get("skip_reason", "")
+            console.print(f"[dim]{ts}[/] [yellow]ENRICH[/] {mem_id} skipped ({reason})")
+        else:
+            console.print(f"\n[bold cyan]━━━ ENRICH[/] [dim]{ts}[/] [cyan]({elapsed}ms)[/]")
+            console.print(f"  [dim]memory:[/] {mem_id}")
+
+            # Content
+            content = data.get("content", "")
+            if content:
+                # Indent content lines
+                content_lines = content[:500].split("\n")
+                console.print("  [dim]content:[/]")
+                for line in content_lines[:8]:
+                    console.print(f"    {line}")
+                if len(content) > 500 or len(content_lines) > 8:
+                    console.print("    [dim]...[/]")
+
+            # Tags before/after
+            tags_before = data.get("tags_before", [])
+            tags_added = data.get("tags_added", [])
+            if tags_before or tags_added:
+                console.print("")
+                console.print(f"  [dim]tags before:[/] {tags_before}")
+                if tags_added:
+                    console.print(f"  [green]tags added:[/]  {tags_added}")
+
+            # Entities by category
+            entities = data.get("entities", {})
+            if entities and any(entities.values()):
+                console.print("")
+                console.print("  [dim]entities:[/]")
+                for category, values in entities.items():
+                    if values:
+                        console.print(f"    {category}: {', '.join(values)}")
+
+            # Links created
+            temporal_links = data.get("temporal_links", [])
+            semantic_neighbors = data.get("semantic_neighbors", [])
+            patterns = data.get("patterns_detected", [])
+
+            if temporal_links or semantic_neighbors or patterns:
+                console.print("")
+                console.print("  [dim]links created:[/]")
+                if temporal_links:
+                    ids = [str(tid)[:8] for tid in temporal_links]
+                    console.print(f"    temporal: {', '.join(ids)} ({len(ids)} memories)")
+                if semantic_neighbors:
+                    neighbor_strs = []
+                    for item in semantic_neighbors:
+                        try:
+                            nid, score = item[0], item[1]
+                            neighbor_strs.append(f"{nid} ({score})")
+                        except (IndexError, TypeError):
+                            neighbor_strs.append(str(item)[:20])
+                    console.print(f"    semantic: {', '.join(neighbor_strs)}")
+                if patterns:
+                    for p in patterns:
+                        ptype = p.get("type", "?")
+                        similar = p.get("similar_memories", 0)
+                        console.print(f"    patterns: {ptype} ({similar} similar memories)")
+
+            # Summary
+            summary = data.get("summary", "")
+            if summary:
+                console.print("")
+                console.print(f'  [dim]summary:[/] "{summary[:100]}"')
+
+            console.print("")  # Blank line after
+
+    elif event_type == "enrichment.failed":
+        error = data.get("error", "unknown")[:80]
+        attempt = data.get("attempt", 1)
+        will_retry = data.get("will_retry", False)
+        retry_str = " (will retry)" if will_retry else ""
+        console.print(
+            f"[dim]{ts}[/] [red]ENRICH FAIL[/] {mem_id} attempt {attempt}: {error}{retry_str}"
         )
 
-        # Events table
-        events_table = Table(show_header=True, header_style="bold", expand=True, show_lines=False)
-        events_table.add_column("Time", width=8)
-        events_table.add_column("Type", width=18)
-        events_table.add_column("Details", overflow="ellipsis")
 
-        for event in list(self.events)[:15]:
-            ts = event.get("timestamp", "")
-            if "T" in ts:
-                ts = ts.split("T")[1][:8]
-            event_type = event.get("type", "unknown")
-            data = event.get("data", {})
+def print_consolidation_event(event: Event) -> None:
+    """Print consolidation events."""
+    data = event.get("data", {})
+    ts = format_timestamp(event.get("timestamp", ""))
 
-            # Format based on event type
-            if event_type == "memory.store":
-                preview = data.get("content_preview", "")[:40]
-                details = f"{preview}... ({data.get('type', '?')})"
-                type_style = "green"
-            elif event_type == "memory.recall":
-                query = data.get("query", "")[:30]
-                details = (
-                    f"'{query}' -> {data.get('result_count', 0)} ({data.get('elapsed_ms', 0)}ms)"
+    task_type = data.get("task_type", "?")
+    affected = data.get("affected_count", 0)
+    elapsed = data.get("elapsed_ms", 0)
+    success = data.get("success", True)
+
+    status = "[green]OK[/]" if success else "[red]FAIL[/]"
+    console.print(
+        f"[dim]{ts}[/] [magenta]CONSOLIDATE[/] "
+        f"{task_type}: {affected} affected ({elapsed}ms) {status}"
+    )
+
+
+def print_error_event(event: Event) -> None:
+    """Print error events."""
+    data = event.get("data", {})
+    ts = format_timestamp(event.get("timestamp", ""))
+
+    error = data.get("error", "unknown")
+    console.print(f"[dim]{ts}[/] [bold red]ERROR[/] {error}")
+
+
+def print_associate_event(event: Event) -> None:
+    """Print a memory.associate event."""
+    data = event.get("data", {})
+    ts = format_timestamp(event.get("timestamp", ""))
+
+    mem1 = str(data.get("memory1_id", "?"))[:8]
+    mem2 = str(data.get("memory2_id", "?"))[:8]
+    rel_type = data.get("relation_type", "?")
+    strength = data.get("strength", 0.5)
+
+    console.print(
+        f"[dim]{ts}[/] [bold blue]ASSOCIATE[/] "
+        f"{mem1} [cyan]--{rel_type}-->[/] {mem2}  "
+        f"[dim]strength={strength}[/]"
+    )
+
+
+def print_raw_event(event: Event) -> None:
+    """Print any other event as JSON."""
+    ts = format_timestamp(event.get("timestamp", ""))
+    event_type = event.get("type", "unknown")
+
+    console.print(f"[dim]{ts}[/] [blue]{event_type}[/]")
+    # Print data as formatted JSON
+    data = event.get("data", {})
+    if data:
+        json_str = json.dumps(data, indent=2, default=str)
+        syntax = Syntax(json_str, "json", theme="monokai", line_numbers=False)
+        console.print(syntax)
+
+
+def process_event(event: Event) -> None:
+    """Route event to appropriate printer."""
+    event_type = event.get("type", "")
+
+    if event_type == "memory.store":
+        print_store_event(event)
+    elif event_type == "memory.recall":
+        print_recall_event(event)
+    elif event_type == "memory.associate":
+        print_associate_event(event)
+    elif event_type.startswith("enrichment."):
+        print_enrichment_event(event)
+    elif event_type == "consolidation.run":
+        print_consolidation_event(event)
+    elif event_type == "error":
+        print_error_event(event)
+    else:
+        print_raw_event(event)
+
+
+def stream_events(url: str, token: str, max_reconnects: int = 0) -> None:
+    """Connect to SSE stream and print events.
+
+    Args:
+        url: AutoMem API base URL
+        token: API authentication token
+        max_reconnects: Max reconnection attempts (0 = unlimited)
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    reconnect_count = 0
+    consecutive_ssl_errors = 0
+
+    console.print(f"[bold]Connecting to {url}/stream...[/]")
+    console.print("[dim]Press Ctrl+C to stop[/]")
+    console.print()
+
+    while True:
+        try:
+            # Explicit timeout: finite connect/write, infinite read for SSE
+            timeout = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
+            with httpx.Client(timeout=timeout) as client:
+                with client.stream("GET", f"{url}/stream", headers=headers) as resp:
+                    # Differentiate auth errors from transient errors
+                    if resp.status_code in (401, 403):
+                        console.print(f"[red]Authentication failed (HTTP {resp.status_code})[/]")
+                        console.print("[dim]Check your API token[/]")
+                        break
+                    if resp.status_code >= 500:
+                        raise httpx.HTTPStatusError(
+                            f"Server error {resp.status_code}",
+                            request=resp.request,
+                            response=resp,
+                        )
+                    if resp.status_code != 200:
+                        console.print(f"[red]HTTP {resp.status_code}[/]")
+                        break
+
+                    # Reset SSL error counter on successful connect
+                    consecutive_ssl_errors = 0
+
+                    if reconnect_count > 0:
+                        console.print(f"[green]Connected[/] [dim](reconnect #{reconnect_count})[/]")
+                    else:
+                        console.print("[green]Connected[/]")
+
+                    # SSE multi-line data buffer (per RFC 8895)
+                    data_buffer: list[str] = []
+
+                    for line in resp.iter_lines():
+                        if line.startswith("data:"):
+                            # Accumulate data lines (strip "data:" or "data: " prefix)
+                            payload = line[5:].lstrip(" ") if len(line) > 5 else ""
+                            data_buffer.append(payload)
+                        elif line == "":
+                            # Empty line = end of event, dispatch buffered data
+                            if data_buffer:
+                                full_data = "\n".join(data_buffer)
+                                data_buffer.clear()
+                                try:
+                                    event = json.loads(full_data)
+                                    process_event(event)
+                                except json.JSONDecodeError:
+                                    console.print(
+                                        f"[dim red]Malformed event data:[/] {full_data[:100]}"
+                                    )
+                        elif line.startswith(":"):
+                            # Keepalive comment - ignore silently
+                            pass
+
+        except KeyboardInterrupt:
+            console.print("\n[bold]Disconnected.[/]")
+            break
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            reconnect_count += 1
+            error_str = str(e)
+
+            # Detect SSL errors (Railway load balancer kills idle SSE connections)
+            is_ssl_error = "SSL" in error_str or "ssl" in error_str or "handshake" in error_str
+
+            if is_ssl_error:
+                consecutive_ssl_errors += 1
+                # Exponential backoff for SSL errors: 2s, 4s, 8s, 16s, max 30s
+                backoff = min(30, 2**consecutive_ssl_errors)
+                console.print(
+                    f"[yellow]SSL connection reset[/] [dim](Railway LB, backoff {backoff}s)[/]"
                 )
-                type_style = "cyan"
-            elif event_type == "enrichment.start":
-                details = f"{data.get('memory_id', '')[:8]}... attempt {data.get('attempt', 1)}"
-                type_style = "yellow"
-            elif event_type == "enrichment.complete":
-                status = "skipped" if data.get("skipped") else "done"
-                details = (
-                    f"{data.get('memory_id', '')[:8]}... {status} ({data.get('elapsed_ms', 0)}ms)"
-                )
-                type_style = "green"
-            elif event_type == "enrichment.failed":
-                details = f"{data.get('memory_id', '')[:8]}... {data.get('error', '')[:30]}"
-                type_style = "red"
-            elif event_type == "consolidation.run":
-                details = f"{data.get('task_type', '?')} - {data.get('affected_count', 0)} affected ({data.get('elapsed_ms', 0)}ms)"
-                type_style = "magenta"
             else:
-                details = str(data)[:50]
-                type_style = "white"
+                consecutive_ssl_errors = 0
+                backoff = 5
+                console.print(f"[red]Connection error:[/] {e}")
 
-            events_table.add_row(ts, f"[{type_style}]{event_type}[/]", details)
+            # Check max reconnects
+            if max_reconnects > 0 and reconnect_count >= max_reconnects:
+                console.print(f"[red]Max reconnects ({max_reconnects}) reached. Exiting.[/]")
+                break
 
-        layout["events"].update(Panel(events_table, title="Events (latest 15)"))
-
-        # Consolidation panel
-        consol_text = Text()
-        if self.consolidation_history:
-            for run in list(self.consolidation_history)[:5]:
-                task = run.get("task_type", "?")
-                affected = run.get("affected_count", 0)
-                elapsed = run.get("elapsed_ms", 0)
-                success = "[green]OK[/]" if run.get("success") else "[red]FAIL[/]"
-                next_run = run.get("next_scheduled", "?")
-                consol_text.append(f"{task}: ", style="bold")
-                consol_text.append(f"{affected} affected, {elapsed}ms ")
-                consol_text.append_markup(success)
-                consol_text.append(f"\n  Next: {next_run}\n", style="dim")
-        else:
-            consol_text.append("No consolidation runs yet", style="dim")
-        layout["consolidation"].update(Panel(consol_text, title="Consolidation"))
-
-        # Stats panel
-        stats_text = Text()
-        stats_text.append(f"Stores:       {self.stats['stores']}\n", style="green")
-        stats_text.append(f"Recalls:      {self.stats['recalls']}\n", style="cyan")
-        stats_text.append(f"Enriched:     {self.stats['enriched']}\n", style="yellow")
-        stats_text.append(f"Consolidated: {self.stats['consolidated']}\n", style="magenta")
-        stats_text.append(f"Errors:       {self.stats['errors']}\n", style="red")
-        layout["stats"].update(Panel(stats_text, title="Stats"))
-
-        # Garbage detector panel
-        garbage_text = Text()
-        if self.garbage.counts:
-            for category, count in self.garbage.counts.most_common(5):
-                garbage_text.append(f"{category}: {count}\n", style="yellow")
-            garbage_text.append("\n")
-            for warning in list(self.garbage.warnings)[:3]:
-                garbage_text.append(f"{warning[:45]}...\n", style="dim yellow")
-        else:
-            garbage_text.append("No suspicious patterns", style="green")
-        layout["garbage"].update(Panel(garbage_text, title="Garbage Detector"))
-
-        # Errors panel
-        errors_text = Text()
-        if self.errors:
-            for err in list(self.errors)[:5]:
-                errors_text.append(f"{err[:50]}\n", style="red")
-        else:
-            errors_text.append("No errors", style="green")
-        layout["errors"].update(Panel(errors_text, title="Errors"))
-
-        return layout
+            console.print(f"[dim]Reconnecting in {backoff}s... (attempt #{reconnect_count})[/]")
+            time.sleep(backoff)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="AutoMem real-time monitor",
+        description="AutoMem tail - stream memory operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Local development
   python scripts/automem_watch.py --url http://localhost:8001 --token dev
-
-  # Against Railway
-  python scripts/automem_watch.py --url https://automem.railway.app --token $AUTOMEM_API_TOKEN
+  python scripts/automem_watch.py --url https://automem.up.railway.app --token $TOKEN
+  python scripts/automem_watch.py --url $URL --token $TOKEN --max-reconnects 100
         """,
     )
     parser.add_argument("--url", required=True, help="AutoMem API URL")
     parser.add_argument("--token", required=True, help="API token")
     parser.add_argument(
-        "--min-content-length",
+        "--max-reconnects",
         type=int,
-        default=10,
-        help="Minimum content length before flagging as garbage (default: 10)",
+        default=0,
+        help="Max reconnection attempts (0 = unlimited, default)",
     )
     args = parser.parse_args()
 
-    console = Console()
-    monitor = AutoMemMonitor(args.url, args.token, args.min_content_length)
-
-    console.print(f"[bold]Connecting to {args.url}/stream...[/]")
-
-    def connect_loop():
-        while True:
-            try:
-                monitor.connect()
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                monitor.connected = False
-                ts = datetime.now().strftime("%H:%M:%S")
-                monitor.errors.appendleft(f"[{ts}] [CONN] {str(e)[:50]}")
-                time.sleep(5)  # Reconnect delay
-
-    thread = threading.Thread(target=connect_loop, daemon=True)
-    thread.start()
-
-    # Give connection time to establish
-    time.sleep(1)
-
-    with Live(monitor.render(), console=console, refresh_per_second=2) as live:
-        try:
-            while True:
-                live.update(monitor.render())
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            console.print("\n[bold]Disconnected.[/]")
+    stream_events(args.url.rstrip("/"), args.token, args.max_reconnects)
 
 
 if __name__ == "__main__":

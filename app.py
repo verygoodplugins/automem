@@ -28,6 +28,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from falkordb import FalkorDB
 from flask import Blueprint, Flask, abort, jsonify, request
+from flask_cors import CORS
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
@@ -110,7 +111,8 @@ except Exception:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")
+CORS(app)  # Enable CORS for Graph Viewer and other cross-origin clients
 
 # Legacy blueprint placeholders for deprecated route definitions below.
 # These are not registered with the app and are safe to keep until full removal.
@@ -1053,9 +1055,12 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
 class EnrichmentStats:
     processed_total: int = 0
     successes: int = 0
+    skips: int = 0
     failures: int = 0
     last_success_id: Optional[str] = None
     last_success_at: Optional[str] = None
+    last_skip_id: Optional[str] = None
+    last_skip_at: Optional[str] = None
     last_error: Optional[str] = None
     last_error_at: Optional[str] = None
 
@@ -1064,6 +1069,12 @@ class EnrichmentStats:
         self.successes += 1
         self.last_success_id = memory_id
         self.last_success_at = utc_now()
+
+    def record_skip(self, memory_id: str) -> None:
+        self.processed_total += 1
+        self.skips += 1
+        self.last_skip_id = memory_id
+        self.last_skip_at = utc_now()
 
     def record_failure(self, error: str) -> None:
         self.processed_total += 1
@@ -1075,9 +1086,12 @@ class EnrichmentStats:
         return {
             "processed_total": self.processed_total,
             "successes": self.successes,
+            "skips": self.skips,
             "failures": self.failures,
             "last_success_id": self.last_success_id,
             "last_success_at": self.last_success_at,
+            "last_skip_id": self.last_skip_id,
+            "last_skip_at": self.last_skip_at,
             "last_error": self.last_error,
             "last_error_at": self.last_error_at,
         }
@@ -1167,9 +1181,11 @@ def require_api_token() -> None:
     if not API_TOKEN:
         return
 
-    # Allow unauthenticated health checks (supports blueprint endpoint names)
+    # Allow unauthenticated health checks and monitor page
     endpoint = request.endpoint or ""
-    if endpoint.endswith("health") or request.path == "/health":
+    if endpoint == "static" or request.path.startswith("/static/"):
+        return
+    if endpoint.endswith("health") or request.path in ("/health", "/monitor"):
         return
 
     token = _extract_api_token()
@@ -1847,21 +1863,37 @@ def enrichment_worker() -> None:
             )
 
             try:
-                processed = enrich_memory(job.memory_id, forced=job.forced)
-                state.enrichment_stats.record_success(job.memory_id)
+                result = enrich_memory(job.memory_id, forced=job.forced)
+                if result.get("processed", False):
+                    state.enrichment_stats.record_success(job.memory_id)
+                else:
+                    state.enrichment_stats.record_skip(job.memory_id)
                 elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
+
                 emit_event(
                     "enrichment.complete",
                     {
                         "memory_id": job.memory_id,
-                        "success": True,
                         "elapsed_ms": elapsed_ms,
-                        "skipped": not processed,
+                        "skipped": not result.get("processed", False),
+                        "skip_reason": result.get("reason"),
+                        # Full enrichment data:
+                        "content": result.get("content", ""),
+                        "tags_before": result.get("tags_before", []),
+                        "tags_after": result.get("tags_after", []),
+                        "tags_added": result.get("tags_added", []),
+                        "entities": result.get("entities", {}),
+                        "temporal_links": result.get("temporal_links", []),
+                        "semantic_neighbors": result.get("semantic_neighbors", []),
+                        "patterns_detected": result.get("patterns_detected", []),
+                        "summary": result.get("summary", ""),
                     },
                     utc_now,
                 )
-                if not processed:
-                    logger.debug("Enrichment skipped for %s (already processed)", job.memory_id)
+                if not result.get("processed"):
+                    logger.debug(
+                        "Enrichment skipped for %s (%s)", job.memory_id, result.get("reason")
+                    )
             except Exception as exc:  # pragma: no cover - background thread
                 state.enrichment_stats.record_failure(str(exc))
                 elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
@@ -2165,8 +2197,21 @@ def _run_sync_check() -> None:
         logger.exception("Sync check failed")
 
 
-def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
-    """Enrich a memory with relationships, patterns, and entity extraction."""
+def enrich_memory(memory_id: str, *, forced: bool = False) -> Dict[str, Any]:
+    """Enrich a memory with relationships, patterns, and entity extraction.
+
+    Returns a dict with enrichment details:
+        - processed: True if enrichment was performed
+        - content: Original memory content
+        - tags_before: Tags before enrichment
+        - tags_after: Tags after enrichment (includes entity tags)
+        - tags_added: Delta of tags added during enrichment
+        - entities: Dict of extracted entities by category
+        - temporal_links: List of linked memory IDs (PRECEDED_BY relationships)
+        - semantic_neighbors: List of (id, score) tuples for similar memories
+        - patterns_detected: List of detected pattern info
+        - summary: Generated summary
+    """
     graph = get_memory_graph()
     if graph is None:
         raise RuntimeError("FalkorDB unavailable for enrichment")
@@ -2175,7 +2220,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
 
     if not result.result_set:
         logger.debug("Skipping enrichment for %s; memory not found", memory_id)
-        return False
+        return {"processed": False, "reason": "memory_not_found"}
 
     node = result.result_set[0][0]
     properties = getattr(node, "properties", None)
@@ -2189,12 +2234,14 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
 
     already_processed = bool(properties.get("processed"))
     if already_processed and not forced:
-        return False
+        return {"processed": False, "reason": "already_processed"}
 
     content = properties.get("content", "") or ""
     entities = extract_entities(content)
 
-    tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
+    # Capture original tags before any modification
+    original_tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
+    tags = list(original_tags)  # Copy for modification
     entity_tags: Set[str] = set()
 
     if entities:
@@ -2216,7 +2263,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
 
     tag_prefixes = _compute_tag_prefixes(tags)
 
-    temporal_links = find_temporal_relationships(graph, memory_id)
+    temporal_link_ids = find_temporal_relationships(graph, memory_id)
     pattern_info = detect_patterns(graph, memory_id, content)
     semantic_neighbors = link_semantic_neighbors(graph, memory_id)
 
@@ -2233,7 +2280,7 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
         {
             "last_run": utc_now(),
             "forced": forced,
-            "temporal_links": temporal_links,
+            "temporal_links": temporal_link_ids,
             "patterns_detected": pattern_info,
             "semantic_neighbors": [
                 {"id": neighbour_id, "score": score} for neighbour_id, score in semantic_neighbors
@@ -2291,17 +2338,34 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     logger.debug(
         "Enriched memory %s (temporal=%s, patterns=%s, semantic=%s)",
         memory_id,
-        temporal_links,
+        temporal_link_ids,
         pattern_info,
         len(semantic_neighbors),
     )
 
-    return True
+    # Compute tags added during enrichment
+    tags_added = sorted(set(tags) - set(original_tags))
+
+    return {
+        "processed": True,
+        "content": content,
+        "tags_before": original_tags,
+        "tags_after": tags,
+        "tags_added": tags_added,
+        "entities": entities,
+        "temporal_links": temporal_link_ids,
+        "semantic_neighbors": [(nid[:8], round(score, 3)) for nid, score in semantic_neighbors],
+        "patterns_detected": pattern_info,
+        "summary": (summary or ""),
+    }
 
 
-def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> int:
-    """Find and create temporal relationships with recent memories."""
-    created = 0
+def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> List[str]:
+    """Find and create temporal relationships with recent memories.
+
+    Returns list of linked memory IDs.
+    """
+    linked_ids: List[str] = []
     try:
         result = graph.query(
             """
@@ -2332,11 +2396,11 @@ def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> i
                 """,
                 {"id1": memory_id, "id2": related_id, "timestamp": timestamp},
             )
-            created += 1
+            linked_ids.append(related_id)
     except Exception:
         logger.exception("Failed to find temporal relationships")
 
-    return created
+    return linked_ids
 
 
 def detect_patterns(graph: Any, memory_id: str, content: str) -> List[Dict[str, Any]]:
@@ -2772,13 +2836,16 @@ def store_memory() -> Any:
     emit_event(
         "memory.store",
         {
-            "id": memory_id,
-            "content_preview": content[:100] + "..." if len(content) > 100 else content,
+            "memory_id": memory_id,
+            "content": content,  # Full content
             "type": memory_type,
+            "type_confidence": type_confidence,
             "importance": importance,
-            "tags": tags[:5],
-            "size_bytes": len(content),
-            "elapsed_ms": int(response["query_time_ms"]),
+            "tags": tags,  # All tags
+            "metadata": metadata,  # Full metadata
+            "embedding_status": embedding_status,
+            "qdrant_status": qdrant_result,
+            "elapsed_ms": round(response["query_time_ms"], 2),
         },
         utc_now,
     )
@@ -3054,23 +3121,65 @@ def recall_memories() -> Any:
     # Emit SSE event for real-time monitoring
     elapsed_ms = int((time.perf_counter() - query_start) * 1000)
     result_count = 0
+    dedup_removed = 0
+    result_summaries: List[Dict[str, Any]] = []
     try:
         # Response is either a tuple (response, status) or Response object
         resp_data = response[0] if isinstance(response, tuple) else response
         if hasattr(resp_data, "get_json"):
             data = resp_data.get_json(silent=True) or {}
-            result_count = len(data.get("memories", []))
-    except Exception as e:
+            results = data.get("results", [])
+            result_count = len(results)
+            dedup_removed = data.get("dedup_removed", 0)
+
+            # Build result summaries for top 10 results
+            for r in results[:10]:
+                mem = r.get("memory") or {}
+                if not isinstance(mem, dict):
+                    mem = {}
+                tags_list = mem.get("tags") or []
+                result_summaries.append(
+                    {
+                        "id": str(r.get("id", ""))[:8],
+                        "score": round(float(r.get("final_score", 0)), 3),
+                        "type": mem.get("type", "?"),
+                        "content_length": len(mem.get("content", "")),
+                        "tags_count": (
+                            len(tags_list) if isinstance(tags_list, (list, tuple)) else 0
+                        ),
+                    }
+                )
+    except (TypeError, ValueError, AttributeError) as e:
         logger.debug("Failed to parse response for result_count", exc_info=e)
+
+    # Compute aggregate stats
+    avg_length = 0
+    avg_tags = 0
+    score_min = 0
+    score_max = 0
+    if result_summaries:
+        avg_length = int(sum(r["content_length"] for r in result_summaries) / len(result_summaries))
+        avg_tags = round(sum(r["tags_count"] for r in result_summaries) / len(result_summaries), 1)
+        scores = [r["score"] for r in result_summaries]
+        score_min = min(scores)
+        score_max = max(scores)
 
     emit_event(
         "memory.recall",
         {
-            "query": query_text[:50] if query_text else "(no query)",
-            "limit": limit,
+            "query": query_text,  # Full query
             "result_count": result_count,
+            "dedup_removed": dedup_removed,
             "elapsed_ms": elapsed_ms,
-            "tags": tag_filters[:3] if tag_filters else [],
+            "tags_filter": tag_filters if tag_filters else [],
+            "has_time_filter": bool(start_time or end_time),
+            "vector_search": bool(query_text or embedding_param),
+            "stats": {
+                "avg_length": avg_length,
+                "avg_tags": avg_tags,
+                "score_range": [score_min, score_max],
+            },
+            "result_summaries": result_summaries[:3],  # Top 3 for display
         },
         utc_now,
     )
@@ -3152,6 +3261,17 @@ def create_association() -> Any:
     for prop in relation_config.get("properties", []):
         if prop in relationship_props:
             response[prop] = relationship_props[prop]
+
+    emit_event(
+        "memory.associate",
+        {
+            "memory1_id": memory1_id,
+            "memory2_id": memory2_id,
+            "relation_type": relation_type,
+            "strength": strength,
+        },
+        utc_now,
+    )
 
     return jsonify(response), 201
 
@@ -3807,6 +3927,12 @@ app.register_blueprint(recall_bp)
 app.register_blueprint(consolidation_bp)
 app.register_blueprint(graph_bp)
 app.register_blueprint(stream_bp)
+
+
+@app.route("/monitor")
+def monitor_page() -> Any:
+    """Serve the real-time SSE monitor dashboard."""
+    return app.send_static_file("monitor.html")
 
 
 if __name__ == "__main__":

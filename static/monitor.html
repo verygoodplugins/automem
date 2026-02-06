@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoMem Monitor</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --card: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --muted: #8b949e;
+            --accent: #a371f7;
+            --accent-hover: #b687f8;
+            --store: #238636;
+            --recall: #1f6feb;
+            --enrichment: #a371f7;
+            --consolidation: #f0883e;
+            --error: #f85149;
+            --associate: #3fb950;
+            --warning: #d29922;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+
+        /* Login Screen */
+        #login-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .login-logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: white;
+            margin-bottom: 24px;
+        }
+        .login-title { font-size: 1.75rem; font-weight: 600; color: var(--accent); margin-bottom: 8px; }
+        .login-subtitle { color: var(--muted); margin-bottom: 32px; }
+        .login-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-label { display: block; font-size: 0.9rem; font-weight: 500; margin-bottom: 8px; }
+        .login-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1rem;
+            margin-bottom: 8px;
+        }
+        .login-input:focus { outline: none; border-color: var(--accent); }
+        .login-hint { font-size: 0.8rem; color: var(--muted); margin-bottom: 24px; }
+        .login-btn {
+            width: 100%;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, var(--accent), #6366f1);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .login-error {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--error);
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: var(--error);
+            margin-bottom: 16px;
+            display: none;
+        }
+        .login-footer { margin-top: 24px; font-size: 0.85rem; color: var(--muted); }
+
+        /* Monitor Screen */
+        #monitor-screen { display: none; }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--card);
+        }
+        .header h1 { font-size: 1.25rem; font-weight: 600; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        .status-badge.connected { background: var(--store); color: white; }
+        .status-badge.disconnected { background: var(--error); color: white; }
+        .status-badge.connecting { background: var(--consolidation); color: white; }
+        .disconnect-btn {
+            padding: 6px 12px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--muted);
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+        .disconnect-btn:hover { border-color: var(--error); color: var(--error); }
+
+        /* Status Cards */
+        .status-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            padding: 16px 20px;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+        }
+        .status-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+        }
+        .card-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+        .card-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+        }
+        .card-row:last-child { margin-bottom: 0; }
+        .card-value { font-weight: 600; font-size: 1.25rem; }
+        .card-label { color: var(--muted); font-size: 0.8rem; }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .status-dot.green { background: var(--store); }
+        .status-dot.yellow { background: var(--warning); }
+        .status-dot.red { background: var(--error); }
+        .status-dot.gray { background: var(--muted); }
+
+        /* Stats Bar */
+        .stats-bar {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 12px 20px;
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+        .stat { color: var(--muted); }
+        .stat-value { color: var(--text); font-weight: 600; }
+        .stat-value.error { color: var(--error); }
+
+        /* Filter Bar */
+        .filter-bar {
+            display: flex;
+            gap: 8px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+        .filter-btn {
+            padding: 6px 14px;
+            border-radius: 6px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-btn:hover { border-color: var(--accent); color: var(--text); }
+        .filter-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+        .filter-btn .badge {
+            background: var(--error);
+            color: white;
+            padding: 1px 6px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            margin-left: 4px;
+        }
+
+        /* Events Container */
+        .events-container { padding: 16px 20px; }
+
+        /* Event Cards */
+        .event-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 10px;
+            overflow: hidden;
+            transition: opacity 0.3s, transform 0.3s;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .event-card.error { border-color: var(--error); background: rgba(248, 81, 73, 0.05); }
+        .event-card.hidden { display: none; }
+
+        .event-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            cursor: pointer;
+        }
+        .event-header:hover { background: rgba(255,255,255,0.02); }
+
+        .event-type {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: white;
+            flex-shrink: 0;
+        }
+        .type-store { background: var(--store); }
+        .type-recall { background: var(--recall); }
+        .type-enrichment, .type-complete, .type-start { background: var(--enrichment); }
+        .type-consolidation, .type-run { background: var(--consolidation); }
+        .type-failed, .type-error { background: var(--error); }
+        .type-associate { background: var(--associate); }
+
+        .event-summary {
+            flex: 1;
+            font-size: 0.9rem;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .perf-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-family: monospace;
+            flex-shrink: 0;
+        }
+        .perf-good { color: var(--store); }
+        .perf-warn { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+        .perf-slow { background: rgba(248, 81, 73, 0.2); color: var(--error); }
+
+        .event-time {
+            font-size: 0.75rem;
+            color: var(--muted);
+            font-family: monospace;
+            flex-shrink: 0;
+        }
+
+        .event-toggle {
+            color: var(--muted);
+            font-size: 0.8rem;
+            transition: transform 0.2s;
+        }
+        .event-card.open .event-toggle { transform: rotate(90deg); }
+
+        /* Event Body - Inline Data */
+        .event-body {
+            padding: 0 16px 14px;
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+        }
+        .event-card:not(.open) .event-body { display: none; }
+
+        .event-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-top: 10px;
+        }
+        .event-field {
+            display: flex;
+            gap: 6px;
+        }
+        .field-label { color: var(--muted); }
+        .field-value { color: var(--text); }
+
+        .tags-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 8px;
+        }
+        .tag {
+            background: rgba(255,255,255,0.08);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            color: var(--text);
+        }
+        .tag.added { background: rgba(35, 134, 54, 0.3); color: var(--store); }
+        .tag.entity { background: rgba(163, 113, 247, 0.2); color: var(--accent); }
+
+        .links-section { margin-top: 10px; }
+        .link-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 4px;
+            font-size: 0.8rem;
+        }
+        .link-type { color: var(--muted); min-width: 70px; }
+        .link-value { color: var(--text); font-family: monospace; }
+        .link-score { color: var(--accent); }
+
+        .error-message {
+            color: var(--error);
+            margin-top: 8px;
+            padding: 8px 12px;
+            background: rgba(248, 81, 73, 0.1);
+            border-radius: 4px;
+        }
+
+        .content-preview {
+            margin-top: 8px;
+            color: var(--text);
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .json-toggle {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+        .json-toggle summary {
+            cursor: pointer;
+            color: var(--muted);
+            font-size: 0.75rem;
+        }
+        .json-toggle pre {
+            margin: 8px 0 0;
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.7rem;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--muted);
+        }
+        .empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Quality Badges */
+        .quality-badge {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+        .quality-badge.warn { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+        .quality-badge.large { background: rgba(248, 81, 73, 0.2); color: var(--error); }
+        .quality-badge.low-conf { background: rgba(139, 148, 158, 0.2); color: var(--muted); }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .status-cards { grid-template-columns: 1fr 1fr; }
+            .stats-bar { flex-wrap: wrap; gap: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="login-screen">
+        <div class="login-logo">AM</div>
+        <h1 class="login-title">AutoMem Monitor</h1>
+        <p class="login-subtitle">Unified operations dashboard</p>
+        <div class="login-card">
+            <div id="login-error" class="login-error"></div>
+            <form id="login-form">
+                <label class="login-label">API Token</label>
+                <input type="password" id="token-input" class="login-input" placeholder="Enter your AutoMem API token" autocomplete="off">
+                <p class="login-hint">Your credentials are stored locally and never sent to third parties.</p>
+                <button type="submit" class="login-btn" id="connect-btn">Connect →</button>
+            </form>
+        </div>
+        <p class="login-footer">AutoMem Memory Service</p>
+    </div>
+
+    <!-- Monitor Screen -->
+    <div id="monitor-screen">
+        <header class="header">
+            <h1>AutoMem Monitor</h1>
+            <div class="header-right">
+                <span class="status-badge connecting" id="status-badge">Connecting...</span>
+                <button class="disconnect-btn" id="disconnect-btn">Disconnect</button>
+            </div>
+        </header>
+
+        <!-- Status Cards -->
+        <div class="status-cards" id="status-cards">
+            <div class="status-card" id="health-card">
+                <div class="card-title">Health</div>
+                <div class="card-row"><span class="status-dot gray" id="falkor-dot"></span> FalkorDB</div>
+                <div class="card-row"><span class="status-dot gray" id="qdrant-dot"></span> Qdrant</div>
+                <div class="card-row"><span class="status-dot gray" id="sync-dot"></span> <span id="sync-status">Checking...</span></div>
+            </div>
+            <div class="status-card" id="memories-card">
+                <div class="card-title">Memories</div>
+                <div class="card-value" id="memory-count">—</div>
+                <div class="card-label">total memories</div>
+                <div class="card-row" style="margin-top: 4px;"><span class="status-dot gray" id="vector-dot"></span> <span id="vector-status">Vectors</span></div>
+            </div>
+            <div class="status-card" id="enrichment-card">
+                <div class="card-title">Enrichment</div>
+                <div class="card-row"><span class="field-label">Queue:</span> <span id="enrich-queue">—</span></div>
+                <div class="card-row"><span class="field-label">Failed:</span> <span id="enrich-failed">—</span></div>
+                <div class="card-row"><span class="field-label">Pending:</span> <span id="enrich-pending">—</span></div>
+            </div>
+            <div class="status-card" id="consolidation-card">
+                <div class="card-title">Consolidation</div>
+                <div class="card-row"><span class="field-label">Decay:</span> <span id="consol-decay">—</span></div>
+                <div class="card-row"><span class="field-label">Creative:</span> <span id="consol-creative">—</span></div>
+                <div class="card-row"><span class="field-label">Next:</span> <span id="consol-next">—</span></div>
+            </div>
+        </div>
+
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+            <span class="stat">Events: <span class="stat-value" id="event-count">0</span></span>
+            <span class="stat">Errors: <span class="stat-value" id="error-count">0</span></span>
+            <span class="stat">Avg Latency: <span class="stat-value" id="avg-latency">—</span></span>
+            <span class="stat">Reconnects: <span class="stat-value" id="reconnect-count">0</span></span>
+            <span class="stat" id="log-status-stat" style="margin-left: auto;">📁 <span id="log-status-text">—</span></span>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="store">Store</button>
+            <button class="filter-btn" data-filter="recall">Recall</button>
+            <button class="filter-btn" data-filter="enrichment">Enrich</button>
+            <button class="filter-btn" data-filter="consolidation">Consolidation</button>
+            <button class="filter-btn" data-filter="error">Errors <span class="badge" id="error-badge" style="display:none">0</span></button>
+        </div>
+
+        <!-- Events -->
+        <div class="events-container" id="events-container">
+            <div class="empty-state" id="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <p>Waiting for events...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const THRESHOLDS = {
+            store: { warn: 100, slow: 500 },
+            recall: { warn: 200, slow: 1000 },
+            enrichment: { warn: 2000, slow: 5000 },
+            contentSize: { warn: 1000, large: 2000 },
+            typeConfidence: { low: 0.5 }
+	        };
+
+	        // State
+	        let sseAbortController = null;
+	        let currentToken = null;
+	        let eventHistory = [];
+	        let errorCount = 0;
+	        let reconnectCount = 0;
+	        let currentFilter = 'all';
+	        let statusRefreshInterval = null;
+
+	        function escapeHtml(text) {
+	            const div = document.createElement('div');
+	            div.textContent = text == null ? '' : String(text);
+	            return div.innerHTML;
+	        }
+
+	        function sleep(ms) {
+	            return new Promise(resolve => setTimeout(resolve, ms));
+	        }
+
+	        async function readSseStream(stream, onMessage, signal) {
+	            const reader = stream.getReader();
+	            const decoder = new TextDecoder('utf-8');
+	            let buffer = '';
+	            let eventName = '';
+	            let dataBuffer = '';
+
+	            while (true) {
+	                if (signal?.aborted) {
+	                    try { reader.cancel(); } catch (_) {}
+	                    return;
+	                }
+	                const { value, done } = await reader.read();
+	                if (done) break;
+
+	                buffer += decoder.decode(value, { stream: true });
+	                const lines = buffer.split(/\r?\n/);
+	                buffer = lines.pop() || '';
+
+	                for (const line of lines) {
+	                    if (line === '') {
+	                        if (dataBuffer) {
+	                            const payload = dataBuffer.endsWith('\n') ? dataBuffer.slice(0, -1) : dataBuffer;
+	                            onMessage(payload, eventName || 'message');
+	                        }
+	                        eventName = '';
+	                        dataBuffer = '';
+	                        continue;
+	                    }
+	                    if (line.startsWith(':')) {
+	                        continue;
+	                    }
+	                    if (line.startsWith('event:')) {
+	                        eventName = line.slice(6).trim();
+	                        continue;
+	                    }
+	                    if (line.startsWith('data:')) {
+	                        dataBuffer += line.slice(5).replace(/^\s*/, '') + '\n';
+	                        continue;
+	                    }
+	                }
+	            }
+	        }
+
+        // Elements
+        const loginScreen = document.getElementById('login-screen');
+        const monitorScreen = document.getElementById('monitor-screen');
+        const loginForm = document.getElementById('login-form');
+        const tokenInput = document.getElementById('token-input');
+        const loginError = document.getElementById('login-error');
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const statusBadge = document.getElementById('status-badge');
+        const eventsContainer = document.getElementById('events-container');
+        const emptyState = document.getElementById('empty-state');
+
+        // Check saved token
+        const savedToken = localStorage.getItem('automem_token');
+        if (savedToken) tryConnect(savedToken);
+
+        // Login form
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const token = tokenInput.value.trim();
+            if (!token) {
+                showError('Please enter your API token');
+                return;
+            }
+            tryConnect(token);
+        });
+
+        // Disconnect
+        disconnectBtn.addEventListener('click', () => {
+            disconnect();
+            showLoginScreen();
+        });
+
+        // Filter buttons
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentFilter = btn.dataset.filter;
+                applyFilter();
+            });
+        });
+
+        function showLoginScreen(error = null) {
+            loginScreen.style.display = 'flex';
+            monitorScreen.style.display = 'none';
+            if (error) showError(error);
+            else loginError.style.display = 'none';
+            connectBtn.disabled = false;
+            connectBtn.textContent = 'Connect →';
+        }
+
+        function showMonitorScreen() {
+            loginScreen.style.display = 'none';
+            monitorScreen.style.display = 'block';
+        }
+
+        function showError(msg) {
+            loginError.textContent = msg;
+            loginError.style.display = 'block';
+        }
+
+	        function disconnect() {
+	            if (sseAbortController) {
+	                sseAbortController.abort();
+	                sseAbortController = null;
+	            }
+	            if (statusRefreshInterval) {
+	                clearInterval(statusRefreshInterval);
+	                statusRefreshInterval = null;
+	            }
+	            localStorage.removeItem('automem_token');
+            currentToken = null;
+        }
+
+	        function tryConnect(token) {
+	            connectBtn.disabled = true;
+	            connectBtn.textContent = 'Connecting...';
+	            loginError.style.display = 'none';
+	            currentToken = token;
+
+	            const baseUrl = window.location.origin;
+	            let hasConnected = false;
+	            let backoffMs = 1000;
+
+	            if (sseAbortController) {
+	                sseAbortController.abort();
+	                sseAbortController = null;
+	            }
+	            const controller = new AbortController();
+	            sseAbortController = controller;
+
+	            const onOpen = async (isReconnect) => {
+	                if (!isReconnect) {
+	                    localStorage.setItem('automem_token', token);
+	                    showMonitorScreen();
+	                }
+	                statusBadge.textContent = 'Connected';
+	                statusBadge.className = 'status-badge connected';
+	                fetchSystemStatus();
+	                fetchLogStatus();
+	                if (!statusRefreshInterval) {
+	                    statusRefreshInterval = setInterval(fetchSystemStatus, 30000);
+	                }
+	                if (!isReconnect) {
+	                    await fetchEventHistory();  // Hydrate from log file
+	                }
+	            };
+
+	            const onMessage = (payload) => {
+	                try {
+	                    const event = JSON.parse(payload);
+	                    addEvent(event);
+	                } catch (err) {
+	                    console.error('Failed to parse event:', payload);
+	                }
+	            };
+
+	            const connectOnce = async (isReconnect) => {
+	                const headers = {
+	                    'Accept': 'text/event-stream',
+	                    'Authorization': `Bearer ${token}`,
+	                };
+	                const resp = await fetch(`${baseUrl}/stream`, {
+	                    headers,
+	                    signal: controller.signal,
+	                    cache: 'no-store',
+	                });
+	                if (!resp.ok) {
+	                    throw new Error(`HTTP ${resp.status}`);
+	                }
+	                if (!hasConnected) {
+	                    hasConnected = true;
+	                }
+	                await onOpen(isReconnect);
+	                await readSseStream(resp.body, onMessage, controller.signal);
+	            };
+
+	            (async () => {
+	                while (!controller.signal.aborted && currentToken === token) {
+	                    try {
+	                        await connectOnce(hasConnected);
+	                        if (controller.signal.aborted) return;
+	                        throw new Error('Stream ended');
+	                    } catch (err) {
+	                        if (controller.signal.aborted) return;
+	                        if (!hasConnected) {
+	                            showLoginScreen('Invalid token or connection failed');
+	                            connectBtn.disabled = false;
+	                            connectBtn.textContent = 'Connect →';
+	                            currentToken = null;
+	                            sseAbortController = null;
+	                            return;
+	                        }
+	                        statusBadge.textContent = 'Reconnecting...';
+	                        statusBadge.className = 'status-badge disconnected';
+	                        reconnectCount++;
+	                        document.getElementById('reconnect-count').textContent = reconnectCount;
+	                        await sleep(backoffMs);
+	                        backoffMs = Math.min(backoffMs * 2, 30000);
+	                    }
+	                }
+	            })();
+
+	        }
+
+        async function fetchSystemStatus() {
+            if (!currentToken) return;
+            const headers = { 'X-API-Key': currentToken };
+
+            try {
+                const [health, enrichment, consolidation] = await Promise.all([
+                    fetch('/health').then(r => r.json()).catch(() => null),
+                    fetch('/enrichment/status', { headers }).then(r => r.json()).catch(() => null),
+                    fetch('/consolidate/status', { headers }).then(r => r.json()).catch(() => null)
+                ]);
+
+                if (health) updateHealthCard(health);
+                if (enrichment) updateEnrichmentCard(enrichment);
+                if (consolidation) updateConsolidationCard(consolidation);
+            } catch (err) {
+                console.error('Failed to fetch status:', err);
+            }
+        }
+
+        async function fetchEventHistory() {
+            if (!currentToken) return;
+            const headers = { 'X-API-Key': currentToken };
+
+            try {
+                const resp = await fetch('/stream/history?limit=100', { headers });
+                if (!resp.ok) return;
+                const { events } = await resp.json();
+                if (events?.length) {
+                    // Add historical events (oldest first, so they appear in correct order)
+                    events.forEach(event => addEvent(event, true));
+                    console.log(`Loaded ${events.length} historical events`);
+                }
+            } catch (err) {
+                console.log('No event history available');
+            }
+        }
+
+        async function fetchLogStatus() {
+            if (!currentToken) return;
+            const headers = { 'X-API-Key': currentToken };
+
+            try {
+                const resp = await fetch('/stream/log-status', { headers });
+                if (!resp.ok) return;
+                const status = await resp.json();
+                const el = document.getElementById('log-status-text');
+                if (status.enabled) {
+                    el.textContent = `${status.event_count} events (${formatBytes(status.size_bytes)})`;
+                    el.style.color = 'var(--text)';
+                } else {
+                    el.textContent = 'disabled';
+                    el.style.color = 'var(--muted)';
+                }
+            } catch (err) {
+                document.getElementById('log-status-text').textContent = '—';
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function updateHealthCard(h) {
+            document.getElementById('falkor-dot').className = 'status-dot ' + (h.falkordb === 'connected' ? 'green' : 'red');
+            document.getElementById('qdrant-dot').className = 'status-dot ' + (h.qdrant === 'connected' ? 'green' : h.qdrant === 'disconnected' ? 'red' : 'yellow');
+
+            const syncStatus = h.sync_status || 'unknown';
+            document.getElementById('sync-dot').className = 'status-dot ' + (syncStatus === 'synced' ? 'green' : syncStatus === 'unknown' ? 'gray' : 'yellow');
+            document.getElementById('sync-status').textContent = syncStatus.replace('_', ' ');
+
+            document.getElementById('memory-count').textContent = (h.memory_count || 0).toLocaleString();
+            const vectorMatch = h.memory_count === h.vector_count;
+            document.getElementById('vector-dot').className = 'status-dot ' + (vectorMatch ? 'green' : 'yellow');
+            document.getElementById('vector-status').textContent = `${(h.vector_count || 0).toLocaleString()} vectors`;
+        }
+
+        function updateEnrichmentCard(e) {
+            document.getElementById('enrich-queue').textContent = e.queue_size || e.queue_depth || 0;
+            document.getElementById('enrich-failed').textContent = e.stats?.failures || 0;
+            document.getElementById('enrich-pending').textContent = e.pending || 0;
+        }
+
+        function updateConsolidationCard(c) {
+            const history = c.history || [];
+            const lastDecay = history.find(h => h.task_type === 'decay');
+            const lastCreative = history.find(h => h.task_type === 'creative');
+
+            document.getElementById('consol-decay').textContent = lastDecay ? timeAgo(lastDecay.timestamp) : 'never';
+            document.getElementById('consol-creative').textContent = lastCreative ? timeAgo(lastCreative.timestamp) : 'never';
+
+            const nextRuns = c.next_runs || {};
+            const nextRun = Object.entries(nextRuns).sort((a, b) => new Date(a[1]) - new Date(b[1]))[0];
+            document.getElementById('consol-next').textContent = nextRun ? `${nextRun[0]} in ${timeUntil(nextRun[1])}` : '—';
+        }
+
+        function timeAgo(ts) {
+            const diff = Date.now() - new Date(ts).getTime();
+            const mins = Math.floor(diff / 60000);
+            if (mins < 60) return `${mins}m ago`;
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return `${hours}h ago`;
+            return `${Math.floor(hours / 24)}d ago`;
+        }
+
+        function timeUntil(ts) {
+            const diff = new Date(ts).getTime() - Date.now();
+            if (diff < 0) return 'now';
+            const mins = Math.floor(diff / 60000);
+            if (mins < 60) return `${mins}m`;
+            return `${Math.floor(mins / 60)}h`;
+        }
+
+        function formatTime(ts) {
+            if (!ts) return '';
+            return new Date(ts).toLocaleTimeString('en-US', { hour12: false });
+        }
+
+        function truncate(str, len = 80) {
+            if (!str) return '';
+            str = String(str);
+            return str.length > len ? str.slice(0, len) + '...' : str;
+        }
+
+        function getEventCategory(type) {
+            if (type.includes('store')) return 'store';
+            if (type.includes('recall')) return 'recall';
+            if (type.includes('enrichment') || type.includes('complete') || type.includes('start')) return 'enrichment';
+            if (type.includes('consolidation')) return 'consolidation';
+            if (type.includes('failed') || type.includes('error')) return 'error';
+            if (type.includes('associate')) return 'associate';
+            return 'other';
+        }
+
+        function getTypeClass(type) {
+            const t = type.split('.').pop();
+            if (t === 'store') return 'store';
+            if (t === 'recall') return 'recall';
+            if (t === 'complete' || t === 'start') return 'enrichment';
+            if (t === 'failed') return 'failed';
+            if (t === 'run') return 'consolidation';
+            if (t === 'associate') return 'associate';
+            return 'enrichment';
+        }
+
+        function getPerfBadge(ms, type) {
+            if (!ms && ms !== 0) return '';
+            const t = THRESHOLDS[type] || THRESHOLDS.store;
+            let cls = 'perf-good';
+            let prefix = '';
+            if (ms >= t.slow) { cls = 'perf-slow'; prefix = '🐢 '; }
+            else if (ms >= t.warn) { cls = 'perf-warn'; prefix = '⚠ '; }
+            const display = ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+            return `<span class="perf-badge ${cls}">${prefix}${display}</span>`;
+        }
+
+        function getQualityBadges(d, type) {
+            let badges = '';
+            if (type === 'memory.store' && d.content) {
+                const len = d.content.length;
+                if (len >= THRESHOLDS.contentSize.large) {
+                    badges += `<span class="quality-badge large">📏 ${(len/1000).toFixed(1)}k chars</span>`;
+                } else if (len >= THRESHOLDS.contentSize.warn) {
+                    badges += `<span class="quality-badge warn">📏 ${(len/1000).toFixed(1)}k chars</span>`;
+                }
+            }
+            if (d.type_confidence !== undefined && d.type_confidence < THRESHOLDS.typeConfidence.low) {
+                badges += `<span class="quality-badge low-conf">❓ ${Math.round(d.type_confidence * 100)}%</span>`;
+            }
+            if (d.tags && d.tags.length === 0) {
+                badges += `<span class="quality-badge warn">⚠ no tags</span>`;
+            }
+            return badges;
+        }
+
+	        function getSummary(event) {
+	            const d = event.data || {};
+	            const type = event.type;
+
+	            switch (type) {
+	                case 'memory.store':
+	                    return escapeHtml(truncate(d.content, 60) || String(d.memory_id || '').slice(0, 8));
+	                case 'memory.recall':
+	                    return escapeHtml(`"${truncate(d.query, 40)}" → ${d.result_count || 0} results`);
+	                case 'memory.associate':
+	                    return escapeHtml(`${String(d.memory1_id || '').slice(0,8)} → ${String(d.memory2_id || '').slice(0,8)} (${d.relation_type})`);
+	                case 'enrichment.start':
+	                    return escapeHtml(`${String(d.memory_id || '').slice(0,8)} attempt ${d.attempt || 1}`);
+	                case 'enrichment.complete':
+	                    const tagsAdded = d.tags_added?.length || 0;
+	                    return escapeHtml(`${String(d.memory_id || '').slice(0,8)} enriched` + (tagsAdded ? ` (+${tagsAdded} tags)` : ''));
+	                case 'enrichment.failed':
+	                    return escapeHtml(`${String(d.memory_id || '').slice(0,8)}: ${truncate(d.error, 50)}`);
+	                case 'consolidation.run':
+	                    return escapeHtml(`${d.task_type} → ${d.affected_count || 0} memories`);
+	                default:
+	                    return escapeHtml(truncate(JSON.stringify(d), 60));
+	            }
+	        }
+
+        function renderEventBody(event) {
+            const d = event.data || {};
+            const type = event.type;
+            let html = '';
+
+	            switch (type) {
+	                case 'memory.store':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Type:</span> <span class="field-value">${escapeHtml(d.type || 'Memory')} (${Math.round((d.type_confidence || 0) * 100)}%)</span></span>
+	                        <span class="event-field"><span class="field-label">Importance:</span> <span class="field-value">${d.importance || 0}</span></span>
+	                        <span class="event-field"><span class="field-label">Size:</span> <span class="field-value">${d.content?.length || 0} chars</span></span>
+	                    </div>`;
+	                    if (d.content) {
+	                        html += `<div class="content-preview">${escapeHtml(truncate(d.content, 200))}</div>`;
+	                    }
+	                    if (d.tags?.length) {
+	                        html += `<div class="tags-list">${d.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>`;
+	                    }
+	                    break;
+
+	                case 'memory.recall':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Query:</span> <span class="field-value">"${escapeHtml(truncate(d.query, 50))}"</span></span>
+	                    </div>`;
+                    html += `<div class="event-row">
+                        <span class="event-field"><span class="field-label">Results:</span> <span class="field-value">${d.result_count || 0}</span></span>
+                        <span class="event-field"><span class="field-label">Vector:</span> <span class="field-value">${d.vector_search ? '✓' : '✗'}</span></span>
+                        <span class="event-field"><span class="field-label">Time filter:</span> <span class="field-value">${d.has_time_filter ? '✓' : '✗'}</span></span>
+                    </div>`;
+                    if (d.stats?.score_range) {
+                        html += `<div class="event-row">
+                            <span class="event-field"><span class="field-label">Scores:</span> <span class="field-value">${d.stats.score_range[1]?.toFixed(2)} - ${d.stats.score_range[0]?.toFixed(2)}</span></span>
+                            <span class="event-field"><span class="field-label">Avg length:</span> <span class="field-value">${Math.round(d.stats.avg_length || 0)} chars</span></span>
+                        </div>`;
+                    }
+	                    if (d.tags_filter?.length) {
+	                        html += `<div class="tags-list">${d.tags_filter.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>`;
+	                    }
+	                    break;
+
+	                case 'enrichment.complete':
+	                    if (d.tags_added?.length) {
+	                        html += `<div class="tags-list">${d.tags_added.map(t => `<span class="tag added">+${escapeHtml(t)}</span>`).join('')}</div>`;
+	                    }
+	                    if (d.entities && Object.keys(d.entities).length) {
+	                        html += `<div class="event-row" style="margin-top:8px;">`;
+	                        for (const [cat, vals] of Object.entries(d.entities)) {
+	                            if (vals?.length) {
+	                                html += `<span class="event-field"><span class="field-label">${escapeHtml(cat)}:</span> <span class="field-value">${escapeHtml(vals.join(', '))}</span></span>`;
+	                            }
+	                        }
+	                        html += `</div>`;
+	                    }
+                    if (d.temporal_links?.length || d.semantic_neighbors?.length) {
+                        html += `<div class="links-section">`;
+	                        if (d.temporal_links?.length) {
+	                            const ids = d.temporal_links.map(id => String(id).slice(0,8));
+	                            html += `<div class="link-row"><span class="link-type">temporal:</span> <span class="link-value">${escapeHtml(ids.join(', '))}</span></div>`;
+	                        }
+	                        if (d.semantic_neighbors?.length) {
+	                            const neighbors = d.semantic_neighbors.map(item => {
+	                                const [id, score] = Array.isArray(item) ? item : [item, null];
+	                                return `<span class="link-value">${escapeHtml(String(id).slice(0,8))}</span>` + (score ? ` <span class="link-score">(${Number(score).toFixed(2)})</span>` : '');
+	                            });
+	                            html += `<div class="link-row"><span class="link-type">semantic:</span> ${neighbors.join(', ')}</div>`;
+	                        }
+	                        html += `</div>`;
+	                    }
+	                    if (d.patterns_detected?.length) {
+	                        html += `<div class="event-row" style="margin-top:8px;">`;
+	                        for (const p of d.patterns_detected) {
+	                            html += `<span class="event-field"><span class="field-label">pattern:</span> <span class="field-value">${escapeHtml(p.type)} (${p.similar_memories} similar)</span></span>`;
+	                        }
+	                        html += `</div>`;
+	                    }
+	                    break;
+
+	                case 'enrichment.failed':
+	                    html += `<div class="error-message">${escapeHtml(d.error || 'Unknown error')}</div>`;
+	                    html += `<div class="event-row" style="margin-top:8px;">
+	                        <span class="event-field"><span class="field-label">Attempt:</span> <span class="field-value">${d.attempt || '?'}</span></span>
+	                        <span class="event-field"><span class="field-label">Will retry:</span> <span class="field-value">${d.will_retry ? 'Yes' : 'No'}</span></span>
+	                    </div>`;
+	                    break;
+
+	                case 'memory.associate':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">From:</span> <span class="field-value mono">${escapeHtml(d.memory1_id || '?')}</span></span>
+	                        <span class="event-field"><span class="field-label">To:</span> <span class="field-value mono">${escapeHtml(d.memory2_id || '?')}</span></span>
+	                    </div>`;
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Type:</span> <span class="field-value">${escapeHtml(d.relation_type || '?')}</span></span>
+	                        <span class="event-field"><span class="field-label">Strength:</span> <span class="field-value">${d.strength || '?'}</span></span>
+	                    </div>`;
+	                    break;
+
+	                case 'consolidation.run':
+	                    html += `<div class="event-row">
+	                        <span class="event-field"><span class="field-label">Task:</span> <span class="field-value">${escapeHtml(d.task_type || '?')}</span></span>
+	                        <span class="event-field"><span class="field-label">Affected:</span> <span class="field-value">${d.affected_count || 0} memories</span></span>
+	                        <span class="event-field"><span class="field-label">Success:</span> <span class="field-value">${d.success ? '✓' : '✗'}</span></span>
+	                    </div>`;
+	                    break;
+
+	                default:
+	                    html += `<div class="event-row"><span class="field-value mono">${escapeHtml(JSON.stringify(d))}</span></div>`;
+	            }
+
+	            // Raw JSON toggle
+	            html += `<details class="json-toggle">
+	                <summary>Raw JSON</summary>
+	                <pre>${escapeHtml(JSON.stringify(event, null, 2))}</pre>
+	            </details>`;
+
+            return html;
+        }
+
+        function addEvent(event, isHistorical = false) {
+            // Remove empty state
+            if (emptyState) emptyState.remove();
+
+            // Track event
+            eventHistory.unshift(event);
+            if (eventHistory.length > 200) eventHistory.pop();
+
+            // Update stats
+            const isError = event.type.includes('failed') || event.type.includes('error');
+            if (isError) {
+                errorCount++;
+                document.getElementById('error-count').textContent = errorCount;
+                document.getElementById('error-count').classList.add('error');
+                const badge = document.getElementById('error-badge');
+                badge.textContent = errorCount;
+                badge.style.display = 'inline';
+            }
+
+            document.getElementById('event-count').textContent = eventHistory.length;
+
+            // Calculate avg latency
+            const latencies = eventHistory.filter(e => e.data?.elapsed_ms).map(e => e.data.elapsed_ms);
+            if (latencies.length) {
+                const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+                document.getElementById('avg-latency').textContent = avg >= 1000 ? `${(avg/1000).toFixed(1)}s` : `${Math.round(avg)}ms`;
+            }
+
+            // Create event card
+            const category = getEventCategory(event.type);
+	            const typeClass = getTypeClass(event.type);
+	            const typeName = event.type.split('.').pop().toUpperCase();
+	            const d = event.data || {};
+            const ms = d.elapsed_ms;
+            const perfType = event.type.includes('enrich') ? 'enrichment' : event.type.includes('recall') ? 'recall' : 'store';
+
+            const card = document.createElement('div');
+            card.className = `event-card${isError ? ' error' : ''}${isHistorical ? ' historical' : ''}`;
+            card.dataset.category = category;
+            if (isHistorical) card.style.animation = 'none';  // Skip animation for historical events
+
+            const hidden = currentFilter !== 'all' && currentFilter !== category;
+            if (hidden) card.classList.add('hidden');
+
+	            card.innerHTML = `
+	                <div class="event-header" onclick="this.parentElement.classList.toggle('open')">
+	                    <span class="event-type type-${typeClass}">${escapeHtml(typeName)}</span>
+	                    <span class="event-summary">${getSummary(event)}${getQualityBadges(d, event.type)}</span>
+	                    ${getPerfBadge(ms, perfType)}
+	                    <span class="event-time">${formatTime(event.timestamp)}</span>
+	                    <span class="event-toggle">▶</span>
+	                </div>
+                <div class="event-body">${renderEventBody(event)}</div>
+            `;
+
+            eventsContainer.prepend(card);
+
+            // Limit to 200 cards
+            while (eventsContainer.children.length > 200) {
+                eventsContainer.lastChild.remove();
+            }
+        }
+
+        function applyFilter() {
+            document.querySelectorAll('.event-card').forEach(card => {
+                const category = card.dataset.category;
+                const show = currentFilter === 'all' || currentFilter === category;
+                card.classList.toggle('hidden', !show);
+            });
+        }
+    </script>
+</body>
+</html>
