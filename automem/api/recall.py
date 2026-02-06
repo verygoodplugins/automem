@@ -1401,7 +1401,7 @@ def handle_recall(
             logger=logger,
             additional_tag_filters=tag_filters,  # Pass conversation tag filter
         )
-        if exclude_tags:
+        if start_time or end_time or tag_filters or exclude_tags:
             entity_expansion_results = [
                 r
                 for r in entity_expansion_results
