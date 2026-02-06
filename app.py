@@ -1228,18 +1228,16 @@ def init_embedding_provider() -> None:
             raise RuntimeError(f"Failed to initialize local fastembed provider: {e}") from e
 
     elif provider_config == "ollama":
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        model = os.getenv("OLLAMA_MODEL", "nomic-embed-text")
+        try:
+            timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
+            max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+        except ValueError as ve:
+            raise RuntimeError(f"Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES value: {ve}") from ve
         try:
             from automem.embedding.ollama import OllamaEmbeddingProvider
 
-            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            model = os.getenv("OLLAMA_MODEL", "nomic-embed-text")
-            try:
-                timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
-                max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
-            except ValueError as ve:
-                raise RuntimeError(
-                    f"Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES value: {ve}"
-                ) from ve
             state.embedding_provider = OllamaEmbeddingProvider(
                 base_url=base_url,
                 model=model,
