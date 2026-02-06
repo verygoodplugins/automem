@@ -1097,7 +1097,8 @@ def test_rate_limiting(client, mock_state, auth_headers):
     assert response.status_code == 429  # Too Many Requests
 
 
-def test_recall_with_exclude_tags_single(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_exclude_tags_single(client, auth_headers):
     """Test memory recall with exclude_tags parameter - single tag exclusion."""
     # Create memories with different tags
     mem1_data = {
@@ -1148,7 +1149,8 @@ def test_recall_with_exclude_tags_single(client, mock_state, auth_headers):
         assert "conversation_3" in mem_tags
 
 
-def test_recall_with_exclude_tags_multiple(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_exclude_tags_multiple(client, auth_headers):
     """Test memory recall with exclude_tags parameter - multiple tag exclusions."""
     # Create memories with different conversation tags
     mem1_data = {
@@ -1198,7 +1200,8 @@ def test_recall_with_exclude_tags_multiple(client, mock_state, auth_headers):
     assert conversation_tags == {"conversation_3", "conversation_4"}
 
 
-def test_recall_with_exclude_tags_prefix_matching(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_exclude_tags_prefix_matching(client, auth_headers):
     """Test that exclude_tags works with prefix matching."""
     # Create memories with prefixed tags
     mem1_data = {
@@ -1241,7 +1244,8 @@ def test_recall_with_exclude_tags_prefix_matching(client, mock_state, auth_heade
         assert "permanent" in mem_tags
 
 
-def test_recall_with_tags_and_exclude_tags_combined(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_tags_and_exclude_tags_combined(client, auth_headers):
     """Test combining tags filter with exclude_tags."""
     # Create memories
     mem1_data = {
@@ -1284,7 +1288,8 @@ def test_recall_with_tags_and_exclude_tags_combined(client, mock_state, auth_hea
         assert "conversation_3" in mem_tags
 
 
-def test_recall_exclude_tags_with_no_results(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_recall_exclude_tags_with_no_results(client, auth_headers):
     """Test that exclude_tags returns empty when all memories are excluded."""
     # Create memory
     mem_data = {

@@ -39,7 +39,7 @@ Recall
 
 - GET `/recall`
   - **Basic parameters**: `query`, `limit`, `tags`, `exclude_tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
-    - `exclude_tags` - Comma-separated list or multiple params to exclude memories containing ANY of these tags. Supports both exact and prefix matching. Example: `exclude_tags=conversation_5` or `exclude_tags=temp,draft`
+    - `exclude_tags` - Comma-separated list or multiple params to exclude memories containing ANY of these tags. Supports both exact and prefix matching (independent of `tag_match`). Example: `exclude_tags=conversation_5` or `exclude_tags=temp,draft`
   - **Ordering**: `sort` (or `order_by`) supports:
     - `score` (default) - hybrid relevance/importance ranking
     - `time_desc` / `time_asc` - chronological ordering by `updated_at`/`timestamp` within the filter window (use for "what happened since X")
