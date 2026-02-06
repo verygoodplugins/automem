@@ -1233,8 +1233,13 @@ def init_embedding_provider() -> None:
 
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
             model = os.getenv("OLLAMA_MODEL", "nomic-embed-text")
-            timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
-            max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+            try:
+                timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
+                max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+            except ValueError as ve:
+                raise RuntimeError(
+                    f"Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES value: {ve}"
+                ) from ve
             state.embedding_provider = OllamaEmbeddingProvider(
                 base_url=base_url,
                 model=model,
@@ -1283,8 +1288,13 @@ def init_embedding_provider() -> None:
 
                 base_url = ollama_base_url or "http://localhost:11434"
                 model = ollama_model or "nomic-embed-text"
-                timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
-                max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+                try:
+                    timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
+                    max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+                except ValueError:
+                    logger.warning("Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES, using defaults")
+                    timeout = 30.0
+                    max_retries = 2
                 state.embedding_provider = OllamaEmbeddingProvider(
                     base_url=base_url,
                     model=model,
