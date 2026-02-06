@@ -465,8 +465,31 @@ export function createApp() {
     next();
   });
 
-  // In-memory session store: sessionId -> { transport, server, res, heartbeat, type }
+  // In-memory session store: sessionId -> { transport, server, res, heartbeat, type, lastAccess }
   const sessions = new Map();
+
+  // Sweep abandoned Streamable HTTP sessions every 5 minutes (1-hour TTL)
+  const SESSION_TTL_MS = 60 * 60 * 1000;
+  const sessionSweep = setInterval(() => {
+    const now = Date.now();
+    for (const [sid, session] of sessions.entries()) {
+      if (session.type === 'streamable-http' && now - (session.lastAccess || 0) > SESSION_TTL_MS) {
+        console.log(`[MCP] Sweeping idle Streamable HTTP session: ${sid}`);
+        // Delete first so transport.onclose guard (sessions.has) becomes a no-op
+        sessions.delete(sid);
+        // close() returns a Promise — catch async rejections to avoid unhandled rejection crashes
+        if (session.transport) {
+          Promise.resolve(session.transport.close()).catch(() => {});
+        }
+        if (session.server) {
+          Promise.resolve(session.server.close()).catch(() => {});
+        }
+        session.eventStore?.removeStream(sid);
+        session.eventStore?.stopCleanup();
+      }
+    }
+  }, 5 * 60 * 1000);
+  sessionSweep.unref?.();
 
   // Basic health
   app.get('/health', (_req, res) => res.json({
@@ -643,6 +666,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
             id: null
           });
         }
+        session.lastAccess = Date.now();
         transport = session.transport;
       }
       // New session (POST initialize request only)
@@ -661,7 +685,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
           sessionIdGenerator: () => randomUUID(),
           eventStore, // Enables Last-Event-ID resumability
           onsessioninitialized: (sid) => {
-            sessions.set(sid, { transport, server, type: 'streamable-http', eventStore });
+            sessions.set(sid, { transport, server, type: 'streamable-http', eventStore, lastAccess: Date.now() });
             console.log(`[MCP] Streamable HTTP session initialized: ${sid}`);
           }
         });
@@ -686,17 +710,6 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
           id: null
         });
       }
-
-      res.on('close', () => {
-        const sid = transport.sessionId;
-        if (sid && sessions.has(sid)) {
-          console.log(`[MCP] Streamable HTTP client disconnected: ${sid}`);
-          const session = sessions.get(sid);
-          sessions.delete(sid);
-          session?.eventStore?.removeStream(sid);
-          session?.eventStore?.stopCleanup();
-        }
-      });
 
       await transport.handleRequest(req, res, req.body);
     } catch (e) {

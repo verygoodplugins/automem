@@ -1095,3 +1095,219 @@ def test_rate_limiting(client, mock_state, auth_headers):
     # Should eventually get rate limited
     response = client.get("/health")
     assert response.status_code == 429  # Too Many Requests
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_exclude_tags_single(client, auth_headers):
+    """Test memory recall with exclude_tags parameter - single tag exclusion."""
+    # Create memories with different tags
+    mem1_data = {
+        "content": "Python function in conversation 5",
+        "tags": ["python", "conversation_5", "user"],
+        "importance": 0.8,
+    }
+    mem2_data = {
+        "content": "JavaScript function in conversation 3",
+        "tags": ["javascript", "conversation_3", "user"],
+        "importance": 0.7,
+    }
+    mem3_data = {
+        "content": "Python class in conversation 5",
+        "tags": ["python", "conversation_5", "assistant"],
+        "importance": 0.9,
+    }
+
+    for payload in (mem1_data, mem2_data, mem3_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
+    # Recall without exclusion - should get user-tagged memories
+    response = client.get("/recall?tags=user&limit=10", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+
+    results = data.get("results", [])
+    assert len(results) == 2
+
+    # Recall with exclude_tags=conversation_5 - should only get conversation_3
+    response = client.get(
+        "/recall?tags=user&exclude_tags=conversation_5&limit=10",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+
+    # Check that conversation_5 memories are excluded
+    results = data.get("results", [])
+    assert len(results) == 1
+    for mem in results:
+        mem_tags = mem.get("memory", {}).get("tags", [])
+        assert "conversation_5" not in mem_tags
+        assert "conversation_3" in mem_tags
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_exclude_tags_multiple(client, auth_headers):
+    """Test memory recall with exclude_tags parameter - multiple tag exclusions."""
+    # Create memories with different conversation tags
+    mem1_data = {
+        "content": "Memory from conversation 1",
+        "tags": ["user_1", "conversation_1"],
+        "importance": 0.8,
+    }
+    mem2_data = {
+        "content": "Memory from conversation 2",
+        "tags": ["user_1", "conversation_2"],
+        "importance": 0.7,
+    }
+    mem3_data = {
+        "content": "Memory from conversation 3",
+        "tags": ["user_1", "conversation_3"],
+        "importance": 0.9,
+    }
+    mem4_data = {
+        "content": "Memory from conversation 4",
+        "tags": ["user_1", "conversation_4"],
+        "importance": 0.6,
+    }
+
+    for payload in (mem1_data, mem2_data, mem3_data, mem4_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
+    # Exclude multiple conversations (1 and 2)
+    response = client.get(
+        "/recall?tags=user_1&exclude_tags=conversation_1,conversation_2&limit=10",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+
+    # Check that excluded conversation memories are not present
+    results = data.get("results", [])
+    assert len(results) == 2
+    conversation_tags = set()
+    for mem in results:
+        mem_tags = mem.get("memory", {}).get("tags", [])
+        assert "conversation_1" not in mem_tags
+        assert "conversation_2" not in mem_tags
+        conversation_tags.update({tag for tag in mem_tags if tag.startswith("conversation_")})
+    assert conversation_tags == {"conversation_3", "conversation_4"}
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_exclude_tags_prefix_matching(client, auth_headers):
+    """Test that exclude_tags works with prefix matching."""
+    # Create memories with prefixed tags
+    mem1_data = {
+        "content": "Temporary note 1",
+        "tags": ["user_1", "temp:draft"],
+        "importance": 0.5,
+    }
+    mem2_data = {
+        "content": "Temporary note 2",
+        "tags": ["user_1", "temp:scratch"],
+        "importance": 0.4,
+    }
+    mem3_data = {
+        "content": "Permanent note",
+        "tags": ["user_1", "permanent"],
+        "importance": 0.9,
+    }
+
+    for payload in (mem1_data, mem2_data, mem3_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
+    # Exclude all temp: prefixed tags
+    response = client.get(
+        "/recall?tags=user_1&exclude_tags=temp&limit=10",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+
+    # Should only get permanent note
+    results = data.get("results", [])
+    assert len(results) == 1
+    for mem in results:
+        mem_tags = mem.get("memory", {}).get("tags", [])
+        # No tag should start with "temp"
+        assert not any(tag.startswith("temp") for tag in mem_tags)
+        assert "permanent" in mem_tags
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_recall_with_tags_and_exclude_tags_combined(client, auth_headers):
+    """Test combining tags filter with exclude_tags."""
+    # Create memories
+    mem1_data = {
+        "content": "User message in current conversation",
+        "tags": ["user_1", "conversation_5", "user"],
+        "importance": 0.8,
+    }
+    mem2_data = {
+        "content": "Assistant message in current conversation",
+        "tags": ["user_1", "conversation_5", "assistant"],
+        "importance": 0.7,
+    }
+    mem3_data = {
+        "content": "User message in past conversation",
+        "tags": ["user_1", "conversation_3", "user"],
+        "importance": 0.9,
+    }
+
+    for payload in (mem1_data, mem2_data, mem3_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
+    # Include user_1 but exclude conversation_5
+    response = client.get(
+        "/recall?tags=user_1&exclude_tags=conversation_5&limit=10",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+
+    # Should only get memory from conversation_3
+    results = data.get("results", [])
+    assert len(results) == 1
+    for mem in results:
+        mem_tags = mem.get("memory", {}).get("tags", [])
+        assert "user_1" in mem_tags
+        assert "conversation_5" not in mem_tags
+        assert "conversation_3" in mem_tags
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_recall_exclude_tags_with_no_results(client, auth_headers):
+    """Test that exclude_tags returns empty when all memories are excluded."""
+    # Create memory
+    mem_data = {
+        "content": "Only memory",
+        "tags": ["user_1", "conversation_5"],
+        "importance": 0.8,
+    }
+
+    store_response = client.post("/memory", json=mem_data, headers=auth_headers)
+    assert store_response.status_code == 201
+    assert store_response.get_json()["status"] == "success"
+
+    # Exclude the only conversation
+    response = client.get(
+        "/recall?tags=user_1&exclude_tags=conversation_5&limit=10",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+    assert len(data.get("results", [])) == 0

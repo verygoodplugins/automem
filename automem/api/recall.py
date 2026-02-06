@@ -540,13 +540,23 @@ def _inject_priority_memories(
     context_profile: Dict[str, Any],
     seen_ids: Set[str],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     start_time: Optional[str],
     end_time: Optional[str],
     tag_mode: str,
     tag_match: str,
     limit: int,
+    exclude_tags: Optional[List[str]] = None,
 ) -> bool:
     priority_tags: Set[str] = context_profile.get("priority_tags") or set()
     if not priority_tags:
@@ -570,8 +580,22 @@ def _inject_priority_memories(
             tag_match=effective_tag_match,
         )
         if priority_matches:
-            results.extend(priority_matches)
-            return True
+            filtered_priority = [
+                record
+                for record in priority_matches
+                if result_passes_filters(
+                    record,
+                    start_time,
+                    end_time,
+                    tag_list,
+                    effective_tag_mode,
+                    effective_tag_match,
+                    exclude_tags,
+                )
+            ]
+            if filtered_priority:
+                results.extend(filtered_priority)
+                return True
 
     if qdrant_client is not None:
         tag_results = vector_filter_only_tag_search(
@@ -593,6 +617,7 @@ def _inject_priority_memories(
                     tag_list,
                     effective_tag_mode,
                     effective_tag_match,
+                    exclude_tags,
                 )
             ]
             if filtered_results:
@@ -756,7 +781,16 @@ def _expand_related_memories(
     seed_results: List[Dict[str, Any]],
     seen_ids: Set[str],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     compute_metadata_score: Callable[
         [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
@@ -776,6 +810,7 @@ def _expand_related_memories(
     seed_score_boost: float = 0.25,
     expand_min_strength: Optional[float] = None,
     expand_min_importance: Optional[float] = None,
+    exclude_tags: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     if graph is None or not seed_results or expansion_limit <= 0:
         return []
@@ -847,7 +882,7 @@ def _expand_related_memories(
                 except (TypeError, ValueError):
                     continue
             if not result_passes_filters(
-                candidate, start_time, end_time, tag_filters, tag_mode, tag_match
+                candidate, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
             ):
                 continue
 
@@ -912,7 +947,16 @@ def handle_recall(
         [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
     ],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],
@@ -981,6 +1025,12 @@ def handle_recall(
         sort_param = "time_desc"
 
     tag_filters = normalize_tag_list(tags_param)
+
+    # Parse exclude_tags parameter
+    exclude_tags_input = _split_multi_value(
+        request.args.getlist("exclude_tags") or request.args.get("exclude_tags")
+    )
+    exclude_tags = normalize_tag_list(exclude_tags_input)
 
     allowed_rel_set: Set[str] = (
         set(allowed_relations) if allowed_relations else set(ALLOWED_RELATIONS)
@@ -1108,12 +1158,12 @@ def handle_recall(
                 tag_mode,
                 tag_match,
             )
-            if start_time or end_time or tag_filters:
+            if start_time or end_time or tag_filters or exclude_tags:
                 vector_matches = [
                     res
                     for res in vector_matches
                     if result_passes_filters(
-                        res, start_time, end_time, tag_filters, tag_mode, tag_match
+                        res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
                     )
                 ]
         local_results.extend(vector_matches[:per_query_limit])
@@ -1166,6 +1216,7 @@ def handle_recall(
                     tag_mode,
                     tag_match,
                     per_query_limit,
+                    exclude_tags,
                 )
 
         query_tokens = extract_keywords(query_str.lower()) if query_str else []
@@ -1185,7 +1236,9 @@ def handle_recall(
         local_results = [
             res
             for res in local_results
-            if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match)
+            if result_passes_filters(
+                res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+            )
         ]
 
         if sort_param == "score":
@@ -1328,6 +1381,7 @@ def handle_recall(
             logger=logger,
             expand_min_strength=expand_min_strength,
             expand_min_importance=expand_min_importance,
+            exclude_tags=exclude_tags,
         )
         results = seed_results + expansion_results
 
@@ -1347,6 +1401,14 @@ def handle_recall(
             logger=logger,
             additional_tag_filters=tag_filters,  # Pass conversation tag filter
         )
+        if start_time or end_time or tag_filters or exclude_tags:
+            entity_expansion_results = [
+                r
+                for r in entity_expansion_results
+                if result_passes_filters(
+                    r, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                )
+            ]
         results = seed_results + expansion_results + entity_expansion_results
 
     response = {
@@ -1385,6 +1447,8 @@ def handle_recall(
         response["time_window"] = {"start": start_time, "end": end_time}
     if tag_filters:
         response["tags"] = tag_filters
+    if exclude_tags:
+        response["exclude_tags"] = exclude_tags
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
@@ -1407,6 +1471,7 @@ def handle_recall(
             "vector_matches": total_vector_matches,
             "has_time_filter": bool(start_time or end_time),
             "has_tag_filter": bool(tag_filters),
+            "has_exclude_filter": bool(exclude_tags),
             "limit": limit,
             "dedup_removed": dedup_removed,
             "is_multi": is_multi,
@@ -1440,7 +1505,16 @@ def create_recall_blueprint(
         [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
     ],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],
