@@ -1205,13 +1205,15 @@ def init_embedding_provider() -> None:
 
     Priority order:
     1. OpenAI API (if OPENAI_API_KEY is set)
-    2. Local fastembed model (no API key needed)
-    3. Placeholder hash-based embeddings (fallback)
+    2. Ollama local server (if configured)
+    3. Local fastembed model (no API key needed)
+    4. Placeholder hash-based embeddings (fallback)
 
     Can be controlled via EMBEDDING_PROVIDER env var:
-    - "auto" (default): Try OpenAI, then fastembed, then placeholder
+    - "auto" (default): Try OpenAI, then Ollama, then fastembed, then placeholder
     - "openai": Use OpenAI only, fail if unavailable
     - "local": Use fastembed only, fail if unavailable
+    - "ollama": Use Ollama only, fail if unavailable
     - "placeholder": Use placeholder embeddings
     """
     if state.embedding_provider is not None:
@@ -1250,6 +1252,29 @@ def init_embedding_provider() -> None:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize local fastembed provider: {e}") from e
 
+    elif provider_config == "ollama":
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        model = os.getenv("OLLAMA_MODEL", "nomic-embed-text")
+        try:
+            timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
+            max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+        except ValueError as ve:
+            raise RuntimeError(f"Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES value: {ve}") from ve
+        try:
+            from automem.embedding.ollama import OllamaEmbeddingProvider
+
+            state.embedding_provider = OllamaEmbeddingProvider(
+                base_url=base_url,
+                model=model,
+                dimension=vector_size,
+                timeout=timeout,
+                max_retries=max_retries,
+            )
+            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
+            return
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Ollama provider: {e}") from e
+
     elif provider_config == "placeholder":
         from automem.embedding.placeholder import PlaceholderEmbeddingProvider
 
@@ -1257,7 +1282,7 @@ def init_embedding_provider() -> None:
         logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
         return
 
-    # Auto-selection: Try OpenAI → fastembed → placeholder
+    # Auto-selection: Try OpenAI → Ollama (if configured) → fastembed → placeholder
     if provider_config == "auto":
         # Try OpenAI first
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1276,6 +1301,38 @@ def init_embedding_provider() -> None:
             except Exception as e:
                 logger.warning(
                     "Failed to initialize OpenAI provider, trying local model: %s", str(e)
+                )
+
+        ollama_base_url = os.getenv("OLLAMA_BASE_URL")
+        ollama_model = os.getenv("OLLAMA_MODEL")
+        if ollama_base_url or ollama_model:
+            try:
+                from automem.embedding.ollama import OllamaEmbeddingProvider
+
+                base_url = ollama_base_url or "http://localhost:11434"
+                model = ollama_model or "nomic-embed-text"
+                try:
+                    timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
+                    max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+                except ValueError:
+                    logger.warning("Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES, using defaults")
+                    timeout = 30.0
+                    max_retries = 2
+                state.embedding_provider = OllamaEmbeddingProvider(
+                    base_url=base_url,
+                    model=model,
+                    dimension=vector_size,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                )
+                logger.info(
+                    "Embedding provider (auto-selected): %s",
+                    state.embedding_provider.provider_name(),
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    "Failed to initialize Ollama provider, trying local model: %s", str(e)
                 )
 
         # Try local fastembed
@@ -1306,7 +1363,7 @@ def init_embedding_provider() -> None:
     # Invalid config
     raise ValueError(
         f"Invalid EMBEDDING_PROVIDER={provider_config}. "
-        f"Valid options: auto, openai, local, placeholder"
+        f"Valid options: auto, openai, local, ollama, placeholder"
     )
 
 

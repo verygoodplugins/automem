@@ -49,27 +49,38 @@ curl -X POST \
 
 ### Embedding Providers
 
-AutoMem supports three embedding backends with automatic fallback.
+AutoMem supports four embedding backends with automatic fallback.
 
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
-| `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `openai`, `local`, `placeholder` |
+| `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `openai`, `local`, `ollama`, `placeholder` |
 | `OPENAI_API_KEY` | OpenAI API key (for OpenAI provider) | - | `sk-proj-...` |
+| `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Ollama embedding model | `nomic-embed-text` | `nomic-embed-text` |
+| `OLLAMA_TIMEOUT` | Ollama request timeout (seconds) | `30` | `10`, `30`, `60` |
+| `OLLAMA_MAX_RETRIES` | Ollama retry count | `2` | `0`, `1`, `2` |
 
 **Provider Options:**
-- `auto` (default): Try OpenAI → FastEmbed local model → Placeholder
+- `auto` (default): Try OpenAI → Ollama (if configured) → FastEmbed local model → Placeholder
 - `openai`: Use OpenAI API only (requires `OPENAI_API_KEY`)
 - `local`: Use FastEmbed local model only (~210MB download on first use)
+- `ollama`: Use Ollama only (requires `OLLAMA_BASE_URL` and a pulled model)
 - `placeholder`: Use hash-based embeddings (no semantic search)
 
 **Local Model Details:**
-- Model: `BAAI/bge-base-en-v1.5` (768 dimensions)
-- Size: ~210MB (cached to `~/.config/automem/models/`)
+- Models: `BAAI/bge-small-en-v1.5` (384d), `BAAI/bge-base-en-v1.5` (768d), `BAAI/bge-large-en-v1.5` (1024d)
+- Size: ~67MB / ~210MB / ~1.2GB (cached to `~/.config/automem/models/`)
 - No API key or internet required after first download
 - Good semantic quality, faster than API calls
 - Recommended: pin `onnxruntime<1.20` with `fastembed` 0.4.x to avoid runtime issues
 - Docker: persist model cache with a volume (see docker-compose.yml)
 - Ensure `VECTOR_SIZE` equals the selected model's dimension (default 768)
+
+**Ollama Details:**
+- Requires a running Ollama server (default `http://localhost:11434`)
+- Pull the embedding model before use: `ollama pull nomic-embed-text`
+- Embedding dimensions vary by model; set `VECTOR_SIZE` to match the model output
+- For `auto` mode, Ollama is only attempted if `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is set
 
 **Additional Configuration:**
 | Variable | Description | Default | Notes |
@@ -77,6 +88,23 @@ AutoMem supports three embedding backends with automatic fallback.
 | `AUTOMEM_MODELS_DIR` | Override model cache directory | `~/.config/automem/models/` | Useful in containers |
 
 ---
+
+## Embedding Provider Tradeoffs
+
+| Provider | Cost | Pros | Cons | Best for |
+|----------|------|------|------|----------|
+| OpenAI | ~$0.13/1M tokens (large), ~$0.02/1M tokens (small) | Highest semantic quality, zero infra | Recurring API cost, outbound network required | Production accuracy with minimal ops |
+| FastEmbed (local) | Hardware-only (CPU/GPU) | Offline after first download, consistent latency | Model download size, quality tied to model size | Self-hosted + cost-sensitive environments |
+| Ollama | Hardware-only (CPU/GPU) | Fully local, easy model swapping | Requires running Ollama service, model dims vary | Self-hosted deployments with Ollama already in stack |
+| Placeholder | Free | Always available, deterministic | No semantic search quality | Development/testing without vectors |
+
+**Dimension matching tip:** If embeddings fail with a size mismatch, confirm your model's output length and set `VECTOR_SIZE` accordingly (or use `VECTOR_SIZE_AUTODETECT=true` if you accept adopting the existing collection size).
+
+## Hosting Considerations (Railway vs Self-Hosted)
+
+- **Railway / managed PaaS:** OpenAI is the simplest choice (no local model downloads). FastEmbed works but increases image size and cold-start time; use a persistent volume for `AUTOMEM_MODELS_DIR` if supported. Ollama typically requires a **separate service** (Railway does not ship Ollama by default), so you'll need to deploy Ollama elsewhere and set `OLLAMA_BASE_URL` to that service.
+- **Self-hosted Docker/VPS:** FastEmbed and Ollama are straightforward and avoid API costs. Ollama benefits from GPU acceleration if available; otherwise expect higher latency on CPU. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in docker-compose setups).
+- **Dimension consistency:** Regardless of host, make sure `VECTOR_SIZE` matches the embedding model output. Changing models requires re-embedding existing memories.
 
 ## Optional Variables
 
