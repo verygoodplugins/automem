@@ -477,12 +477,12 @@ export function createApp() {
         console.log(`[MCP] Sweeping idle Streamable HTTP session: ${sid}`);
         // Delete first so transport.onclose guard (sessions.has) becomes a no-op
         sessions.delete(sid);
-        // Tear down transport and server to release resources
+        // close() returns a Promise — catch async rejections to avoid unhandled rejection crashes
         if (session.transport) {
-          try { session.transport.close(); } catch (_) { /* already closed */ }
+          Promise.resolve(session.transport.close()).catch(() => {});
         }
         if (session.server) {
-          try { session.server.close(); } catch (_) { /* already closed */ }
+          Promise.resolve(session.server.close()).catch(() => {});
         }
         session.eventStore?.removeStream(sid);
         session.eventStore?.stopCleanup();
