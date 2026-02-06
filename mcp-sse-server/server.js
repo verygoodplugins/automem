@@ -475,7 +475,15 @@ export function createApp() {
     for (const [sid, session] of sessions.entries()) {
       if (session.type === 'streamable-http' && now - (session.lastAccess || 0) > SESSION_TTL_MS) {
         console.log(`[MCP] Sweeping idle Streamable HTTP session: ${sid}`);
+        // Delete first so transport.onclose guard (sessions.has) becomes a no-op
         sessions.delete(sid);
+        // Tear down transport and server to release resources
+        if (session.transport) {
+          try { session.transport.close(); } catch (_) { /* already closed */ }
+        }
+        if (session.server) {
+          try { session.server.close(); } catch (_) { /* already closed */ }
+        }
         session.eventStore?.removeStream(sid);
         session.eventStore?.stopCleanup();
       }
