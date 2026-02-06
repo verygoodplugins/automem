@@ -2,6 +2,69 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.10.0](https://github.com/verygoodplugins/automem/compare/v0.9.3...v0.10.0) (2026-02-06)
+
+
+### Features
+
+* Add `exclude_tags` parameter to recall API ([#58](https://github.com/verygoodplugins/automem/issues/58)) ([8aeca2e](https://github.com/verygoodplugins/automem/commit/8aeca2ebba472ce065ed97b46ef495519a836067))
+* add memory content size governance with auto-summarization ([e24a86b](https://github.com/verygoodplugins/automem/commit/e24a86be0a0dde80804aef6b6d88953d0e4dd9a5))
+* add memory content size governance with auto-summarization ([876aabf](https://github.com/verygoodplugins/automem/commit/876aabf320cc5937c44d6678e02f0aed33b051b8))
+* Add real-time observability with SSE streaming and TUI monitor ([54d2701](https://github.com/verygoodplugins/automem/commit/54d2701f42992de6172aa862d794f6b09ff0c95b))
+* Add real-time observability with SSE streaming and TUI monitor ([c5f6370](https://github.com/verygoodplugins/automem/commit/c5f63708f0bcb3ab63c56ae0ae63da0dd4b3229b))
+* Add real-time observability with SSE streaming and TUI monitor ([944168e](https://github.com/verygoodplugins/automem/commit/944168e8e00bcdc42af09944577e32475ce25119))
+* **api:** add graph visualization API endpoints ([#26](https://github.com/verygoodplugins/automem/issues/26)) ([a0d0dd3](https://github.com/verygoodplugins/automem/commit/a0d0dd3719ac9dad7c4e24e78f290c9364d2b2e1))
+* **api:** add time-based sorting to recall API ([c063845](https://github.com/verygoodplugins/automem/commit/c063845bb72af7aaaff519083b850da84f20003e))
+* **api:** add time-based sorting to recall API ([a511f0c](https://github.com/verygoodplugins/automem/commit/a511f0c6b6ab74e1c98d29eaae19c7ca69f6542b))
+* create coderabbit.yml ([e05811f](https://github.com/verygoodplugins/automem/commit/e05811f32904a0355b34957be0d5a15629f73f2b))
+* **embedding:** add Ollama embedding provider and expand docs ([#56](https://github.com/verygoodplugins/automem/issues/56)) ([b506a90](https://github.com/verygoodplugins/automem/commit/b506a90661ee8f329bfdc40fff6dda7b2c6a0504))
+* **mcp-sse:** agent-friendly recall output + tests ([71201d3](https://github.com/verygoodplugins/automem/commit/71201d33b5b8a9044f23f3a911dbf193de67b669))
+* **mcp-sse:** improve recall tool output and options ([97c4f72](https://github.com/verygoodplugins/automem/commit/97c4f7240b5319a95412e7d1e65ae65e67150a46))
+
+
+### Bug Fixes
+
+* Add TTL cleanup to InMemoryEventStore ([0631af6](https://github.com/verygoodplugins/automem/commit/0631af6cee60f70505aa0f392e5073f8245b7923))
+* Address CodeRabbit security and lint issues ([a701c57](https://github.com/verygoodplugins/automem/commit/a701c578340c90bb08456a066cdf1e304b11ddda))
+* **backup:** Fix GitHub Actions backup failing with connection error ([19ed1e8](https://github.com/verygoodplugins/automem/commit/19ed1e817f2faab4b570a3d7cdc829c3d9a664ff))
+* **backup:** Fix GitHub Actions backup failing with connection error ([10b37d0](https://github.com/verygoodplugins/automem/commit/10b37d0f92273dbaf29bad4cb32d95ff80df5e81))
+* **consolidation:** prevent accidental forgetting ([4330c20](https://github.com/verygoodplugins/automem/commit/4330c207d01f68fda96347f36cac41dc466ce93a))
+* **consolidation:** prevent accidental forgetting ([39dee3e](https://github.com/verygoodplugins/automem/commit/39dee3ec44baf73bf319d16b3ca11667ad063fd2))
+* Correct token parameter for gpt-5 models (max_output_tokens) ([0786705](https://github.com/verygoodplugins/automem/commit/0786705597493779ee16d64b6d111428336da7a7))
+* **enrichment:** sync tags/tag_prefixes to Qdrant ([3ccf874](https://github.com/verygoodplugins/automem/commit/3ccf8748901c6f297a7cb0487d5ac9ddf63bd076))
+* **enrichment:** sync tags/tag_prefixes to Qdrant ([7ba9d76](https://github.com/verygoodplugins/automem/commit/7ba9d76d2be0575fe688ada42f9a29542b890edf))
+* Handle streamable HTTP client disconnects ([f15a7ee](https://github.com/verygoodplugins/automem/commit/f15a7ee81ef690581bbc54deca38c168401a4cac))
+* **mcp-sse:** update test for SDK 1.20+ Accept header behavior ([597909e](https://github.com/verygoodplugins/automem/commit/597909e40a2aecc28420c3a9bbb0a41deda0bfa7))
+* **mcp:** close transport/server on sweep and update Accept header test ([ce7f6fa](https://github.com/verygoodplugins/automem/commit/ce7f6fad6720bd091883805ddbf8d4e702a91e60))
+* **mcp:** replace broken res.on('close') with TTL sweep for Streamable HTTP sessions ([3d53263](https://github.com/verygoodplugins/automem/commit/3d53263389c72c2c2fd624ea3cb18b8d5d1e1227))
+* **mcp:** replace broken res.on('close') with TTL sweep for Streamable HTTP sessions ([#59](https://github.com/verygoodplugins/automem/issues/59)) ([d4d3259](https://github.com/verygoodplugins/automem/commit/d4d325916f167c0f69a97038d8d335b0dc15a95d))
+* **mcp:** use Promise.resolve().catch() for async close() in session sweep ([a8cc589](https://github.com/verygoodplugins/automem/commit/a8cc5895dd826883e3c8e3fbeda66c9a8f7b5790))
+* Production bugs - datetime tz, OpenAI tokens, Qdrant race ([14491c4](https://github.com/verygoodplugins/automem/commit/14491c47ea78729d03cd36390cda67f3cc70670a))
+* Production bugs - datetime tz, OpenAI tokens, Qdrant race ([0771360](https://github.com/verygoodplugins/automem/commit/07713600e3b5c13c9c3662b89a2baa6c1d1bb90b))
+* Refactor tests to use double quotes for consistency ([21da453](https://github.com/verygoodplugins/automem/commit/21da45310652ee700ddb97da11db65b6ddeb6e90))
+* Refine summarization token limit and improve tests ([6cab145](https://github.com/verygoodplugins/automem/commit/6cab145ea6e4e65ad172ccf242b2a57c8f585018))
+* Update test for POST /mcp Accept header error ([67a5a10](https://github.com/verygoodplugins/automem/commit/67a5a10a8ae416eeb6992c1ffaafe33aae881ff1))
+* YAML indentation in backup workflow and update docs ([a606b3e](https://github.com/verygoodplugins/automem/commit/a606b3e4ae160d0f3b7e390579ab7b0adac70947))
+
+
+### Documentation
+
+* add mermaid diagrams for architecture visualization ([0d70a2a](https://github.com/verygoodplugins/automem/commit/0d70a2a9037743059dbb3bc1ca1902cdc9ad5b5c))
+* Add Qdrant setup guide and update docs for AUTOMEM_API_URL ([5c440aa](https://github.com/verygoodplugins/automem/commit/5c440aa7fa38c3169655601953859b5ffd4a009e))
+* Add Qdrant setup guide and update docs for AUTOMEM_API_URL ([123ff28](https://github.com/verygoodplugins/automem/commit/123ff282508e648a97fe0a0d40c522cf1ceded62))
+* Enhance README.md with formatted NPM bridge link ([09ac4ac](https://github.com/verygoodplugins/automem/commit/09ac4acc6e9f7738f25b06cbe12dff0975ad2e0f))
+* merge mermaid diagrams from docs/add-mermaid-diagrams ([4e9ae4f](https://github.com/verygoodplugins/automem/commit/4e9ae4fcd18b58a356cb87e34ca43a29e81a5bf7))
+* Update API documentation and configuration settings ([9281149](https://github.com/verygoodplugins/automem/commit/928114926cb7795b3ee70783d38a2ba747209355))
+* Update API documentation and configuration settings ([#51](https://github.com/verygoodplugins/automem/issues/51)) ([ad9500f](https://github.com/verygoodplugins/automem/commit/ad9500f698c9d78bcae29682bad43164cba8028b))
+* Update API endpoint count and project description ([9e71299](https://github.com/verygoodplugins/automem/commit/9e71299be2bb6744d78e0e596b2d3afcc760458a))
+* update diagrams for Streamable HTTP transport ([1a2ce22](https://github.com/verygoodplugins/automem/commit/1a2ce22caea6d46b27b59dd235cc8076be2a5e1b))
+* Update docs to clarify MCP bridge and improve formatting ([af69a2f](https://github.com/verygoodplugins/automem/commit/af69a2fd6c7f91e82e96c0b48b24d21796782651))
+* Update MCP documentation and server implementation for Streamable HTTP support ([8fdef09](https://github.com/verygoodplugins/automem/commit/8fdef09863989bdde0a514b152d570cc93d69d37))
+* Update MCP documentation and server implementation for Streamable HTTP support ([335a78d](https://github.com/verygoodplugins/automem/commit/335a78dc60cf2821eb095cd276c74e8d81418469))
+* update MCP_SSE.md to reflect MCP bridge terminology ([940a776](https://github.com/verygoodplugins/automem/commit/940a776e0cb43ad74c4dd1c7c2820f9317b3a4c9))
+* Update Railway deployment docs and improve README ([5480eb5](https://github.com/verygoodplugins/automem/commit/5480eb52136162893236e0b5278cb241dd57481f))
+* Update Railway deployment docs and improve README ([82c33b0](https://github.com/verygoodplugins/automem/commit/82c33b05b7b24d66922888ba4ba3b09ba55a10d6))
+
 ## [Unreleased]
 
 ### Fixed
