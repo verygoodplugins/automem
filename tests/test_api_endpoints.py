@@ -1096,6 +1096,7 @@ def test_rate_limiting(client, mock_state, auth_headers):
     response = client.get("/health")
     assert response.status_code == 429  # Too Many Requests
 
+
 def test_recall_with_exclude_tags_single(client, mock_state, auth_headers):
     """Test memory recall with exclude_tags parameter - single tag exclusion."""
     # Create memories with different tags
@@ -1114,28 +1115,37 @@ def test_recall_with_exclude_tags_single(client, mock_state, auth_headers):
         "tags": ["python", "conversation_5", "assistant"],
         "importance": 0.9,
     }
-    
-    client.post("/store", json=mem1_data, headers=auth_headers)
-    client.post("/store", json=mem2_data, headers=auth_headers)
-    client.post("/store", json=mem3_data, headers=auth_headers)
-    
-    # Recall without exclusion - should get all
+
+    for payload in (mem1_data, mem2_data, mem3_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
+    # Recall without exclusion - should get user-tagged memories
     response = client.get("/recall?tags=user&limit=10", headers=auth_headers)
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    
+
+    results = data.get("results", [])
+    assert len(results) == 2
+
     # Recall with exclude_tags=conversation_5 - should only get conversation_3
-    response = client.get("/recall?tags=user&exclude_tags=conversation_5&limit=10", headers=auth_headers)
+    response = client.get(
+        "/recall?tags=user&exclude_tags=conversation_5&limit=10",
+        headers=auth_headers,
+    )
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    
+
     # Check that conversation_5 memories are excluded
-    memories = data.get("memories", [])
-    for mem in memories:
+    results = data.get("results", [])
+    assert len(results) == 1
+    for mem in results:
         mem_tags = mem.get("memory", {}).get("tags", [])
         assert "conversation_5" not in mem_tags
+        assert "conversation_3" in mem_tags
 
 
 def test_recall_with_exclude_tags_multiple(client, mock_state, auth_headers):
@@ -1161,29 +1171,31 @@ def test_recall_with_exclude_tags_multiple(client, mock_state, auth_headers):
         "tags": ["user_1", "conversation_4"],
         "importance": 0.6,
     }
-    
-    client.post("/store", json=mem1_data, headers=auth_headers)
-    client.post("/store", json=mem2_data, headers=auth_headers)
-    client.post("/store", json=mem3_data, headers=auth_headers)
-    client.post("/store", json=mem4_data, headers=auth_headers)
-    
+
+    for payload in (mem1_data, mem2_data, mem3_data, mem4_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
     # Exclude multiple conversations (1 and 2)
     response = client.get(
         "/recall?tags=user_1&exclude_tags=conversation_1,conversation_2&limit=10",
-        headers=auth_headers
+        headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    
+
     # Check that excluded conversation memories are not present
-    memories = data.get("memories", [])
-    for mem in memories:
+    results = data.get("results", [])
+    assert len(results) == 2
+    conversation_tags = set()
+    for mem in results:
         mem_tags = mem.get("memory", {}).get("tags", [])
         assert "conversation_1" not in mem_tags
         assert "conversation_2" not in mem_tags
-        # conversation_3 and conversation_4 should be allowed
-        assert any(tag in ["conversation_3", "conversation_4"] for tag in mem_tags)
+        conversation_tags.update({tag for tag in mem_tags if tag.startswith("conversation_")})
+    assert conversation_tags == {"conversation_3", "conversation_4"}
 
 
 def test_recall_with_exclude_tags_prefix_matching(client, mock_state, auth_headers):
@@ -1204,26 +1216,29 @@ def test_recall_with_exclude_tags_prefix_matching(client, mock_state, auth_heade
         "tags": ["user_1", "permanent"],
         "importance": 0.9,
     }
-    
-    client.post("/store", json=mem1_data, headers=auth_headers)
-    client.post("/store", json=mem2_data, headers=auth_headers)
-    client.post("/store", json=mem3_data, headers=auth_headers)
-    
+
+    for payload in (mem1_data, mem2_data, mem3_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
     # Exclude all temp: prefixed tags
     response = client.get(
         "/recall?tags=user_1&exclude_tags=temp&limit=10",
-        headers=auth_headers
+        headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    
+
     # Should only get permanent note
-    memories = data.get("memories", [])
-    for mem in memories:
+    results = data.get("results", [])
+    assert len(results) == 1
+    for mem in results:
         mem_tags = mem.get("memory", {}).get("tags", [])
         # No tag should start with "temp"
         assert not any(tag.startswith("temp") for tag in mem_tags)
+        assert "permanent" in mem_tags
 
 
 def test_recall_with_tags_and_exclude_tags_combined(client, mock_state, auth_headers):
@@ -1244,26 +1259,29 @@ def test_recall_with_tags_and_exclude_tags_combined(client, mock_state, auth_hea
         "tags": ["user_1", "conversation_3", "user"],
         "importance": 0.9,
     }
-    
-    client.post("/store", json=mem1_data, headers=auth_headers)
-    client.post("/store", json=mem2_data, headers=auth_headers)
-    client.post("/store", json=mem3_data, headers=auth_headers)
-    
+
+    for payload in (mem1_data, mem2_data, mem3_data):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        assert store_response.get_json()["status"] == "success"
+
     # Include user_1 but exclude conversation_5
     response = client.get(
         "/recall?tags=user_1&exclude_tags=conversation_5&limit=10",
-        headers=auth_headers
+        headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    
+
     # Should only get memory from conversation_3
-    memories = data.get("memories", [])
-    for mem in memories:
+    results = data.get("results", [])
+    assert len(results) == 1
+    for mem in results:
         mem_tags = mem.get("memory", {}).get("tags", [])
         assert "user_1" in mem_tags
         assert "conversation_5" not in mem_tags
+        assert "conversation_3" in mem_tags
 
 
 def test_recall_exclude_tags_with_no_results(client, mock_state, auth_headers):
@@ -1274,15 +1292,17 @@ def test_recall_exclude_tags_with_no_results(client, mock_state, auth_headers):
         "tags": ["user_1", "conversation_5"],
         "importance": 0.8,
     }
-    
-    client.post("/store", json=mem_data, headers=auth_headers)
-    
+
+    store_response = client.post("/memory", json=mem_data, headers=auth_headers)
+    assert store_response.status_code == 201
+    assert store_response.get_json()["status"] == "success"
+
     # Exclude the only conversation
     response = client.get(
         "/recall?tags=user_1&exclude_tags=conversation_5&limit=10",
-        headers=auth_headers
+        headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    assert len(data.get("memories", [])) == 0
+    assert len(data.get("results", [])) == 0

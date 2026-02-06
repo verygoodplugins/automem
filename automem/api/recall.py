@@ -540,7 +540,16 @@ def _inject_priority_memories(
     context_profile: Dict[str, Any],
     seen_ids: Set[str],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str, Optional[List[str]]], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     start_time: Optional[str],
     end_time: Optional[str],
@@ -571,8 +580,22 @@ def _inject_priority_memories(
             tag_match=effective_tag_match,
         )
         if priority_matches:
-            results.extend(priority_matches)
-            return True
+            filtered_priority = [
+                record
+                for record in priority_matches
+                if result_passes_filters(
+                    record,
+                    start_time,
+                    end_time,
+                    tag_list,
+                    effective_tag_mode,
+                    effective_tag_match,
+                    exclude_tags,
+                )
+            ]
+            if filtered_priority:
+                results.extend(filtered_priority)
+                return True
 
     if qdrant_client is not None:
         tag_results = vector_filter_only_tag_search(
@@ -758,7 +781,16 @@ def _expand_related_memories(
     seed_results: List[Dict[str, Any]],
     seen_ids: Set[str],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str, Optional[List[str]]], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     compute_metadata_score: Callable[
         [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
@@ -915,7 +947,16 @@ def handle_recall(
         [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
     ],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str, Optional[List[str]]], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],
@@ -986,8 +1027,10 @@ def handle_recall(
     tag_filters = normalize_tag_list(tags_param)
 
     # Parse exclude_tags parameter
-    exclude_tags_param = request.args.getlist("exclude_tags") or request.args.get("exclude_tags")
-    exclude_tags = normalize_tag_list(exclude_tags_param) if exclude_tags_param else []
+    exclude_tags_input = _split_multi_value(
+        request.args.getlist("exclude_tags") or request.args.get("exclude_tags")
+    )
+    exclude_tags = normalize_tag_list(exclude_tags_input)
 
     allowed_rel_set: Set[str] = (
         set(allowed_relations) if allowed_relations else set(ALLOWED_RELATIONS)
@@ -1193,7 +1236,9 @@ def handle_recall(
         local_results = [
             res
             for res in local_results
-            if result_passes_filters(res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags)
+            if result_passes_filters(
+                res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+            )
         ]
 
         if sort_param == "score":
@@ -1449,7 +1494,16 @@ def create_recall_blueprint(
         [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]], tuple[float, Dict[str, float]]
     ],
     result_passes_filters: Callable[
-        [Dict[str, Any], Optional[str], Optional[str], Optional[List[str]], str, str, Optional[List[str]]], bool
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
     ],
     graph_keyword_search: Callable[..., List[Dict[str, Any]]],
     vector_search: Callable[..., List[Dict[str, Any]]],
