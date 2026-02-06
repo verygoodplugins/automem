@@ -21,7 +21,8 @@
 name: Release Please
 
 on:
-    # Keep releases opt-in. This avoids surprise "release PR" churn on every push to main.
+    push:
+        branches: [main]
     workflow_dispatch: {}
 
 permissions:
