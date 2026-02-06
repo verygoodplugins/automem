@@ -1401,6 +1401,14 @@ def handle_recall(
             logger=logger,
             additional_tag_filters=tag_filters,  # Pass conversation tag filter
         )
+        if exclude_tags:
+            entity_expansion_results = [
+                r
+                for r in entity_expansion_results
+                if result_passes_filters(
+                    r, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                )
+            ]
         results = seed_results + expansion_results + entity_expansion_results
 
     response = {
@@ -1463,6 +1471,7 @@ def handle_recall(
             "vector_matches": total_vector_matches,
             "has_time_filter": bool(start_time or end_time),
             "has_tag_filter": bool(tag_filters),
+            "has_exclude_filter": bool(exclude_tags),
             "limit": limit,
             "dedup_removed": dedup_removed,
             "is_multi": is_multi,
