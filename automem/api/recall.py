@@ -1439,6 +1439,8 @@ def handle_recall(
         response["time_window"] = {"start": start_time, "end": end_time}
     if tag_filters:
         response["tags"] = tag_filters
+    if exclude_tags:
+        response["exclude_tags"] = exclude_tags
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
