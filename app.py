@@ -810,13 +810,13 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             return None
 
         try:
-            # Use appropriate token parameter based on model family
-            if CLASSIFICATION_MODEL.startswith("o"):  # o-series (o1, o3, etc.)
-                token_param = {"max_completion_tokens": 50}
-            elif CLASSIFICATION_MODEL.startswith("gpt-5"):  # gpt-5 family
-                token_param = {"max_completion_tokens": 50}
-            else:  # gpt-4o-mini, gpt-4, etc.
-                token_param = {"max_tokens": 50}
+            # Build model-specific params (o-series and gpt-5 don't support temperature)
+            extra_params: dict = {}
+            if CLASSIFICATION_MODEL.startswith(("o", "gpt-5")):
+                extra_params["max_completion_tokens"] = 50
+            else:
+                extra_params["max_tokens"] = 50
+                extra_params["temperature"] = 0.3
             response = state.openai_client.chat.completions.create(
                 model=CLASSIFICATION_MODEL,
                 messages=[
@@ -824,8 +824,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
                     {"role": "user", "content": content[:1000]},  # Limit to 1000 chars
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.3,
-                **token_param,
+                **extra_params,
             )
 
             result = json.loads(response.choices[0].message.content)

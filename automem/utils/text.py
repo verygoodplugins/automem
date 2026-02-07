@@ -147,13 +147,13 @@ def summarize_content(
         # Estimate tokens from target character length (~4 chars/token), cap at 150
         token_limit = min(150, max(1, int(target_length / 4)))
 
-        # Use appropriate token parameter based on model family
-        if model.startswith("o"):  # o-series (o1, o3, etc.)
-            token_param = {"max_completion_tokens": token_limit}
-        elif model.startswith("gpt-5"):  # gpt-5 family
-            token_param = {"max_completion_tokens": token_limit}
-        else:  # gpt-4o-mini, gpt-4, etc.
-            token_param = {"max_tokens": token_limit}
+        # Build model-specific params (o-series and gpt-5 don't support temperature)
+        extra_params: dict = {}
+        if model.startswith(("o", "gpt-5")):
+            extra_params["max_completion_tokens"] = token_limit
+        else:
+            extra_params["max_tokens"] = token_limit
+            extra_params["temperature"] = 0.3
 
         response = openai_client.chat.completions.create(
             model=model,
@@ -161,8 +161,7 @@ def summarize_content(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": content},
             ],
-            temperature=0.3,
-            **token_param,
+            **extra_params,
         )
 
         summary = response.choices[0].message.content.strip()
