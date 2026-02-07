@@ -40,5 +40,4 @@ jobs:
               id: release
               with:
                   release-type: python
-                  # Optional: specify package name if different from repo
-                  # package-name: automem
+                  token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
