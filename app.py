@@ -2299,6 +2299,11 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     return True
 
 
+def _temporal_cutoff() -> str:
+    """Return an ISO timestamp 7 days ago to bound temporal queries."""
+    return (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+
 def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> int:
     """Find and create temporal relationships with recent memories."""
     created = 0
@@ -2306,16 +2311,19 @@ def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> i
         result = graph.query(
             """
             MATCH (m1:Memory {id: $id})
+            WITH m1, m1.timestamp AS ts
+            WHERE ts IS NOT NULL
             MATCH (m2:Memory)
             WHERE m2.id <> $id
                 AND m2.timestamp IS NOT NULL
-                AND m1.timestamp IS NOT NULL
-                AND m2.timestamp < m1.timestamp
+                AND m2.timestamp < ts
+                AND m2.timestamp > $cutoff
             RETURN m2.id
             ORDER BY m2.timestamp DESC
             LIMIT $limit
             """,
-            {"id": memory_id, "limit": limit},
+            {"id": memory_id, "limit": limit, "cutoff": _temporal_cutoff()},
+            timeout=5000,
         )
 
         timestamp = utc_now()
