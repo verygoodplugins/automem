@@ -2,6 +2,15 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.10.1](https://github.com/verygoodplugins/automem/compare/v0.10.0...v0.10.1) (2026-02-07)
+
+
+### Bug Fixes
+
+* bound temporal query to 7-day window with timeout ([#62](https://github.com/verygoodplugins/automem/issues/62)) ([9c720de](https://github.com/verygoodplugins/automem/commit/9c720dea686e579d2f85881624db8c3c48ce395d))
+* skip temperature param for o-series and gpt-5 models ([#65](https://github.com/verygoodplugins/automem/issues/65)) ([f1d5b1d](https://github.com/verygoodplugins/automem/commit/f1d5b1d283e3b0e929697ceed97aa99755c9ca27))
+* use max_completion_tokens for gpt-5 model family ([#61](https://github.com/verygoodplugins/automem/issues/61)) ([1ec25db](https://github.com/verygoodplugins/automem/commit/1ec25dbc7616f1a00008df59f34abd589feec770))
+
 ## [0.10.0](https://github.com/verygoodplugins/automem/compare/v0.9.3...v0.10.0) (2026-02-06)
 
 
