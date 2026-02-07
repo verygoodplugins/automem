@@ -814,7 +814,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             if CLASSIFICATION_MODEL.startswith("o"):  # o-series (o1, o3, etc.)
                 token_param = {"max_completion_tokens": 50}
             elif CLASSIFICATION_MODEL.startswith("gpt-5"):  # gpt-5 family
-                token_param = {"max_output_tokens": 50}
+                token_param = {"max_completion_tokens": 50}
             else:  # gpt-4o-mini, gpt-4, etc.
                 token_param = {"max_tokens": 50}
             response = state.openai_client.chat.completions.create(
