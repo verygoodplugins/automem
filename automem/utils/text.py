@@ -151,7 +151,7 @@ def summarize_content(
         if model.startswith("o"):  # o-series (o1, o3, etc.)
             token_param = {"max_completion_tokens": token_limit}
         elif model.startswith("gpt-5"):  # gpt-5 family
-            token_param = {"max_output_tokens": token_limit}
+            token_param = {"max_completion_tokens": token_limit}
         else:  # gpt-4o-mini, gpt-4, etc.
             token_param = {"max_tokens": token_limit}
 
