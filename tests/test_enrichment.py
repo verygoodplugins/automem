@@ -24,7 +24,7 @@ class FakeGraph:
         self.exemplifies_calls = []
         self.update_calls = []
 
-    def query(self, query: str, params: dict | None = None) -> FakeResult:
+    def query(self, query: str, params: dict | None = None, **kwargs) -> FakeResult:
         params = params or {}
 
         if "MATCH (m:Memory {id: $id}) RETURN m" in query and "RETURN m2.id" not in query:
