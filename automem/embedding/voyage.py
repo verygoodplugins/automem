@@ -115,7 +115,14 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                 if not isinstance(data["data"], list):
                     raise ValueError("Voyage API response 'data' field is not a list")
                 
-                embeddings = [item["embedding"] for item in data["data"]]
+                embeddings = []
+                for i, item in enumerate(data["data"]):
+                    if "embedding" not in item:
+                        raise ValueError(
+                            f"Voyage API response item {i} "
+                            f"missing 'embedding' field"
+                        )
+                    embeddings.append(item["embedding"])
                 
                 # Validate dimensions
                 for i, emb in enumerate(embeddings):
@@ -129,9 +136,17 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                 
             except httpx.HTTPStatusError as e:
                 last_error = e
-                if e.response.status_code == 429 or (500 <= e.response.status_code < 600):  # Rate limit or server errors
-                    error_type = "rate limited" if e.response.status_code == 429 else "server error"
-                    logger.warning("Voyage %s (status %d), attempt %d/%d", error_type, e.response.status_code, attempt + 1, self.max_retries + 1)
+                status = e.response.status_code
+                if status == 429 or 500 <= status < 600:
+                    error_type = (
+                        "rate limited" if status == 429
+                        else "server error"
+                    )
+                    logger.warning(
+                        "Voyage %s (status %d), attempt %d/%d",
+                        error_type, status,
+                        attempt + 1, self.max_retries + 1,
+                    )
                     if attempt < self.max_retries:
                         time.sleep(2 ** attempt)  # Exponential backoff
                         continue
@@ -139,7 +154,10 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries:
-                    logger.warning("Voyage request failed, attempt %d/%d: %s", attempt + 1, self.max_retries + 1, e)
+                    logger.warning(
+                        "Voyage request failed, attempt %d/%d: %s",
+                        attempt + 1, self.max_retries + 1, e,
+                    )
                     continue
                 raise
         
