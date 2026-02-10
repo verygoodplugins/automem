@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live clean logs deploy
+.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live clean logs deploy
 
 # Default target
 help:
@@ -19,8 +19,10 @@ help:
 	@echo "  make clean      - Clean up containers and volumes"
 	@echo ""
 	@echo "Benchmarks:"
-	@echo "  make test-locomo      - Run LoCoMo benchmark (local)"
-	@echo "  make test-locomo-live - Run LoCoMo benchmark (Railway)"
+	@echo "  make test-locomo          - Run LoCoMo benchmark (local)"
+	@echo "  make test-locomo-live     - Run LoCoMo benchmark (Railway)"
+	@echo "  make test-longmemeval     - Run LongMemEval benchmark (local)"
+	@echo "  make test-longmemeval-live - Run LongMemEval benchmark (Railway)"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make deploy     - Deploy to Railway"
@@ -100,6 +102,14 @@ test-locomo:
 # Run LoCoMo benchmark (Railway)
 test-locomo-live:
 	@./test-locomo-benchmark.sh --live
+
+# Run LongMemEval benchmark (local)
+test-longmemeval:
+	@./test-longmemeval-benchmark.sh
+
+# Run LongMemEval benchmark (Railway)
+test-longmemeval-live:
+	@./test-longmemeval-benchmark.sh --live
 
 # Recall Quality Lab
 lab-clone:
