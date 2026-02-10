@@ -15,7 +15,8 @@ def _parse_iso_datetime(value: Optional[Any]) -> Optional[datetime]:
         return None
 
     # Handle numeric timestamps (unix epoch)
-    if isinstance(value, (int, float)):
+    # Guard against bool values since bool is a subclass of int in Python
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         try:
             return datetime.fromtimestamp(value, tz=timezone.utc)
         except (ValueError, OSError):
