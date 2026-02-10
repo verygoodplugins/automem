@@ -128,9 +128,18 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                 for i, emb in enumerate(embeddings):
                     if len(emb) != self._dimension:
                         raise ValueError(
-                            f"Voyage embedding length {len(emb)} != configured dimension {self._dimension} "
+                            f"Voyage embedding length {len(emb)} "
+                            f"!= configured dimension "
+                            f"{self._dimension} "
                             f"at index {i} (model={self.model})"
                         )
+                
+                # Validate count matches input
+                if len(embeddings) != len(texts):
+                    raise ValueError(
+                        f"Voyage returned {len(embeddings)} "
+                        f"embeddings for {len(texts)} input texts"
+                    )
                 
                 return embeddings
                 
@@ -150,6 +159,8 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                     if attempt < self.max_retries:
                         time.sleep(2 ** attempt)  # Exponential backoff
                         continue
+                raise
+            except ValueError:
                 raise
             except Exception as e:
                 last_error = e
