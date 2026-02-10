@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from typing import List, Optional
 
 import httpx
@@ -108,6 +109,12 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                 response.raise_for_status()
                 data = response.json()
                 
+                # Defensive validation of API response structure
+                if "data" not in data:
+                    raise ValueError("Voyage API response missing 'data' field")
+                if not isinstance(data["data"], list):
+                    raise ValueError("Voyage API response 'data' field is not a list")
+                
                 embeddings = [item["embedding"] for item in data["data"]]
                 
                 # Validate dimensions
@@ -122,10 +129,10 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                 
             except httpx.HTTPStatusError as e:
                 last_error = e
-                if e.response.status_code == 429:  # Rate limit
-                    logger.warning("Voyage rate limited, attempt %d/%d", attempt + 1, self.max_retries + 1)
+                if e.response.status_code == 429 or (500 <= e.response.status_code < 600):  # Rate limit or server errors
+                    error_type = "rate limited" if e.response.status_code == 429 else "server error"
+                    logger.warning("Voyage %s (status %d), attempt %d/%d", error_type, e.response.status_code, attempt + 1, self.max_retries + 1)
                     if attempt < self.max_retries:
-                        import time
                         time.sleep(2 ** attempt)  # Exponential backoff
                         continue
                 raise
