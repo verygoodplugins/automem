@@ -348,6 +348,27 @@ def create_memory_blueprint_full(
         )
         return jsonify(response), 201
 
+    @bp.route("/memory/<memory_id>", methods=["GET"])
+    def get(memory_id: str) -> Any:
+        graph = get_memory_graph()
+        if graph is None:
+            abort(503, description="Graph database unavailable")
+
+        try:
+            result = graph.query(
+                "MATCH (m:Memory {id: $id}) RETURN m",
+                {"id": memory_id},
+            )
+        except Exception:
+            logger.exception("Failed to fetch memory %s", memory_id)
+            abort(500, description="Failed to fetch memory")
+
+        if not result.result_set:
+            abort(404, description="Memory not found")
+
+        node = serialize_node(result.result_set[0][0])
+        return jsonify({"status": "success", "memory": node})
+
     @bp.route("/memory/<memory_id>", methods=["PATCH"])
     def update(memory_id: str) -> Any:
         payload = request.get_json(silent=True)
