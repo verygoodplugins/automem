@@ -367,6 +367,13 @@ def create_memory_blueprint_full(
             abort(404, description="Memory not found")
 
         node = serialize_node(result.result_set[0][0])
+        # Parse metadata field for consistency with by_tag endpoint
+        node["metadata"] = parse_metadata_field(node.get("metadata"))
+        
+        # Update last_accessed timestamp for consistency with by_tag endpoint
+        if on_access:
+            on_access([memory_id])
+        
         return jsonify({"status": "success", "memory": node})
 
     @bp.route("/memory/<memory_id>", methods=["PATCH"])
