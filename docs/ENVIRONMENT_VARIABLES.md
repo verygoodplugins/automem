@@ -54,7 +54,8 @@ AutoMem supports four embedding backends with automatic fallback.
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
 | `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `openai`, `local`, `ollama`, `placeholder` |
-| `OPENAI_API_KEY` | OpenAI API key (for OpenAI provider) | - | `sk-proj-...` |
+| `OPENAI_API_KEY` | API key (OpenAI or compatible provider) | - | `sk-proj-...` |
+| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs | - | `https://openrouter.ai/api/v1` |
 | `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama embedding model | `nomic-embed-text` | `nomic-embed-text` |
 | `OLLAMA_TIMEOUT` | Ollama request timeout (seconds) | `30` | `10`, `30`, `60` |
@@ -81,6 +82,23 @@ AutoMem supports four embedding backends with automatic fallback.
 - Pull the embedding model before use: `ollama pull nomic-embed-text`
 - Embedding dimensions vary by model; set `VECTOR_SIZE` to match the model output
 - For `auto` mode, Ollama is only attempted if `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is set
+
+**OpenAI-Compatible Providers (OpenRouter, LiteLLM, Azure, vLLM, etc.):**
+
+The `openai` provider works with any service that exposes an OpenAI-compatible `/v1/embeddings` endpoint. Set `OPENAI_BASE_URL` to point at the provider and `OPENAI_API_KEY` to your provider's key:
+
+```bash
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=sk-or-v1-your-openrouter-key
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+EMBEDDING_MODEL=openai/text-embedding-3-small   # model name varies by provider
+VECTOR_SIZE=768                                  # must match the model's output dimension
+```
+
+**Important notes for non-OpenAI providers:**
+- The `dimensions` parameter (which lets OpenAI truncate embeddings) is **only sent to OpenAI's own API** (`api.openai.com`). For all other base URLs it is omitted because most compatible providers don't support it.
+- You **must** set `VECTOR_SIZE` to match the model's native output dimension since dimension truncation is unavailable.
+- Model names may differ per provider (e.g. `openai/text-embedding-3-small` on OpenRouter vs `text-embedding-3-small` on OpenAI).
 
 **Additional Configuration:**
 | Variable | Description | Default | Notes |
