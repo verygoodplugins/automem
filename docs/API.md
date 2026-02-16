@@ -23,7 +23,7 @@ Memory
 
 - GET `/memory/{id}`
   - Response: `{ "status": "success", "memory": { ... } }`
-  - Errors: `404` if memory is missing, `503` if graph database is unavailable.
+  - Errors: `404` if memory is missing, `500` on query failure, `503` if graph database is unavailable.
 
 - PATCH `/memory/{id}`
   - Body: any subset of fields (`content`, `tags`, `importance`, `type`, `confidence`, `timestamp`, `metadata`)
