@@ -1248,11 +1248,15 @@ def init_embedding_provider() -> None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
+        openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
         try:
             from automem.embedding.openai import OpenAIEmbeddingProvider
 
             state.embedding_provider = OpenAIEmbeddingProvider(
-                api_key=api_key, model=EMBEDDING_MODEL, dimension=vector_size
+                api_key=api_key,
+                model=EMBEDDING_MODEL,
+                dimension=vector_size,
+                base_url=openai_base_url,
             )
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
             return
@@ -1317,9 +1321,7 @@ def init_embedding_provider() -> None:
                 )
                 return
             except Exception as e:
-                logger.warning(
-                    "Failed to initialize Voyage provider, trying OpenAI: %s", str(e)
-                )
+                logger.warning("Failed to initialize Voyage provider, trying OpenAI: %s", str(e))
 
         # Try OpenAI
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1327,8 +1329,12 @@ def init_embedding_provider() -> None:
             try:
                 from automem.embedding.openai import OpenAIEmbeddingProvider
 
+                openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
                 state.embedding_provider = OpenAIEmbeddingProvider(
-                    api_key=api_key, model=EMBEDDING_MODEL, dimension=vector_size
+                    api_key=api_key,
+                    model=EMBEDDING_MODEL,
+                    dimension=vector_size,
+                    base_url=openai_base_url,
                 )
                 logger.info(
                     "Embedding provider (auto-selected): %s",

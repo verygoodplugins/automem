@@ -390,7 +390,8 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-large` |
 | `VOYAGE_API_KEY`    | Voyage API key (Voyage provider)      | _unset_    |
 | `VOYAGE_MODEL`      | Voyage model (Voyage provider)        | `voyage-4` |
-| `OPENAI_API_KEY`    | OpenAI API key (OpenAI provider)      | _unset_    |
+| `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
+| `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
 

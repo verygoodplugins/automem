@@ -9,9 +9,21 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO strings into timezone-aware datetimes (UTC fallback for naive)."""
-    if not value:
+def _parse_iso_datetime(value: Optional[Any]) -> Optional[datetime]:
+    """Parse ISO strings or unix timestamps into timezone-aware datetimes (UTC fallback for naive)."""
+    if value is None:
+        return None
+
+    # Handle numeric timestamps (unix epoch)
+    # Guard against bool values since bool is a subclass of int in Python
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+
+    # Handle string timestamps
+    if not isinstance(value, str):
         return None
 
     candidate = value.strip()

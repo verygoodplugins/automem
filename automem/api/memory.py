@@ -348,6 +348,34 @@ def create_memory_blueprint_full(
         )
         return jsonify(response), 201
 
+    @bp.route("/memory/<memory_id>", methods=["GET"])
+    def get(memory_id: str) -> Any:
+        graph = get_memory_graph()
+        if graph is None:
+            abort(503, description="Graph database unavailable")
+
+        try:
+            result = graph.query(
+                "MATCH (m:Memory {id: $id}) RETURN m",
+                {"id": memory_id},
+            )
+        except Exception:
+            logger.exception("Failed to fetch memory %s", memory_id)
+            abort(500, description="Failed to fetch memory")
+
+        if not getattr(result, "result_set", None):
+            abort(404, description="Memory not found")
+
+        node = serialize_node(result.result_set[0][0])
+        # Parse metadata field for consistency with by_tag endpoint
+        node["metadata"] = parse_metadata_field(node.get("metadata"))
+
+        # Update last_accessed timestamp for consistency with by_tag endpoint
+        if on_access:
+            on_access([memory_id])
+
+        return jsonify({"status": "success", "memory": node})
+
     @bp.route("/memory/<memory_id>", methods=["PATCH"])
     def update(memory_id: str) -> Any:
         payload = request.get_json(silent=True)
@@ -547,7 +575,12 @@ def create_memory_blueprint_full(
                 on_access(accessed_ids)
 
         return jsonify(
-            {"status": "success", "tags": tags, "count": len(memories), "memories": memories}
+            {
+                "status": "success",
+                "tags": tags,
+                "count": len(memories),
+                "memories": memories,
+            }
         )
 
     @bp.route("/associate", methods=["POST"])
@@ -566,7 +599,10 @@ def create_memory_blueprint_full(
         if memory1_id == memory2_id:
             abort(400, description="Cannot associate a memory with itself")
         if relation_type not in set(allowed_relations):
-            abort(400, description=f"Relation type must be one of {sorted(allowed_relations)}")
+            abort(
+                400,
+                description=f"Relation type must be one of {sorted(allowed_relations)}",
+            )
 
         graph = get_memory_graph()
         if graph is None:

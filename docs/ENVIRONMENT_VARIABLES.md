@@ -56,7 +56,8 @@ AutoMem supports five embedding backends with automatic fallback.
 | `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `voyage`, `openai`, `local`, `ollama`, `placeholder` |
 | `VOYAGE_API_KEY` | Voyage API key (for Voyage provider) | - | `pa-...` |
 | `VOYAGE_MODEL` | Voyage embedding model | `voyage-4` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
-| `OPENAI_API_KEY` | OpenAI API key (for OpenAI provider) | - | `sk-proj-...` |
+| `OPENAI_API_KEY` | API key (OpenAI or compatible provider) | - | `sk-proj-...` |
+| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs | - | `https://openrouter.ai/api/v1` |
 | `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama embedding model | `nomic-embed-text` | `nomic-embed-text` |
 | `OLLAMA_TIMEOUT` | Ollama request timeout (seconds) | `30` | `10`, `30`, `60` |
@@ -90,6 +91,23 @@ AutoMem supports five embedding backends with automatic fallback.
 - Optional model override via `VOYAGE_MODEL` (default `voyage-4`)
 - Voyage 4 family supports output dimensions `256`, `512`, `1024`, or `2048`
 - Set `VECTOR_SIZE` to one of the supported Voyage dimensions
+
+**OpenAI-Compatible Providers (OpenRouter, LiteLLM, Azure, vLLM, etc.):**
+
+The `openai` provider works with any service that exposes an OpenAI-compatible `/v1/embeddings` endpoint. Set `OPENAI_BASE_URL` to point at the provider and `OPENAI_API_KEY` to your provider's key:
+
+```bash
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=sk-or-v1-your-openrouter-key
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+EMBEDDING_MODEL=openai/text-embedding-3-small   # model name varies by provider
+VECTOR_SIZE=768                                  # must match the model's output dimension
+```
+
+**Important notes for non-OpenAI providers:**
+- The `dimensions` parameter (which lets OpenAI truncate embeddings) is **only sent to OpenAI's own API** (`api.openai.com`). For all other base URLs it is omitted because most compatible providers don't support it.
+- You **must** set `VECTOR_SIZE` to match the model's native output dimension since dimension truncation is unavailable.
+- Model names may differ per provider (e.g. `openai/text-embedding-3-small` on OpenRouter vs `text-embedding-3-small` on OpenAI).
 
 **Additional Configuration:**
 | Variable | Description | Default | Notes |

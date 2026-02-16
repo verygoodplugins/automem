@@ -412,6 +412,44 @@ def test_parse_iso_datetime_aware_preserved():
     assert result.tzinfo is not None
 
 
+def test_parse_iso_datetime_unix_int():
+    """Integer unix timestamps should parse as UTC datetimes."""
+    from datetime import timezone
+
+    from automem.utils.time import _parse_iso_datetime
+
+    value = 1_705_315_400
+    result = _parse_iso_datetime(value)
+    assert result is not None
+    assert result.tzinfo == timezone.utc
+    assert int(result.timestamp()) == value
+
+
+def test_parse_iso_datetime_unix_float():
+    """Float unix timestamps should preserve fractional seconds."""
+    from automem.utils.time import _parse_iso_datetime
+
+    value = 1_705_315_400.75
+    result = _parse_iso_datetime(value)
+    assert result is not None
+    assert abs(result.timestamp() - value) < 1e-6
+
+
+def test_parse_iso_datetime_bool_not_numeric():
+    """Boolean values should not be interpreted as unix timestamps."""
+    from automem.utils.time import _parse_iso_datetime
+
+    assert _parse_iso_datetime(True) is None
+    assert _parse_iso_datetime(False) is None
+
+
+def test_parse_iso_datetime_numeric_out_of_range():
+    """Out-of-range numeric timestamps should return None."""
+    from automem.utils.time import _parse_iso_datetime
+
+    assert _parse_iso_datetime(1e20) is None
+
+
 def test_result_passes_filters_mixed_naive_aware():
     """Filter comparison should work with mixed naive/aware timestamps."""
     # Function expects result dict with "memory" key containing the timestamp

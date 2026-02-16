@@ -557,6 +557,7 @@ Run the benchmark yourself: `make test-locomo`
 - `EMBEDDING_PROVIDER` - Choose `voyage`, `openai`, `local`, `ollama`, or `placeholder` backends
 - `VOYAGE_API_KEY` / `VOYAGE_MODEL` - Voyage embeddings (if using `voyage`)
 - `OPENAI_API_KEY` - OpenAI embeddings (if using `openai`)
+- `OPENAI_BASE_URL` - Custom endpoint for OpenAI-compatible providers (OpenRouter, LiteLLM, vLLM, etc.)
 - `OLLAMA_BASE_URL` / `OLLAMA_MODEL` - Ollama embeddings (if using `ollama`)
 - `ADMIN_API_TOKEN` - Required for `/admin/reembed` and enrichment controls
 - Consolidation tuning: `CONSOLIDATION_*_INTERVAL_SECONDS`
