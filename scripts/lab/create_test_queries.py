@@ -231,7 +231,7 @@ def generate_template_questions(memories: List[Dict]) -> List[Dict[str, Any]]:
     return results
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Generate test queries from AutoMem data")
     parser.add_argument("--count", type=int, default=50, help="Number of memories to sample")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file path")
@@ -284,7 +284,7 @@ def main():
         json.dump(test_set, f, indent=2)
 
     print(f"\nSaved to: {output_path}")
-    print(f"Review and curate the queries, then run:")
+    print("Review and curate the queries, then run:")
     print(f"  python scripts/lab/run_recall_test.py --test-set {output_path}")
 
 

@@ -48,6 +48,12 @@ done
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-production-$(date +%Y-%m-%d-%H%M)}"
 SNAPSHOT_DIR="$LAB_DIR/snapshots/$SNAPSHOT_NAME"
 
+if [ "$RESTORE_ONLY" = true ] && [ "$SNAPSHOT_NAME" = "production-"* ]; then
+    echo "ERROR: --restore-only requires an explicit snapshot name."
+    echo "Usage: $0 --restore-only <snapshot-name>"
+    exit 1
+fi
+
 echo "=== AutoMem Recall Quality Lab ==="
 echo "Snapshot: $SNAPSHOT_NAME"
 echo ""

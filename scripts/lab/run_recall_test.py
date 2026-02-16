@@ -137,7 +137,7 @@ def load_config(name: str) -> Dict[str, str]:
         return json.load(f)
 
 
-def apply_config(config: Dict[str, str]) -> Dict[str, str]:
+def apply_config(config: Dict[str, str]) -> Dict[str, Optional[str]]:
     """Apply config by setting environment variables. Returns original values for restore."""
     original = {}
     for key, value in config.items():
@@ -146,7 +146,7 @@ def apply_config(config: Dict[str, str]) -> Dict[str, str]:
     return original
 
 
-def restore_config(original: Dict[str, Optional[str]]):
+def restore_config(original: Dict[str, Optional[str]]) -> None:
     """Restore original environment variables."""
     for key, value in original.items():
         if value is None:
@@ -155,14 +155,12 @@ def restore_config(original: Dict[str, Optional[str]]):
             os.environ[key] = value
 
 
-def restart_api_with_config(config: Dict[str, str]):
+def restart_api_with_config(config: Dict[str, str]) -> None:
     """Restart the Docker API container with new environment variables.
 
     For env vars that are read at import time (like scoring weights),
     we need to restart the Flask process.
     """
-    env_args = " ".join(f"-e {k}={v}" for k, v in config.items())
-
     # Check if any scoring/consolidation weights changed — these need restart
     needs_restart = any(
         k.startswith(("SEARCH_WEIGHT_", "CONSOLIDATION_", "RECALL_")) for k in config
@@ -323,7 +321,7 @@ def run_test(config_name: str, queries: List[Dict], api_url: str) -> TestRunResu
     return result
 
 
-def print_summary(result: TestRunResult):
+def print_summary(result: TestRunResult) -> None:
     """Print a summary of test results."""
     print(f"\n--- {result.config_name} ---")
     print(f"  Recall@5:   {result.mean_recall_5:.3f}")
@@ -335,7 +333,7 @@ def print_summary(result: TestRunResult):
 
     cats = result.by_category()
     if len(cats) > 1:
-        print(f"\n  By category:")
+        print("\n  By category:")
         for cat, metrics in sorted(cats.items()):
             print(
                 f"    {cat:12s} R@10={metrics['recall_10']:.3f}  "
@@ -343,7 +341,7 @@ def print_summary(result: TestRunResult):
             )
 
 
-def print_comparison(a: TestRunResult, b: TestRunResult):
+def print_comparison(a: TestRunResult, b: TestRunResult) -> None:
     """Print statistical comparison between two test runs."""
     print(f"\n=== COMPARISON: {a.config_name} -> {b.config_name} ===")
 
@@ -382,10 +380,10 @@ def print_comparison(a: TestRunResult, b: TestRunResult):
             f"p={stats['p_value']:.4f}  d={stats['cohens_d']:.2f} ({stats['effect_size']})"
         )
 
-    print(f"\n  ** = statistically significant (p < 0.05)")
+    print("\n  ** = statistically significant (p < 0.05)")
 
 
-def save_results(result: TestRunResult, output_dir: Path):
+def save_results(result: TestRunResult, output_dir: Path) -> Path:
     """Save test results to JSON."""
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -432,7 +430,7 @@ def load_test_set(path: str) -> List[Dict]:
     return data.get("queries", data) if isinstance(data, dict) else data
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="AutoMem Recall Quality Test Harness")
     parser.add_argument("--config", type=str, required=False, help="Config name to test")
     parser.add_argument("--compare", type=str, help="Config name to compare against")
