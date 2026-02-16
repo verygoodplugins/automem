@@ -497,8 +497,11 @@ def main():
 
     elif args.compare:
         # Comparison mode
+        if not args.config:
+            print("ERROR: --compare requires --config to specify the candidate config")
+            sys.exit(1)
         config_a = load_config(args.compare)
-        config_b = load_config(args.config) if args.config else {}
+        config_b = load_config(args.config)
 
         print(f"\n--- Running baseline: {args.compare} ---")
         restart_api_with_config(config_a)

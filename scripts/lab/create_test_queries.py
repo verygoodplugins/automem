@@ -265,7 +265,9 @@ def main():
 
     # Output
     output_path = args.output or f"lab/test_sets/queries_{len(queries)}.json"
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
     test_set = {
         "metadata": {
