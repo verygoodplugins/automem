@@ -166,16 +166,24 @@ class MockGraph:
 
             if "ORDER BY m.timestamp ASC" in query:
                 results.sort(
-                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)), reverse=False
+                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)),
+                    reverse=False,
                 )
             elif "ORDER BY m.timestamp DESC" in query:
-                results.sort(key=lambda mem: (_timestamp_key(mem), _importance(mem)), reverse=True)
+                results.sort(
+                    key=lambda mem: (_timestamp_key(mem), _importance(mem)),
+                    reverse=True,
+                )
             elif "ORDER BY coalesce(m.updated_at, m.timestamp) ASC" in query:
                 results.sort(
-                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)), reverse=False
+                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)),
+                    reverse=False,
                 )
             elif "ORDER BY coalesce(m.updated_at, m.timestamp) DESC" in query:
-                results.sort(key=lambda mem: (_timestamp_key(mem), _importance(mem)), reverse=True)
+                results.sort(
+                    key=lambda mem: (_timestamp_key(mem), _importance(mem)),
+                    reverse=True,
+                )
             else:
                 results.sort(
                     key=lambda mem: (
@@ -210,7 +218,14 @@ class MockQdrantClient:
         for point in points:
             self.points[point.id] = {"vector": point.vector, "payload": point.payload}
 
-    def search(self, collection_name, query_vector, limit=5, with_payload=True, with_vectors=False):
+    def search(
+        self,
+        collection_name,
+        query_vector,
+        limit=5,
+        with_payload=True,
+        with_vectors=False,
+    ):
         """Mock search operation."""
         self.search_calls.append(
             {"collection": collection_name, "vector": query_vector, "limit": limit}
@@ -431,7 +446,8 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     }
 
     response = client.get(
-        "/recall?time_query=last 7 days&tags=cursor&limit=10&sort=time_desc", headers=auth_headers
+        "/recall?time_query=last 7 days&tags=cursor&limit=10&sort=time_desc",
+        headers=auth_headers,
     )
     assert response.status_code == 200
     data = response.get_json()
@@ -574,6 +590,56 @@ def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers)
 # ==================== Test Memory Update ====================
 
 
+def test_get_memory_success_parses_metadata_and_updates_access(client, mock_state, auth_headers):
+    """Test successful memory retrieval by ID with parsed metadata and access tracking."""
+    memory_id = "get-memory-123"
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": "Memory content",
+        "tags": ["api", "test"],
+        "importance": 0.7,
+        "metadata": json.dumps({"source": "unit-test", "count": 2}),
+        "timestamp": utc_now(),
+    }
+
+    response = client.get(f"/memory/{memory_id}", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+
+    assert data["status"] == "success"
+    assert data["memory"]["id"] == memory_id
+    assert data["memory"]["metadata"] == {"source": "unit-test", "count": 2}
+
+    # Verify last_accessed update query was issued via on_access callback
+    last_accessed_queries = [
+        query
+        for query, _params in mock_state.memory_graph.queries
+        if "SET m.last_accessed" in query
+    ]
+    assert last_accessed_queries
+
+
+def test_get_memory_not_found(client, mock_state, auth_headers):
+    """Test retrieving a non-existent memory by ID."""
+    response = client.get("/memory/non-existent-id", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_get_memory_graph_unavailable(client, mock_state, auth_headers):
+    """Test get memory endpoint returns 503 when graph is unavailable."""
+    mock_state.memory_graph = None
+    response = client.get("/memory/any-id", headers=auth_headers)
+    assert response.status_code == 503
+
+
+def test_get_memory_query_failure(client, mock_state, auth_headers):
+    """Test get memory endpoint returns 500 when graph query fails."""
+    mock_graph = mock_state.memory_graph
+    mock_graph.query = Mock(side_effect=RuntimeError("query failed"))
+    response = client.get("/memory/failing-id", headers=auth_headers)
+    assert response.status_code == 500
+
+
 def test_update_memory_success(client, mock_state, auth_headers):
     """Test successful memory update."""
     memory_id = "test-memory-123"
@@ -587,7 +653,11 @@ def test_update_memory_success(client, mock_state, auth_headers):
         "timestamp": utc_now(),
     }
 
-    update_data = {"content": "Updated content", "tags": ["updated", "modified"], "importance": 0.9}
+    update_data = {
+        "content": "Updated content",
+        "tags": ["updated", "modified"],
+        "importance": 0.9,
+    }
 
     response = client.patch(f"/memory/{memory_id}", json=update_data, headers=auth_headers)
 
@@ -805,7 +875,9 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
 def test_consolidate_trigger(client, mock_state, auth_headers):
     """Test triggering consolidation tasks."""
     response = client.post(
-        "/consolidate", json={"mode": "full"}, headers=auth_headers  # API uses 'mode' not 'task'
+        "/consolidate",
+        json={"mode": "full"},
+        headers=auth_headers,  # API uses 'mode' not 'task'
     )
     assert response.status_code == 200
     data = response.get_json()
@@ -844,7 +916,9 @@ def test_enrichment_status(client, mock_state, auth_headers):
 def test_enrichment_reprocess(client, mock_state, admin_headers):
     """Test reprocessing memories for enrichment."""
     response = client.post(
-        "/enrichment/reprocess", json={"ids": ["mem1", "mem2", "mem3"]}, headers=admin_headers
+        "/enrichment/reprocess",
+        json={"ids": ["mem1", "mem2", "mem3"]},
+        headers=admin_headers,
     )
 
     assert response.status_code == 202
@@ -885,7 +959,12 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
     for rel_type in relationship_types:
         response = client.post(
             "/associate",
-            json={"memory1_id": "mem1", "memory2_id": "mem2", "type": rel_type, "strength": 0.8},
+            json={
+                "memory1_id": "mem1",
+                "memory2_id": "mem2",
+                "type": rel_type,
+                "strength": 0.8,
+            },
             headers=auth_headers,
         )
         assert response.status_code == 201, f"Failed for relationship type: {rel_type}"
@@ -895,8 +974,14 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
 
 def test_create_association_with_properties(client, mock_state, auth_headers):
     """Test creating association with additional properties."""
-    mock_state.memory_graph.memories["mem1"] = {"id": "mem1", "content": "Preferred method"}
-    mock_state.memory_graph.memories["mem2"] = {"id": "mem2", "content": "Alternative method"}
+    mock_state.memory_graph.memories["mem1"] = {
+        "id": "mem1",
+        "content": "Preferred method",
+    }
+    mock_state.memory_graph.memories["mem2"] = {
+        "id": "mem2",
+        "content": "Alternative method",
+    }
 
     response = client.post(
         "/associate",
@@ -905,7 +990,10 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
             "memory2_id": "mem2",
             "type": "PREFERS_OVER",
             "strength": 0.9,
-            "properties": {"reason": "Better performance", "context": "Production environment"},
+            "properties": {
+                "reason": "Better performance",
+                "context": "Production environment",
+            },
         },
         headers=auth_headers,
     )
@@ -985,7 +1073,10 @@ def test_falkordb_unavailable(client, mock_state, auth_headers):
 def test_invalid_json_payload(client, mock_state, auth_headers):
     """Test handling of invalid JSON payload."""
     response = client.post(
-        "/memory", data="This is not JSON", headers=auth_headers, content_type="application/json"
+        "/memory",
+        data="This is not JSON",
+        headers=auth_headers,
+        content_type="application/json",
     )
     assert response.status_code == 400
 
@@ -1041,9 +1132,21 @@ def test_expand_related_memories_filters_strength_and_importance():
     class Graph:
         def query(self, query: str, params: dict):
             related = [
-                ("RELATES_TO", 0.2, _Node(properties={"id": "keep", "importance": 0.9})),
-                ("RELATES_TO", 0.05, _Node(properties={"id": "weak", "importance": 0.9})),
-                ("RELATES_TO", 0.8, _Node(properties={"id": "low_importance", "importance": 0.1})),
+                (
+                    "RELATES_TO",
+                    0.2,
+                    _Node(properties={"id": "keep", "importance": 0.9}),
+                ),
+                (
+                    "RELATES_TO",
+                    0.05,
+                    _Node(properties={"id": "weak", "importance": 0.9}),
+                ),
+                (
+                    "RELATES_TO",
+                    0.8,
+                    _Node(properties={"id": "low_importance", "importance": 0.1}),
+                ),
             ]
             return SimpleNamespace(result_set=related)
 
