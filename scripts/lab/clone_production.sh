@@ -69,18 +69,26 @@ if [ "$RESTORE_ONLY" = false ]; then
         exit 1
     fi
 
-    # Extract connection info
-    RAILWAY_FALKORDB_HOST=$(echo "$RAILWAY_VARS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('FALKORDB_HOST',''))" 2>/dev/null)
-    RAILWAY_FALKORDB_PORT=$(echo "$RAILWAY_VARS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('FALKORDB_PORT','6379'))" 2>/dev/null)
+    # Extract connection info from Railway variables
     RAILWAY_FALKORDB_PASSWORD=$(echo "$RAILWAY_VARS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('FALKORDB_PASSWORD',''))" 2>/dev/null)
     RAILWAY_QDRANT_URL=$(echo "$RAILWAY_VARS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('QDRANT_URL',''))" 2>/dev/null)
     RAILWAY_QDRANT_API_KEY=$(echo "$RAILWAY_VARS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('QDRANT_API_KEY',''))" 2>/dev/null)
 
-    if [ -z "$RAILWAY_FALKORDB_HOST" ]; then
-        echo "ERROR: FALKORDB_HOST not found in Railway variables."
-        echo "Ensure TCP Proxy is enabled on your FalkorDB service."
+    # FalkorDB requires TCP Proxy for external access.
+    # Accept via env var or --falkordb-proxy arg, since Railway's FALKORDB_HOST
+    # is the internal hostname (falkordb.railway.internal) which isn't reachable.
+    FALKORDB_PROXY="${FALKORDB_TCP_PROXY:-}"
+    if [ -z "$FALKORDB_PROXY" ]; then
+        echo "ERROR: FALKORDB_TCP_PROXY not set."
+        echo "Enable TCP Proxy on FalkorDB in Railway dashboard, then run:"
+        echo "  FALKORDB_TCP_PROXY=host:port $0 $*"
+        echo ""
+        echo "Example: FALKORDB_TCP_PROXY=metro.proxy.rlwy.net:43718 $0"
         exit 1
     fi
+
+    RAILWAY_FALKORDB_HOST=$(echo "$FALKORDB_PROXY" | cut -d: -f1)
+    RAILWAY_FALKORDB_PORT=$(echo "$FALKORDB_PROXY" | cut -d: -f2)
 
     echo "  FalkorDB: $RAILWAY_FALKORDB_HOST:$RAILWAY_FALKORDB_PORT"
     echo "  Qdrant:   ${RAILWAY_QDRANT_URL:0:40}..."

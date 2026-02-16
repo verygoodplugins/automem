@@ -137,9 +137,7 @@ def generate_questions_batch(memories: List[Dict]) -> List[Dict[str, Any]]:
             content = mem.get("content", "")[:300]
             mem_type = mem.get("type", "Context")
             tags = ", ".join((mem.get("tags") or [])[:5])
-            memory_descriptions.append(
-                f"Memory {j + 1} (type: {mem_type}, tags: {tags}):\n{content}"
-            )
+            memory_descriptions.append(f"Memory {j} (type: {mem_type}, tags: {tags}):\n{content}")
 
         prompt = f"""For each memory below, generate 2 natural questions that a user would ask
 an AI assistant to retrieve this specific memory. Questions should be:
@@ -147,7 +145,8 @@ an AI assistant to retrieve this specific memory. Questions should be:
 - Specific enough to uniquely identify this memory
 - Varied in style (some direct, some contextual)
 
-Return JSON array of objects with: memory_index (0-based), questions (array of 2 strings)
+Return a JSON object with key "results" containing an array of objects.
+Each object must have: "memory_index" (0-based integer matching Memory 0, Memory 1, etc.) and "questions" (array of exactly 2 strings).
 
 Memories:
 {chr(10).join(memory_descriptions)}"""
