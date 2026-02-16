@@ -19,7 +19,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
 
     Requires a Voyage API key and makes network requests to Voyage AI.
     Provides high-quality semantic embeddings with generous free tier.
-    
+
     Supports the Voyage 4 family with shared embedding spaces:
     - voyage-4-large: Best quality, MoE architecture
     - voyage-4: Approaches voyage-3-large quality, mid-sized
@@ -48,28 +48,28 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         Raises:
             ValueError: If API key is not provided or dimension is invalid
         """
-        self.api_key = api_key or os.getenv("VOYAGE_API_KEY")
-        if not self.api_key:
+        api_key_value = api_key or os.getenv("VOYAGE_API_KEY")
+        if not api_key_value:
             raise ValueError("Voyage API key required (pass api_key or set VOYAGE_API_KEY)")
-        
+
         valid_dimensions = {256, 512, 1024, 2048}
         if dimension not in valid_dimensions:
             raise ValueError(f"Invalid dimension {dimension}. Must be one of: {valid_dimensions}")
-        
+
         self.model = model
         self._dimension = dimension
         self.timeout = timeout
         self.max_retries = max_retries
         self.input_type = input_type
-        
+
         self.client = httpx.Client(
             timeout=timeout,
             headers={
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {api_key_value}",
                 "Content-Type": "application/json",
             },
         )
-        
+
         logger.info(
             "Voyage embedding provider initialized (model=%s, dimensions=%d, timeout=%.1fs, retries=%d)",
             model,
@@ -78,16 +78,18 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
             max_retries,
         )
 
-    def _make_request(self, texts: List[str], input_type: Optional[str] = None) -> List[List[float]]:
+    def _make_request(
+        self, texts: List[str], input_type: Optional[str] = None
+    ) -> List[List[float]]:
         """Make embedding request to Voyage API.
-        
+
         Args:
             texts: List of texts to embed
             input_type: Optional input type ("query" or "document")
-            
+
         Returns:
             List of embedding vectors
-            
+
         Raises:
             Exception: If API call fails after retries
         """
@@ -96,34 +98,52 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
             "model": self.model,
             "output_dimension": self._dimension,
         }
-        
+
         # Use instance input_type if not overridden
         effective_input_type = input_type or self.input_type
         if effective_input_type:
             payload["input_type"] = effective_input_type
-        
+
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
                 response = self.client.post(VOYAGE_API_URL, json=payload)
                 response.raise_for_status()
                 data = response.json()
-                
+
                 # Defensive validation of API response structure
+                if not isinstance(data, dict):
+                    raise ValueError(f"Voyage API response is not an object (model={self.model})")
+                if "error" in data:
+                    raise ValueError(
+                        f"Voyage API returned error payload (model={self.model}, status={response.status_code}): "
+                        f"{data['error']}"
+                    )
                 if "data" not in data:
                     raise ValueError("Voyage API response missing 'data' field")
                 if not isinstance(data["data"], list):
                     raise ValueError("Voyage API response 'data' field is not a list")
-                
+
                 embeddings = []
                 for i, item in enumerate(data["data"]):
+                    if not isinstance(item, dict):
+                        raise ValueError(f"Voyage API response item {i} is not an object")
                     if "embedding" not in item:
                         raise ValueError(
-                            f"Voyage API response item {i} "
-                            f"missing 'embedding' field"
+                            f"Voyage API response item {i} " f"missing 'embedding' field"
                         )
-                    embeddings.append(item["embedding"])
-                
+
+                    embedding = item["embedding"]
+                    if not isinstance(embedding, list):
+                        raise ValueError(
+                            f"Voyage API response item {i} 'embedding' field is not a list"
+                        )
+                    if any(not isinstance(v, (int, float)) for v in embedding):
+                        raise ValueError(
+                            f"Voyage API response item {i} 'embedding' contains non-numeric values"
+                        )
+                    embeddings.append(embedding)
+
                 # Validate dimensions
                 for i, emb in enumerate(embeddings):
                     if len(emb) != self._dimension:
@@ -133,31 +153,30 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                             f"{self._dimension} "
                             f"at index {i} (model={self.model})"
                         )
-                
+
                 # Validate count matches input
                 if len(embeddings) != len(texts):
                     raise ValueError(
                         f"Voyage returned {len(embeddings)} "
                         f"embeddings for {len(texts)} input texts"
                     )
-                
+
                 return embeddings
-                
+
             except httpx.HTTPStatusError as e:
                 last_error = e
                 status = e.response.status_code
                 if status == 429 or 500 <= status < 600:
-                    error_type = (
-                        "rate limited" if status == 429
-                        else "server error"
-                    )
+                    error_type = "rate limited" if status == 429 else "server error"
                     logger.warning(
                         "Voyage %s (status %d), attempt %d/%d",
-                        error_type, status,
-                        attempt + 1, self.max_retries + 1,
+                        error_type,
+                        status,
+                        attempt + 1,
+                        self.max_retries + 1,
                     )
                     if attempt < self.max_retries:
-                        time.sleep(2 ** attempt)  # Exponential backoff
+                        time.sleep(2**attempt)  # Exponential backoff
                         continue
                 raise
             except ValueError:
@@ -167,11 +186,13 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                 if attempt < self.max_retries:
                     logger.warning(
                         "Voyage request failed, attempt %d/%d: %s",
-                        attempt + 1, self.max_retries + 1, e,
+                        attempt + 1,
+                        self.max_retries + 1,
+                        e,
                     )
                     continue
                 raise
-        
+
         raise last_error or RuntimeError("Voyage request failed after retries")
 
     def generate_embedding(self, text: str) -> List[float]:
@@ -204,16 +225,16 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         """
         if not texts:
             return []
-        
+
         # Voyage supports up to 128 texts per batch
         batch_size = 128
         all_embeddings = []
-        
+
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             embeddings = self._make_request(batch)
             all_embeddings.extend(embeddings)
-        
+
         logger.info(
             "Generated %d Voyage embeddings in batch (avg length: %d)",
             len(all_embeddings),
@@ -236,8 +257,18 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
             Provider identifier
         """
         return f"voyage:{self.model}"
-    
+
+    def close(self) -> None:
+        """Close the HTTP client."""
+        if hasattr(self, "client"):
+            self.client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+
     def __del__(self):
         """Clean up HTTP client."""
-        if hasattr(self, 'client'):
-            self.client.close()
+        self.close()
