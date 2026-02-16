@@ -78,7 +78,7 @@ def create_health_blueprint(
             "sync_status": sync_status,
             "enrichment": {
                 "status": "running" if enrichment_thread_alive else "stopped",
-                "queue_depth": state.enrichment_queue.qsize() if state.enrichment_queue else 0,
+                "queue_depth": (state.enrichment_queue.qsize() if state.enrichment_queue else 0),
                 "pending": enrichment_pending,
                 "inflight": enrichment_inflight,
                 "processed": state.enrichment_stats.successes,
@@ -87,6 +87,18 @@ def create_health_blueprint(
             "timestamp": utc_now(),
             "graph": graph_name,
         }
+
+        # BM25 status
+        try:
+            from automem.search.bm25 import BM25_ENABLED, get_index_count
+
+            health_data["bm25"] = {
+                "enabled": BM25_ENABLED,
+                "indexed": get_index_count() if BM25_ENABLED else 0,
+            }
+        except Exception:
+            health_data["bm25"] = {"enabled": False, "error": "import_failed"}
+
         return jsonify(health_data)
 
     return bp
