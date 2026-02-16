@@ -7,7 +7,7 @@ custom gateway.
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from openai import OpenAI
 
@@ -82,7 +82,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             max_retries,
         )
 
-    def _create_kwargs(self, input_val, model: str) -> dict:
+    def _create_kwargs(self, input_val: Union[str, Sequence[str]], model: str) -> Dict[str, Any]:
         """Build kwargs for ``client.embeddings.create``."""
         kwargs = dict(input=input_val, model=model)
         if self._send_dimensions:

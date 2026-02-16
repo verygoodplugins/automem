@@ -1230,7 +1230,7 @@ def init_embedding_provider() -> None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
-        openai_base_url = os.getenv("OPENAI_BASE_URL")
+        openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
         try:
             from automem.embedding.openai import OpenAIEmbeddingProvider
 
@@ -1293,7 +1293,7 @@ def init_embedding_provider() -> None:
             try:
                 from automem.embedding.openai import OpenAIEmbeddingProvider
 
-                openai_base_url = os.getenv("OPENAI_BASE_URL")
+                openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
                 state.embedding_provider = OpenAIEmbeddingProvider(
                     api_key=api_key,
                     model=EMBEDDING_MODEL,
