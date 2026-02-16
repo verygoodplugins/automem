@@ -556,6 +556,7 @@ Run the benchmark yourself: `make test-locomo`
 - `QDRANT_URL` / `QDRANT_API_KEY` - Enable semantic search ([setup guide](docs/QDRANT_SETUP.md))
 - `EMBEDDING_PROVIDER` - Choose `openai`, `local`, `ollama`, or `placeholder` backends
 - `OPENAI_API_KEY` - OpenAI embeddings (if using `openai`)
+- `OPENAI_BASE_URL` - Custom endpoint for OpenAI-compatible providers (OpenRouter, LiteLLM, vLLM, etc.)
 - `OLLAMA_BASE_URL` / `OLLAMA_MODEL` - Ollama embeddings (if using `ollama`)
 - `ADMIN_API_TOKEN` - Required for `/admin/reembed` and enrichment controls
 - Consolidation tuning: `CONSOLIDATION_*_INTERVAL_SECONDS`

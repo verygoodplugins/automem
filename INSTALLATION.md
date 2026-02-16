@@ -388,6 +388,7 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `VECTOR_SIZE`       | Embedding dimension                   | `3072`     |
 | `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-large` |
 | `OPENAI_API_KEY`    | For real embeddings (vs placeholders) | _unset_    |
+| `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
 
