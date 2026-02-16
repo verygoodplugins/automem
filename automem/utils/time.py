@@ -19,7 +19,7 @@ def _parse_iso_datetime(value: Optional[Any]) -> Optional[datetime]:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         try:
             return datetime.fromtimestamp(value, tz=timezone.utc)
-        except (ValueError, OSError):
+        except (ValueError, OSError, OverflowError):
             return None
 
     # Handle string timestamps
