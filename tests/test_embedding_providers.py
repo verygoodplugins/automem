@@ -252,6 +252,29 @@ def test_openai_provider_initialization(mock_openai_client):
         assert call_kwargs["api_key"] == "test-key"
         assert "timeout" in call_kwargs
         assert "max_retries" in call_kwargs
+        # No base_url when using default OpenAI
+        assert "base_url" not in call_kwargs
+
+
+def test_openai_provider_initialization_with_base_url(mock_openai_client):
+    """Test OpenAI provider passes base_url to SDK client."""
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
+        mock_openai_class.return_value = mock_openai_client
+
+        from automem.embedding.openai import OpenAIEmbeddingProvider
+
+        provider = OpenAIEmbeddingProvider(
+            api_key="or-key",
+            model="openai/text-embedding-3-small",
+            dimension=768,
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+        call_kwargs = mock_openai_class.call_args[1]
+        assert call_kwargs["base_url"] == "https://openrouter.ai/api/v1"
+        assert call_kwargs["api_key"] == "or-key"
+        # Provider name should reflect non-default endpoint
+        assert "openai-compatible" in provider.provider_name()
 
 
 def test_openai_provider_single_embedding(mock_openai_client):
@@ -268,10 +291,31 @@ def test_openai_provider_single_embedding(mock_openai_client):
         assert len(embedding) == 768
         assert embedding[0] == 0.5
 
-        # Verify API call
+        # Verify API call includes dimensions for native OpenAI
         mock_openai_client.embeddings.create.assert_called_once_with(
             model="text-embedding-3-small", input="test text", dimensions=768
         )
+
+
+def test_openai_provider_omits_dimensions_for_compatible_provider(mock_openai_client):
+    """Test that dimensions param is NOT sent for non-OpenAI base URLs."""
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
+        mock_openai_class.return_value = mock_openai_client
+        mock_openai_client.embeddings.create.return_value = Mock(data=[Mock(embedding=[0.5] * 768)])
+
+        from automem.embedding.openai import OpenAIEmbeddingProvider
+
+        provider = OpenAIEmbeddingProvider(
+            api_key="or-key",
+            dimension=768,
+            base_url="https://openrouter.ai/api/v1",
+        )
+        provider.generate_embedding("test text")
+
+        call_kwargs = mock_openai_client.embeddings.create.call_args[1]
+        assert (
+            "dimensions" not in call_kwargs
+        ), "dimensions should not be sent to non-OpenAI providers"
 
 
 def test_openai_provider_batch_embedding(mock_openai_client):
@@ -315,10 +359,22 @@ def test_openai_provider_dimension_validation(mock_openai_client):
         provider = OpenAIEmbeddingProvider(api_key="test-key", dimension=768)
 
         # Should raise error for dimension mismatch
-        with pytest.raises(
-            ValueError, match="OpenAI embedding length 1536 != configured dimension 768"
-        ):
+        with pytest.raises(ValueError, match="Embedding length 1536 != configured dimension 768"):
             provider.generate_embedding("test")
+
+
+def test_is_openai_native_detection():
+    """Test _is_openai_native correctly identifies OpenAI vs third-party URLs."""
+    from automem.embedding.openai import _is_openai_native
+
+    # Native OpenAI
+    assert _is_openai_native(None) is True
+    assert _is_openai_native("https://api.openai.com/v1") is True
+
+    # Third-party providers
+    assert _is_openai_native("https://openrouter.ai/api/v1") is False
+    assert _is_openai_native("https://litellm.example.com/v1") is False
+    assert _is_openai_native("http://localhost:4000/v1") is False
 
 
 def test_openai_provider_import_failure():
