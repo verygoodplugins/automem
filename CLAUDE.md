@@ -129,13 +129,15 @@ Memories are classified into types for better organization:
 
 ### Embedding Generation
 
-AutoMem uses a provider pattern with three embedding backends:
+AutoMem uses a provider pattern with multiple embedding backends:
 
 #### Provider Priority (Auto-Selection)
-1. **OpenAI** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
+1. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
    - High-quality semantic embeddings via API
    - Requires network and API costs
    - 3072 dimensions by default (configurable via `EMBEDDING_MODEL` and `VECTOR_SIZE`)
+   - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.)
+   - The `dimensions` parameter is only sent to OpenAI's own API; omitted for third-party providers
 
 2. **FastEmbed** (`fastembed:BAAI/bge-base-en-v1.5`) - Local ONNX model
    - Good quality semantic embeddings
@@ -154,13 +156,13 @@ AutoMem uses a provider pattern with three embedding backends:
 
 Control via `EMBEDDING_PROVIDER` environment variable:
 - `auto` (default): Try OpenAI → FastEmbed → Placeholder
-- `openai`: Use OpenAI only (fail if unavailable)
+- `openai`: Use OpenAI only (fail if unavailable). Also works with OpenAI-compatible providers when `OPENAI_BASE_URL` is set.
 - `local`: Use FastEmbed only (fail if unavailable)
 - `placeholder`: Use placeholder embeddings
 
 Graph writes always succeed even if vector storage fails (graceful degradation).
 
-**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with three implementations: `OpenAIEmbeddingProvider`, `FastEmbedProvider`, `PlaceholderEmbeddingProvider`.
+**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with implementations: `OpenAIEmbeddingProvider` (also handles compatible providers), `FastEmbedProvider`, `OllamaEmbeddingProvider`, `PlaceholderEmbeddingProvider`.
 
 ## Testing
 
@@ -213,7 +215,8 @@ ADMIN_API_TOKEN=             # For admin endpoints
 
 # Embedding configuration
 EMBEDDING_PROVIDER=auto      # auto|openai|local|placeholder
-OPENAI_API_KEY=              # For OpenAI embeddings (optional)
+OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
+OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs (optional)
 
 # Consolidation intervals (seconds)
 CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)
