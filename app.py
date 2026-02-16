@@ -908,7 +908,22 @@ def _is_valid_entity(
         return False
 
     # Reject strings starting with markdown/formatting or code characters
-    if cleaned[0] in {"-", "*", "#", ">", "|", "[", "]", "{", "}", "(", ")", "_", "'", '"'}:
+    if cleaned[0] in {
+        "-",
+        "*",
+        "#",
+        ">",
+        "|",
+        "[",
+        "]",
+        "{",
+        "}",
+        "(",
+        ")",
+        "_",
+        "'",
+        '"',
+    }:
         return False
 
     # Reject common code artifacts (suffixes that indicate class names)
@@ -1019,7 +1034,9 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
 
     # Extract project names from "project called/named 'X'" pattern
     for match in re.findall(
-        r'(?:project|repo|repository)\s+(?:called|named)\s+"([^"]+)"', text, re.IGNORECASE
+        r'(?:project|repo|repository)\s+(?:called|named)\s+"([^"]+)"',
+        text,
+        re.IGNORECASE,
     ):
         cleaned = match.strip()
         if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
@@ -1343,7 +1360,8 @@ def init_embedding_provider() -> None:
                 return
             except Exception as e:
                 logger.warning(
-                    "Failed to initialize OpenAI provider, trying local model: %s", str(e)
+                    "Failed to initialize OpenAI provider, trying local model: %s",
+                    str(e),
                 )
 
         ollama_base_url = os.getenv("OLLAMA_BASE_URL")
@@ -1375,7 +1393,8 @@ def init_embedding_provider() -> None:
                 return
             except Exception as e:
                 logger.warning(
-                    "Failed to initialize Ollama provider, trying local model: %s", str(e)
+                    "Failed to initialize Ollama provider, trying local model: %s",
+                    str(e),
                 )
 
         # Try local fastembed
@@ -1384,7 +1403,8 @@ def init_embedding_provider() -> None:
 
             state.embedding_provider = FastEmbedProvider(dimension=vector_size)
             logger.info(
-                "Embedding provider (auto-selected): %s", state.embedding_provider.provider_name()
+                "Embedding provider (auto-selected): %s",
+                state.embedding_provider.provider_name(),
             )
             return
         except Exception as e:
@@ -1399,7 +1419,8 @@ def init_embedding_provider() -> None:
             "Install fastembed or set VOYAGE_API_KEY/OPENAI_API_KEY for semantic embeddings."
         )
         logger.info(
-            "Embedding provider (auto-selected): %s", state.embedding_provider.provider_name()
+            "Embedding provider (auto-selected): %s",
+            state.embedding_provider.provider_name(),
         )
         return
 
@@ -1438,7 +1459,8 @@ def init_falkordb() -> None:
         state.falkordb = FalkorDB(**connection_params)
         state.memory_graph = state.falkordb.select_graph(GRAPH_NAME)
         logger.info(
-            "FalkorDB connection established (auth: %s)", "enabled" if password else "disabled"
+            "FalkorDB connection established (auth: %s)",
+            "enabled" if password else "disabled",
         )
     except Exception:  # pragma: no cover - log full stack trace in production
         logger.exception("Failed to initialize FalkorDB connection")
@@ -1496,7 +1518,9 @@ def _ensure_qdrant_collection() -> None:
         existing = {collection.name for collection in collections.collections}
         if COLLECTION_NAME not in existing:
             logger.info(
-                "Creating Qdrant collection '%s' with %dd vectors", COLLECTION_NAME, effective_dim
+                "Creating Qdrant collection '%s' with %dd vectors",
+                COLLECTION_NAME,
+                effective_dim,
             )
             state.qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
@@ -2324,7 +2348,8 @@ def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
             # 404 means embedding upload hasn't completed yet (race condition)
             if exc.status_code == 404:
                 logger.debug(
-                    "Qdrant payload sync skipped - point not yet uploaded: %s", memory_id[:8]
+                    "Qdrant payload sync skipped - point not yet uploaded: %s",
+                    memory_id[:8],
                 )
             else:
                 logger.warning("Qdrant payload sync failed (%d): %s", exc.status_code, memory_id)
@@ -3028,7 +3053,12 @@ def memories_by_tag() -> Any:
         memories.append(data)
 
     return jsonify(
-        {"status": "success", "tags": tags, "count": len(memories), "memories": memories}
+        {
+            "status": "success",
+            "tags": tags,
+            "count": len(memories),
+            "memories": memories,
+        }
     )
 
 
@@ -3100,6 +3130,7 @@ def recall_memories() -> Any:
         allowed_relations=ALLOWED_RELATIONS,
         relation_limit=RECALL_RELATION_LIMIT,
         expansion_limit_default=RECALL_EXPANSION_LIMIT,
+        get_openai_client=get_openai_client,
     )
 
     # Emit SSE event for real-time monitoring
@@ -3601,7 +3632,11 @@ def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
         if not embeddings or any(len(e) != expected_dim for e in embeddings):
             logger.warning(
                 "Provider %s returned invalid dims in batch; using placeholders",
-                state.embedding_provider.provider_name() if state.embedding_provider else "unknown",
+                (
+                    state.embedding_provider.provider_name()
+                    if state.embedding_provider
+                    else "unknown"
+                ),
             )
             return [_generate_placeholder_embedding(c) for c in contents]
         return embeddings
@@ -3783,6 +3818,7 @@ recall_bp = create_recall_blueprint(
     _serialize_node,
     _summarize_relation_node,
     update_last_accessed,
+    get_openai_client=get_openai_client,
 )
 
 memory_bp = create_memory_blueprint_full(
