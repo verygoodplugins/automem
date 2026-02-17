@@ -385,8 +385,8 @@ def test_recall_with_query(client, mock_state, auth_headers):
         "tags": ["python", "programming"],
         "importance": 0.8,
     }
-    mock_state.memory_graph.memories["test-id"] = {
-        "id": "test-id",
+    mock_state.memory_graph.memories["dddddddd-dddd-dddd-dddd-dddddddddddd"] = {
+        "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
         "content": memory_data["content"],
         "tags": memory_data["tags"],
         "importance": memory_data["importance"],
@@ -652,7 +652,7 @@ def test_get_memory_query_failure(client, mock_state, auth_headers):
 
 def test_update_memory_success(client, mock_state, auth_headers):
     """Test successful memory update."""
-    memory_id = "test-memory-123"
+    memory_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
 
     # Create initial memory
     mock_state.memory_graph.memories[memory_id] = {
@@ -687,7 +687,7 @@ def test_update_memory_not_found(client, mock_state, auth_headers):
 
 def test_update_memory_partial_fields(client, mock_state, auth_headers):
     """Test updating only some fields of a memory."""
-    memory_id = "test-memory-456"
+    memory_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
     # Create initial memory
     mock_state.memory_graph.memories[memory_id] = {
@@ -749,8 +749,8 @@ def test_delete_memory_not_found(client, mock_state, auth_headers):
 def test_memory_by_tag_single(client, mock_state, auth_headers):
     """Test retrieving memories by a single tag."""
     # Add some memories with tags
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Python tutorial",
         "tags": ["python", "tutorial"],
         "importance": 0.8,
@@ -784,14 +784,14 @@ def test_memory_by_tag_no_tags(client, mock_state, auth_headers):
 def test_admin_reembed_success(client, mock_state, admin_headers):
     """Test successful re-embedding of memories."""
     # Add memories to reembed
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "First memory to reembed",
         "tags": ["test"],
         "importance": 0.7,
     }
-    mock_state.memory_graph.memories["mem2"] = {
-        "id": "mem2",
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         "content": "Second memory to reembed",
         "tags": ["test"],
         "importance": 0.8,
@@ -819,8 +819,8 @@ def test_admin_reembed_no_openai(client, mock_state, admin_headers):
     mock_state.openai_client = None
 
     # Add memories to reembed
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Memory to reembed with fallback",
         "tags": ["test"],
     }
@@ -858,8 +858,8 @@ def test_admin_reembed_no_admin_token(client, mock_state, auth_headers):
 def test_admin_reembed_force_flag(client, mock_state, admin_headers):
     """Test force reembedding with force flag."""
     # Add memory
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Memory with existing embedding",
         "tags": ["test"],
     }
@@ -927,7 +927,13 @@ def test_enrichment_reprocess(client, mock_state, admin_headers):
     """Test reprocessing memories for enrichment."""
     response = client.post(
         "/enrichment/reprocess",
-        json={"ids": ["mem1", "mem2", "mem3"]},
+        json={
+            "ids": [
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            ]
+        },
         headers=admin_headers,
     )
 
@@ -949,8 +955,14 @@ def test_enrichment_reprocess_no_ids(client, mock_state, admin_headers):
 def test_create_association_all_relationship_types(client, mock_state, auth_headers):
     """Test creating associations with all new relationship types."""
     # Create two memories
-    mock_state.memory_graph.memories["mem1"] = {"id": "mem1", "content": "Memory 1"}
-    mock_state.memory_graph.memories["mem2"] = {"id": "mem2", "content": "Memory 2"}
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "content": "Memory 1",
+    }
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "content": "Memory 2",
+    }
 
     relationship_types = [
         "RELATES_TO",
@@ -970,8 +982,8 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
         response = client.post(
             "/associate",
             json={
-                "memory1_id": "mem1",
-                "memory2_id": "mem2",
+                "memory1_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "memory2_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                 "type": rel_type,
                 "strength": 0.8,
             },
