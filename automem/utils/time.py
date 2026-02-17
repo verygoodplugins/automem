@@ -56,6 +56,9 @@ def _normalize_timestamp(raw: str) -> str:
     except ValueError as exc:  # pragma: no cover - validation path
         raise ValueError("Invalid ISO timestamp") from exc
 
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
     return parsed.astimezone(timezone.utc).isoformat()
 
 

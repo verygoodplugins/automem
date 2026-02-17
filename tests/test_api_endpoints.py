@@ -984,20 +984,22 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
 
 def test_create_association_with_properties(client, mock_state, auth_headers):
     """Test creating association with additional properties."""
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mem1_id = "11111111-1111-1111-1111-111111111111"
+    mem2_id = "22222222-2222-2222-2222-222222222222"
+    mock_state.memory_graph.memories[mem1_id] = {
+        "id": mem1_id,
         "content": "Preferred method",
     }
-    mock_state.memory_graph.memories["mem2"] = {
-        "id": "mem2",
+    mock_state.memory_graph.memories[mem2_id] = {
+        "id": mem2_id,
         "content": "Alternative method",
     }
 
     response = client.post(
         "/associate",
         json={
-            "memory1_id": "mem1",
-            "memory2_id": "mem2",
+            "memory1_id": mem1_id,
+            "memory2_id": mem2_id,
             "type": "PREFERS_OVER",
             "strength": 0.9,
             "reason": "Better performance",
