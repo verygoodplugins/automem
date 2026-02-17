@@ -220,13 +220,13 @@ class MockQdrantClient:
 
     def search(
         self,
-        collection_name,
-        query_vector,
-        limit=5,
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
         *,
-        with_payload=True,
-        with_vectors=False,
-    ):
+        with_payload: bool = True,
+        with_vectors: bool = False,
+    ) -> list:
         """Mock search operation."""
         _ = with_payload, with_vectors  # Used by real client, not needed in mock
         self.search_calls.append(
