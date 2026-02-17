@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -226,7 +227,7 @@ class MockQdrantClient:
         *,
         with_payload: bool = True,
         with_vectors: bool = False,
-    ) -> list:
+    ) -> list[Any]:
         """Mock search operation."""
         _ = with_payload, with_vectors  # Used by real client, not needed in mock
         self.search_calls.append(
@@ -1158,7 +1159,7 @@ def test_expand_related_memories_filters_strength_and_importance():
         pass
 
     class Graph:
-        def query(self, query: str, params: dict):
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
             related = [
                 (
                     "RELATES_TO",
