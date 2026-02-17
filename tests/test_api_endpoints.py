@@ -428,8 +428,8 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     older_ts = (now - timedelta(days=2)).isoformat()
     newer_ts = (now - timedelta(days=1)).isoformat()
 
-    mock_state.memory_graph.memories["older"] = {
-        "id": "older",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000001"] = {
+        "id": "10000000-0000-0000-0000-000000000001",
         "content": "Older memory",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -437,8 +437,8 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
         "updated_at": older_ts,
         "last_accessed": older_ts,
     }
-    mock_state.memory_graph.memories["newer"] = {
-        "id": "newer",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000002"] = {
+        "id": "10000000-0000-0000-0000-000000000002",
         "content": "Newer memory",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -456,7 +456,7 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     assert data["status"] == "success"
     assert data.get("sort") == "time_desc"
     assert data["results"], "Expected at least one result"
-    assert data["results"][0]["id"] == "newer"
+    assert data["results"][0]["id"] == "10000000-0000-0000-0000-000000000002"
 
 
 def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_headers):
@@ -467,8 +467,8 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
     older_ts = (now - timedelta(days=2)).isoformat()
     newer_ts = (now - timedelta(days=1)).isoformat()
 
-    mock_state.memory_graph.memories["older"] = {
-        "id": "older",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000001"] = {
+        "id": "10000000-0000-0000-0000-000000000001",
         "content": "Older memory default sort",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -476,8 +476,8 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
         "updated_at": older_ts,
         "last_accessed": older_ts,
     }
-    mock_state.memory_graph.memories["newer"] = {
-        "id": "newer",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000002"] = {
+        "id": "10000000-0000-0000-0000-000000000002",
         "content": "Newer memory default sort",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -493,7 +493,7 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
     data = response.get_json()
     assert data["status"] == "success"
     assert data.get("sort") == "time_desc"
-    assert data["results"][0]["id"] == "newer"
+    assert data["results"][0]["id"] == "10000000-0000-0000-0000-000000000002"
 
 
 def test_recall_with_explicit_timestamps(client, mock_state, auth_headers):
@@ -1034,8 +1034,8 @@ def test_startup_recall(client, mock_state, auth_headers):
     """Test startup recall endpoint."""
     # Add some recent high-importance memories
     now = utc_now()
-    mock_state.memory_graph.memories["important"] = {
-        "id": "important",
+    mock_state.memory_graph.memories["20000000-0000-0000-0000-000000000001"] = {
+        "id": "20000000-0000-0000-0000-000000000001",
         "content": "Critical information",
         "importance": 0.95,
         "timestamp": now,
@@ -1056,15 +1056,15 @@ def test_startup_recall(client, mock_state, auth_headers):
 def test_analyze_endpoint(client, mock_state, auth_headers):
     """Test analytics endpoint."""
     # Add varied memories for analytics
-    mock_state.memory_graph.memories["decision1"] = {
-        "id": "decision1",
+    mock_state.memory_graph.memories["30000000-0000-0000-0000-000000000001"] = {
+        "id": "30000000-0000-0000-0000-000000000001",
         "content": "Architectural decision",
         "type": "Decision",
         "confidence": 0.9,
         "importance": 0.85,
     }
-    mock_state.memory_graph.memories["pattern1"] = {
-        "id": "pattern1",
+    mock_state.memory_graph.memories["30000000-0000-0000-0000-000000000002"] = {
+        "id": "30000000-0000-0000-0000-000000000002",
         "content": "Common pattern",
         "type": "Pattern",
         "confidence": 0.7,
@@ -1148,7 +1148,11 @@ def test_embedding_dimension_validation(client, mock_state, auth_headers):
 
 
 def test_expand_related_memories_filters_strength_and_importance():
-    seed_results = [{"id": "seed1", "final_score": 0.8, "memory": {"id": "seed1"}}]
+    seed_id = "11111111-0000-0000-0000-000000000001"
+    keep_id = "11111111-0000-0000-0000-000000000002"
+    weak_id = "11111111-0000-0000-0000-000000000003"
+    low_imp_id = "11111111-0000-0000-0000-000000000004"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
 
     class _Node(SimpleNamespace):
         pass
@@ -1159,17 +1163,17 @@ def test_expand_related_memories_filters_strength_and_importance():
                 (
                     "RELATES_TO",
                     0.2,
-                    _Node(properties={"id": "keep", "importance": 0.9}),
+                    _Node(properties={"id": keep_id, "importance": 0.9}),
                 ),
                 (
                     "RELATES_TO",
                     0.05,
-                    _Node(properties={"id": "weak", "importance": 0.9}),
+                    _Node(properties={"id": weak_id, "importance": 0.9}),
                 ),
                 (
                     "RELATES_TO",
                     0.8,
-                    _Node(properties={"id": "low_importance", "importance": 0.1}),
+                    _Node(properties={"id": low_imp_id, "importance": 0.1}),
                 ),
             ]
             return SimpleNamespace(result_set=related)
@@ -1206,7 +1210,7 @@ def test_expand_related_memories_filters_strength_and_importance():
     )
 
     ids = {res["id"] for res in results}
-    assert ids == {"keep"}
+    assert ids == {keep_id}
 
 
 # ==================== Test Rate Limiting (if implemented) ====================
