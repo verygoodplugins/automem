@@ -43,7 +43,7 @@ def _parse_iso_datetime(value: Union[str, int, float, None]) -> Optional[datetim
         return None
 
 
-def _normalize_timestamp(raw: Union[str, int, float, None]) -> str:
+def _normalize_timestamp(raw: str) -> str:
     """Validate and normalise an incoming timestamp string to UTC ISO format."""
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("Timestamp must be a non-empty ISO formatted string")

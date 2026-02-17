@@ -378,7 +378,10 @@ def create_memory_blueprint_full(
 
         # Update last_accessed timestamp for consistency with by_tag endpoint
         if on_access:
-            on_access([memory_id])
+            try:
+                on_access([memory_id])
+            except Exception:
+                logger.exception("on_access failed for memory %s", memory_id)
 
         return jsonify({"status": "success", "memory": node})
 

@@ -619,13 +619,15 @@ def test_get_memory_success_parses_metadata_and_updates_access(client, mock_stat
     assert last_accessed_queries
 
 
-def test_get_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_get_memory_not_found(client, auth_headers):
     """Test retrieving a non-existent memory by ID."""
     response = client.get("/memory/00000000-0000-0000-0000-000000000000", headers=auth_headers)
     assert response.status_code == 404
 
 
-def test_get_memory_invalid_id(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_get_memory_invalid_id(client, auth_headers):
     """Test retrieving a memory with an invalid (non-UUID) ID returns 400."""
     response = client.get("/memory/not-a-uuid", headers=auth_headers)
     assert response.status_code == 400
