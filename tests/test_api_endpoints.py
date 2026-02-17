@@ -223,10 +223,12 @@ class MockQdrantClient:
         collection_name,
         query_vector,
         limit=5,
+        *,
         with_payload=True,
         with_vectors=False,
     ):
         """Mock search operation."""
+        _ = with_payload, with_vectors  # Used by real client, not needed in mock
         self.search_calls.append(
             {"collection": collection_name, "vector": query_vector, "limit": limit}
         )
@@ -998,10 +1000,8 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
             "memory2_id": "mem2",
             "type": "PREFERS_OVER",
             "strength": 0.9,
-            "properties": {
-                "reason": "Better performance",
-                "context": "Production environment",
-            },
+            "reason": "Better performance",
+            "context": "Production environment",
         },
         headers=auth_headers,
     )
@@ -1009,6 +1009,8 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
     assert response.status_code == 201
     data = response.get_json()
     assert data["status"] == "success"
+    assert data["reason"] == "Better performance"
+    assert data["context"] == "Production environment"
 
 
 # ==================== Test Startup Recall ====================
