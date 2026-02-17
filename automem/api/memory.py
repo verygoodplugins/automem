@@ -6,6 +6,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
+from flask.typing import ResponseReturnValue
 
 from automem.config import (
     CLASSIFICATION_MODEL,
@@ -349,7 +350,12 @@ def create_memory_blueprint_full(
         return jsonify(response), 201
 
     @bp.route("/memory/<memory_id>", methods=["GET"])
-    def get(memory_id: str) -> Any:
+    def get(memory_id: str) -> ResponseReturnValue:
+        try:
+            uuid.UUID(memory_id)
+        except ValueError:
+            abort(400, description="memory_id must be a valid UUID")
+
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="Graph database unavailable")

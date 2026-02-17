@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple, Union
 
 
 def utc_now() -> str:
@@ -9,7 +9,7 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_iso_datetime(value: Optional[Any]) -> Optional[datetime]:
+def _parse_iso_datetime(value: Union[str, int, float, None]) -> Optional[datetime]:
     """Parse ISO strings or unix timestamps into timezone-aware datetimes (UTC fallback for naive)."""
     if value is None:
         return None
@@ -43,7 +43,7 @@ def _parse_iso_datetime(value: Optional[Any]) -> Optional[datetime]:
         return None
 
 
-def _normalize_timestamp(raw: Any) -> str:
+def _normalize_timestamp(raw: Union[str, int, float, None]) -> str:
     """Validate and normalise an incoming timestamp string to UTC ISO format."""
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("Timestamp must be a non-empty ISO formatted string")

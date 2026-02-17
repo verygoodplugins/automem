@@ -592,7 +592,7 @@ def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers)
 
 def test_get_memory_success_parses_metadata_and_updates_access(client, mock_state, auth_headers):
     """Test successful memory retrieval by ID with parsed metadata and access tracking."""
-    memory_id = "get-memory-123"
+    memory_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
     mock_state.memory_graph.memories[memory_id] = {
         "id": memory_id,
         "content": "Memory content",
@@ -621,14 +621,20 @@ def test_get_memory_success_parses_metadata_and_updates_access(client, mock_stat
 
 def test_get_memory_not_found(client, mock_state, auth_headers):
     """Test retrieving a non-existent memory by ID."""
-    response = client.get("/memory/non-existent-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000000", headers=auth_headers)
     assert response.status_code == 404
+
+
+def test_get_memory_invalid_id(client, mock_state, auth_headers):
+    """Test retrieving a memory with an invalid (non-UUID) ID returns 400."""
+    response = client.get("/memory/not-a-uuid", headers=auth_headers)
+    assert response.status_code == 400
 
 
 def test_get_memory_graph_unavailable(client, mock_state, auth_headers):
     """Test get memory endpoint returns 503 when graph is unavailable."""
     mock_state.memory_graph = None
-    response = client.get("/memory/any-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000001", headers=auth_headers)
     assert response.status_code == 503
 
 
@@ -636,7 +642,7 @@ def test_get_memory_query_failure(client, mock_state, auth_headers):
     """Test get memory endpoint returns 500 when graph query fails."""
     mock_graph = mock_state.memory_graph
     mock_graph.query = Mock(side_effect=RuntimeError("query failed"))
-    response = client.get("/memory/failing-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000002", headers=auth_headers)
     assert response.status_code == 500
 
 
