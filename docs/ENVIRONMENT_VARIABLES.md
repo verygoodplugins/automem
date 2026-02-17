@@ -257,19 +257,43 @@ Controls entity extraction and relationship linking.
 
 ### Search Weights
 
-Controls how different factors are weighted in memory recall.
+Controls how different factors are weighted in memory recall scoring.
 
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
-| `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search |
-| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | TF-IDF |
-| `SEARCH_WEIGHT_TAG` | Tag matching | `0.15` | Exact tag match |
+| `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search via Qdrant |
+| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | TF-IDF style |
+| `SEARCH_WEIGHT_RELATION` | Graph relationship boost | `0.25` | Memories connected via edges |
+| `SEARCH_WEIGHT_TAG` | Tag matching | `0.20` | Tag overlap scoring |
+| `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.20` | Full query in metadata |
 | `SEARCH_WEIGHT_IMPORTANCE` | Memory importance | `0.10` | User/system defined |
+| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Linear decay over 180 days |
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
-| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Time-based boost |
-| `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.15` | Full text match |
+| `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` | Decay-derived score (see below) |
 
 These act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
+
+**`SEARCH_WEIGHT_RELEVANCE` (new):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
+
+### Memory Content Limits
+
+Controls auto-summarization and content size validation on store.
+
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `MEMORY_CONTENT_SOFT_LIMIT` | Char limit before auto-summarization triggers | `500` | Content above this is summarized |
+| `MEMORY_CONTENT_HARD_LIMIT` | Char limit before rejection | `2000` | Content above this is rejected |
+| `MEMORY_AUTO_SUMMARIZE` | Enable/disable auto-summarization | `true` | `false` stores as-is |
+| `MEMORY_SUMMARY_TARGET_LENGTH` | Target length for summarized content | `300` | Characters |
+
+### Sync Configuration
+
+Background worker that checks FalkorDB ↔ Qdrant consistency.
+
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `SYNC_CHECK_INTERVAL_SECONDS` | How often to check for drift | `3600` | 1 hour |
+| `SYNC_AUTO_REPAIR` | Auto-fix inconsistencies | `true` | Set `false` for dry-run mode |
 
 ### Recall Settings
 
@@ -309,6 +333,23 @@ These variables are only used by test suites.
 |----------|-------------|---------|
 | `AUTOMEM_RUN_INTEGRATION_TESTS` | Enable integration tests | `0` |
 | `AUTOMEM_START_DOCKER` | Auto-start Docker in tests | `0` |
+| `AUTOMEM_TEST_BASE_URL` | Base URL for Recall Quality Lab | `http://localhost:8001` |
+
+### Recall Quality Lab
+
+The `scripts/lab/` directory provides a data-driven framework for testing and optimizing recall scoring. It uses IR metrics (Recall@K, MRR, NDCG) and statistical comparison to evaluate config changes.
+
+**Makefile targets:**
+
+| Target | Description | Example |
+|--------|-------------|---------|
+| `make lab-clone` | Clone production data to local Docker | `make lab-clone` |
+| `make lab-queries` | Generate test queries from local data | `make lab-queries` |
+| `make lab-test` | Run recall test with a config | `make lab-test CONFIG=baseline` |
+| `make lab-compare` | A/B compare two configs | `make lab-compare CONFIG=fix_v1 BASELINE=baseline` |
+| `make lab-sweep` | Sweep a parameter across values | `make lab-sweep PARAM=SEARCH_WEIGHT_VECTOR VALUES=0.20,0.30,0.40,0.50` |
+
+**Config files** live in `scripts/lab/configs/` as JSON. Each config maps env var names to values that override the server's search weights for that test run. See `baseline.json` for an example.
 
 ---
 

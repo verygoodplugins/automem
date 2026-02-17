@@ -100,3 +100,24 @@ test-locomo:
 # Run LoCoMo benchmark (Railway)
 test-locomo-live:
 	@./test-locomo-benchmark.sh --live
+
+# Recall Quality Lab
+lab-clone:
+	@echo "🔬 Cloning production data to local Docker..."
+	@bash scripts/lab/clone_production.sh
+
+lab-queries:
+	@echo "🔬 Generating test queries from local data..."
+	@python3 scripts/lab/create_test_queries.py
+
+lab-test:
+	@echo "🔬 Running recall quality test..."
+	@python3 scripts/lab/run_recall_test.py --config $(or $(CONFIG),baseline)
+
+lab-compare:
+	@echo "🔬 Comparing configs: $(BASELINE) vs $(CONFIG)..."
+	@python3 scripts/lab/run_recall_test.py --config $(CONFIG) --compare $(or $(BASELINE),baseline)
+
+lab-sweep:
+	@echo "🔬 Sweeping $(PARAM)..."
+	@python3 scripts/lab/run_recall_test.py --sweep $(PARAM) $(VALUES)

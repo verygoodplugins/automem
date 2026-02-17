@@ -2083,6 +2083,7 @@ def _store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[flo
                         "updated_at": properties.get("updated_at", utc_now()),
                         "last_accessed": properties.get("last_accessed", utc_now()),
                         "metadata": json.loads(properties.get("metadata", "{}")),
+                        "relevance_score": properties.get("relevance_score"),
                     },
                 )
             ],
