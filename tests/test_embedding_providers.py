@@ -3,6 +3,7 @@
 import os
 from unittest.mock import MagicMock, Mock, patch
 
+import httpx
 import pytest
 
 # Test imports with fallback for missing packages
@@ -252,6 +253,29 @@ def test_openai_provider_initialization(mock_openai_client):
         assert call_kwargs["api_key"] == "test-key"
         assert "timeout" in call_kwargs
         assert "max_retries" in call_kwargs
+        # No base_url when using default OpenAI
+        assert "base_url" not in call_kwargs
+
+
+def test_openai_provider_initialization_with_base_url(mock_openai_client):
+    """Test OpenAI provider passes base_url to SDK client."""
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
+        mock_openai_class.return_value = mock_openai_client
+
+        from automem.embedding.openai import OpenAIEmbeddingProvider
+
+        provider = OpenAIEmbeddingProvider(
+            api_key="or-key",
+            model="openai/text-embedding-3-small",
+            dimension=768,
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+        call_kwargs = mock_openai_class.call_args[1]
+        assert call_kwargs["base_url"] == "https://openrouter.ai/api/v1"
+        assert call_kwargs["api_key"] == "or-key"
+        # Provider name should reflect non-default endpoint
+        assert "openai-compatible" in provider.provider_name()
 
 
 def test_openai_provider_single_embedding(mock_openai_client):
@@ -268,10 +292,31 @@ def test_openai_provider_single_embedding(mock_openai_client):
         assert len(embedding) == 768
         assert embedding[0] == 0.5
 
-        # Verify API call
+        # Verify API call includes dimensions for native OpenAI
         mock_openai_client.embeddings.create.assert_called_once_with(
             model="text-embedding-3-small", input="test text", dimensions=768
         )
+
+
+def test_openai_provider_omits_dimensions_for_compatible_provider(mock_openai_client):
+    """Test that dimensions param is NOT sent for non-OpenAI base URLs."""
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
+        mock_openai_class.return_value = mock_openai_client
+        mock_openai_client.embeddings.create.return_value = Mock(data=[Mock(embedding=[0.5] * 768)])
+
+        from automem.embedding.openai import OpenAIEmbeddingProvider
+
+        provider = OpenAIEmbeddingProvider(
+            api_key="or-key",
+            dimension=768,
+            base_url="https://openrouter.ai/api/v1",
+        )
+        provider.generate_embedding("test text")
+
+        call_kwargs = mock_openai_client.embeddings.create.call_args[1]
+        assert (
+            "dimensions" not in call_kwargs
+        ), "dimensions should not be sent to non-OpenAI providers"
 
 
 def test_openai_provider_batch_embedding(mock_openai_client):
@@ -315,10 +360,22 @@ def test_openai_provider_dimension_validation(mock_openai_client):
         provider = OpenAIEmbeddingProvider(api_key="test-key", dimension=768)
 
         # Should raise error for dimension mismatch
-        with pytest.raises(
-            ValueError, match="OpenAI embedding length 1536 != configured dimension 768"
-        ):
+        with pytest.raises(ValueError, match="Embedding length 1536 != configured dimension 768"):
             provider.generate_embedding("test")
+
+
+def test_is_openai_native_detection():
+    """Test _is_openai_native correctly identifies OpenAI vs third-party URLs."""
+    from automem.embedding.openai import _is_openai_native
+
+    # Native OpenAI
+    assert _is_openai_native(None) is True
+    assert _is_openai_native("https://api.openai.com/v1") is True
+
+    # Third-party providers
+    assert _is_openai_native("https://openrouter.ai/api/v1") is False
+    assert _is_openai_native("https://litellm.example.com/v1") is False
+    assert _is_openai_native("http://localhost:4000/v1") is False
 
 
 def test_openai_provider_import_failure():
@@ -333,7 +390,197 @@ def test_openai_provider_import_failure():
         pass
 
 
+# ==================== VoyageEmbeddingProvider Tests ====================
+
+
+@patch("automem.embedding.voyage.httpx.Client")
+def test_voyage_provider_initialization(mock_httpx_client_class):
+    """Test Voyage provider initialization with expected client configuration."""
+    mock_httpx_client = Mock()
+    mock_httpx_client_class.return_value = mock_httpx_client
+
+    from automem.embedding.voyage import VoyageEmbeddingProvider
+
+    provider = VoyageEmbeddingProvider(api_key="voyage-test-key", model="voyage-4", dimension=1024)
+
+    assert provider.dimension() == 1024
+    assert provider.provider_name() == "voyage:voyage-4"
+
+    mock_httpx_client_class.assert_called_once()
+    call_kwargs = mock_httpx_client_class.call_args[1]
+    assert call_kwargs["timeout"] == 30.0
+    assert call_kwargs["headers"]["Authorization"] == "Bearer voyage-test-key"
+    assert call_kwargs["headers"]["Content-Type"] == "application/json"
+
+
+@patch("automem.embedding.voyage.httpx.Client")
+def test_voyage_provider_single_embedding_success(mock_httpx_client_class):
+    """Test successful single embedding generation with Voyage."""
+    mock_httpx_client = Mock()
+    mock_httpx_client_class.return_value = mock_httpx_client
+
+    success_response = Mock()
+    success_response.raise_for_status.return_value = None
+    success_response.status_code = 200
+    success_response.json.return_value = {"data": [{"embedding": [0.1] * 1024}]}
+    mock_httpx_client.post.return_value = success_response
+
+    from automem.embedding.voyage import VoyageEmbeddingProvider
+
+    provider = VoyageEmbeddingProvider(api_key="voyage-test-key", dimension=1024)
+    embedding = provider.generate_embedding("hello voyage")
+
+    assert len(embedding) == 1024
+    mock_httpx_client.post.assert_called_once()
+    call_kwargs = mock_httpx_client.post.call_args[1]
+    assert call_kwargs["json"]["output_dimension"] == 1024
+
+
+@patch("automem.embedding.voyage.httpx.Client")
+def test_voyage_provider_malformed_payload_not_retried(mock_httpx_client_class):
+    """Malformed response structure should raise ValueError without retrying."""
+    mock_httpx_client = Mock()
+    mock_httpx_client_class.return_value = mock_httpx_client
+
+    malformed_response = Mock()
+    malformed_response.raise_for_status.return_value = None
+    malformed_response.status_code = 200
+    malformed_response.json.return_value = {"data": "not-a-list"}
+    mock_httpx_client.post.return_value = malformed_response
+
+    from automem.embedding.voyage import VoyageEmbeddingProvider
+
+    provider = VoyageEmbeddingProvider(api_key="voyage-test-key", dimension=1024, max_retries=2)
+    with pytest.raises(ValueError, match="not a list"):
+        provider.generate_embedding("bad payload")
+
+    assert mock_httpx_client.post.call_count == 1
+
+
+@pytest.mark.parametrize("status_code", [429, 503])
+def test_voyage_provider_retries_transient_http_errors(status_code):
+    """Voyage provider should retry transient HTTP failures and then succeed."""
+    request = httpx.Request("POST", "https://api.voyageai.com/v1/embeddings")
+    error_response = httpx.Response(status_code=status_code, request=request)
+    status_error = httpx.HTTPStatusError(
+        f"HTTP {status_code} transient error",
+        request=request,
+        response=error_response,
+    )
+
+    transient_response = Mock()
+    transient_response.raise_for_status.side_effect = status_error
+
+    success_response = Mock()
+    success_response.raise_for_status.return_value = None
+    success_response.status_code = 200
+    success_response.json.return_value = {"data": [{"embedding": [0.2] * 1024}]}
+
+    with patch("automem.embedding.voyage.httpx.Client") as mock_httpx_client_class:
+        with patch("automem.embedding.voyage.time.sleep") as mock_sleep:
+            mock_httpx_client = Mock()
+            mock_httpx_client.post.side_effect = [transient_response, success_response]
+            mock_httpx_client_class.return_value = mock_httpx_client
+
+            from automem.embedding.voyage import VoyageEmbeddingProvider
+
+            provider = VoyageEmbeddingProvider(
+                api_key="voyage-test-key",
+                dimension=1024,
+                max_retries=2,
+            )
+            embedding = provider.generate_embedding("retry me")
+
+            assert len(embedding) == 1024
+            assert mock_httpx_client.post.call_count == 2
+            mock_sleep.assert_called_once_with(1)
+
+
+@patch("automem.embedding.voyage.httpx.Client")
+def test_voyage_provider_validation_error_not_retried(mock_httpx_client_class):
+    """Validation errors in successful responses should not be retried."""
+    mock_httpx_client = Mock()
+    mock_httpx_client_class.return_value = mock_httpx_client
+
+    invalid_embedding_response = Mock()
+    invalid_embedding_response.raise_for_status.return_value = None
+    invalid_embedding_response.status_code = 200
+    invalid_embedding_response.json.return_value = {"data": [{"embedding": "not-a-list"}]}
+    mock_httpx_client.post.return_value = invalid_embedding_response
+
+    from automem.embedding.voyage import VoyageEmbeddingProvider
+
+    provider = VoyageEmbeddingProvider(api_key="voyage-test-key", dimension=1024, max_retries=2)
+    with pytest.raises(ValueError, match="not a list"):
+        provider.generate_embedding("invalid embedding value")
+
+    assert mock_httpx_client.post.call_count == 1
+
+
 # ==================== Provider Selection Logic Tests ====================
+
+
+@patch.dict(
+    os.environ,
+    {
+        "EMBEDDING_PROVIDER": "voyage",
+        "VOYAGE_API_KEY": "voyage-key",
+        "VOYAGE_MODEL": "voyage-4",
+    },
+    clear=False,
+)
+def test_provider_selection_explicit_voyage(monkeypatch):
+    """Test explicit Voyage provider selection."""
+    import app
+
+    monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
+
+    with patch("automem.embedding.voyage.VoyageEmbeddingProvider") as mock_voyage_class:
+        mock_provider = Mock()
+        mock_provider.provider_name.return_value = "voyage:voyage-4"
+        mock_voyage_class.return_value = mock_provider
+
+        app.init_embedding_provider()
+
+        assert app.state.embedding_provider is mock_provider
+        mock_voyage_class.assert_called_once_with(
+            api_key="voyage-key",
+            model="voyage-4",
+            dimension=1024,
+        )
+
+
+@patch.dict(
+    os.environ,
+    {
+        "EMBEDDING_PROVIDER": "auto",
+        "VOYAGE_API_KEY": "voyage-key",
+        "VOYAGE_MODEL": "voyage-4",
+        "OPENAI_API_KEY": "openai-key",
+    },
+    clear=False,
+)
+def test_provider_selection_auto_prefers_voyage(monkeypatch):
+    """Test auto-selection prefers Voyage over OpenAI when both keys are set."""
+    import app
+
+    monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
+
+    with patch("automem.embedding.voyage.VoyageEmbeddingProvider") as mock_voyage_class:
+        with patch("automem.embedding.openai.OpenAIEmbeddingProvider") as mock_openai_class:
+            mock_provider = Mock()
+            mock_provider.provider_name.return_value = "voyage:voyage-4"
+            mock_voyage_class.return_value = mock_provider
+
+            app.init_embedding_provider()
+
+            assert app.state.embedding_provider is mock_provider
+            mock_voyage_class.assert_called_once()
+            mock_openai_class.assert_not_called()
 
 
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "EMBEDDING_PROVIDER": "auto"})
@@ -382,7 +629,8 @@ def test_provider_selection_auto_placeholder_fallback():
 
     # Mock fastembed to fail
     with patch(
-        "automem.embedding.fastembed.TextEmbedding", side_effect=ImportError("Mock failure")
+        "automem.embedding.fastembed.TextEmbedding",
+        side_effect=ImportError("Mock failure"),
     ):
         app.state.embedding_provider = None  # Reset state
         app.init_embedding_provider()
@@ -624,7 +872,10 @@ def test_openai_retry_configuration(mock_openai_client):
 # ==================== End-to-End Tests ====================
 
 
-@patch.dict(os.environ, {"EMBEDDING_PROVIDER": "placeholder", "API_TOKEN": "", "ADMIN_TOKEN": ""})
+@patch.dict(
+    os.environ,
+    {"EMBEDDING_PROVIDER": "placeholder", "API_TOKEN": "", "ADMIN_TOKEN": ""},
+)
 def test_end_to_end_memory_storage_with_provider(monkeypatch):
     """Test complete flow of storing memory with embedding provider."""
     import json

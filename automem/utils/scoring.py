@@ -11,6 +11,7 @@ from automem.config import (
     SEARCH_WEIGHT_KEYWORD,
     SEARCH_WEIGHT_RECENCY,
     SEARCH_WEIGHT_RELATION,
+    SEARCH_WEIGHT_RELEVANCE,
     SEARCH_WEIGHT_TAG,
     SEARCH_WEIGHT_VECTOR,
 )
@@ -171,6 +172,11 @@ def _compute_metadata_score(
         result, memory, tag_terms, metadata_terms, context_profile
     )
 
+    # Relevance score from consolidation decay (reflects access patterns + age)
+    # Default weight is 0.0 (disabled) — enable via SEARCH_WEIGHT_RELEVANCE env var
+    relevance = memory.get("relevance_score")
+    relevance_score = float(relevance) if isinstance(relevance, (int, float)) else 0.0
+
     final = (
         SEARCH_WEIGHT_VECTOR * vector_component
         + SEARCH_WEIGHT_KEYWORD * keyword_component
@@ -180,6 +186,7 @@ def _compute_metadata_score(
         + SEARCH_WEIGHT_CONFIDENCE * confidence_score
         + SEARCH_WEIGHT_RECENCY * recency_score
         + SEARCH_WEIGHT_EXACT * exact_match
+        + SEARCH_WEIGHT_RELEVANCE * relevance_score
         + context_bonus
     )
 
@@ -192,6 +199,7 @@ def _compute_metadata_score(
         "confidence": confidence_score,
         "recency": recency_score,
         "exact": exact_match,
+        "relevance": relevance_score,
         "context": context_bonus,
     }
 

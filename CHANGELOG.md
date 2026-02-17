@@ -2,6 +2,33 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.11.0](https://github.com/verygoodplugins/automem/compare/v0.10.1...v0.11.0) (2026-02-16)
+
+
+### Features
+
+* **api:** add GET /memory/&lt;id&gt; endpoint ([9625580](https://github.com/verygoodplugins/automem/commit/962558053648c72cdc57d3824db2ded11c6b165f))
+* **api:** add GET /memory/&lt;id&gt; endpoint ([#68](https://github.com/verygoodplugins/automem/issues/68)) ([205bdbe](https://github.com/verygoodplugins/automem/commit/205bdbe959cde3ea36e950155e2cff8b4b01bf4b))
+* **embedding:** add Voyage AI embedding provider ([a2ca403](https://github.com/verygoodplugins/automem/commit/a2ca4031ca0ccee0e77715024880ee2e9f46cde0))
+* **embedding:** add Voyage AI embedding provider ([#67](https://github.com/verygoodplugins/automem/issues/67)) ([1bafc44](https://github.com/verygoodplugins/automem/commit/1bafc443795934ec4883fa3feea22ad27af62431))
+* **embedding:** support OpenAI-compatible providers via OPENAI_BASE_URL ([#76](https://github.com/verygoodplugins/automem/issues/76)) ([383a798](https://github.com/verygoodplugins/automem/commit/383a7987edccbcfe137da924e2c5618ec7006568)), closes [#70](https://github.com/verygoodplugins/automem/issues/70)
+
+
+### Bug Fixes
+
+* add defensive validation and improve error handling in Voyage provider ([4c8433a](https://github.com/verygoodplugins/automem/commit/4c8433af5f4743455685d7c502deaa3906fae97f))
+* add httpx to prod deps, skip retry on ValueError, validate embedding count ([95c1e9d](https://github.com/verygoodplugins/automem/commit/95c1e9d4d8ace602538400739510d760c025e396))
+* add missing metadata parsing and access tracking to GET /memory/&lt;id&gt; ([d115929](https://github.com/verygoodplugins/automem/commit/d11592974d3c88ff75ab125ea8a59bd63188148a))
+* guard against bool values in numeric timestamp parsing ([2304c5c](https://github.com/verygoodplugins/automem/commit/2304c5c3912e91a203992ca08025ac27abbcf84b))
+* **utils:** handle numeric timestamps and non-string values in time parser ([0bb222b](https://github.com/verygoodplugins/automem/commit/0bb222b0546a62ee9fa312e78338b389953a6fb8))
+* **utils:** handle numeric timestamps and non-string values in time parser ([#69](https://github.com/verygoodplugins/automem/issues/69)) ([2ba2931](https://github.com/verygoodplugins/automem/commit/2ba29317cd3fbb8cf0eea5e4a940e5d70a678a54))
+* validate embedding items and fix line length ([4c0d278](https://github.com/verygoodplugins/automem/commit/4c0d278555c5372449bb9768c259edc647f1822d))
+
+
+### Documentation
+
+* **api:** include 500 error for GET /memory/{id} ([4b5a603](https://github.com/verygoodplugins/automem/commit/4b5a603e10e021a1f8e888c89102618134dada38))
+
 ## [0.10.1](https://github.com/verygoodplugins/automem/compare/v0.10.0...v0.10.1) (2026-02-07)
 
 

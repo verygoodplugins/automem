@@ -25,6 +25,13 @@ make clean           # Clean up Docker containers/volumes
 make test-locomo      # Run LoCoMo benchmark against local server
 make test-locomo-live # Run LoCoMo benchmark against Railway server
 
+# Recall Quality Lab (data-driven scoring tests)
+make lab-clone        # Clone production data to local Docker
+make lab-queries      # Generate test queries from local data
+make lab-test CONFIG=baseline    # Run recall test with a config
+make lab-compare CONFIG=fix_v1 BASELINE=baseline  # A/B compare configs
+make lab-sweep PARAM=SEARCH_WEIGHT_VECTOR VALUES=0.20,0.30,0.40,0.50
+
 # Code quality
 black .              # Format Python code
 flake8               # Lint Python code
@@ -129,13 +136,15 @@ Memories are classified into types for better organization:
 
 ### Embedding Generation
 
-AutoMem uses a provider pattern with three embedding backends:
+AutoMem uses a provider pattern with multiple embedding backends:
 
 #### Provider Priority (Auto-Selection)
-1. **OpenAI** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
+1. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
    - High-quality semantic embeddings via API
    - Requires network and API costs
    - 3072 dimensions by default (configurable via `EMBEDDING_MODEL` and `VECTOR_SIZE`)
+   - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.)
+   - The `dimensions` parameter is only sent to OpenAI's own API; omitted for third-party providers
 
 2. **FastEmbed** (`fastembed:BAAI/bge-base-en-v1.5`) - Local ONNX model
    - Good quality semantic embeddings
@@ -154,13 +163,13 @@ AutoMem uses a provider pattern with three embedding backends:
 
 Control via `EMBEDDING_PROVIDER` environment variable:
 - `auto` (default): Try OpenAI → FastEmbed → Placeholder
-- `openai`: Use OpenAI only (fail if unavailable)
+- `openai`: Use OpenAI only (fail if unavailable). Also works with OpenAI-compatible providers when `OPENAI_BASE_URL` is set.
 - `local`: Use FastEmbed only (fail if unavailable)
 - `placeholder`: Use placeholder embeddings
 
 Graph writes always succeed even if vector storage fails (graceful degradation).
 
-**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with three implementations: `OpenAIEmbeddingProvider`, `FastEmbedProvider`, `PlaceholderEmbeddingProvider`.
+**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with implementations: `OpenAIEmbeddingProvider` (also handles compatible providers), `FastEmbedProvider`, `OllamaEmbeddingProvider`, `PlaceholderEmbeddingProvider`.
 
 ## Testing
 
@@ -213,7 +222,8 @@ ADMIN_API_TOKEN=             # For admin endpoints
 
 # Embedding configuration
 EMBEDDING_PROVIDER=auto      # auto|openai|local|placeholder
-OPENAI_API_KEY=              # For OpenAI embeddings (optional)
+OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
+OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs (optional)
 
 # Consolidation intervals (seconds)
 CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)
@@ -230,6 +240,27 @@ ENRICHMENT_IDLE_SLEEP_SECONDS=2               # Worker sleep when idle
 ENRICHMENT_FAILURE_BACKOFF_SECONDS=5          # Backoff between retries
 ENRICHMENT_ENABLE_SUMMARIES=true              # Toggle automatic summary creation
 ENRICHMENT_SPACY_MODEL=en_core_web_sm         # spaCy model for entity extraction
+
+# Search scoring weights (all floats, see docs/ENVIRONMENT_VARIABLES.md)
+SEARCH_WEIGHT_VECTOR=0.35          # Semantic similarity via Qdrant
+SEARCH_WEIGHT_KEYWORD=0.35         # Keyword/TF-IDF matching
+SEARCH_WEIGHT_RELATION=0.25        # Graph relationship boost
+SEARCH_WEIGHT_TAG=0.20             # Tag overlap scoring
+SEARCH_WEIGHT_EXACT=0.20           # Exact phrase in metadata
+SEARCH_WEIGHT_IMPORTANCE=0.10      # Memory importance score
+SEARCH_WEIGHT_RECENCY=0.10         # Linear decay over 180 days
+SEARCH_WEIGHT_CONFIDENCE=0.05      # Memory confidence score
+SEARCH_WEIGHT_RELEVANCE=0.0        # Consolidation decay relevance (disabled by default)
+
+# Memory content limits
+MEMORY_CONTENT_SOFT_LIMIT=500      # Auto-summarization trigger (chars)
+MEMORY_CONTENT_HARD_LIMIT=2000     # Hard rejection limit (chars)
+MEMORY_AUTO_SUMMARIZE=true         # Enable/disable auto-summarization
+MEMORY_SUMMARY_TARGET_LENGTH=300   # Target summarized length (chars)
+
+# Sync configuration (background FalkorDB ↔ Qdrant consistency)
+SYNC_CHECK_INTERVAL_SECONDS=3600   # Check interval (1 hour)
+SYNC_AUTO_REPAIR=true              # Auto-fix inconsistencies
 ```
 
 Install spaCy locally to improve entity extraction:
@@ -275,6 +306,12 @@ The `scripts/` directory contains maintenance and recovery tools:
 
 ### Monitoring
 - **health_monitor.py** - Health monitoring service for production deployments
+
+### Recall Quality Lab (`scripts/lab/`)
+- **clone_production.sh** - Clone production FalkorDB + Qdrant data to local Docker for safe testing
+- **create_test_queries.py** - Generate test queries with expected results from local data
+- **run_recall_test.py** - Run recall tests with IR metrics (Recall@K, MRR, NDCG), config comparison, and parameter sweeps
+- **configs/** - JSON config files that override search weights for A/B testing (e.g., `baseline.json`, `issue78_relevance_weight.json`)
 
 All scripts support `--help` for detailed usage information.
 

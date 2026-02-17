@@ -386,12 +386,18 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `QDRANT_API_KEY`    | Qdrant authentication                 | _optional_ |
 | `QDRANT_COLLECTION` | Qdrant collection name                | `memories` |
 | `VECTOR_SIZE`       | Embedding dimension                   | `3072`     |
+| `EMBEDDING_PROVIDER`| Embedding provider selection          | `auto`     |
 | `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-large` |
-| `OPENAI_API_KEY`    | For real embeddings (vs placeholders) | _unset_    |
+| `VOYAGE_API_KEY`    | Voyage API key (Voyage provider)      | _unset_    |
+| `VOYAGE_MODEL`      | Voyage model (Voyage provider)        | `voyage-4` |
+| `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
+| `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
 
 > Existing deployments on 768d should set `VECTOR_SIZE=768` (and keep `EMBEDDING_MODEL=text-embedding-3-small`) until after running `scripts/reembed_embeddings.py`. The server now fails fast if your configured dimension does not match the Qdrant collection.
+>
+> Voyage models support specific dimensions (256, 512, 1024, 2048). If you use `EMBEDDING_PROVIDER=voyage`, set `VECTOR_SIZE` to one of those values and keep it consistent with your Qdrant collection.
 
 #### Enrichment Pipeline
 

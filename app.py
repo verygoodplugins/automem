@@ -1203,13 +1203,15 @@ def init_embedding_provider() -> None:
     """Initialize embedding provider with auto-selection fallback.
 
     Priority order:
-    1. OpenAI API (if OPENAI_API_KEY is set)
-    2. Ollama local server (if configured)
-    3. Local fastembed model (no API key needed)
-    4. Placeholder hash-based embeddings (fallback)
+    1. Voyage API (if VOYAGE_API_KEY is set)
+    2. OpenAI API (if OPENAI_API_KEY is set)
+    3. Ollama local server (if configured)
+    4. Local fastembed model (no API key needed)
+    5. Placeholder hash-based embeddings (fallback)
 
     Can be controlled via EMBEDDING_PROVIDER env var:
-    - "auto" (default): Try OpenAI, then Ollama, then fastembed, then placeholder
+    - "auto" (default): Try Voyage, then OpenAI, then Ollama, then fastembed, then placeholder
+    - "voyage": Use Voyage only, fail if unavailable
     - "openai": Use OpenAI only, fail if unavailable
     - "local": Use fastembed only, fail if unavailable
     - "ollama": Use Ollama only, fail if unavailable
@@ -1226,15 +1228,35 @@ def init_embedding_provider() -> None:
     vector_size = state.effective_vector_size
 
     # Explicit provider selection
-    if provider_config == "openai":
+    if provider_config == "voyage":
+        api_key = os.getenv("VOYAGE_API_KEY")
+        if not api_key:
+            raise RuntimeError("EMBEDDING_PROVIDER=voyage but VOYAGE_API_KEY not set")
+        try:
+            from automem.embedding.voyage import VoyageEmbeddingProvider
+
+            voyage_model = os.getenv("VOYAGE_MODEL", "voyage-4")
+            state.embedding_provider = VoyageEmbeddingProvider(
+                api_key=api_key, model=voyage_model, dimension=vector_size
+            )
+            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
+            return
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Voyage provider: {e}") from e
+
+    elif provider_config == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
+        openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
         try:
             from automem.embedding.openai import OpenAIEmbeddingProvider
 
             state.embedding_provider = OpenAIEmbeddingProvider(
-                api_key=api_key, model=EMBEDDING_MODEL, dimension=vector_size
+                api_key=api_key,
+                model=EMBEDDING_MODEL,
+                dimension=vector_size,
+                base_url=openai_base_url,
             )
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
             return
@@ -1281,16 +1303,38 @@ def init_embedding_provider() -> None:
         logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
         return
 
-    # Auto-selection: Try OpenAI → Ollama (if configured) → fastembed → placeholder
+    # Auto-selection: Try Voyage → OpenAI → Ollama → fastembed → placeholder
     if provider_config == "auto":
-        # Try OpenAI first
+        # Try Voyage first (preferred)
+        voyage_key = os.getenv("VOYAGE_API_KEY")
+        if voyage_key:
+            try:
+                from automem.embedding.voyage import VoyageEmbeddingProvider
+
+                voyage_model = os.getenv("VOYAGE_MODEL", "voyage-4")
+                state.embedding_provider = VoyageEmbeddingProvider(
+                    api_key=voyage_key, model=voyage_model, dimension=vector_size
+                )
+                logger.info(
+                    "Embedding provider (auto-selected): %s",
+                    state.embedding_provider.provider_name(),
+                )
+                return
+            except Exception as e:
+                logger.warning("Failed to initialize Voyage provider, trying OpenAI: %s", str(e))
+
+        # Try OpenAI
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
             try:
                 from automem.embedding.openai import OpenAIEmbeddingProvider
 
+                openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
                 state.embedding_provider = OpenAIEmbeddingProvider(
-                    api_key=api_key, model=EMBEDDING_MODEL, dimension=vector_size
+                    api_key=api_key,
+                    model=EMBEDDING_MODEL,
+                    dimension=vector_size,
+                    base_url=openai_base_url,
                 )
                 logger.info(
                     "Embedding provider (auto-selected): %s",
@@ -1352,7 +1396,7 @@ def init_embedding_provider() -> None:
         state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
         logger.warning(
             "Using placeholder embeddings (no semantic search). "
-            "Install fastembed or set OPENAI_API_KEY for semantic embeddings."
+            "Install fastembed or set VOYAGE_API_KEY/OPENAI_API_KEY for semantic embeddings."
         )
         logger.info(
             "Embedding provider (auto-selected): %s", state.embedding_provider.provider_name()
@@ -1362,7 +1406,7 @@ def init_embedding_provider() -> None:
     # Invalid config
     raise ValueError(
         f"Invalid EMBEDDING_PROVIDER={provider_config}. "
-        f"Valid options: auto, openai, local, ollama, placeholder"
+        f"Valid options: auto, voyage, openai, local, ollama, placeholder"
     )
 
 
@@ -2039,6 +2083,7 @@ def _store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[flo
                         "updated_at": properties.get("updated_at", utc_now()),
                         "last_accessed": properties.get("last_accessed", utc_now()),
                         "metadata": json.loads(properties.get("metadata", "{}")),
+                        "relevance_score": properties.get("relevance_score"),
                     },
                 )
             ],

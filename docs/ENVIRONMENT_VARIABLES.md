@@ -49,19 +49,23 @@ curl -X POST \
 
 ### Embedding Providers
 
-AutoMem supports four embedding backends with automatic fallback.
+AutoMem supports five embedding backends with automatic fallback.
 
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
-| `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `openai`, `local`, `ollama`, `placeholder` |
-| `OPENAI_API_KEY` | OpenAI API key (for OpenAI provider) | - | `sk-proj-...` |
+| `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `voyage`, `openai`, `local`, `ollama`, `placeholder` |
+| `VOYAGE_API_KEY` | Voyage API key (for Voyage provider) | - | `pa-...` |
+| `VOYAGE_MODEL` | Voyage embedding model | `voyage-4` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
+| `OPENAI_API_KEY` | API key (OpenAI or compatible provider) | - | `sk-proj-...` |
+| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs | - | `https://openrouter.ai/api/v1` |
 | `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama embedding model | `nomic-embed-text` | `nomic-embed-text` |
 | `OLLAMA_TIMEOUT` | Ollama request timeout (seconds) | `30` | `10`, `30`, `60` |
 | `OLLAMA_MAX_RETRIES` | Ollama retry count | `2` | `0`, `1`, `2` |
 
 **Provider Options:**
-- `auto` (default): Try OpenAI → Ollama (if configured) → FastEmbed local model → Placeholder
+- `auto` (default): Try Voyage → OpenAI → Ollama (if configured) → FastEmbed local model → Placeholder
+- `voyage`: Use Voyage API only (requires `VOYAGE_API_KEY`)
 - `openai`: Use OpenAI API only (requires `OPENAI_API_KEY`)
 - `local`: Use FastEmbed local model only (~210MB download on first use)
 - `ollama`: Use Ollama only (requires `OLLAMA_BASE_URL` and a pulled model)
@@ -82,6 +86,29 @@ AutoMem supports four embedding backends with automatic fallback.
 - Embedding dimensions vary by model; set `VECTOR_SIZE` to match the model output
 - For `auto` mode, Ollama is only attempted if `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is set
 
+**Voyage Details:**
+- Requires `VOYAGE_API_KEY`
+- Optional model override via `VOYAGE_MODEL` (default `voyage-4`)
+- Voyage 4 family supports output dimensions `256`, `512`, `1024`, or `2048`
+- Set `VECTOR_SIZE` to one of the supported Voyage dimensions
+
+**OpenAI-Compatible Providers (OpenRouter, LiteLLM, Azure, vLLM, etc.):**
+
+The `openai` provider works with any service that exposes an OpenAI-compatible `/v1/embeddings` endpoint. Set `OPENAI_BASE_URL` to point at the provider and `OPENAI_API_KEY` to your provider's key:
+
+```bash
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=sk-or-v1-your-openrouter-key
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+EMBEDDING_MODEL=openai/text-embedding-3-small   # model name varies by provider
+VECTOR_SIZE=768                                  # must match the model's output dimension
+```
+
+**Important notes for non-OpenAI providers:**
+- The `dimensions` parameter (which lets OpenAI truncate embeddings) is **only sent to OpenAI's own API** (`api.openai.com`). For all other base URLs it is omitted because most compatible providers don't support it.
+- You **must** set `VECTOR_SIZE` to match the model's native output dimension since dimension truncation is unavailable.
+- Model names may differ per provider (e.g. `openai/text-embedding-3-small` on OpenRouter vs `text-embedding-3-small` on OpenAI).
+
 **Additional Configuration:**
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
@@ -93,6 +120,7 @@ AutoMem supports four embedding backends with automatic fallback.
 
 | Provider | Cost | Pros | Cons | Best for |
 |----------|------|------|------|----------|
+| Voyage | API usage | Strong quality, flexible model family, simple API | Requires outbound network and matching `VECTOR_SIZE` | Teams using Voyage for quality/cost balance |
 | OpenAI | ~$0.13/1M tokens (large), ~$0.02/1M tokens (small) | Highest semantic quality, zero infra | Recurring API cost, outbound network required | Production accuracy with minimal ops |
 | FastEmbed (local) | Hardware-only (CPU/GPU) | Offline after first download, consistent latency | Model download size, quality tied to model size | Self-hosted + cost-sensitive environments |
 | Ollama | Hardware-only (CPU/GPU) | Fully local, easy model swapping | Requires running Ollama service, model dims vary | Self-hosted deployments with Ollama already in stack |
@@ -102,7 +130,7 @@ AutoMem supports four embedding backends with automatic fallback.
 
 ## Hosting Considerations (Railway vs Self-Hosted)
 
-- **Railway / managed PaaS:** OpenAI is the simplest choice (no local model downloads). FastEmbed works but increases image size and cold-start time; use a persistent volume for `AUTOMEM_MODELS_DIR` if supported. Ollama typically requires a **separate service** (Railway does not ship Ollama by default), so you'll need to deploy Ollama elsewhere and set `OLLAMA_BASE_URL` to that service.
+- **Railway / managed PaaS:** Voyage and OpenAI are the simplest choices (no local model downloads). FastEmbed works but increases image size and cold-start time; use a persistent volume for `AUTOMEM_MODELS_DIR` if supported. Ollama typically requires a **separate service** (Railway does not ship Ollama by default), so you'll need to deploy Ollama elsewhere and set `OLLAMA_BASE_URL` to that service.
 - **Self-hosted Docker/VPS:** FastEmbed and Ollama are straightforward and avoid API costs. Ollama benefits from GPU acceleration if available; otherwise expect higher latency on CPU. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in docker-compose setups).
 - **Dimension consistency:** Regardless of host, make sure `VECTOR_SIZE` matches the embedding model output. Changing models requires re-embedding existing memories.
 
@@ -229,19 +257,43 @@ Controls entity extraction and relationship linking.
 
 ### Search Weights
 
-Controls how different factors are weighted in memory recall.
+Controls how different factors are weighted in memory recall scoring.
 
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
-| `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search |
-| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | TF-IDF |
-| `SEARCH_WEIGHT_TAG` | Tag matching | `0.15` | Exact tag match |
+| `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search via Qdrant |
+| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | TF-IDF style |
+| `SEARCH_WEIGHT_RELATION` | Graph relationship boost | `0.25` | Memories connected via edges |
+| `SEARCH_WEIGHT_TAG` | Tag matching | `0.20` | Tag overlap scoring |
+| `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.20` | Full query in metadata |
 | `SEARCH_WEIGHT_IMPORTANCE` | Memory importance | `0.10` | User/system defined |
+| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Linear decay over 180 days |
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
-| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Time-based boost |
-| `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.15` | Full text match |
+| `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` | Decay-derived score (see below) |
 
 These act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
+
+**`SEARCH_WEIGHT_RELEVANCE` (new):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
+
+### Memory Content Limits
+
+Controls auto-summarization and content size validation on store.
+
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `MEMORY_CONTENT_SOFT_LIMIT` | Char limit before auto-summarization triggers | `500` | Content above this is summarized |
+| `MEMORY_CONTENT_HARD_LIMIT` | Char limit before rejection | `2000` | Content above this is rejected |
+| `MEMORY_AUTO_SUMMARIZE` | Enable/disable auto-summarization | `true` | `false` stores as-is |
+| `MEMORY_SUMMARY_TARGET_LENGTH` | Target length for summarized content | `300` | Characters |
+
+### Sync Configuration
+
+Background worker that checks FalkorDB ↔ Qdrant consistency.
+
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `SYNC_CHECK_INTERVAL_SECONDS` | How often to check for drift | `3600` | 1 hour |
+| `SYNC_AUTO_REPAIR` | Auto-fix inconsistencies | `true` | Set `false` for dry-run mode |
 
 ### Recall Settings
 
@@ -281,6 +333,23 @@ These variables are only used by test suites.
 |----------|-------------|---------|
 | `AUTOMEM_RUN_INTEGRATION_TESTS` | Enable integration tests | `0` |
 | `AUTOMEM_START_DOCKER` | Auto-start Docker in tests | `0` |
+| `AUTOMEM_TEST_BASE_URL` | Base URL for Recall Quality Lab | `http://localhost:8001` |
+
+### Recall Quality Lab
+
+The `scripts/lab/` directory provides a data-driven framework for testing and optimizing recall scoring. It uses IR metrics (Recall@K, MRR, NDCG) and statistical comparison to evaluate config changes.
+
+**Makefile targets:**
+
+| Target | Description | Example |
+|--------|-------------|---------|
+| `make lab-clone` | Clone production data to local Docker | `make lab-clone` |
+| `make lab-queries` | Generate test queries from local data | `make lab-queries` |
+| `make lab-test` | Run recall test with a config | `make lab-test CONFIG=baseline` |
+| `make lab-compare` | A/B compare two configs | `make lab-compare CONFIG=fix_v1 BASELINE=baseline` |
+| `make lab-sweep` | Sweep a parameter across values | `make lab-sweep PARAM=SEARCH_WEIGHT_VECTOR VALUES=0.20,0.30,0.40,0.50` |
+
+**Config files** live in `scripts/lab/configs/` as JSON. Each config maps env var names to values that override the server's search weights for that test run. See `baseline.json` for an example.
 
 ---
 

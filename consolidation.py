@@ -594,6 +594,15 @@ class MemoryConsolidator:
                             SET m.relevance_score = $score
                         """
                         self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                        if self.vector_store:
+                            try:
+                                self.vector_store.set_payload(
+                                    collection_name="memories",
+                                    points=[memory["id"]],
+                                    payload={"relevance_score": relevance},
+                                )
+                            except Exception:
+                                pass
                     continue
 
                 stats["archived"].append(
@@ -621,6 +630,15 @@ class MemoryConsolidator:
                             "score": relevance,
                         },
                     )
+                    if self.vector_store:
+                        try:
+                            self.vector_store.set_payload(
+                                collection_name="memories",
+                                points=[memory["id"]],
+                                payload={"relevance_score": relevance},
+                            )
+                        except Exception:
+                            pass
             else:
                 stats["preserved"] += 1
 
@@ -631,6 +649,15 @@ class MemoryConsolidator:
                         SET m.relevance_score = $score
                     """
                     self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                    if self.vector_store:
+                        try:
+                            self.vector_store.set_payload(
+                                collection_name="memories",
+                                points=[memory["id"]],
+                                payload={"relevance_score": relevance},
+                            )
+                        except Exception:
+                            pass
 
         if stats["protected"]:
             logger.info(
@@ -888,6 +915,17 @@ class MemoryConsolidator:
                 SET m.relevance_score = $score
             """
             self._query_graph(update_query, {"id": memory["id"], "score": new_score})
+
+            # Sync relevance_score to Qdrant so vector search results include it
+            if self.vector_store:
+                try:
+                    self.vector_store.set_payload(
+                        collection_name="memories",
+                        points=[memory["id"]],
+                        payload={"relevance_score": new_score},
+                    )
+                except Exception:
+                    logger.debug("Qdrant relevance sync skipped for %s", memory["id"][:8])
 
         if stats["processed"] > 0:
             stats["avg_relevance_before"] = total_before / stats["processed"]
