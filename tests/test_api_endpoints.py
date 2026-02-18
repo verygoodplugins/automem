@@ -678,6 +678,16 @@ def test_update_memory_success(client, mock_state, auth_headers):
     assert data["memory_id"] == memory_id
 
 
+def test_update_memory_invalid_id(client, mock_state, auth_headers):
+    """Test updating with an invalid (non-UUID) memory ID returns 400."""
+    response = client.patch(
+        "/memory/not-a-uuid",
+        json={"content": "New content"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+
+
 def test_update_memory_not_found(client, mock_state, auth_headers):
     """Test updating non-existent memory."""
     response = client.patch(
@@ -738,6 +748,12 @@ def test_delete_memory_success(client, mock_state, auth_headers):
     assert data["status"] == "success"
     assert data["memory_id"] == memory_id
     assert memory_id not in mock_state.memory_graph.memories
+
+
+def test_delete_memory_invalid_id(client, mock_state, auth_headers):
+    """Test deleting with an invalid (non-UUID) memory ID returns 400."""
+    response = client.delete("/memory/not-a-uuid", headers=auth_headers)
+    assert response.status_code == 400
 
 
 def test_delete_memory_not_found(client, mock_state, auth_headers):
