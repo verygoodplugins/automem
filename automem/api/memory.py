@@ -581,7 +581,10 @@ def create_memory_blueprint_full(
         if on_access and memories:
             accessed_ids = [str(m.get("id")) for m in memories if m.get("id")]
             if accessed_ids:
-                on_access(accessed_ids)
+                try:
+                    on_access(accessed_ids)
+                except Exception:
+                    logger.exception("on_access failed for %d memories", len(accessed_ids))
 
         return jsonify(
             {

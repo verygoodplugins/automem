@@ -532,8 +532,8 @@ def _store_memory(
 def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
     """Ensure coding-style memories rise to the top when editing Python."""
     mock_state.memory_graph.memories.clear()
-    style_id = "style-mem"
-    other_id = "general-mem"
+    style_id = "aa000000-0000-0000-0000-000000000001"
+    other_id = "aa000000-0000-0000-0000-000000000002"
     _store_memory(
         mock_state,
         other_id,
@@ -563,8 +563,8 @@ def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
 def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers):
     """Ensure style memory appears even when limit would normally omit it."""
     mock_state.memory_graph.memories.clear()
-    style_id = "style-mem-limit"
-    other_id = "general-mem-limit"
+    style_id = "aa000000-0000-0000-0000-000000000003"
+    other_id = "aa000000-0000-0000-0000-000000000004"
     _store_memory(
         mock_state,
         other_id,
@@ -714,7 +714,7 @@ def test_update_memory_partial_fields(client, mock_state, auth_headers):
 
 def test_delete_memory_success(client, mock_state, auth_headers):
     """Test successful memory deletion."""
-    memory_id = "delete-test-123"
+    memory_id = "dd000000-0000-0000-0000-000000000001"
 
     # Create memory to delete
     mock_state.memory_graph.memories[memory_id] = {

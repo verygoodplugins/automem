@@ -231,7 +231,7 @@ AUTOMEM_API_TOKEN=           # Required for authentication
 ADMIN_API_TOKEN=             # For admin endpoints
 
 # Embedding configuration
-EMBEDDING_PROVIDER=auto      # auto|openai|local|placeholder
+EMBEDDING_PROVIDER=auto      # auto|voyage|openai|ollama|local|placeholder
 OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
 OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs (optional)
 
