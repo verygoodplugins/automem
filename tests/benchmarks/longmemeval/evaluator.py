@@ -9,6 +9,7 @@ Provides scoring utilities:
 import json
 import os
 import re
+from collections import Counter
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 try:
@@ -41,18 +42,20 @@ def substring_match(hypothesis: str, reference: str) -> bool:
 
 def f1_token_overlap(hypothesis: str, reference: str) -> float:
     """Compute F1 score based on token overlap."""
-    h_tokens = set(normalize_text(hypothesis).split())
-    r_tokens = set(normalize_text(reference).split())
+    h_tokens = normalize_text(hypothesis).split()
+    r_tokens = normalize_text(reference).split()
 
     if not h_tokens or not r_tokens:
         return 0.0
 
-    common = h_tokens & r_tokens
-    if not common:
+    h_counts = Counter(h_tokens)
+    r_counts = Counter(r_tokens)
+    common_count = sum((h_counts & r_counts).values())
+    if common_count == 0:
         return 0.0
 
-    precision = len(common) / len(h_tokens)
-    recall = len(common) / len(r_tokens)
+    precision = common_count / len(h_tokens)
+    recall = common_count / len(r_tokens)
     return 2 * precision * recall / (precision + recall)
 
 
@@ -192,13 +195,10 @@ Respond with ONLY a JSON object:
         )
         content = response.choices[0].message.content.strip()
 
-        # Parse JSON response
-        # Handle markdown code blocks
-        if content.startswith("```"):
-            lines = content.splitlines()
-            if len(lines) > 1:
-                content = "\n".join(lines[1:])
-            content = content.rsplit("```", 1)[0].strip()
+        # Parse JSON response (handle fenced markdown like ```json ... ```)
+        fence_match = re.match(r"^\s*```[a-zA-Z0-9_-]*\s*\n(?P<body>.*)\n\s*```\s*$", content, re.S)
+        if fence_match:
+            content = fence_match.group("body").strip()
 
         result = json.loads(content)
         return {
@@ -207,7 +207,7 @@ Respond with ONLY a JSON object:
             "explanation": result.get("explanation", ""),
         }
 
-    except Exception as e:
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
         # Fall back to quick scoring on LLM failure
         qs = quick_score(hypothesis, reference, question_id)
         return {
@@ -244,17 +244,21 @@ class LongMemEvalScorer:
         "Best Guess (no memory)": 18.8,
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.results: List[Dict[str, Any]] = []
 
-    def add_result(self, result: Dict[str, Any]):
+    def add_result(self, result: Dict[str, Any]) -> None:
         """Add a single question result."""
         self.results.append(result)
 
     def compute_scores(self) -> Dict[str, Any]:
         """Compute aggregated scores."""
         if not self.results:
-            return {"overall": {"accuracy": 0.0, "correct": 0, "total": 0}}
+            return {
+                "overall": {"accuracy": 0.0, "correct": 0, "total": 0},
+                "by_type": {},
+                "abstention": {"total": 0, "correct": 0, "accuracy": 0.0},
+            }
 
         total = len(self.results)
         correct = sum(1 for r in self.results if r.get("is_correct", False))
@@ -293,7 +297,9 @@ class LongMemEvalScorer:
             },
         }
 
-    def print_report(self, config_name: str = "baseline", elapsed_time: float = 0.0):
+    def print_report(
+        self, config_name: str = "baseline", elapsed_time: float = 0.0
+    ) -> Dict[str, Any]:
         """Print a formatted benchmark report."""
         scores = self.compute_scores()
         overall = scores["overall"]

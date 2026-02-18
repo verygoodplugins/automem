@@ -39,6 +39,7 @@ class LongMemEvalConfig:
 
     # Answer generation
     llm_model: str = os.getenv("LONGMEMEVAL_LLM_MODEL", "gpt-4o")
+    eval_llm_model: Optional[str] = os.getenv("LONGMEMEVAL_EVAL_LLM_MODEL")
     use_chain_of_note: bool = True
 
     # Performance tuning

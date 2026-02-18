@@ -34,9 +34,10 @@ import re
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
+from uuid import UUID
 
 import requests
 
@@ -62,10 +63,25 @@ from tests.benchmarks.longmemeval.evaluator import (
 logger = logging.getLogger(__name__)
 
 
+class LongMemEvalResult(TypedDict):
+    question_id: str
+    question_type: str
+    question: str
+    reference: str
+    hypothesis: str
+    is_correct: bool
+    confidence: float
+    explanation: str
+    recalled_count: int
+    memories_stored: int
+    is_abstention: bool
+    question_date: str
+
+
 class LongMemEvalBenchmark:
     """Evaluates AutoMem against the LongMemEval benchmark."""
 
-    def __init__(self, config: LongMemEvalConfig):
+    def __init__(self, config: LongMemEvalConfig) -> None:
         self.config = config
         self.headers = {
             "Authorization": f"Bearer {config.api_token}",
@@ -86,7 +102,7 @@ class LongMemEvalBenchmark:
             )
             return response.status_code == 200
         except Exception as e:
-            print(f"Health check failed: {e}")
+            logger.exception("Health check failed: %s", e)
             return False
 
     def load_dataset(self) -> List[Dict[str, Any]]:
@@ -98,13 +114,13 @@ class LongMemEvalBenchmark:
                 f"Download from: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned"
             )
 
-        with open(data_file) as f:
+        with open(data_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         print(f"Loaded {len(data)} questions from {Path(data_file).name}")
         return data
 
-    def cleanup_test_data(self, question_id: Optional[str] = None):
+    def cleanup_test_data(self, question_id: Optional[str] = None) -> None:
         """Remove test memories from AutoMem."""
         tag = f"{self.config.tag_prefix}:{question_id}" if question_id else self.config.tag_prefix
         match_mode = "exact" if question_id else "prefix"
@@ -129,6 +145,15 @@ class LongMemEvalBenchmark:
                 for r in results:
                     memory_id = r.get("id")
                     if memory_id:
+                        try:
+                            UUID(str(memory_id))
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                "Skipping invalid memory id during cleanup: %r (row=%r)",
+                                memory_id,
+                                r,
+                            )
+                            continue
                         delete_response = requests.delete(
                             f"{self.config.base_url}/memory/{memory_id}",
                             headers=self.headers,
@@ -147,7 +172,7 @@ class LongMemEvalBenchmark:
                     break
 
             except Exception as e:
-                print(f"Cleanup error: {e}")
+                logger.exception("Cleanup error: %s", e)
                 break
 
         if total_deleted > 0:
@@ -163,11 +188,12 @@ class LongMemEvalBenchmark:
             # Strip day name in parens
             cleaned = re.sub(r"\s*\([^)]+\)\s*", " ", date_str).strip()
             dt = datetime.strptime(cleaned, "%Y/%m/%d %H:%M")
-            return dt.isoformat()
+            dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat().replace("+00:00", "Z")
         except (ValueError, AttributeError):
             return None
 
-    def _format_session_as_memory(self, session_turns: List[Dict]) -> str:
+    def _format_session_as_memory(self, session_turns: List[Dict[str, Any]]) -> str:
         """Format a session's turns into a single memory content block."""
         lines = []
         for turn in session_turns:
@@ -235,7 +261,7 @@ class LongMemEvalBenchmark:
                     else:
                         print(f"  Failed to store session {sid}: " f"{response.status_code}")
                 except Exception as e:
-                    print(f"  Error storing session {sid}: {e}")
+                    logger.exception("Error storing session %s: %s", sid, e)
 
             elif self.config.storage_strategy == "per-turn":
                 # One memory per turn
@@ -378,16 +404,19 @@ class LongMemEvalBenchmark:
                 # Flatten: AutoMem nests memory data under "memory" key
                 flattened = []
                 for r in results:
-                    mem = r.get("memory", {})
-                    mem["score"] = r.get("score", 0)
-                    mem["match_type"] = r.get("match_type", "")
-                    flattened.append(mem)
+                    mem = r.get("memory")
+                    if not mem:
+                        continue
+                    mem_copy = dict(mem)
+                    mem_copy["score"] = r.get("score", 0)
+                    mem_copy["match_type"] = r.get("match_type", "")
+                    flattened.append(mem_copy)
                 return flattened
             else:
                 print(f"  Recall failed for {question_id}: {response.status_code}")
                 return []
         except Exception as e:
-            print(f"  Recall error for {question_id}: {e}")
+            logger.exception("Recall error for %s: %s", question_id, e)
             return []
 
     def _format_memories_for_prompt(self, memories: List[Dict[str, Any]]) -> str:
@@ -463,27 +492,40 @@ Answer:"""
             full_answer = response.choices[0].message.content.strip()
 
             # Extract final answer from chain-of-note format
-            if self.config.use_chain_of_note and "Step 3" in full_answer:
-                # Get everything after "Step 3 - Answer:"
-                parts = full_answer.split("Step 3")
-                if len(parts) > 1:
-                    answer_part = parts[-1]
-                    # Strip the label
+            if self.config.use_chain_of_note:
+                step3_match = re.search(
+                    r"Step\s*3(?:\s*[\.\-:]|\s)*\s*(?:Answer|Final Answer)?\s*[:\-]?\s*",
+                    full_answer,
+                    flags=re.IGNORECASE,
+                )
+                if step3_match:
+                    trailing = full_answer[step3_match.end() :]
+                    next_step_match = re.search(
+                        r"\n\s*Step\s*\d+\s*[\.\-:]", trailing, flags=re.IGNORECASE
+                    )
+                    answer_part = (
+                        trailing[: next_step_match.start()] if next_step_match else trailing
+                    )
                     answer_part = re.sub(
-                        r"^\s*[-:]\s*(Answer\s*[-:]?\s*)?", "", answer_part
+                        r"^\s*(?:Answer|Final Answer)\s*[:\-]?\s*",
+                        "",
+                        answer_part,
+                        flags=re.IGNORECASE,
                     ).strip()
-                    if answer_part:
+                    if answer_part and (
+                        len(answer_part) < len(full_answer) or re.search(r"[A-Za-z]", answer_part)
+                    ):
                         return answer_part
 
             return full_answer
 
         except Exception as e:
-            print(f"  LLM generation error: {e}")
+            logger.exception("LLM generation error: %s", e)
             if memories:
                 return memories[0].get("content", "I don't know.")
             return "I don't know."
 
-    def evaluate_question(self, item: Dict[str, Any], memories_stored: int) -> Dict[str, Any]:
+    def evaluate_question(self, item: Dict[str, Any], memories_stored: int) -> LongMemEvalResult:
         """
         Evaluate a single question: recall, generate answer, score.
 
@@ -503,12 +545,13 @@ Answer:"""
 
         # Score
         if self.config.use_llm_eval and self.openai_client:
+            eval_model = self.config.eval_llm_model or self.config.llm_model
             eval_result = llm_evaluate(
                 question=question,
                 hypothesis=hypothesis,
                 reference=reference,
                 question_id=question_id,
-                model=self.config.llm_model,
+                model=eval_model,
                 client=self.openai_client,
             )
             is_correct = eval_result["is_correct"]
@@ -623,6 +666,7 @@ Answer:"""
             "auto_decompose": self.config.auto_decompose,
             "use_temporal_hints": self.config.use_temporal_hints,
             "llm_model": self.config.llm_model,
+            "eval_llm_model": self.config.eval_llm_model,
             "use_llm_eval": self.config.use_llm_eval,
         }
         scores["memory_ingest_failures"] = self.memory_ingest_failures
@@ -630,10 +674,12 @@ Answer:"""
 
         return scores
 
-    def save_results(self, scores: Dict[str, Any], output_path: Optional[str] = None):
+    def save_results(
+        self, scores: Dict[str, Any], output_path: Optional[str] = None
+    ) -> Tuple[str, str]:
         """Save benchmark results to JSONL and JSON files."""
         if output_path is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             output_path = os.path.join(
                 self.config.results_dir,
                 f"{self.config.name}_{timestamp}",
@@ -661,7 +707,7 @@ Answer:"""
         return json_path, jsonl_path
 
 
-def main():
+def main() -> int:
     """Run LongMemEval benchmark evaluation."""
     import argparse
 
@@ -707,6 +753,11 @@ def main():
         help="LLM model for answer generation (default: gpt-4o)",
     )
     parser.add_argument(
+        "--eval-llm-model",
+        default=None,
+        help="LLM model for evaluation (default: same as --llm-model)",
+    )
+    parser.add_argument(
         "--llm-eval",
         action="store_true",
         help="Use GPT-4o for evaluation (costs money, more accurate)",
@@ -741,6 +792,8 @@ def main():
         overrides["recall_limit"] = args.recall_limit
     if args.llm_model:
         overrides["llm_model"] = args.llm_model
+    if args.eval_llm_model:
+        overrides["eval_llm_model"] = args.eval_llm_model
     if args.llm_eval:
         overrides["use_llm_eval"] = True
     if args.max_questions > 0:
