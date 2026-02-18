@@ -18,6 +18,14 @@ from automem.config import (
 from automem.utils.text import should_summarize_content, summarize_content
 
 
+def _validate_memory_id(memory_id: str) -> None:
+    """Abort with 400 if *memory_id* is not a valid UUID."""
+    try:
+        uuid.UUID(memory_id)
+    except ValueError:
+        abort(400, description="memory_id must be a valid UUID")
+
+
 def create_memory_blueprint(
     store_memory: Callable[[], Any],
     update_memory: Callable[[str], Any],
@@ -348,12 +356,6 @@ def create_memory_blueprint_full(
             },
         )
         return jsonify(response), 201
-
-    def _validate_memory_id(memory_id: str) -> None:
-        try:
-            uuid.UUID(memory_id)
-        except ValueError:
-            abort(400, description="memory_id must be a valid UUID")
 
     @bp.route("/memory/<memory_id>", methods=["GET"])
     def get(memory_id: str) -> ResponseReturnValue:

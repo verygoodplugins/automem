@@ -150,9 +150,10 @@ def test_store_memory_success(client, reset_state, auth_headers):
 
 
 def test_create_association_validates_payload(client, reset_state, auth_headers):
+    same_id = "a0000000-0000-0000-0000-000000000001"
     response = client.post(
         "/associate",
-        data=json.dumps({"memory1_id": "a", "memory2_id": "a"}),
+        data=json.dumps({"memory1_id": same_id, "memory2_id": same_id}),
         content_type="application/json",
         headers=auth_headers,
     )
