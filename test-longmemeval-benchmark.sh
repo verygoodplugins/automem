@@ -148,18 +148,20 @@ if [ "$RUN_LIVE" = true ]; then
     # Get Railway credentials
     echo -e "${BLUE}Fetching Railway credentials...${NC}"
 
-    export AUTOMEM_TEST_BASE_URL=$(railway variables get PUBLIC_URL 2>/dev/null || echo "")
-    if [ -z "$AUTOMEM_TEST_BASE_URL" ]; then
+    base_url="$(railway variables get PUBLIC_URL 2>/dev/null)" || base_url=""
+    if [ -z "$base_url" ]; then
         echo -e "${RED}Could not fetch PUBLIC_URL from Railway${NC}"
         echo -e "${YELLOW}Make sure you're linked to the project: railway link${NC}"
         exit 1
     fi
+    export AUTOMEM_TEST_BASE_URL="$base_url"
 
-    export AUTOMEM_TEST_API_TOKEN=$(railway variables get AUTOMEM_API_TOKEN 2>/dev/null || echo "")
-    if [ -z "$AUTOMEM_TEST_API_TOKEN" ]; then
+    api_token="$(railway variables get AUTOMEM_API_TOKEN 2>/dev/null)" || api_token=""
+    if [ -z "$api_token" ]; then
         echo -e "${RED}Could not fetch AUTOMEM_API_TOKEN from Railway${NC}"
         exit 1
     fi
+    export AUTOMEM_TEST_API_TOKEN="$api_token"
 
     echo -e "${GREEN}Connected to Railway: $AUTOMEM_TEST_BASE_URL${NC}"
     export AUTOMEM_ALLOW_LIVE=1

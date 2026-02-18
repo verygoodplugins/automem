@@ -9,7 +9,7 @@ Provides scoring utilities:
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 try:
     from openai import OpenAI
@@ -218,7 +218,7 @@ class LongMemEvalScorer:
     """Aggregates scores across questions and produces reports."""
 
     # Question type display names
-    TYPE_NAMES = {
+    TYPE_NAMES: ClassVar[Dict[str, str]] = {
         "single-session-user": "Single-Session (User)",
         "single-session-assistant": "Single-Session (Assistant)",
         "single-session-preference": "Single-Session (Preference)",
@@ -228,7 +228,7 @@ class LongMemEvalScorer:
     }
 
     # Competitive landscape for comparison
-    COMPETITORS = {
+    COMPETITORS: ClassVar[Dict[str, float]] = {
         "Mastra OM (gpt-5-mini)": 94.87,
         "Emergence Internal": 86.0,
         "Mastra OM (gpt-4o)": 84.23,
@@ -296,7 +296,7 @@ class LongMemEvalScorer:
         overall = scores["overall"]
 
         print(f"\n{'='*60}")
-        print(f"LongMemEval Benchmark Results")
+        print("LongMemEval Benchmark Results")
         print(f"Config: {config_name}")
         if elapsed_time > 0:
             print(f"Elapsed: {elapsed_time:.1f}s")
@@ -306,7 +306,7 @@ class LongMemEvalScorer:
             f"\nOverall Accuracy: {overall['accuracy']:.2%} ({overall['correct']}/{overall['total']})"
         )
 
-        print(f"\nAccuracy by Question Type:")
+        print("\nAccuracy by Question Type:")
         print(f"  {'Type':<35s} {'Accuracy':>8s} {'Count':>8s}")
         print(f"  {'-'*35} {'-'*8} {'-'*8}")
 
@@ -324,7 +324,7 @@ class LongMemEvalScorer:
             )
 
         # Competitive comparison
-        print(f"\nCompetitive Landscape:")
+        print("\nCompetitive Landscape:")
         automem_pct = overall["accuracy"] * 100
         for name, score in sorted(self.COMPETITORS.items(), key=lambda x: -x[1]):
             marker = " <-- AutoMem" if abs(score - automem_pct) < 0.5 else ""

@@ -28,6 +28,7 @@ References:
 """
 
 import json
+import logging
 import os
 import re
 import sys
@@ -58,6 +59,8 @@ from tests.benchmarks.longmemeval.evaluator import (
     quick_score,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class LongMemEvalBenchmark:
     """Evaluates AutoMem against the LongMemEval benchmark."""
@@ -69,6 +72,7 @@ class LongMemEvalBenchmark:
             "Content-Type": "application/json",
         }
         self.scorer = LongMemEvalScorer()
+        self.memory_ingest_failures = 0
         self.openai_client = None
         if OpenAI and os.getenv("OPENAI_API_KEY"):
             self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -156,9 +160,7 @@ class LongMemEvalBenchmark:
         except (ValueError, AttributeError):
             return None
 
-    def _format_session_as_memory(
-        self, session_turns: List[Dict], session_id: str, session_date: str
-    ) -> str:
+    def _format_session_as_memory(self, session_turns: List[Dict]) -> str:
         """Format a session's turns into a single memory content block."""
         lines = []
         for turn in session_turns:
@@ -181,7 +183,7 @@ class LongMemEvalBenchmark:
         stored = 0
 
         for i, (session_turns, sid, date_str) in enumerate(
-            zip(sessions, session_ids, session_dates)
+            zip(sessions, session_ids, session_dates, strict=True)
         ):
             if not session_turns:
                 continue
@@ -190,7 +192,7 @@ class LongMemEvalBenchmark:
 
             if self.config.storage_strategy == "per-session":
                 # One memory per session
-                content = self._format_session_as_memory(session_turns, sid, date_str)
+                content = self._format_session_as_memory(session_turns)
                 tags = [
                     self.config.tag_prefix,
                     f"{self.config.tag_prefix}:{question_id}",
@@ -271,8 +273,14 @@ class LongMemEvalBenchmark:
                         )
                         if response.status_code in [200, 201]:
                             stored += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.memory_ingest_failures += 1
+                        logger.exception(
+                            "Failed to store turn for session %s at index %s: %s",
+                            sid,
+                            j,
+                            e,
+                        )
 
             # Pause between batches
             if (i + 1) % self.config.batch_size == 0:
@@ -538,6 +546,8 @@ Answer:"""
 
         Returns comprehensive results dict.
         """
+        self.memory_ingest_failures = 0
+
         # Health check
         if not self.health_check():
             print("AutoMem API is not accessible. Aborting benchmark.")
@@ -550,7 +560,7 @@ Answer:"""
         if self.config.max_questions > 0:
             dataset = dataset[: self.config.max_questions]
 
-        print(f"\nRunning LongMemEval benchmark:")
+        print("\nRunning LongMemEval benchmark:")
         print(f"  Config: {self.config.name}")
         print(f"  Questions: {len(dataset)}")
         print(f"  Storage: {self.config.storage_strategy}")
@@ -609,6 +619,7 @@ Answer:"""
             "llm_model": self.config.llm_model,
             "use_llm_eval": self.config.use_llm_eval,
         }
+        scores["memory_ingest_failures"] = self.memory_ingest_failures
         scores["details"] = all_results
 
         return scores
