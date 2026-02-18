@@ -689,7 +689,8 @@ def test_update_memory_invalid_id(client, auth_headers):
     assert response.status_code == 400
 
 
-def test_update_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_update_memory_not_found(client, auth_headers):
     """Test updating non-existent memory."""
     response = client.patch(
         "/memory/00000000-0000-0000-0000-000000000099",
@@ -758,7 +759,8 @@ def test_delete_memory_invalid_id(client, auth_headers):
     assert response.status_code == 400
 
 
-def test_delete_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_delete_memory_not_found(client, auth_headers):
     """Test deleting non-existent memory."""
     response = client.delete("/memory/00000000-0000-0000-0000-000000000098", headers=auth_headers)
     assert response.status_code == 404

@@ -149,7 +149,8 @@ def test_store_memory_success(client, reset_state, auth_headers):
     assert body["qdrant"] in {"unconfigured", "stored", "failed"}
 
 
-def test_create_association_validates_payload(client, reset_state, auth_headers):
+@pytest.mark.usefixtures("reset_state")
+def test_create_association_validates_payload(client, auth_headers):
     same_id = "a0000000-0000-0000-0000-000000000001"
     response = client.post(
         "/associate",
@@ -160,7 +161,8 @@ def test_create_association_validates_payload(client, reset_state, auth_headers)
     assert response.status_code == 400
 
 
-def test_create_association_success(client, reset_state, auth_headers):
+@pytest.mark.usefixtures("reset_state")
+def test_create_association_success(client, auth_headers):
     mem_a = "a0000000-0000-0000-0000-000000000001"
     mem_b = "b0000000-0000-0000-0000-000000000002"
     for memory_id in (mem_a, mem_b):
