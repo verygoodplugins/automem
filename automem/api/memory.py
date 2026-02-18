@@ -282,32 +282,50 @@ def create_memory_blueprint_full(
                         logger.exception("Failed to UPDATE existing memory %s, falling back to ADD", target_id)
                         dedup_result["action"] = "ADD"
                     else:
-                        # Re-embed the merged content
-                        enqueue_embedding(target_id, merged)
-                        # Update Qdrant payload
+                        # Update Qdrant with new embedding + merged payload
                         qdrant_cl = get_qdrant_client()
                         if qdrant_cl:
                             try:
+                                # Fetch existing payload to preserve tags/metadata not in request
+                                existing_payload = {}
+                                try:
+                                    existing_points = qdrant_cl.retrieve(
+                                        collection_name=collection_name,
+                                        ids=[target_id],
+                                        with_payload=True,
+                                    )
+                                    if existing_points:
+                                        existing_payload = existing_points[0].payload or {}
+                                except Exception:
+                                    logger.warning("Could not fetch existing payload for %s", target_id)
+
                                 new_emb = generate_real_embedding(merged)
                                 if new_emb:
+                                    # Preserve existing fields, override only what's explicitly provided
+                                    merged_payload = {
+                                        **existing_payload,
+                                        "content": merged,
+                                        "importance": importance,
+                                        "updated_at": utc_now(),
+                                        "last_accessed": utc_now(),
+                                    }
+                                    # Only override tags/metadata if explicitly provided in request
+                                    if tags:
+                                        merged_payload["tags"] = tags
+                                        merged_payload["tag_prefixes"] = tag_prefixes
+                                    if metadata:
+                                        merged_payload["metadata"] = metadata
+                                    if memory_type:
+                                        merged_payload["type"] = memory_type
+                                        merged_payload["confidence"] = type_confidence
+
                                     qdrant_cl.upsert(
                                         collection_name=collection_name,
                                         points=[
                                             point_struct(
                                                 id=target_id,
                                                 vector=new_emb,
-                                                payload={
-                                                    "content": merged,
-                                                    "tags": tags,
-                                                    "tag_prefixes": tag_prefixes,
-                                                    "importance": importance,
-                                                    "timestamp": created_at,
-                                                    "type": memory_type,
-                                                    "confidence": type_confidence,
-                                                    "updated_at": utc_now(),
-                                                    "last_accessed": utc_now(),
-                                                    "metadata": metadata,
-                                                },
+                                                payload=merged_payload,
                                             )
                                         ],
                                     )
@@ -332,15 +350,21 @@ def create_memory_blueprint_full(
                     # Delete the old memory, then store the new one normally below
                     old_id = dedup_result["target_id"]
                     try:
-                        graph.query("MATCH (m:Memory {id: $id}) DELETE m", {"id": old_id})
+                        graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": old_id})
                     except Exception:
                         logger.warning("Failed to delete superseded memory %s", old_id)
                     qdrant_cl = get_qdrant_client()
                     if qdrant_cl:
                         try:
+                            selector = {"points": [old_id]}
+                            try:
+                                from qdrant_client.http import models as http_models
+                                selector = http_models.PointIdsList(points=[old_id])
+                            except Exception:
+                                pass
                             qdrant_cl.delete(
                                 collection_name=collection_name,
-                                points_selector=[old_id],
+                                points_selector=selector,
                             )
                         except Exception:
                             logger.warning("Failed to delete superseded memory from Qdrant %s", old_id)

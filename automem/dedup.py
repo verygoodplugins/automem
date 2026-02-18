@@ -93,8 +93,6 @@ def check_dedup(
 
     # Step 2: Search for similar existing memories
     try:
-        from qdrant_client.models import Filter  # noqa: F401
-
         search_results = qdrant_client.search(
             collection_name=collection_name,
             query_vector=embedding,
@@ -144,7 +142,11 @@ def check_dedup(
             response_format={"type": "json_object"},
         )
 
-        raw = response.choices[0].message.content.strip()
+        raw = response.choices[0].message.content
+        if not raw:
+            logger.warning("LLM returned empty content for dedup, defaulting to ADD")
+            return result
+        raw = raw.strip()
         decision = json.loads(raw)
 
         action = decision.get("action", "ADD").upper()
@@ -152,6 +154,17 @@ def check_dedup(
             action = "ADD"
 
         result["action"] = action
+
+        # Validate target_id against actual candidates to prevent LLM hallucination
+        candidate_ids = {c["id"] for c in candidates}
+        target_id = decision.get("target_id", "")
+        if target_id and target_id not in candidate_ids:
+            logger.warning(
+                "Dedup target_id %s not in candidates %s, falling back to ADD",
+                target_id, candidate_ids,
+            )
+            result["action"] = "ADD"
+            return result
 
         if action == "UPDATE":
             result["target_id"] = decision.get("target_id", "")
