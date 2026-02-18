@@ -129,12 +129,19 @@ class LongMemEvalBenchmark:
                 for r in results:
                     memory_id = r.get("id")
                     if memory_id:
-                        requests.delete(
+                        delete_response = requests.delete(
                             f"{self.config.base_url}/memory/{memory_id}",
                             headers=self.headers,
                             timeout=self.config.request_timeout,
                         )
-                        total_deleted += 1
+                        if delete_response.ok:
+                            total_deleted += 1
+                        else:
+                            logger.warning(
+                                "Failed to delete memory %s during cleanup: %s",
+                                memory_id,
+                                delete_response.status_code,
+                            )
 
                 if len(results) < 100:
                     break
@@ -273,13 +280,12 @@ class LongMemEvalBenchmark:
                         )
                         if response.status_code in [200, 201]:
                             stored += 1
-                    except Exception as e:
+                    except Exception:
                         self.memory_ingest_failures += 1
                         logger.exception(
-                            "Failed to store turn for session %s at index %s: %s",
+                            "Failed to store turn for session %s at index %s",
                             sid,
                             j,
-                            e,
                         )
 
             # Pause between batches

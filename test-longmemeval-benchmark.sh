@@ -176,8 +176,9 @@ else
         exit 1
     fi
 
-    # Check if services are running
-    if ! docker compose ps | grep -q "flask-api.*running"; then
+    # Check if services are running and healthy
+    running_services="$(docker compose ps --status running --services 2>/dev/null || true)"
+    if [ -z "$running_services" ] || ! curl -fsS "http://localhost:8001/health" > /dev/null 2>&1; then
         echo -e "${YELLOW}AutoMem services not running${NC}"
         echo -e "${BLUE}Starting services...${NC}"
         docker compose up -d

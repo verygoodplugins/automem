@@ -195,7 +195,10 @@ Respond with ONLY a JSON object:
         # Parse JSON response
         # Handle markdown code blocks
         if content.startswith("```"):
-            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            lines = content.splitlines()
+            if len(lines) > 1:
+                content = "\n".join(lines[1:])
+            content = content.rsplit("```", 1)[0].strip()
 
         result = json.loads(content)
         return {
