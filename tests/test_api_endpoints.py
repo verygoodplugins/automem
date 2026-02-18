@@ -681,7 +681,9 @@ def test_update_memory_success(client, mock_state, auth_headers):
 def test_update_memory_not_found(client, mock_state, auth_headers):
     """Test updating non-existent memory."""
     response = client.patch(
-        "/memory/non-existent-id", json={"content": "New content"}, headers=auth_headers
+        "/memory/00000000-0000-0000-0000-000000000099",
+        json={"content": "New content"},
+        headers=auth_headers,
     )
     assert response.status_code == 404
 
@@ -740,7 +742,7 @@ def test_delete_memory_success(client, mock_state, auth_headers):
 
 def test_delete_memory_not_found(client, mock_state, auth_headers):
     """Test deleting non-existent memory."""
-    response = client.delete("/memory/non-existent", headers=auth_headers)
+    response = client.delete("/memory/00000000-0000-0000-0000-000000000098", headers=auth_headers)
     assert response.status_code == 404
 
 

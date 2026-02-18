@@ -173,13 +173,13 @@ Control via `EMBEDDING_PROVIDER` environment variable:
 - `auto` (default): Try Voyage → OpenAI → Ollama → FastEmbed → Placeholder
 - `voyage`: Use Voyage only (fail if unavailable)
 - `openai`: Use OpenAI only (fail if unavailable). Also works with OpenAI-compatible providers when `OPENAI_BASE_URL` is set.
-- `local`: Use FastEmbed only (fail if unavailable)
 - `ollama`: Use Ollama only (fail if unavailable)
+- `local`: Use FastEmbed only (fail if unavailable)
 - `placeholder`: Use placeholder embeddings
 
 Graph writes always succeed even if vector storage fails (graceful degradation).
 
-**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with implementations: `VoyageEmbeddingProvider`, `OpenAIEmbeddingProvider` (also handles compatible providers), `FastEmbedProvider`, `OllamaEmbeddingProvider`, `PlaceholderEmbeddingProvider`.
+**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with implementations: `VoyageEmbeddingProvider`, `OpenAIEmbeddingProvider` (also handles compatible providers), `OllamaEmbeddingProvider`, `FastEmbedProvider`, `PlaceholderEmbeddingProvider`.
 
 ## Testing
 

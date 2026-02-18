@@ -349,12 +349,15 @@ def create_memory_blueprint_full(
         )
         return jsonify(response), 201
 
-    @bp.route("/memory/<memory_id>", methods=["GET"])
-    def get(memory_id: str) -> ResponseReturnValue:
+    def _validate_memory_id(memory_id: str) -> None:
         try:
             uuid.UUID(memory_id)
         except ValueError:
             abort(400, description="memory_id must be a valid UUID")
+
+    @bp.route("/memory/<memory_id>", methods=["GET"])
+    def get(memory_id: str) -> ResponseReturnValue:
+        _validate_memory_id(memory_id)
 
         graph = get_memory_graph()
         if graph is None:
@@ -387,6 +390,7 @@ def create_memory_blueprint_full(
 
     @bp.route("/memory/<memory_id>", methods=["PATCH"])
     def update(memory_id: str) -> Any:
+        _validate_memory_id(memory_id)
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
@@ -512,6 +516,7 @@ def create_memory_blueprint_full(
 
     @bp.route("/memory/<memory_id>", methods=["DELETE"])
     def delete(memory_id: str) -> Any:
+        _validate_memory_id(memory_id)
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
