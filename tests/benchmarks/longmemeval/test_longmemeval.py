@@ -360,7 +360,15 @@ class LongMemEvalBenchmark:
                 timeout=self.config.request_timeout,
             )
             if response.status_code == 200:
-                return response.json().get("results", [])
+                results = response.json().get("results", [])
+                # Flatten: AutoMem nests memory data under "memory" key
+                flattened = []
+                for r in results:
+                    mem = r.get("memory", {})
+                    mem["score"] = r.get("score", 0)
+                    mem["match_type"] = r.get("match_type", "")
+                    flattened.append(mem)
+                return flattened
             else:
                 print(f"  Recall failed for {question_id}: {response.status_code}")
                 return []
