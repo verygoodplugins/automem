@@ -99,6 +99,17 @@ MEMORY_AUTO_SUMMARIZE = os.getenv("MEMORY_AUTO_SUMMARIZE", "true").lower() not i
 # Target length for summarized content
 MEMORY_SUMMARY_TARGET_LENGTH = int(os.getenv("MEMORY_SUMMARY_TARGET_LENGTH", "300"))
 
+# Write-time deduplication gate (LLM-based ADD/UPDATE/SUPERSEDE/NOOP)
+MEMORY_DEDUP_ENABLED = os.getenv("MEMORY_DEDUP_ENABLED", "false").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+MEMORY_DEDUP_MODEL = os.getenv("MEMORY_DEDUP_MODEL", "gpt-4o-mini")
+MEMORY_DEDUP_SIMILARITY_THRESHOLD = float(
+    os.getenv("MEMORY_DEDUP_SIMILARITY_THRESHOLD", "0.70")
+)
+
 # Memory types for classification
 MEMORY_TYPES = {"Decision", "Pattern", "Preference", "Style", "Habit", "Insight", "Context"}
 

@@ -12,8 +12,12 @@ from automem.config import (
     MEMORY_AUTO_SUMMARIZE,
     MEMORY_CONTENT_HARD_LIMIT,
     MEMORY_CONTENT_SOFT_LIMIT,
+    MEMORY_DEDUP_ENABLED,
+    MEMORY_DEDUP_MODEL,
+    MEMORY_DEDUP_SIMILARITY_THRESHOLD,
     MEMORY_SUMMARY_TARGET_LENGTH,
 )
+from automem.dedup import check_dedup
 from automem.utils.text import should_summarize_content, summarize_content
 
 
@@ -214,6 +218,135 @@ def create_memory_blueprint_full(
         else:
             last_accessed = updated_at
 
+        # ── Write-time dedup gate ──────────────────────────────────
+        # Check for semantically similar existing memories and let an LLM
+        # decide: ADD (store new), UPDATE (merge into existing),
+        # SUPERSEDE (replace existing), or NOOP (skip).
+        skip_dedup = payload.get("skip_dedup", False)
+        dedup_result = None
+        if MEMORY_DEDUP_ENABLED and not skip_dedup:
+            qdrant_client = get_qdrant_client()
+            openai_client = get_openai_client() if get_openai_client else None
+            if qdrant_client and openai_client:
+                dedup_result = check_dedup(
+                    new_content=content,
+                    generate_embedding=generate_real_embedding,
+                    qdrant_client=qdrant_client,
+                    collection_name=collection_name,
+                    openai_client=openai_client,
+                    model=MEMORY_DEDUP_MODEL,
+                    similarity_threshold=MEMORY_DEDUP_SIMILARITY_THRESHOLD,
+                )
+
+                if dedup_result["action"] == "NOOP":
+                    query_ms = (time.perf_counter() - query_start) * 1000
+                    return (
+                        jsonify(
+                            {
+                                "status": "skipped",
+                                "reason": "dedup_noop",
+                                "detail": dedup_result.get("reason", "duplicate"),
+                                "candidates": dedup_result.get("candidates", []),
+                                "query_time_ms": round(query_ms, 2),
+                            }
+                        ),
+                        200,
+                    )
+
+                if dedup_result["action"] == "UPDATE" and dedup_result.get("target_id"):
+                    # Merge into the existing memory instead of creating a new one.
+                    # Rewrite memory_id to target the existing one, and use merged content.
+                    target_id = dedup_result["target_id"]
+                    merged = dedup_result.get("merged_content", content)
+                    # Update the existing memory in FalkorDB
+                    try:
+                        graph.query(
+                            """
+                            MATCH (m:Memory {id: $id})
+                            SET m.content = $content,
+                                m.updated_at = $updated_at,
+                                m.last_accessed = $last_accessed,
+                                m.importance = CASE WHEN $importance > m.importance
+                                    THEN $importance ELSE m.importance END
+                            RETURN m
+                            """,
+                            {
+                                "id": target_id,
+                                "content": merged,
+                                "updated_at": utc_now(),
+                                "last_accessed": utc_now(),
+                                "importance": importance,
+                            },
+                        )
+                    except Exception:
+                        logger.exception("Failed to UPDATE existing memory %s, falling back to ADD", target_id)
+                        dedup_result["action"] = "ADD"
+                    else:
+                        # Re-embed the merged content
+                        enqueue_embedding(target_id, merged)
+                        # Update Qdrant payload
+                        qdrant_cl = get_qdrant_client()
+                        if qdrant_cl:
+                            try:
+                                new_emb = generate_real_embedding(merged)
+                                if new_emb:
+                                    qdrant_cl.upsert(
+                                        collection_name=collection_name,
+                                        points=[
+                                            point_struct(
+                                                id=target_id,
+                                                vector=new_emb,
+                                                payload={
+                                                    "content": merged,
+                                                    "tags": tags,
+                                                    "tag_prefixes": tag_prefixes,
+                                                    "importance": importance,
+                                                    "timestamp": created_at,
+                                                    "type": memory_type,
+                                                    "confidence": type_confidence,
+                                                    "updated_at": utc_now(),
+                                                    "last_accessed": utc_now(),
+                                                    "metadata": metadata,
+                                                },
+                                            )
+                                        ],
+                                    )
+                            except Exception:
+                                logger.warning("Failed to update Qdrant for merged memory %s", target_id)
+
+                        query_ms = (time.perf_counter() - query_start) * 1000
+                        return (
+                            jsonify(
+                                {
+                                    "status": "updated",
+                                    "memory_id": target_id,
+                                    "dedup_action": "UPDATE",
+                                    "merged_content": merged,
+                                    "query_time_ms": round(query_ms, 2),
+                                }
+                            ),
+                            200,
+                        )
+
+                if dedup_result["action"] == "SUPERSEDE" and dedup_result.get("target_id"):
+                    # Delete the old memory, then store the new one normally below
+                    old_id = dedup_result["target_id"]
+                    try:
+                        graph.query("MATCH (m:Memory {id: $id}) DELETE m", {"id": old_id})
+                    except Exception:
+                        logger.warning("Failed to delete superseded memory %s", old_id)
+                    qdrant_cl = get_qdrant_client()
+                    if qdrant_cl:
+                        try:
+                            qdrant_cl.delete(
+                                collection_name=collection_name,
+                                points_selector=[old_id],
+                            )
+                        except Exception:
+                            logger.warning("Failed to delete superseded memory from Qdrant %s", old_id)
+
+                # For ADD and SUPERSEDE, fall through to normal store below
+
         try:
             graph.query(
                 """
@@ -331,6 +464,12 @@ def create_memory_blueprint_full(
             response["summarized"] = True
             response["original_length"] = len(original_content)
             response["summarized_length"] = len(content)
+
+        # Include dedup info if gate ran
+        if dedup_result:
+            response["dedup_action"] = dedup_result["action"]
+            if dedup_result["action"] == "SUPERSEDE":
+                response["superseded_id"] = dedup_result.get("target_id")
 
         logger.info(
             "memory_stored",
