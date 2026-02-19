@@ -447,7 +447,9 @@ def test_embedding_handling_real(api_client):
         message = str(body.get("message", ""))
         match = re.search(r"exactly\s+(\d+)\s+values", message, flags=re.IGNORECASE)
         if match:
-            payload["embedding"] = [0.1] * int(match.group(1))
+            adjusted_dim = int(match.group(1))
+            print(f"Adjusting embedding dimension from {len(embedding)} to {adjusted_dim}")
+            payload["embedding"] = [0.1] * adjusted_dim
             memory_response = api_client.post(f"{api_client.base_url}/memory", json=payload)
 
     assert memory_response.status_code == 201

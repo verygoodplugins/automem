@@ -62,9 +62,9 @@ lint:
 	@echo "🔍 Linting (flake8) ..."
 	./venv/bin/flake8 .
 
-# Run all tests including integration tests
+# Run integration tests (requires Docker services)
 test-integration:
-	@echo "🧪 Running all tests including integration tests..."
+	@echo "🧪 Running integration tests..."
 	@echo "🐳 Starting Docker services..."
 	@AUTOMEM_API_TOKEN=test-token ADMIN_API_TOKEN=test-admin-token docker compose up -d
 	@echo "⏳ Waiting for services to be ready..."

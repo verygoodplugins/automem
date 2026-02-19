@@ -7,7 +7,7 @@ import pytest
 
 import consolidation as consolidation_module
 from consolidation import MemoryConsolidator
-from tests.support.fake_graph import FakeGraph
+from tests.support.fake_graph import FakeGraph  # noqa: F401 - used via dummy_graph fixture
 
 
 class FakeVectorStore:
@@ -38,8 +38,8 @@ def iso_days_ago(days: int) -> str:
     return (base - timedelta(days=days)).isoformat()
 
 
-def test_calculate_relevance_score_accounts_for_relationships() -> None:
-    graph = FakeGraph()
+def test_calculate_relevance_score_accounts_for_relationships(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts["m1"] = 0
     consolidator = MemoryConsolidator(graph)
 
@@ -62,8 +62,8 @@ def test_calculate_relevance_score_accounts_for_relationships() -> None:
     assert 0 < boosted <= 1
 
 
-def test_discover_creative_associations_builds_connections() -> None:
-    graph = FakeGraph()
+def test_discover_creative_associations_builds_connections(dummy_graph) -> None:
+    graph = dummy_graph
     graph.sample_rows = [
         ["decision-a", "Chose approach A", "Decision", [1.0, 0.0, 0.0], iso_days_ago(3)],
         ["decision-b", "Chose approach B", "Decision", [0.0, 1.0, 0.0], iso_days_ago(4)],
@@ -76,8 +76,8 @@ def test_discover_creative_associations_builds_connections() -> None:
     assert any(item["type"] == "CONTRASTS_WITH" for item in associations)
 
 
-def test_cluster_similar_memories_groups_items() -> None:
-    graph = FakeGraph()
+def test_cluster_similar_memories_groups_items(dummy_graph) -> None:
+    graph = dummy_graph
     graph.cluster_rows = [
         ["m1", "Alpha", [1.0, 0.0], "Insight"],
         ["m2", "Alpha follow-up", [0.95, 0.05], "Insight"],
@@ -124,8 +124,8 @@ def build_forgetting_rows() -> List[List[Any]]:
     ]
 
 
-def test_apply_controlled_forgetting_dry_run() -> None:
-    graph = FakeGraph()
+def test_apply_controlled_forgetting_dry_run(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts["recent-keep"] = 5
     graph.forgetting_rows = build_forgetting_rows()
 
@@ -140,8 +140,8 @@ def test_apply_controlled_forgetting_dry_run() -> None:
     assert graph.deleted == []
 
 
-def test_apply_controlled_forgetting_updates_graph_and_vector_store() -> None:
-    graph = FakeGraph()
+def test_apply_controlled_forgetting_updates_graph_and_vector_store(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts["recent-keep"] = 5
     graph.forgetting_rows = build_forgetting_rows()
 
@@ -161,8 +161,8 @@ def test_apply_controlled_forgetting_updates_graph_and_vector_store() -> None:
     assert points == ["old-delete"]
 
 
-def test_apply_decay_updates_scores() -> None:
-    graph = FakeGraph()
+def test_apply_decay_updates_scores(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts = {"a": 0, "b": 2}
     graph.decay_rows = [
         ["a", "Early note", iso_days_ago(10), 0.5, iso_days_ago(10), 0.5],

@@ -210,6 +210,8 @@ class FakeGraph:
                     "metadata": params.get("metadata", memory.get("metadata")),
                     "type": params.get("type", memory.get("type")),
                     "confidence": params.get("confidence", memory.get("confidence")),
+                    "timestamp": params.get("timestamp", memory.get("timestamp")),
+                    "last_accessed": params.get("last_accessed", memory.get("last_accessed")),
                     "updated_at": params.get("updated_at", _utc_now()),
                 }
             )
@@ -272,7 +274,8 @@ class FakeGraph:
                 reverse=True,
             )
 
-            limit = int(params.get("limit") or len(results))
+            limit_param = params.get("limit")
+            limit = len(results) if limit_param is None else int(limit_param)
             return FakeResult([[FakeNode(memory)] for memory in results[:limit]])
 
         # Bulk fetch for reembed
@@ -441,7 +444,8 @@ class FakeGraph:
                     key=lambda memory: (_importance(memory), _timestamp_key(memory)), reverse=True
                 )
 
-            limit = int(params.get("limit") or len(results))
+            limit_param = params.get("limit")
+            limit = len(results) if limit_param is None else int(limit_param)
             return FakeResult([[FakeNode(memory)] for memory in results[:limit]])
 
         # Analytics query patterns

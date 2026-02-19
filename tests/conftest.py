@@ -147,6 +147,21 @@ if "openai" not in sys.modules:
     _install_openai_stub()
 
 
+from tests.support.fake_graph import FakeGraph  # noqa: E402 - after stubs installed
+
+
+@pytest.fixture()
+def dummy_graph() -> FakeGraph:
+    """Provide a fresh FakeGraph for tests that need a simple graph mock."""
+    return FakeGraph()
+
+
+@pytest.fixture()
+def seeded_enrichment_graph() -> FakeGraph:
+    """Provide a FakeGraph pre-seeded with enrichment fixture data."""
+    return FakeGraph(seed_enrichment_fixture=True)
+
+
 def pytest_collection_modifyitems(  # pragma: no cover - collection-time behavior
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:

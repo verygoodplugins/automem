@@ -5,7 +5,7 @@ import json
 import pytest
 
 import app
-from tests.support.fake_graph import FakeGraph
+from tests.support.fake_graph import FakeGraph  # noqa: F401 - used via fixtures
 
 
 @pytest.fixture(autouse=True)
@@ -41,8 +41,8 @@ def test_extract_entities_basic():
     assert "Launchpad" in entities["projects"]
 
 
-def test_enrich_memory_updates_metadata(monkeypatch):
-    fake_graph = FakeGraph(seed_enrichment_fixture=True)
+def test_enrich_memory_updates_metadata(monkeypatch, seeded_enrichment_graph):
+    fake_graph = seeded_enrichment_graph
     app.state.memory_graph = fake_graph
 
     processed = app.enrich_memory("mem-1", forced=True)
