@@ -2223,6 +2223,20 @@ def jit_enrich_lightweight(memory_id: str, properties: Dict[str, Any]) -> Option
     if graph is None:
         return None
 
+    # Check canonical enrichment state to avoid re-enriching Qdrant-sourced memories
+    try:
+        check = graph.query(
+            "MATCH (m:Memory {id: $id}) RETURN m.enriched, m.processed",
+            {"id": memory_id},
+        )
+        if getattr(check, "result_set", None):
+            row = check.result_set[0]
+            if row[0] or row[1]:  # already enriched or processed — skip
+                logger.debug("JIT skipped for %s (already enriched/processed)", memory_id)
+                return None
+    except Exception:  # noqa: BLE001 - best-effort guard, proceed if check fails
+        pass
+
     content = properties.get("content", "") or ""
     if not content:
         return None

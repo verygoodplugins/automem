@@ -1,7 +1,9 @@
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from flask.testing import FlaskClient
 
 import app
 
@@ -82,6 +84,15 @@ class DummyGraph:
                     ]
                 ]
             )
+
+        # JIT canonical enrichment check
+        if "MATCH (m:Memory {id:" in query and "m.enriched" in query:
+            mem = next((m for m in self.memories if m["id"] == params.get("id")), None)
+            if mem:
+                return SimpleNamespace(
+                    result_set=[[mem.get("enriched", False), mem.get("processed", False)]]
+                )
+            return SimpleNamespace(result_set=[])
 
         # Graph recall relations query
         if "MATCH (m:Memory {id:" in query and "RETURN type" in query:
@@ -474,7 +485,7 @@ def test_result_passes_filters_mixed_naive_aware():
 # ============================================================================
 
 
-def test_jit_enrich_lightweight_basic(reset_state) -> None:
+def test_jit_enrich_lightweight_basic(reset_state: DummyGraph) -> None:
     """JIT enrichment extracts entities, generates summary, and does NOT set processed."""
     properties = {
         "id": "mem-jit-1",
@@ -500,8 +511,8 @@ def test_jit_enrich_lightweight_basic(reset_state) -> None:
     assert "enrichment" in metadata
     assert metadata["enrichment"]["jit"] is True
 
-    # Verify the graph query did NOT set processed=true
-    graph_queries = [q for q, _p in reset_state.queries if "processed" in q]
+    # Verify the graph SET query did NOT set processed=true
+    graph_queries = [q for q, _p in reset_state.queries if "SET" in q and "processed" in q]
     assert not graph_queries, "JIT should NOT set processed=true"
 
 
@@ -524,11 +535,13 @@ def test_jit_enrich_lightweight_no_graph(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result is None
 
 
-def test_recall_jit_enriches_unenriched(client, auth_headers, monkeypatch) -> None:
+def test_recall_jit_enriches_unenriched(
+    client: FlaskClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Recall should JIT-enrich unenriched memories when enabled."""
-    jit_calls = []
+    jit_calls: list[str] = []
 
-    def mock_jit(memory_id, props):
+    def mock_jit(memory_id: str, props: dict[str, Any]) -> dict[str, Any]:
         jit_calls.append(memory_id)
         updated = dict(props)
         updated["enriched"] = True
