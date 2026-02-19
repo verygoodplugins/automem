@@ -24,6 +24,20 @@ make test-integration
 make test-live
 ```
 
+## Pytest Markers
+
+The suite now uses explicit markers:
+
+- `unit`: Fast mocked tests (default classification).
+- `integration`: Docker-backed local integration tests.
+- `live`: Benchmarks/live-environment tests (opt-in).
+
+Marker behavior:
+
+- Any test not explicitly marked `integration` or `live` is auto-classified as `unit`.
+- `make test` runs `-m unit`.
+- `make test-integration` runs `-m integration` with the existing env-based gate.
+
 ## Test Types
 
 ```mermaid
@@ -71,6 +85,7 @@ flowchart TD
 - No external services required
 - Tests API logic, validation, edge cases
 - Safe to run anytime
+- Internally runs: `pytest -m unit`
 
 ### 2. Integration Tests (Local)
 **Command**: `make test-integration`
@@ -80,6 +95,7 @@ flowchart TD
 - Creates test memories tagged with `["test", "integration"]`
 - Cleans up all test data after completion
 - Requires: Docker, Docker Compose
+- Internally runs: `pytest -m integration`
 
 **What it does:**
 1. Starts Docker services with `AUTOMEM_API_TOKEN=test-token`
