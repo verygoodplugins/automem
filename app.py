@@ -72,6 +72,9 @@ from automem.analytics.runtime_helpers import startup_recall as _startup_recall_
 from automem.api.auth_helpers import extract_api_token as _extract_api_token_helper
 from automem.api.auth_helpers import require_admin_token as _require_admin_token_helper
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
+from automem.api.runtime_memory_routes import delete_memory as _delete_memory_runtime
+from automem.api.runtime_memory_routes import memories_by_tag as _memories_by_tag_runtime
+from automem.api.runtime_memory_routes import update_memory as _update_memory_runtime
 from automem.api.stream import create_stream_blueprint, emit_event
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_helpers import (
@@ -1187,196 +1190,51 @@ def store_memory() -> Any:
 
 @memory_bp.route("/memory/<memory_id>", methods=["PATCH"])
 def update_memory(memory_id: str) -> Any:
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(400, description="JSON body is required")
-
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
-    if not getattr(result, "result_set", None):
-        abort(404, description="Memory not found")
-
-    current_node = result.result_set[0][0]
-    current = _serialize_node(current_node)
-
-    new_content = payload.get("content", current.get("content"))
-    tags = _normalize_tag_list(payload.get("tags", current.get("tags")))
-    tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
-    tag_prefixes = _compute_tag_prefixes(tags_lower)
-    importance = payload.get("importance", current.get("importance"))
-    memory_type = payload.get("type", current.get("type"))
-    confidence = payload.get("confidence", current.get("confidence"))
-    timestamp = payload.get("timestamp", current.get("timestamp"))
-    metadata_raw = payload.get("metadata", _parse_metadata_field(current.get("metadata")))
-    updated_at = payload.get("updated_at", current.get("updated_at", utc_now()))
-    last_accessed = payload.get("last_accessed", current.get("last_accessed"))
-
-    if metadata_raw is None:
-        metadata: Dict[str, Any] = {}
-    elif isinstance(metadata_raw, dict):
-        metadata = metadata_raw
-    else:
-        abort(400, description="'metadata' must be an object")
-    metadata_json = json.dumps(metadata, default=str)
-
-    if timestamp:
-        try:
-            timestamp = _normalize_timestamp(timestamp)
-        except ValueError as exc:
-            abort(400, description=f"Invalid timestamp: {exc}")
-
-    if updated_at:
-        try:
-            updated_at = _normalize_timestamp(updated_at)
-        except ValueError as exc:
-            abort(400, description=f"Invalid updated_at: {exc}")
-
-    if last_accessed:
-        try:
-            last_accessed = _normalize_timestamp(last_accessed)
-        except ValueError as exc:
-            abort(400, description=f"Invalid last_accessed: {exc}")
-
-    update_query = """
-        MATCH (m:Memory {id: $id})
-        SET m.content = $content,
-            m.tags = $tags,
-            m.tag_prefixes = $tag_prefixes,
-            m.importance = $importance,
-            m.type = $type,
-            m.confidence = $confidence,
-            m.timestamp = $timestamp,
-            m.metadata = $metadata,
-            m.updated_at = $updated_at,
-            m.last_accessed = $last_accessed
-        RETURN m
-    """
-
-    graph.query(
-        update_query,
-        {
-            "id": memory_id,
-            "content": new_content,
-            "tags": tags,
-            "tag_prefixes": tag_prefixes,
-            "importance": importance,
-            "type": memory_type,
-            "confidence": confidence,
-            "timestamp": timestamp,
-            "metadata": metadata_json,
-            "updated_at": updated_at,
-            "last_accessed": last_accessed,
-        },
+    return _update_memory_runtime(
+        request_obj=request,
+        memory_id=memory_id,
+        get_memory_graph_fn=get_memory_graph,
+        get_qdrant_client_fn=get_qdrant_client,
+        normalize_tag_list_fn=_normalize_tag_list,
+        compute_tag_prefixes_fn=_compute_tag_prefixes,
+        parse_metadata_field_fn=_parse_metadata_field,
+        normalize_timestamp_fn=_normalize_timestamp,
+        generate_real_embedding_fn=_generate_real_embedding,
+        serialize_node_fn=_serialize_node,
+        collection_name=COLLECTION_NAME,
+        point_struct_cls=PointStruct,
+        utc_now_fn=utc_now,
+        logger=logger,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
     )
-
-    qdrant_client = get_qdrant_client()
-    vector = None
-    if qdrant_client is not None:
-        if new_content != current.get("content"):
-            vector = _generate_real_embedding(new_content)
-        else:
-            try:
-                existing = qdrant_client.retrieve(
-                    collection_name=COLLECTION_NAME,
-                    ids=[memory_id],
-                    with_vectors=True,
-                )
-                if existing:
-                    vector = existing[0].vector
-            except Exception:
-                logger.exception("Failed to retrieve existing vector; regenerating")
-                vector = _generate_real_embedding(new_content)
-
-        if vector is not None:
-            payload = {
-                "content": new_content,
-                "tags": tags,
-                "tag_prefixes": tag_prefixes,
-                "importance": importance,
-                "timestamp": timestamp,
-                "type": memory_type,
-                "confidence": confidence,
-                "updated_at": updated_at,
-                "last_accessed": last_accessed,
-                "metadata": metadata,
-            }
-            qdrant_client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=[PointStruct(id=memory_id, vector=vector, payload=payload)],
-            )
-
-    return jsonify({"status": "success", "memory_id": memory_id})
 
 
 @memory_bp.route("/memory/<memory_id>", methods=["DELETE"])
 def delete_memory(memory_id: str) -> Any:
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
-    if not getattr(result, "result_set", None):
-        abort(404, description="Memory not found")
-
-    graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": memory_id})
-
-    qdrant_client = get_qdrant_client()
-    if qdrant_client is not None:
-        try:
-            if "qdrant_models" in globals() and qdrant_models is not None:
-                selector = qdrant_models.PointIdsList(points=[memory_id])
-            else:
-                selector = {"points": [memory_id]}
-            qdrant_client.delete(collection_name=COLLECTION_NAME, points_selector=selector)
-        except Exception:
-            logger.exception("Failed to delete vector for memory %s", memory_id)
-
-    return jsonify({"status": "success", "memory_id": memory_id})
+    return _delete_memory_runtime(
+        memory_id=memory_id,
+        get_memory_graph_fn=get_memory_graph,
+        get_qdrant_client_fn=get_qdrant_client,
+        qdrant_models_obj=qdrant_models if "qdrant_models" in globals() else None,
+        collection_name=COLLECTION_NAME,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
+        logger=logger,
+    )
 
 
 @memory_bp.route("/memory/by-tag", methods=["GET"])
 def memories_by_tag() -> Any:
-    raw_tags = request.args.getlist("tags") or request.args.get("tags")
-    tags = _normalize_tag_list(raw_tags)
-    if not tags:
-        abort(400, description="'tags' query parameter is required")
-
-    limit = max(1, min(int(request.args.get("limit", 20)), 200))
-
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    params = {
-        "tags": [tag.lower() for tag in tags],
-        "limit": limit,
-    }
-
-    query = """
-        MATCH (m:Memory)
-        WHERE ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tags)
-        RETURN m
-        ORDER BY m.importance DESC, m.timestamp DESC
-        LIMIT $limit
-    """
-
-    try:
-        result = graph.query(query, params)
-    except Exception:
-        logger.exception("Tag search failed")
-        abort(500, description="Failed to search by tag")
-
-    memories: List[Dict[str, Any]] = []
-    for row in getattr(result, "result_set", []) or []:
-        data = _serialize_node(row[0])
-        data["metadata"] = _parse_metadata_field(data.get("metadata"))
-        memories.append(data)
-
-    return jsonify(
-        {"status": "success", "tags": tags, "count": len(memories), "memories": memories}
+    return _memories_by_tag_runtime(
+        request_obj=request,
+        normalize_tag_list_fn=_normalize_tag_list,
+        get_memory_graph_fn=get_memory_graph,
+        serialize_node_fn=_serialize_node,
+        parse_metadata_field_fn=_parse_metadata_field,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
+        logger=logger,
     )
 
 
