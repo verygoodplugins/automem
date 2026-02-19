@@ -73,6 +73,7 @@ from automem.api.auth_helpers import require_admin_token as _require_admin_token
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
 from automem.api.stream import create_stream_blueprint, emit_event
 from automem.classification.memory_classifier import MemoryClassifier
+from automem.embedding.provider_init import init_embedding_provider as _init_embedding_provider
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
 from automem.embedding.runtime_helpers import (
@@ -184,6 +185,11 @@ from automem.search.runtime_recall_helpers import (
     configure_recall_helpers,
 )
 from automem.stores.graph_store import _build_graph_tag_predicate
+from automem.stores.runtime_clients import (
+    ensure_qdrant_collection as _ensure_qdrant_collection_runtime,
+)
+from automem.stores.runtime_clients import init_falkordb as _init_falkordb_runtime
+from automem.stores.runtime_clients import init_qdrant as _init_qdrant_runtime
 from automem.stores.vector_store import _build_qdrant_tag_filter
 from automem.utils.entity_extraction import (
     _slugify,
@@ -330,341 +336,44 @@ memory_classifier = MemoryClassifier(
 
 
 def init_embedding_provider() -> None:
-    """Initialize embedding provider with auto-selection fallback.
-
-    Priority order:
-    1. Voyage API (if VOYAGE_API_KEY is set)
-    2. OpenAI API (if OPENAI_API_KEY is set)
-    3. Ollama local server (if configured)
-    4. Local fastembed model (no API key needed)
-    5. Placeholder hash-based embeddings (fallback)
-
-    Can be controlled via EMBEDDING_PROVIDER env var:
-    - "auto" (default): Try Voyage, then OpenAI, then Ollama, then fastembed, then placeholder
-    - "voyage": Use Voyage only, fail if unavailable
-    - "openai": Use OpenAI only, fail if unavailable
-    - "local": Use fastembed only, fail if unavailable
-    - "ollama": Use Ollama only, fail if unavailable
-    - "placeholder": Use placeholder embeddings
-    """
-    if state.embedding_provider is not None:
-        return
-
-    provider_config = (os.getenv("EMBEDDING_PROVIDER", "auto") or "auto").strip().lower()
-    # Use effective dimension (auto-detected from existing collection or config default).
-    # If Qdrant hasn't set it (or config was changed in-process), align to VECTOR_SIZE.
-    if state.qdrant is None and state.effective_vector_size != VECTOR_SIZE:
-        state.effective_vector_size = VECTOR_SIZE
-    vector_size = state.effective_vector_size
-
-    # Explicit provider selection
-    if provider_config == "voyage":
-        api_key = os.getenv("VOYAGE_API_KEY")
-        if not api_key:
-            raise RuntimeError("EMBEDDING_PROVIDER=voyage but VOYAGE_API_KEY not set")
-        try:
-            from automem.embedding.voyage import VoyageEmbeddingProvider
-
-            voyage_model = os.getenv("VOYAGE_MODEL", "voyage-4")
-            state.embedding_provider = VoyageEmbeddingProvider(
-                api_key=api_key, model=voyage_model, dimension=vector_size
-            )
-            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
-            return
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize Voyage provider: {e}") from e
-
-    elif provider_config == "openai":
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
-        openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
-        try:
-            from automem.embedding.openai import OpenAIEmbeddingProvider
-
-            state.embedding_provider = OpenAIEmbeddingProvider(
-                api_key=api_key,
-                model=EMBEDDING_MODEL,
-                dimension=vector_size,
-                base_url=openai_base_url,
-            )
-            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
-            return
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize OpenAI provider: {e}") from e
-
-    elif provider_config == "local":
-        try:
-            from automem.embedding.fastembed import FastEmbedProvider
-
-            state.embedding_provider = FastEmbedProvider(dimension=vector_size)
-            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
-            return
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize local fastembed provider: {e}") from e
-
-    elif provider_config == "ollama":
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        model = os.getenv("OLLAMA_MODEL", "nomic-embed-text")
-        try:
-            timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
-            max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
-        except ValueError as ve:
-            raise RuntimeError(f"Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES value: {ve}") from ve
-        try:
-            from automem.embedding.ollama import OllamaEmbeddingProvider
-
-            state.embedding_provider = OllamaEmbeddingProvider(
-                base_url=base_url,
-                model=model,
-                dimension=vector_size,
-                timeout=timeout,
-                max_retries=max_retries,
-            )
-            logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
-            return
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize Ollama provider: {e}") from e
-
-    elif provider_config == "placeholder":
-        from automem.embedding.placeholder import PlaceholderEmbeddingProvider
-
-        state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
-        logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
-        return
-
-    # Auto-selection: Try Voyage → OpenAI → Ollama → fastembed → placeholder
-    if provider_config == "auto":
-        # Try Voyage first (preferred)
-        voyage_key = os.getenv("VOYAGE_API_KEY")
-        if voyage_key:
-            try:
-                from automem.embedding.voyage import VoyageEmbeddingProvider
-
-                voyage_model = os.getenv("VOYAGE_MODEL", "voyage-4")
-                state.embedding_provider = VoyageEmbeddingProvider(
-                    api_key=voyage_key, model=voyage_model, dimension=vector_size
-                )
-                logger.info(
-                    "Embedding provider (auto-selected): %s",
-                    state.embedding_provider.provider_name(),
-                )
-                return
-            except Exception as e:
-                logger.warning("Failed to initialize Voyage provider, trying OpenAI: %s", str(e))
-
-        # Try OpenAI
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key:
-            try:
-                from automem.embedding.openai import OpenAIEmbeddingProvider
-
-                openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
-                state.embedding_provider = OpenAIEmbeddingProvider(
-                    api_key=api_key,
-                    model=EMBEDDING_MODEL,
-                    dimension=vector_size,
-                    base_url=openai_base_url,
-                )
-                logger.info(
-                    "Embedding provider (auto-selected): %s",
-                    state.embedding_provider.provider_name(),
-                )
-                return
-            except Exception as e:
-                logger.warning(
-                    "Failed to initialize OpenAI provider, trying local model: %s", str(e)
-                )
-
-        ollama_base_url = os.getenv("OLLAMA_BASE_URL")
-        ollama_model = os.getenv("OLLAMA_MODEL")
-        if ollama_base_url or ollama_model:
-            try:
-                from automem.embedding.ollama import OllamaEmbeddingProvider
-
-                base_url = ollama_base_url or "http://localhost:11434"
-                model = ollama_model or "nomic-embed-text"
-                try:
-                    timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
-                    max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
-                except ValueError:
-                    logger.warning("Invalid OLLAMA_TIMEOUT or OLLAMA_MAX_RETRIES, using defaults")
-                    timeout = 30.0
-                    max_retries = 2
-                state.embedding_provider = OllamaEmbeddingProvider(
-                    base_url=base_url,
-                    model=model,
-                    dimension=vector_size,
-                    timeout=timeout,
-                    max_retries=max_retries,
-                )
-                logger.info(
-                    "Embedding provider (auto-selected): %s",
-                    state.embedding_provider.provider_name(),
-                )
-                return
-            except Exception as e:
-                logger.warning(
-                    "Failed to initialize Ollama provider, trying local model: %s", str(e)
-                )
-
-        # Try local fastembed
-        try:
-            from automem.embedding.fastembed import FastEmbedProvider
-
-            state.embedding_provider = FastEmbedProvider(dimension=vector_size)
-            logger.info(
-                "Embedding provider (auto-selected): %s", state.embedding_provider.provider_name()
-            )
-            return
-        except Exception as e:
-            logger.warning("Failed to initialize fastembed provider, using placeholder: %s", str(e))
-
-        # Fallback to placeholder
-        from automem.embedding.placeholder import PlaceholderEmbeddingProvider
-
-        state.embedding_provider = PlaceholderEmbeddingProvider(dimension=vector_size)
-        logger.warning(
-            "Using placeholder embeddings (no semantic search). "
-            "Install fastembed or set VOYAGE_API_KEY/OPENAI_API_KEY for semantic embeddings."
-        )
-        logger.info(
-            "Embedding provider (auto-selected): %s", state.embedding_provider.provider_name()
-        )
-        return
-
-    # Invalid config
-    raise ValueError(
-        f"Invalid EMBEDDING_PROVIDER={provider_config}. "
-        f"Valid options: auto, voyage, openai, local, ollama, placeholder"
+    _init_embedding_provider(
+        state=state,
+        logger=logger,
+        vector_size_config=VECTOR_SIZE,
+        embedding_model=EMBEDDING_MODEL,
     )
 
 
 def init_falkordb() -> None:
-    """Initialize FalkorDB connection if not already connected."""
-    if state.memory_graph is not None:
-        return
-
-    host = (
-        os.getenv("FALKORDB_HOST")
-        or os.getenv("RAILWAY_PRIVATE_DOMAIN")
-        or os.getenv("RAILWAY_PUBLIC_DOMAIN")
-        or "localhost"
+    _init_falkordb_runtime(
+        state=state,
+        logger=logger,
+        falkordb_cls=FalkorDB,
+        graph_name=GRAPH_NAME,
+        falkordb_port=FALKORDB_PORT,
     )
-    password = os.getenv("FALKORDB_PASSWORD")
-
-    try:
-        logger.info("Connecting to FalkorDB at %s:%s", host, FALKORDB_PORT)
-
-        # Only pass authentication if password is actually configured
-        connection_params = {
-            "host": host,
-            "port": FALKORDB_PORT,
-        }
-        if password:
-            connection_params["password"] = password
-            connection_params["username"] = "default"
-
-        state.falkordb = FalkorDB(**connection_params)
-        state.memory_graph = state.falkordb.select_graph(GRAPH_NAME)
-        logger.info(
-            "FalkorDB connection established (auth: %s)", "enabled" if password else "disabled"
-        )
-    except Exception:  # pragma: no cover - log full stack trace in production
-        logger.exception("Failed to initialize FalkorDB connection")
-        state.falkordb = None
-        state.memory_graph = None
 
 
 def init_qdrant() -> None:
-    """Initialize Qdrant connection and ensure the collection exists."""
-    if state.qdrant is not None:
-        return
-
-    url = os.getenv("QDRANT_URL")
-    api_key = os.getenv("QDRANT_API_KEY")
-
-    if not url:
-        logger.info("Qdrant URL not provided; skipping client initialization")
-        return
-
-    try:
-        logger.info("Connecting to Qdrant at %s", url)
-        state.qdrant = QdrantClient(url=url, api_key=api_key)
-        _ensure_qdrant_collection()
-        logger.info("Qdrant connection established")
-    except ValueError:
-        # Surface migration guidance (e.g., vector dimension mismatch) and halt startup
-        state.qdrant = None
-        raise
-    except Exception:  # pragma: no cover - log full stack trace in production
-        logger.exception("Failed to initialize Qdrant client")
-        state.qdrant = None
+    _init_qdrant_runtime(
+        state=state,
+        logger=logger,
+        qdrant_client_cls=QdrantClient,
+        ensure_collection_fn=_ensure_qdrant_collection,
+    )
 
 
 def _ensure_qdrant_collection() -> None:
-    """Create the Qdrant collection if it does not already exist."""
-    if state.qdrant is None:
-        return
-
-    try:
-        # Auto-detect vector dimension from existing collection (backwards compatibility)
-        # This ensures users with 768d embeddings aren't broken by default change to 3072d
-        effective_dim, source = get_effective_vector_size(state.qdrant)
-        state.effective_vector_size = effective_dim
-
-        if source == "collection":
-            logger.info(
-                "Using existing collection dimension: %dd (config default: %dd)",
-                effective_dim,
-                VECTOR_SIZE,
-            )
-        else:
-            logger.info("Using configured vector dimension: %dd", effective_dim)
-
-        collections = state.qdrant.get_collections()
-        existing = {collection.name for collection in collections.collections}
-        if COLLECTION_NAME not in existing:
-            logger.info(
-                "Creating Qdrant collection '%s' with %dd vectors", COLLECTION_NAME, effective_dim
-            )
-            state.qdrant.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=effective_dim, distance=Distance.COSINE),
-            )
-
-        # Ensure payload indexes exist for tag filtering
-        logger.info("Ensuring Qdrant payload indexes for collection '%s'", COLLECTION_NAME)
-        if PayloadSchemaType:
-            # Use enum if available
-            state.qdrant.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name="tags",
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-            state.qdrant.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name="tag_prefixes",
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-        else:
-            # Fallback to string values when enum not available
-            state.qdrant.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name="tags",
-                field_schema="keyword",
-            )
-            state.qdrant.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name="tag_prefixes",
-                field_schema="keyword",
-            )
-    except ValueError:
-        # Bubble up migration guidance so the service fails fast instead of silently degrading
-        raise
-    except Exception:  # pragma: no cover - log full stack trace in production
-        logger.exception("Failed to ensure Qdrant collection; disabling client")
-        state.qdrant = None
+    _ensure_qdrant_collection_runtime(
+        state=state,
+        logger=logger,
+        collection_name=COLLECTION_NAME,
+        vector_size_config=VECTOR_SIZE,
+        get_effective_vector_size_fn=get_effective_vector_size,
+        vector_params_cls=VectorParams,
+        distance_enum=Distance,
+        payload_schema_type_enum=PayloadSchemaType,
+    )
 
 
 def get_memory_graph() -> Any:
