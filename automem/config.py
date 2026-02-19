@@ -76,6 +76,14 @@ ENRICHMENT_ENABLE_SUMMARIES = os.getenv("ENRICHMENT_ENABLE_SUMMARIES", "true").l
 }
 ENRICHMENT_SPACY_MODEL = os.getenv("ENRICHMENT_SPACY_MODEL", "en_core_web_sm")
 
+# JIT (just-in-time) enrichment: run lightweight enrichment inline during recall
+# for memories that haven't been processed by the async worker yet.
+JIT_ENRICHMENT_ENABLED = os.getenv("JIT_ENRICHMENT_ENABLED", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+
 # Model configuration
 # text-embedding-3-large (3072d): Better semantic precision, recommended for production
 # text-embedding-3-small (768d): Cheaper, use VECTOR_SIZE=768 if switching
