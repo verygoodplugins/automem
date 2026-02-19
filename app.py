@@ -2234,8 +2234,8 @@ def jit_enrich_lightweight(memory_id: str, properties: Dict[str, Any]) -> Option
             if row[0] or row[1]:  # already enriched or processed — skip
                 logger.debug("JIT skipped for %s (already enriched/processed)", memory_id)
                 return None
-    except Exception:  # noqa: BLE001 - best-effort guard, proceed if check fails
-        pass
+    except Exception as exc:  # noqa: BLE001 - best-effort guard, proceed if check fails
+        logger.debug("JIT state-check failed for %s: %s", memory_id, exc)
 
     content = properties.get("content", "") or ""
     if not content:
