@@ -7,12 +7,12 @@ from typing import Any, Dict, List
 
 
 class FakeResult:
-    def __init__(self, rows: List[List[Any]]):
+    def __init__(self, rows: List[List[Any]]) -> None:
         self.result_set = rows
 
 
 class FakeNode:
-    def __init__(self, properties: Dict[str, Any]):
+    def __init__(self, properties: Dict[str, Any]) -> None:
         self.properties = properties
 
 

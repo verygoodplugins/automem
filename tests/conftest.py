@@ -147,7 +147,9 @@ if "openai" not in sys.modules:
     _install_openai_stub()
 
 
-def pytest_collection_modifyitems(config, items):  # pragma: no cover - collection-time behavior
+def pytest_collection_modifyitems(  # pragma: no cover - collection-time behavior
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     del config
     for item in items:
         marker_names = {marker.name for marker in item.iter_markers()}
