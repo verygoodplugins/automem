@@ -19,7 +19,6 @@ import sys
 import time
 import uuid
 from collections import Counter
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from queue import Empty, Queue
@@ -72,14 +71,7 @@ except ImportError:
 
 # SSE streaming for real-time observability
 from automem.api.stream import create_stream_blueprint, emit_event
-
-# Import only the interface; import backends lazily in init_embedding_provider()
-from automem.embedding.provider import EmbeddingProvider
-
-try:
-    import spacy  # type: ignore
-except ImportError:  # pragma: no cover - optional dependency
-    spacy = None
+from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
 # Environment is loaded by automem.config
 
@@ -172,6 +164,12 @@ from automem.config import (
 )
 from automem.stores.graph_store import _build_graph_tag_predicate
 from automem.stores.vector_store import _build_qdrant_tag_filter
+from automem.utils.entity_extraction import (
+    _slugify,
+    configure_entity_extraction,
+    extract_entities,
+    generate_summary,
+)
 from automem.utils.graph import _serialize_node, _summarize_relation_node
 from automem.utils.scoring import _compute_metadata_score, _parse_metadata_field
 from automem.utils.tags import (
@@ -239,6 +237,14 @@ except Exception:
             seen.add(cleaned)
             keywords.append(cleaned)
         return keywords
+
+
+configure_entity_extraction(
+    search_stopwords=SEARCH_STOPWORDS,
+    entity_stopwords=ENTITY_STOPWORDS,
+    entity_blocklist=ENTITY_BLOCKLIST,
+    spacy_model=ENRICHMENT_SPACY_MODEL,
+)
 
 
 # Local scoring/metadata helpers (fallback if package not available)
@@ -850,276 +856,6 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
 
 
 memory_classifier = MemoryClassifier()
-
-
-_SPACY_NLP = None
-_SPACY_INIT_LOCK = Lock()
-
-
-def _get_spacy_nlp():  # type: ignore[return-type]
-    global _SPACY_NLP
-    if spacy is None:
-        return None
-
-    with _SPACY_INIT_LOCK:
-        if _SPACY_NLP is not None:
-            return _SPACY_NLP
-
-        try:
-            _SPACY_NLP = spacy.load(ENRICHMENT_SPACY_MODEL)
-            logger.info("Loaded spaCy model '%s' for enrichment", ENRICHMENT_SPACY_MODEL)
-        except Exception:  # pragma: no cover - optional dependency
-            logger.warning("Failed to load spaCy model '%s'", ENRICHMENT_SPACY_MODEL)
-            _SPACY_NLP = None
-
-        return _SPACY_NLP
-
-
-def _slugify(value: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9]+", "-", value.lower())
-    return cleaned.strip("-")
-
-
-def _is_valid_entity(
-    value: str, *, allow_lower: bool = False, max_words: Optional[int] = None
-) -> bool:
-    if not value:
-        return False
-
-    cleaned = value.strip()
-    if len(cleaned) < 3:
-        return False
-
-    words = cleaned.split()
-    if max_words is not None and len(words) > max_words:
-        return False
-
-    lowered = cleaned.lower()
-    if lowered in SEARCH_STOPWORDS or lowered in ENTITY_STOPWORDS:
-        return False
-
-    # Reject error codes and technical noise
-    if lowered in ENTITY_BLOCKLIST:
-        return False
-
-    if not any(ch.isalpha() for ch in cleaned):
-        return False
-
-    if not allow_lower and cleaned[0].islower() and not cleaned.isupper():
-        return False
-
-    # Reject strings starting with markdown/formatting or code characters
-    if cleaned[0] in {"-", "*", "#", ">", "|", "[", "]", "{", "}", "(", ")", "_", "'", '"'}:
-        return False
-
-    # Reject common code artifacts (suffixes that indicate class names)
-    code_suffixes = (
-        "Adapter",
-        "Handler",
-        "Manager",
-        "Service",
-        "Controller",
-        "Provider",
-        "Factory",
-        "Builder",
-        "Helper",
-        "Util",
-    )
-    if any(cleaned.endswith(suffix) for suffix in code_suffixes):
-        return False
-
-    # Reject boolean/null literals and common JSON noise
-    if lowered in {"true", "false", "null", "none", "undefined"}:
-        return False
-
-    # Reject environment variables (all caps with underscores) and text fragments ending with colons
-    if ("_" in cleaned and cleaned.isupper()) or cleaned.endswith(":"):
-        return False
-
-    return True
-
-
-def generate_summary(
-    content: str, fallback: Optional[str] = None, *, max_length: int = 240
-) -> Optional[str]:
-    text = (content or "").strip()
-    if not text:
-        return fallback
-
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    summary = sentences[0] if sentences else text
-    summary = summary.strip()
-
-    if not summary:
-        return fallback
-
-    if len(summary) > max_length:
-        truncated = summary[:max_length].rsplit(" ", 1)[0]
-        summary = truncated.strip() if truncated else summary[:max_length].strip()
-
-    if fallback and fallback.strip() == summary:
-        return fallback
-
-    return summary
-
-
-def extract_entities(content: str) -> Dict[str, List[str]]:
-    """Extract entities from memory content using spaCy when available."""
-    result: Dict[str, Set[str]] = {
-        "tools": set(),
-        "projects": set(),
-        "people": set(),
-        "concepts": set(),
-        "organizations": set(),
-    }
-
-    text = (content or "").strip()
-    if not text:
-        return {key: [] for key in result}
-
-    nlp = _get_spacy_nlp()
-    if nlp is not None:
-        try:
-            doc = nlp(text)
-            for ent in doc.ents:
-                value = ent.text.strip()
-                if not _is_valid_entity(value, allow_lower=False, max_words=6):
-                    continue
-                if ent.label_ in {"PERSON"}:
-                    result["people"].add(value)
-                elif ent.label_ in {"ORG"}:
-                    result["organizations"].add(value)
-                elif ent.label_ in {"PRODUCT", "WORK_OF_ART", "LAW"}:
-                    result["tools"].add(value)
-                elif ent.label_ in {"EVENT", "GPE", "LOC", "NORP"}:
-                    result["concepts"].add(value)
-        except Exception:  # pragma: no cover - defensive
-            logger.exception("spaCy entity extraction failed")
-
-    # Regex-based fallbacks to capture simple patterns
-    for match in re.findall(
-        r"(?:with|met with|meeting with|talked to|spoke with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
-        text,
-    ):
-        result["people"].add(match.strip())
-
-    tool_patterns = [
-        r"(?:use|using|deploy|deployed|with|via)\s+([A-Z][\w\-]+)",
-        r"([A-Z][\w\-]+)\s+(?:vs|versus|over|instead of)",
-    ]
-    for pattern in tool_patterns:
-        for match in re.findall(pattern, text, flags=re.IGNORECASE):
-            cleaned = match.strip()
-            if _is_valid_entity(cleaned):
-                result["tools"].add(cleaned)
-
-    for match in re.findall(r"`([^`]+)`", text):
-        cleaned = match.strip()
-        if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
-            result["projects"].add(cleaned)
-
-    # Extract project names from "project called/named 'X'" pattern
-    for match in re.findall(
-        r'(?:project|repo|repository)\s+(?:called|named)\s+"([^"]+)"', text, re.IGNORECASE
-    ):
-        cleaned = match.strip()
-        if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
-            result["projects"].add(cleaned)
-
-    # Extract project names from 'project "X"' pattern
-    for match in re.findall(r'(?:project|repo|repository)\s+"([^"]+)"', text, re.IGNORECASE):
-        cleaned = match.strip()
-        if _is_valid_entity(cleaned, allow_lower=False, max_words=4):
-            result["projects"].add(cleaned)
-
-    for match in re.findall(r"Project\s+([A-Z][\w\-]+)", text):
-        cleaned = match.strip()
-        if _is_valid_entity(cleaned):
-            result["projects"].add(cleaned)
-
-    # Extract project names from "project: project-name" pattern (common in session starts)
-    for match in re.findall(r"(?:in |on )?project:\s+([a-z][a-z0-9\-]+)", text, re.IGNORECASE):
-        cleaned = match.strip()
-        if _is_valid_entity(cleaned, allow_lower=True):
-            result["projects"].add(cleaned)
-
-    result["tools"].difference_update(result["people"])
-
-    cleaned = {key: sorted({value for value in values if value}) for key, values in result.items()}
-    return cleaned
-
-
-@dataclass
-class EnrichmentStats:
-    processed_total: int = 0
-    successes: int = 0
-    failures: int = 0
-    last_success_id: Optional[str] = None
-    last_success_at: Optional[str] = None
-    last_error: Optional[str] = None
-    last_error_at: Optional[str] = None
-
-    def record_success(self, memory_id: str) -> None:
-        self.processed_total += 1
-        self.successes += 1
-        self.last_success_id = memory_id
-        self.last_success_at = utc_now()
-
-    def record_failure(self, error: str) -> None:
-        self.processed_total += 1
-        self.failures += 1
-        self.last_error = error
-        self.last_error_at = utc_now()
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "processed_total": self.processed_total,
-            "successes": self.successes,
-            "failures": self.failures,
-            "last_success_id": self.last_success_id,
-            "last_success_at": self.last_success_at,
-            "last_error": self.last_error,
-            "last_error_at": self.last_error_at,
-        }
-
-
-@dataclass
-class EnrichmentJob:
-    memory_id: str
-    attempt: int = 0
-    forced: bool = False
-
-
-@dataclass
-class ServiceState:
-    falkordb: Optional[FalkorDB] = None
-    memory_graph: Any = None
-    qdrant: Optional[QdrantClient] = None
-    openai_client: Optional[OpenAI] = (
-        None  # Keep for backward compatibility (e.g., memory type classification)
-    )
-    embedding_provider: Optional[EmbeddingProvider] = None  # New provider pattern for embeddings
-    enrichment_queue: Optional[Queue] = None
-    enrichment_thread: Optional[Thread] = None
-    enrichment_stats: EnrichmentStats = field(default_factory=EnrichmentStats)
-    enrichment_inflight: Set[str] = field(default_factory=set)
-    enrichment_pending: Set[str] = field(default_factory=set)
-    enrichment_lock: Lock = field(default_factory=Lock)
-    consolidation_thread: Optional[Thread] = None
-    consolidation_stop_event: Optional[Event] = None
-    # Async embedding generation
-    embedding_queue: Optional[Queue] = None
-    embedding_thread: Optional[Thread] = None
-    embedding_inflight: Set[str] = field(default_factory=set)
-    embedding_pending: Set[str] = field(default_factory=set)
-    embedding_lock: Lock = field(default_factory=Lock)
-    # Background sync worker
-    sync_thread: Optional[Thread] = None
-    sync_stop_event: Optional[Event] = None
-    sync_last_run: Optional[str] = None
-    sync_last_result: Optional[Dict[str, Any]] = None
-    # Effective vector size (auto-detected from existing collection or config default)
-    effective_vector_size: int = VECTOR_SIZE
 
 
 state = ServiceState()
