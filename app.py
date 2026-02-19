@@ -88,6 +88,13 @@ from automem.consolidation.runtime_helpers import (
     persist_consolidation_run as _persist_consolidation_run_runtime,
 )
 from automem.consolidation.runtime_helpers import tasks_for_mode as _tasks_for_mode_runtime
+from automem.consolidation.runtime_routes import (
+    consolidate_memories as _consolidate_memories_runtime,
+)
+from automem.consolidation.runtime_routes import (
+    consolidation_status as _consolidation_status_runtime,
+)
+from automem.consolidation.runtime_routes import create_association as _create_association_runtime
 from automem.embedding.provider_init import init_embedding_provider as _init_embedding_provider
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
@@ -1472,139 +1479,48 @@ def recall_memories() -> Any:
 
 @memory_bp.route("/associate", methods=["POST"])
 def create_association() -> Any:
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(400, description="JSON body is required")
-
-    memory1_id = (payload.get("memory1_id") or "").strip()
-    memory2_id = (payload.get("memory2_id") or "").strip()
-    relation_type = (payload.get("type") or "RELATES_TO").upper()
-    strength = _coerce_importance(payload.get("strength", 0.5))
-
-    if not memory1_id or not memory2_id:
-        abort(400, description="'memory1_id' and 'memory2_id' are required")
-    if memory1_id == memory2_id:
-        abort(400, description="Cannot associate a memory with itself")
-    if relation_type not in ALLOWED_RELATIONS:
-        abort(400, description=f"Relation type must be one of {sorted(ALLOWED_RELATIONS)}")
-
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    timestamp = utc_now()
-
-    # Build relationship properties based on type
-    relationship_props = {
-        "strength": strength,
-        "updated_at": timestamp,
-    }
-
-    # Add type-specific properties if provided
-    relation_config = RELATIONSHIP_TYPES.get(relation_type, {})
-    if "properties" in relation_config:
-        for prop in relation_config["properties"]:
-            if prop in payload:
-                relationship_props[prop] = payload[prop]
-
-    # Build the SET clause dynamically
-    set_clauses = [f"r.{key} = ${key}" for key in relationship_props]
-    set_clause = ", ".join(set_clauses)
-
-    try:
-        result = graph.query(
-            f"""
-            MATCH (m1:Memory {{id: $id1}})
-            MATCH (m2:Memory {{id: $id2}})
-            MERGE (m1)-[r:{relation_type}]->(m2)
-            SET {set_clause}
-            RETURN r
-            """,
-            {
-                "id1": memory1_id,
-                "id2": memory2_id,
-                **relationship_props,
-            },
-        )
-    except Exception:  # pragma: no cover - log full stack trace in production
-        logger.exception("Failed to create association")
-        abort(500, description="Failed to create association")
-
-    if not result.result_set:
-        abort(404, description="One or both memories do not exist")
-
-    response = {
-        "status": "success",
-        "message": f"Association created between {memory1_id} and {memory2_id}",
-        "relation_type": relation_type,
-        "strength": strength,
-    }
-
-    # Add additional properties to response
-    for prop in relation_config.get("properties", []):
-        if prop in relationship_props:
-            response[prop] = relationship_props[prop]
-
-    return jsonify(response), 201
+    return _create_association_runtime(
+        request_obj=request,
+        coerce_importance_fn=_coerce_importance,
+        get_memory_graph_fn=get_memory_graph,
+        allowed_relations=ALLOWED_RELATIONS,
+        relationship_types=RELATIONSHIP_TYPES,
+        utc_now_fn=utc_now,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
+        logger=logger,
+    )
 
 
 @consolidation_bp.route("/consolidate", methods=["POST"])
 def consolidate_memories() -> Any:
-    """Run memory consolidation."""
-    data = request.get_json() or {}
-    mode = data.get("mode", "full")
-    dry_run = data.get("dry_run", True)
-
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    init_consolidation_scheduler()
-
-    try:
-        vector_store = get_qdrant_client()
-        consolidator = MemoryConsolidator(graph, vector_store)
-        results = consolidator.consolidate(mode=mode, dry_run=dry_run)
-
-        if not dry_run:
-            _persist_consolidation_run(graph, results)
-
-        return jsonify({"status": "success", "consolidation": results}), 200
-    except Exception as e:
-        logger.error(f"Consolidation failed: {e}")
-        return jsonify({"error": "Consolidation failed", "details": str(e)}), 500
+    return _consolidate_memories_runtime(
+        request_obj=request,
+        get_memory_graph_fn=get_memory_graph,
+        init_consolidation_scheduler_fn=init_consolidation_scheduler,
+        get_qdrant_client_fn=get_qdrant_client,
+        memory_consolidator_cls=MemoryConsolidator,
+        persist_consolidation_run_fn=_persist_consolidation_run,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
+        logger=logger,
+    )
 
 
 @consolidation_bp.route("/consolidate/status", methods=["GET"])
 def consolidation_status() -> Any:
-    """Get consolidation scheduler status."""
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    try:
-        init_consolidation_scheduler()
-        scheduler = _build_scheduler_from_graph(graph)
-        history = _load_recent_runs(graph, CONSOLIDATION_HISTORY_LIMIT)
-        next_runs = scheduler.get_next_runs() if scheduler else {}
-
-        return (
-            jsonify(
-                {
-                    "status": "success",
-                    "next_runs": next_runs,
-                    "history": history,
-                    "thread_alive": bool(
-                        state.consolidation_thread and state.consolidation_thread.is_alive()
-                    ),
-                    "tick_seconds": CONSOLIDATION_TICK_SECONDS,
-                }
-            ),
-            200,
-        )
-    except Exception as e:
-        logger.error(f"Failed to get consolidation status: {e}")
-        return jsonify({"error": "Failed to get status", "details": str(e)}), 500
+    return _consolidation_status_runtime(
+        get_memory_graph_fn=get_memory_graph,
+        init_consolidation_scheduler_fn=init_consolidation_scheduler,
+        build_scheduler_from_graph_fn=_build_scheduler_from_graph,
+        load_recent_runs_fn=_load_recent_runs,
+        consolidation_history_limit=CONSOLIDATION_HISTORY_LIMIT,
+        consolidation_tick_seconds=CONSOLIDATION_TICK_SECONDS,
+        state=state,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
+        logger=logger,
+    )
 
 
 @recall_bp.route("/startup-recall", methods=["GET"])
