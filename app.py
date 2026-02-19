@@ -76,6 +76,7 @@ from automem.api.runtime_memory_routes import delete_memory as _delete_memory_ru
 from automem.api.runtime_memory_routes import memories_by_tag as _memories_by_tag_runtime
 from automem.api.runtime_memory_routes import store_memory as _store_memory_runtime
 from automem.api.runtime_memory_routes import update_memory as _update_memory_runtime
+from automem.api.runtime_recall_routes import recall_memories as _recall_memories_runtime
 from automem.api.stream import create_stream_blueprint, emit_event
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_helpers import (
@@ -1027,99 +1028,33 @@ def memories_by_tag() -> Any:
 
 @recall_bp.route("/recall", methods=["GET"])
 def recall_memories() -> Any:
-    query_start = time.perf_counter()
-    query_text = (request.args.get("query") or "").strip()
-    try:
-        requested_limit = int(request.args.get("limit", 5))
-    except (TypeError, ValueError):
-        requested_limit = 5
-    limit = max(1, min(requested_limit, RECALL_MAX_LIMIT))
-    embedding_param = request.args.get("embedding")
-    time_query = request.args.get("time_query") or request.args.get("time")
-    start_param = request.args.get("start")
-    end_param = request.args.get("end")
-    tags_param = request.args.getlist("tags") or request.args.get("tags")
-
-    tag_mode = (request.args.get("tag_mode") or "any").strip().lower()
-    if tag_mode not in {"any", "all"}:
-        tag_mode = "any"
-
-    tag_match = (request.args.get("tag_match") or "prefix").strip().lower()
-    if tag_match not in {"exact", "prefix"}:
-        tag_match = "prefix"
-
-    time_start, time_end = _parse_time_expression(time_query)
-
-    start_time = time_start
-    end_time = time_end
-
-    if start_param:
-        try:
-            start_time = _normalize_timestamp(start_param)
-        except ValueError as exc:
-            abort(400, description=f"Invalid start time: {exc}")
-
-    if end_param:
-        try:
-            end_time = _normalize_timestamp(end_param)
-        except ValueError as exc:
-            abort(400, description=f"Invalid end time: {exc}")
-
-    tag_filters = _normalize_tag_list(tags_param)
-
-    seen_ids: set[str] = set()
-    graph = get_memory_graph()
-    qdrant_client = get_qdrant_client()
-
-    results: List[Dict[str, Any]] = []
-    vector_matches: List[Dict[str, Any]] = []
     # Delegate implementation to recall blueprint module (kept for backward-compatibility)
     from automem.api.recall import handle_recall  # local import to avoid cycles
 
-    response = handle_recall(
-        get_memory_graph,
-        get_qdrant_client,
-        _normalize_tag_list,
-        _normalize_timestamp,
-        _parse_time_expression,
-        _extract_keywords,
-        _compute_metadata_score,
-        _result_passes_filters,
-        _graph_keyword_search,
-        _vector_search,
-        _vector_filter_only_tag_search,
-        RECALL_MAX_LIMIT,
-        logger,
+    return _recall_memories_runtime(
+        request_obj=request,
+        perf_counter_fn=time.perf_counter,
+        parse_time_expression_fn=_parse_time_expression,
+        normalize_timestamp_fn=_normalize_timestamp,
+        normalize_tag_list_fn=_normalize_tag_list,
+        handle_recall_fn=handle_recall,
+        get_memory_graph_fn=get_memory_graph,
+        get_qdrant_client_fn=get_qdrant_client,
+        extract_keywords_fn=_extract_keywords,
+        compute_metadata_score_fn=_compute_metadata_score,
+        result_passes_filters_fn=_result_passes_filters,
+        graph_keyword_search_fn=_graph_keyword_search,
+        vector_search_fn=_vector_search,
+        vector_filter_only_tag_search_fn=_vector_filter_only_tag_search,
+        recall_max_limit=RECALL_MAX_LIMIT,
+        logger=logger,
         allowed_relations=ALLOWED_RELATIONS,
-        relation_limit=RECALL_RELATION_LIMIT,
-        expansion_limit_default=RECALL_EXPANSION_LIMIT,
+        recall_relation_limit=RECALL_RELATION_LIMIT,
+        recall_expansion_limit=RECALL_EXPANSION_LIMIT,
+        emit_event_fn=emit_event,
+        utc_now_fn=utc_now,
+        abort_fn=abort,
     )
-
-    # Emit SSE event for real-time monitoring
-    elapsed_ms = int((time.perf_counter() - query_start) * 1000)
-    result_count = 0
-    try:
-        # Response is either a tuple (response, status) or Response object
-        resp_data = response[0] if isinstance(response, tuple) else response
-        if hasattr(resp_data, "get_json"):
-            data = resp_data.get_json(silent=True) or {}
-            result_count = len(data.get("memories", []))
-    except Exception as e:
-        logger.debug("Failed to parse response for result_count", exc_info=e)
-
-    emit_event(
-        "memory.recall",
-        {
-            "query": query_text[:50] if query_text else "(no query)",
-            "limit": limit,
-            "result_count": result_count,
-            "elapsed_ms": elapsed_ms,
-            "tags": tag_filters[:3] if tag_filters else [],
-        },
-        utc_now,
-    )
-
-    return response
 
 
 @memory_bp.route("/associate", methods=["POST"])
