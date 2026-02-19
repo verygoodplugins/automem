@@ -1,119 +1,17 @@
 import json
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from flask.testing import FlaskClient
 
 import app
-
-
-class DummyGraph:
-    """Minimal fake FalkorDB graph interface for tests."""
-
-    def __init__(self):
-        self.queries = []
-        self.nodes: set[str] = set()
-        self.memories = []
-
-    def query(self, query, params=None):
-        params = params or {}
-        self.queries.append((query, params))
-
-        # Store memory creation
-        if "MERGE (m:Memory {id:" in query:
-            memory_id = params["id"]
-            self.nodes.add(memory_id)
-            self.memories.append(
-                {
-                    "id": memory_id,
-                    "content": params.get("content", ""),
-                    "type": params.get("type", "Memory"),
-                    "confidence": params.get("confidence", 0.5),
-                    "importance": params.get("importance", 0.5),
-                }
-            )
-            return SimpleNamespace(result_set=[[SimpleNamespace(properties={"id": memory_id})]])
-
-        # Analytics queries
-        if "MATCH (m:Memory)" in query and "RETURN m.type, COUNT(m)" in query:
-            # Return memory type distribution
-            types_count = {}
-            for mem in self.memories:
-                mem_type = mem.get("type", "Memory")
-                if mem_type not in types_count:
-                    types_count[mem_type] = {"count": 0, "total_conf": 0}
-                types_count[mem_type]["count"] += 1
-                types_count[mem_type]["total_conf"] += mem.get("confidence", 0.5)
-
-            result_set = []
-            for mem_type, data in types_count.items():
-                avg_conf = data["total_conf"] / data["count"] if data["count"] > 0 else 0
-                result_set.append([mem_type, data["count"], avg_conf])
-            return SimpleNamespace(result_set=result_set)
-
-        # Pattern queries
-        if "MATCH (p:Pattern)" in query:
-            return SimpleNamespace(result_set=[])
-
-        # Preference queries
-        if "MATCH (m1:Memory)-[r:PREFERS_OVER]" in query:
-            return SimpleNamespace(result_set=[])
-
-        # Temporal insights query
-        if "toInteger(substring(m.timestamp" in query:
-            return SimpleNamespace(result_set=[])
-
-        # Confidence distribution query
-        if "WHEN m.confidence" in query:
-            return SimpleNamespace(result_set=[["medium", len(self.memories)]])
-
-        # Entity extraction query
-        if "MATCH (m:Memory)" in query and "RETURN m.content" in query:
-            result_set = [[mem["content"]] for mem in self.memories[:100]]
-            return SimpleNamespace(result_set=result_set)
-
-        # Simulate an association creation returning a stub relation
-        if "MERGE (m1)-[r:" in query:
-            return SimpleNamespace(
-                result_set=[
-                    [
-                        "RELATES_TO",
-                        params.get("strength", 0.5),
-                        {"properties": {"id": params.get("id2", "")}},
-                    ]
-                ]
-            )
-
-        # JIT canonical enrichment check
-        if "MATCH (m:Memory {id:" in query and "m.enriched" in query:
-            mem = next((m for m in self.memories if m["id"] == params.get("id")), None)
-            if mem:
-                return SimpleNamespace(
-                    result_set=[[mem.get("enriched", False), mem.get("processed", False)]]
-                )
-            return SimpleNamespace(result_set=[])
-
-        # Graph recall relations query
-        if "MATCH (m:Memory {id:" in query and "RETURN type" in query:
-            return SimpleNamespace(result_set=[])
-
-        # Text search query should return stored node
-        if "MATCH (m:Memory)" in query and "RETURN m" in query and "WHERE" in query:
-            data = {
-                "id": params.get("query", "memory-1"),
-                "content": "Example",
-                "importance": 0.9,
-            }
-            return SimpleNamespace(result_set=[[SimpleNamespace(properties=data)]])
-
-        return SimpleNamespace(result_set=[])
+from tests.support.fake_graph import FakeGraph
 
 
 @pytest.fixture(autouse=True)
 def reset_state(monkeypatch):
     state = app.ServiceState()
-    graph = DummyGraph()
+    graph = FakeGraph()
     state.memory_graph = graph
     monkeypatch.setattr(app, "state", state)
     monkeypatch.setattr(app, "init_falkordb", lambda: None)
@@ -345,7 +243,7 @@ def test_recall_updates_last_accessed(client, reset_state, auth_headers):
     body = response.get_json()
     assert body["status"] == "success"
 
-    # Verify the query was issued (check DummyGraph recorded queries)
+    # Verify the query was issued (check FakeGraph recorded queries)
     # Look for the UNWIND query that updates last_accessed
     last_accessed_queries = [q for q, p in reset_state.queries if "SET m.last_accessed" in q]
     assert len(last_accessed_queries) >= 1, "last_accessed update query should have been issued"
@@ -485,7 +383,7 @@ def test_result_passes_filters_mixed_naive_aware():
 # ============================================================================
 
 
-def test_jit_enrich_lightweight_basic(reset_state: DummyGraph) -> None:
+def test_jit_enrich_lightweight_basic(reset_state: FakeGraph) -> None:
     """JIT enrichment extracts entities, generates summary, and does NOT set processed."""
     properties = {
         "id": "mem-jit-1",

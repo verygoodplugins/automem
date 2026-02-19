@@ -49,7 +49,7 @@ test:
 		echo "🔧 ./venv/bin/pytest not found; bootstrapping with 'make install'..."; \
 		$(MAKE) install; \
 	fi
-	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m unit
 
 # Format code
 fmt:
@@ -70,7 +70,7 @@ test-integration:
 	@echo "⏳ Waiting for services to be ready..."
 	@sleep 5
 	@echo "🧪 Running tests..."
-	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs
+	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m integration
 
 # Run integration tests against live Railway server
 test-live:
