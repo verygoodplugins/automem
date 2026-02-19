@@ -74,6 +74,7 @@ from automem.api.auth_helpers import require_admin_token as _require_admin_token
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
 from automem.api.runtime_memory_routes import delete_memory as _delete_memory_runtime
 from automem.api.runtime_memory_routes import memories_by_tag as _memories_by_tag_runtime
+from automem.api.runtime_memory_routes import store_memory as _store_memory_runtime
 from automem.api.runtime_memory_routes import update_memory as _update_memory_runtime
 from automem.api.stream import create_stream_blueprint, emit_event
 from automem.classification.memory_classifier import MemoryClassifier
@@ -946,246 +947,32 @@ def handle_exceptions(exc: Exception):
 
 @memory_bp.route("/memory", methods=["POST"])
 def store_memory() -> Any:
-    query_start = time.perf_counter()
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        abort(400, description="JSON body is required")
-
-    content = (payload.get("content") or "").strip()
-    if not content:
-        abort(400, description="'content' is required")
-
-    tags = _normalize_tags(payload.get("tags"))
-    tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
-    tag_prefixes = _compute_tag_prefixes(tags_lower)
-    importance = _coerce_importance(payload.get("importance"))
-    memory_id = payload.get("id") or str(uuid.uuid4())
-
-    metadata_raw = payload.get("metadata")
-    if metadata_raw is None:
-        metadata: Dict[str, Any] = {}
-    elif isinstance(metadata_raw, dict):
-        metadata = metadata_raw
-    else:
-        abort(400, description="'metadata' must be an object")
-    metadata_json = json.dumps(metadata, default=str)
-
-    # Accept explicit type/confidence or classify automatically
-    raw_type = payload.get("type")
-    type_confidence = payload.get("confidence")
-
-    if raw_type:
-        # Normalize type (handles aliases and case variations)
-        memory_type, was_normalized = normalize_memory_type(raw_type)
-
-        # Empty string means unknown type that couldn't be mapped
-        if not memory_type:
-            valid_types = sorted(MEMORY_TYPES)
-            alias_examples = ", ".join(f"'{k}'" for k in list(TYPE_ALIASES.keys())[:5])
-            abort(
-                400,
-                description=(
-                    f"Invalid memory type '{raw_type}'. "
-                    f"Must be one of: {', '.join(valid_types)}, "
-                    f"or aliases like {alias_examples}..."
-                ),
-            )
-
-        if was_normalized and memory_type != raw_type:
-            logger.debug("Normalized type '%s' -> '%s'", raw_type, memory_type)
-
-        # Use provided confidence or default
-        if type_confidence is None:
-            type_confidence = 0.9  # High confidence for explicit types
-        else:
-            type_confidence = _coerce_importance(type_confidence)
-    else:
-        # Auto-classify if no type provided
-        memory_type, type_confidence = memory_classifier.classify(content)
-
-    # Handle temporal validity fields
-    t_valid = payload.get("t_valid")
-    t_invalid = payload.get("t_invalid")
-    if t_valid:
-        try:
-            t_valid = _normalize_timestamp(t_valid)
-        except ValueError as exc:
-            abort(400, description=f"Invalid t_valid: {exc}")
-    if t_invalid:
-        try:
-            t_invalid = _normalize_timestamp(t_invalid)
-        except ValueError as exc:
-            abort(400, description=f"Invalid t_invalid: {exc}")
-
-    try:
-        embedding = _coerce_embedding(payload.get("embedding"))
-    except ValueError as exc:
-        abort(400, description=str(exc))
-
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    created_at = payload.get("timestamp")
-    if created_at:
-        try:
-            created_at = _normalize_timestamp(created_at)
-        except ValueError as exc:
-            abort(400, description=str(exc))
-    else:
-        created_at = utc_now()
-
-    updated_at = payload.get("updated_at")
-    if updated_at:
-        try:
-            updated_at = _normalize_timestamp(updated_at)
-        except ValueError as exc:
-            abort(400, description=f"Invalid updated_at: {exc}")
-    else:
-        updated_at = created_at
-
-    last_accessed = payload.get("last_accessed")
-    if last_accessed:
-        try:
-            last_accessed = _normalize_timestamp(last_accessed)
-        except ValueError as exc:
-            abort(400, description=f"Invalid last_accessed: {exc}")
-    else:
-        last_accessed = updated_at
-
-    try:
-        graph.query(
-            """
-            MERGE (m:Memory {id: $id})
-            SET m.content = $content,
-                m.timestamp = $timestamp,
-                m.importance = $importance,
-                m.tags = $tags,
-                m.tag_prefixes = $tag_prefixes,
-                m.type = $type,
-                m.confidence = $confidence,
-                m.t_valid = $t_valid,
-                m.t_invalid = $t_invalid,
-                m.updated_at = $updated_at,
-                m.last_accessed = $last_accessed,
-                m.metadata = $metadata,
-                m.processed = false
-            RETURN m
-            """,
-            {
-                "id": memory_id,
-                "content": content,
-                "timestamp": created_at,
-                "importance": importance,
-                "tags": tags,
-                "tag_prefixes": tag_prefixes,
-                "type": memory_type,
-                "confidence": type_confidence,
-                "t_valid": t_valid or created_at,
-                "t_invalid": t_invalid,
-                "updated_at": updated_at,
-                "last_accessed": last_accessed,
-                "metadata": metadata_json,
-            },
-        )
-    except Exception:  # pragma: no cover - log full stack trace in production
-        logger.exception("Failed to persist memory in FalkorDB")
-        abort(500, description="Failed to store memory in FalkorDB")
-
-    # Queue for enrichment
-    enqueue_enrichment(memory_id)
-
-    # Queue for async embedding generation (if no embedding provided)
-    embedding_status = "skipped"
-    qdrant_client = get_qdrant_client()
-
-    if embedding is not None:
-        # Sync path: User provided embedding, store immediately
-        embedding_status = "provided"
-        qdrant_result = None
-        if qdrant_client is not None:
-            try:
-                qdrant_client.upsert(
-                    collection_name=COLLECTION_NAME,
-                    points=[
-                        PointStruct(
-                            id=memory_id,
-                            vector=embedding,
-                            payload={
-                                "content": content,
-                                "tags": tags,
-                                "tag_prefixes": tag_prefixes,
-                                "importance": importance,
-                                "timestamp": created_at,
-                                "type": memory_type,
-                                "confidence": type_confidence,
-                                "updated_at": updated_at,
-                                "last_accessed": last_accessed,
-                                "metadata": metadata,
-                            },
-                        )
-                    ],
-                )
-                qdrant_result = "stored"
-            except Exception:  # pragma: no cover - log full stack trace in production
-                logger.exception("Qdrant upsert failed")
-                qdrant_result = "failed"
-    elif qdrant_client is not None:
-        # Async path: Queue embedding generation
-        enqueue_embedding(memory_id, content)
-        embedding_status = "queued"
-        qdrant_result = "queued"
-    else:
-        qdrant_result = "unconfigured"
-
-    response = {
-        "status": "success",
-        "memory_id": memory_id,
-        "stored_at": created_at,
-        "type": memory_type,
-        "confidence": type_confidence,
-        "qdrant": qdrant_result,
-        "embedding_status": embedding_status,
-        "enrichment": "queued" if state.enrichment_queue else "disabled",
-        "metadata": metadata,
-        "timestamp": created_at,
-        "updated_at": updated_at,
-        "last_accessed": last_accessed,
-        "query_time_ms": round((time.perf_counter() - query_start) * 1000, 2),
-    }
-
-    # Structured logging for performance analysis
-    logger.info(
-        "memory_stored",
-        extra={
-            "memory_id": memory_id,
-            "type": memory_type,
-            "importance": importance,
-            "tags_count": len(tags),
-            "content_length": len(content),
-            "latency_ms": response["query_time_ms"],
-            "embedding_status": embedding_status,
-            "qdrant_status": qdrant_result,
-            "enrichment_queued": bool(state.enrichment_queue),
-        },
+    return _store_memory_runtime(
+        request_obj=request,
+        perf_counter_fn=time.perf_counter,
+        normalize_tags_fn=_normalize_tags,
+        compute_tag_prefixes_fn=_compute_tag_prefixes,
+        coerce_importance_fn=_coerce_importance,
+        normalize_memory_type_fn=normalize_memory_type,
+        memory_types=MEMORY_TYPES,
+        type_aliases=TYPE_ALIASES,
+        classify_memory_fn=memory_classifier.classify,
+        normalize_timestamp_fn=_normalize_timestamp,
+        coerce_embedding_fn=_coerce_embedding,
+        get_memory_graph_fn=get_memory_graph,
+        get_qdrant_client_fn=get_qdrant_client,
+        enqueue_enrichment_fn=enqueue_enrichment,
+        enqueue_embedding_fn=enqueue_embedding,
+        collection_name=COLLECTION_NAME,
+        point_struct_cls=PointStruct,
+        state=state,
+        logger=logger,
+        emit_event_fn=emit_event,
+        utc_now_fn=utc_now,
+        uuid4_fn=uuid.uuid4,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
     )
-
-    # Emit SSE event for real-time monitoring
-    emit_event(
-        "memory.store",
-        {
-            "id": memory_id,
-            "content_preview": content[:100] + "..." if len(content) > 100 else content,
-            "type": memory_type,
-            "importance": importance,
-            "tags": tags[:5],
-            "size_bytes": len(content),
-            "elapsed_ms": int(response["query_time_ms"]),
-        },
-        utc_now,
-    )
-
-    return jsonify(response), 201
 
 
 @memory_bp.route("/memory/<memory_id>", methods=["PATCH"])
