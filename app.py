@@ -8,12 +8,10 @@ is unavailable.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import math
 import os
-import random
 import re
 import sys
 import time
@@ -71,6 +69,18 @@ except ImportError:
 
 # SSE streaming for real-time observability
 from automem.api.stream import create_stream_blueprint, emit_event
+from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
+from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
+from automem.embedding.runtime_helpers import (
+    generate_placeholder_embedding as _generate_placeholder_embedding_value,
+)
+from automem.embedding.runtime_helpers import (
+    generate_real_embedding as _generate_real_embedding_value,
+)
+from automem.embedding.runtime_helpers import (
+    generate_real_embeddings_batch as _generate_real_embeddings_batch_value,
+)
+from automem.embedding.runtime_helpers import normalize_tags as _normalize_tags_value
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
 # Environment is loaded by automem.config
@@ -162,6 +172,13 @@ from automem.config import (
     VECTOR_SIZE,
     normalize_memory_type,
 )
+from automem.search.runtime_recall_helpers import (
+    _graph_keyword_search,
+    _result_passes_filters,
+    _vector_filter_only_tag_search,
+    _vector_search,
+    configure_recall_helpers,
+)
 from automem.stores.graph_store import _build_graph_tag_predicate
 from automem.stores.vector_store import _build_qdrant_tag_filter
 from automem.utils.entity_extraction import (
@@ -245,448 +262,6 @@ configure_entity_extraction(
     entity_blocklist=ENTITY_BLOCKLIST,
     spacy_model=ENRICHMENT_SPACY_MODEL,
 )
-
-
-# Local scoring/metadata helpers (fallback if package not available)
-
-
-def _result_passes_filters(
-    result: Dict[str, Any],
-    start_time: Optional[str],
-    end_time: Optional[str],
-    tag_filters: Optional[List[str]] = None,
-    tag_mode: str = "any",
-    tag_match: str = "prefix",
-    exclude_tags: Optional[List[str]] = None,
-) -> bool:
-    memory = result.get("memory", {}) or {}
-    timestamp = memory.get("timestamp")
-    if start_time or end_time:
-        parsed = _parse_iso_datetime(timestamp) if timestamp else None
-        parsed_start = _parse_iso_datetime(start_time) if start_time else None
-        parsed_end = _parse_iso_datetime(end_time) if end_time else None
-        if parsed is None:
-            return False
-        if parsed_start and parsed < parsed_start:
-            return False
-        if parsed_end and parsed > parsed_end:
-            return False
-
-    if tag_filters:
-        normalized_filters = _prepare_tag_filters(tag_filters)
-        if normalized_filters:
-            normalized_mode = "all" if tag_mode == "all" else "any"
-            normalized_match = "prefix" if tag_match == "prefix" else "exact"
-
-            tags = memory.get("tags") or []
-            lowered_tags = [
-                str(tag).strip().lower()
-                for tag in tags
-                if isinstance(tag, str) and str(tag).strip()
-            ]
-
-            if normalized_match == "exact":
-                tag_set = set(lowered_tags)
-                if not tag_set:
-                    return False
-                if normalized_mode == "all":
-                    if not all(filter_tag in tag_set for filter_tag in normalized_filters):
-                        return False
-                else:
-                    if not any(filter_tag in tag_set for filter_tag in normalized_filters):
-                        return False
-            else:
-                prefixes = memory.get("tag_prefixes") or []
-                prefix_set = {
-                    str(prefix).strip().lower()
-                    for prefix in prefixes
-                    if isinstance(prefix, str) and str(prefix).strip()
-                }
-
-                def _tags_start_with() -> bool:
-                    if not lowered_tags:
-                        return False
-                    if normalized_mode == "all":
-                        return all(
-                            any(tag.startswith(filter_tag) for tag in lowered_tags)
-                            for filter_tag in normalized_filters
-                        )
-                    return any(
-                        tag.startswith(filter_tag)
-                        for filter_tag in normalized_filters
-                        for tag in lowered_tags
-                    )
-
-                if prefix_set:
-                    if normalized_mode == "all":
-                        if not all(filter_tag in prefix_set for filter_tag in normalized_filters):
-                            return False
-                    else:
-                        if not any(filter_tag in prefix_set for filter_tag in normalized_filters):
-                            return False
-                else:
-                    if not _tags_start_with():
-                        return False
-
-    # Apply exclude_tags filter - exclude if ANY excluded tag matches
-    if exclude_tags:
-        normalized_exclude = _prepare_tag_filters(exclude_tags)
-        if normalized_exclude:
-            tags = memory.get("tags") or []
-            lowered_tags = [
-                str(tag).strip().lower()
-                for tag in tags
-                if isinstance(tag, str) and str(tag).strip()
-            ]
-
-            # Check exact matches first
-            tag_set = set(lowered_tags)
-            if any(exclude_tag in tag_set for exclude_tag in normalized_exclude):
-                return False
-
-            # Check prefix matches
-            if any(
-                tag.startswith(exclude_tag)
-                for exclude_tag in normalized_exclude
-                for tag in lowered_tags
-            ):
-                return False
-
-    return True
-
-
-def _format_graph_result(
-    graph: Any,
-    node: Any,
-    score: Optional[float],
-    match_type: str,
-    seen_ids: set[str],
-) -> Optional[Dict[str, Any]]:
-    data = _serialize_node(node)
-    memory_id = str(data.get("id")) if data.get("id") is not None else None
-    if not memory_id or memory_id in seen_ids:
-        return None
-
-    seen_ids.add(memory_id)
-    relations: List[Dict[str, Any]] = _fetch_relations(graph, memory_id)
-
-    numeric_score = float(score) if score is not None else 0.0
-    return {
-        "id": memory_id,
-        "score": numeric_score,
-        "match_score": numeric_score,
-        "match_type": match_type,
-        "source": "graph",
-        "memory": data,
-        "relations": relations,
-    }
-
-
-def _graph_trending_results(
-    graph: Any,
-    limit: int,
-    seen_ids: set[str],
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    tag_filters: Optional[List[str]] = None,
-    tag_mode: str = "any",
-    tag_match: str = "prefix",
-) -> List[Dict[str, Any]]:
-    """Return high-importance memories when no specific query is supplied."""
-    try:
-        sort_param = (
-            ((request.args.get("sort") or request.args.get("order_by") or "score") or "")
-            .strip()
-            .lower()
-        )
-        order_by = {
-            "time_asc": "m.timestamp ASC, m.importance DESC",
-            "time_desc": "m.timestamp DESC, m.importance DESC",
-            "updated_asc": "coalesce(m.updated_at, m.timestamp) ASC, m.importance DESC",
-            "updated_desc": "coalesce(m.updated_at, m.timestamp) DESC, m.importance DESC",
-        }.get(sort_param, "m.importance DESC, m.timestamp DESC")
-
-        where_clauses = ["coalesce(m.archived, false) = false"]
-        params: Dict[str, Any] = {"limit": limit}
-        if start_time:
-            where_clauses.append("m.timestamp >= $start_time")
-            params["start_time"] = start_time
-        if end_time:
-            where_clauses.append("m.timestamp <= $end_time")
-            params["end_time"] = end_time
-        if tag_filters:
-            normalized_filters = _prepare_tag_filters(tag_filters)
-            if normalized_filters:
-                where_clauses.append(_build_graph_tag_predicate(tag_mode, tag_match))
-                params["tag_filters"] = normalized_filters
-
-        query = f"""
-            MATCH (m:Memory)
-            WHERE {' AND '.join(where_clauses)}
-            RETURN m
-            ORDER BY {order_by}
-            LIMIT $limit
-        """
-        result = graph.query(query, params)
-    except Exception:
-        logger.exception("Failed to load trending memories")
-        return []
-
-    trending: List[Dict[str, Any]] = []
-    for row in getattr(result, "result_set", []) or []:
-        record = _format_graph_result(graph, row[0], None, "trending", seen_ids)
-        if record is None:
-            continue
-        # Use importance as a pseudo-score for ordering consistency
-        importance = record["memory"].get("importance")
-        record["score"] = float(importance) if isinstance(importance, (int, float)) else 0.0
-        record["match_score"] = record["score"]
-        trending.append(record)
-
-    return trending
-
-
-def _graph_keyword_search(
-    graph: Any,
-    query_text: str,
-    limit: int,
-    seen_ids: set[str],
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    tag_filters: Optional[List[str]] = None,
-    tag_mode: str = "any",
-    tag_match: str = "prefix",
-) -> List[Dict[str, Any]]:
-    """Perform a keyword-oriented search in the graph store."""
-    normalized = query_text.strip().lower()
-    if not normalized or normalized == "*":
-        return _graph_trending_results(
-            graph,
-            limit,
-            seen_ids,
-            start_time,
-            end_time,
-            tag_filters,
-            tag_mode,
-            tag_match,
-        )
-
-    keywords = _extract_keywords(normalized)
-    phrase = normalized if len(normalized) >= 3 else ""
-
-    try:
-        base_where = ["m.content IS NOT NULL"]
-        params: Dict[str, Any] = {"limit": limit}
-        if start_time:
-            base_where.append("m.timestamp >= $start_time")
-            params["start_time"] = start_time
-        if end_time:
-            base_where.append("m.timestamp <= $end_time")
-            params["end_time"] = end_time
-        if tag_filters:
-            normalized_filters = _prepare_tag_filters(tag_filters)
-            if normalized_filters:
-                base_where.append(_build_graph_tag_predicate(tag_mode, tag_match))
-                params["tag_filters"] = normalized_filters
-
-        where_clause = " AND ".join(base_where)
-
-        if keywords:
-            params.update({"keywords": keywords, "phrase": phrase})
-            query = f"""
-                MATCH (m:Memory)
-                WHERE {where_clause}
-                WITH m,
-                     toLower(m.content) AS content,
-                     [tag IN coalesce(m.tags, []) | toLower(tag)] AS tags
-                UNWIND $keywords AS kw
-                WITH m, content, tags, kw,
-                     CASE WHEN content CONTAINS kw THEN 2 ELSE 0 END +
-                     CASE WHEN any(tag IN tags WHERE tag CONTAINS kw) THEN 1 ELSE 0 END AS kw_score
-                WITH m, content, tags, SUM(kw_score) AS keyword_score
-                WITH m, keyword_score +
-                     CASE WHEN $phrase <> '' AND content CONTAINS $phrase THEN 2 ELSE 0 END +
-                     CASE WHEN $phrase <> '' AND any(tag IN tags WHERE tag CONTAINS $phrase) THEN 1 ELSE 0 END AS score
-                WHERE score > 0
-                RETURN m, score
-                ORDER BY score DESC, m.importance DESC, m.timestamp DESC
-                LIMIT $limit
-            """
-            result = graph.query(query, params)
-        elif phrase:
-            params.update({"phrase": phrase})
-            query = f"""
-                MATCH (m:Memory)
-                WHERE {where_clause}
-                WITH m,
-                     toLower(m.content) AS content,
-                     [tag IN coalesce(m.tags, []) | toLower(tag)] AS tags
-                WITH m,
-                     CASE WHEN content CONTAINS $phrase THEN 2 ELSE 0 END +
-                     CASE WHEN any(tag IN tags WHERE tag CONTAINS $phrase) THEN 1 ELSE 0 END AS score
-                WHERE score > 0
-                RETURN m, score
-                ORDER BY score DESC, m.importance DESC, m.timestamp DESC
-                LIMIT $limit
-            """
-            result = graph.query(query, params)
-        else:
-            return _graph_trending_results(
-                graph,
-                limit,
-                seen_ids,
-                start_time,
-                end_time,
-                tag_filters,
-                tag_mode,
-                tag_match,
-            )
-    except Exception:
-        logger.exception("Graph keyword search failed")
-        return []
-
-    matches: List[Dict[str, Any]] = []
-    for row in getattr(result, "result_set", []) or []:
-        node = row[0]
-        score = row[1] if len(row) > 1 else None
-        record = _format_graph_result(graph, node, score, "keyword", seen_ids)
-        if record is None:
-            continue
-        matches.append(record)
-
-    return matches
-
-
-def _vector_filter_only_tag_search(
-    qdrant_client: Optional[QdrantClient],
-    tag_filters: Optional[List[str]],
-    tag_mode: str,
-    tag_match: str,
-    limit: int,
-    seen_ids: set[str],
-) -> List[Dict[str, Any]]:
-    """Fallback scroll search when only tags are provided."""
-    if qdrant_client is None or not tag_filters or limit <= 0:
-        return []
-
-    query_filter = _build_qdrant_tag_filter(tag_filters, tag_mode, tag_match)
-    if query_filter is None:
-        return []
-
-    try:
-        points, _ = qdrant_client.scroll(
-            collection_name=COLLECTION_NAME,
-            scroll_filter=query_filter,
-            limit=limit,
-            with_payload=True,
-        )
-    except Exception:
-        logger.exception("Qdrant tag-only scroll failed")
-        return []
-
-    results: List[Dict[str, Any]] = []
-    for point in points or []:
-        memory_id = str(point.id)
-        if memory_id in seen_ids:
-            continue
-        seen_ids.add(memory_id)
-
-        payload = point.payload or {}
-        importance = payload.get("importance")
-        if isinstance(importance, (int, float)):
-            score = float(importance)
-        else:
-            try:
-                score = float(importance) if importance is not None else 0.0
-            except (TypeError, ValueError):
-                score = 0.0
-
-        results.append(
-            {
-                "id": memory_id,
-                "score": score,
-                "match_score": score,
-                "match_type": "tag",
-                "source": "qdrant",
-                "memory": payload,
-                "relations": [],
-            }
-        )
-
-    return results
-
-
-def _vector_search(
-    qdrant_client: Optional[QdrantClient],
-    graph: Any,
-    query_text: str,
-    embedding_param: Optional[str],
-    limit: int,
-    seen_ids: set[str],
-    tag_filters: Optional[List[str]] = None,
-    tag_mode: str = "any",
-    tag_match: str = "prefix",
-) -> List[Dict[str, Any]]:
-    """Perform vector search against Qdrant when configured."""
-    if qdrant_client is None:
-        return []
-
-    normalized = (query_text or "").strip()
-    if not embedding_param and normalized in {"", "*"}:
-        return []
-
-    embedding: Optional[List[float]] = None
-
-    if embedding_param:
-        try:
-            embedding = _coerce_embedding(embedding_param)
-        except ValueError as exc:
-            abort(400, description=str(exc))
-    elif normalized:
-        logger.debug("Generating embedding for query: %s", normalized)
-        embedding = _generate_real_embedding(normalized)
-
-    if not embedding:
-        return []
-
-    query_filter = _build_qdrant_tag_filter(tag_filters, tag_mode, tag_match)
-
-    try:
-        vector_results = qdrant_client.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=embedding,
-            limit=limit,
-            with_payload=True,
-            query_filter=query_filter,
-        )
-    except Exception:
-        logger.exception("Qdrant search failed")
-        return []
-
-    matches: List[Dict[str, Any]] = []
-    for hit in vector_results:
-        memory_id = str(hit.id)
-        if memory_id in seen_ids:
-            continue
-
-        seen_ids.add(memory_id)
-        payload = hit.payload or {}
-        relations = _fetch_relations(graph, memory_id) if graph is not None else []
-        score = float(hit.score) if hit.score is not None else 0.0
-
-        matches.append(
-            {
-                "id": memory_id,
-                "score": score,
-                "match_score": score,
-                "match_type": "vector",
-                "source": "qdrant",
-                "memory": payload,
-                "relations": relations,
-            }
-        )
-
-    return matches
 
 
 class MemoryClassifier:
@@ -3377,107 +2952,45 @@ def analyze_memories() -> Any:
 
 
 def _normalize_tags(value: Any) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list) and all(isinstance(tag, str) for tag in value):
-        return value
-    abort(400, description="'tags' must be a list of strings or a single string")
+    try:
+        return _normalize_tags_value(value)
+    except ValueError as exc:
+        abort(400, description=str(exc))
 
 
 def _coerce_importance(value: Any) -> float:
-    if value is None:
-        return 0.5
     try:
-        score = float(value)
-    except (TypeError, ValueError):
-        abort(400, description="'importance' must be a number")
-    if score < 0 or score > 1:
-        abort(400, description="'importance' must be between 0 and 1")
-    return score
+        return _coerce_importance_value(value)
+    except ValueError as exc:
+        abort(400, description=str(exc))
 
 
 def _coerce_embedding(value: Any) -> Optional[List[float]]:
-    if value is None or value == "":
-        return None
-    vector: List[Any]
-    if isinstance(value, list):
-        vector = value
-    elif isinstance(value, str):
-        vector = [part.strip() for part in value.split(",") if part.strip()]
-    else:
-        raise ValueError("Embedding must be a list of floats or a comma-separated string")
-
-    # Use effective dimension (auto-detected or config)
-    expected_dim = state.effective_vector_size
-    if len(vector) != expected_dim:
-        raise ValueError(f"Embedding must contain exactly {expected_dim} values")
-
-    try:
-        return [float(component) for component in vector]
-    except ValueError as exc:
-        raise ValueError("Embedding must contain numeric values") from exc
+    return _coerce_embedding_value(value, state.effective_vector_size)
 
 
 def _generate_placeholder_embedding(content: str) -> List[float]:
-    """Generate a deterministic embedding vector from the content."""
-    digest = hashlib.sha256(content.encode("utf-8")).digest()
-    seed = int.from_bytes(digest[:8], "little", signed=False)
-    rng = random.Random(seed)
-    # Use effective dimension (auto-detected or config)
-    return [rng.random() for _ in range(state.effective_vector_size)]
+    return _generate_placeholder_embedding_value(content, state.effective_vector_size)
 
 
 def _generate_real_embedding(content: str) -> List[float]:
-    """Generate an embedding using the configured provider."""
-    init_embedding_provider()
-
-    if state.embedding_provider is None:
-        logger.warning("No embedding provider available, using placeholder")
-        return _generate_placeholder_embedding(content)
-
-    expected_dim = state.effective_vector_size
-    try:
-        embedding = state.embedding_provider.generate_embedding(content)
-        if not isinstance(embedding, list) or len(embedding) != expected_dim:
-            logger.warning(
-                "Provider %s returned %s dims (expected %d); falling back to placeholder",
-                state.embedding_provider.provider_name(),
-                len(embedding) if isinstance(embedding, list) else "invalid",
-                expected_dim,
-            )
-            return _generate_placeholder_embedding(content)
-        return embedding
-    except Exception as e:
-        logger.warning("Failed to generate embedding: %s", str(e))
-        return _generate_placeholder_embedding(content)
+    return _generate_real_embedding_value(
+        content,
+        init_embedding_provider=init_embedding_provider,
+        state=state,
+        logger=logger,
+        placeholder_embedding=_generate_placeholder_embedding,
+    )
 
 
 def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
-    """Generate multiple embeddings in a single batch for efficiency."""
-    init_embedding_provider()
-
-    if not contents:
-        return []
-
-    if state.embedding_provider is None:
-        logger.debug("No embedding provider available, falling back to placeholder embeddings")
-        return [_generate_placeholder_embedding(c) for c in contents]
-
-    expected_dim = state.effective_vector_size
-    try:
-        embeddings = state.embedding_provider.generate_embeddings_batch(contents)
-        if not embeddings or any(len(e) != expected_dim for e in embeddings):
-            logger.warning(
-                "Provider %s returned invalid dims in batch; using placeholders",
-                state.embedding_provider.provider_name() if state.embedding_provider else "unknown",
-            )
-            return [_generate_placeholder_embedding(c) for c in contents]
-        return embeddings
-    except Exception as e:
-        logger.warning("Failed to generate batch embeddings: %s", str(e))
-        return [_generate_placeholder_embedding(c) for c in contents]
+    return _generate_real_embeddings_batch_value(
+        contents,
+        init_embedding_provider=init_embedding_provider,
+        state=state,
+        logger=logger,
+        placeholder_embedding=_generate_placeholder_embedding,
+    )
 
 
 def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
@@ -3505,6 +3018,21 @@ def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
             }
         )
     return connections
+
+
+configure_recall_helpers(
+    parse_iso_datetime=_parse_iso_datetime,
+    prepare_tag_filters=_prepare_tag_filters,
+    build_graph_tag_predicate=_build_graph_tag_predicate,
+    build_qdrant_tag_filter=_build_qdrant_tag_filter,
+    serialize_node=_serialize_node,
+    fetch_relations=_fetch_relations,
+    extract_keywords=_extract_keywords,
+    coerce_embedding=_coerce_embedding,
+    generate_real_embedding=_generate_real_embedding,
+    logger=logger,
+    collection_name=COLLECTION_NAME,
+)
 
 
 @recall_bp.route("/memories/<memory_id>/related", methods=["GET"])
