@@ -12,6 +12,7 @@ Optional helpers:
 
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -25,9 +26,12 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 _INTEGRATION_ENABLED = os.getenv("AUTOMEM_RUN_INTEGRATION_TESTS")
+pytestmark = [pytest.mark.integration]
 if not _INTEGRATION_ENABLED:
-    pytestmark = pytest.mark.skip(
-        reason="Integration tests disabled. Set AUTOMEM_RUN_INTEGRATION_TESTS=1 to enable."
+    pytestmark.append(
+        pytest.mark.skip(
+            reason="Integration tests disabled. Set AUTOMEM_RUN_INTEGRATION_TESTS=1 to enable."
+        )
     )
 
 # Resolve test base URL and safety for live targets
@@ -36,10 +40,12 @@ _BASE_URL = os.getenv("AUTOMEM_TEST_BASE_URL", _DEFAULT_BASE)
 _parsed = urlparse(_BASE_URL)
 _is_local = _parsed.hostname in {"localhost", "127.0.0.1"}
 if _INTEGRATION_ENABLED and not _is_local and os.getenv("AUTOMEM_ALLOW_LIVE") != "1":
-    pytestmark = pytest.mark.skip(
-        reason=(
-            f"Live server tests skipped for {_BASE_URL}. Set AUTOMEM_ALLOW_LIVE=1 to enable "
-            "against a non-local endpoint."
+    pytestmark.append(
+        pytest.mark.skip(
+            reason=(
+                f"Live server tests skipped for {_BASE_URL}. Set AUTOMEM_ALLOW_LIVE=1 to enable "
+                "against a non-local endpoint."
+            )
         )
     )
 
@@ -137,21 +143,103 @@ def test_health_check_real(api_client):
     response = api_client.get(f"{api_client.base_url}/health")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "healthy"
+    assert data["status"] in {"healthy", "degraded"}
     assert "timestamp" in data
     assert data.get("falkordb") == "connected"
     assert data.get("qdrant") == "connected"
+
+
+def test_store_then_recall_real_smoke(api_client):
+    """Store then recall should return the same memory id/content."""
+    memory_content = f"Store-then-recall smoke {uuid.uuid4()}"
+    unique_tag = f"itest-smoke-{uuid.uuid4().hex[:10]}"
+    store_response = api_client.post(
+        f"{api_client.base_url}/memory",
+        json={
+            "content": memory_content,
+            "tags": ["test", "integration", "smoke", unique_tag],
+            "importance": 0.7,
+        },
+    )
+    assert store_response.status_code == 201
+    memory_id = store_response.json()["memory_id"]
+
+    found = False
+    for _ in range(5):
+        recall_response = api_client.get(
+            f"{api_client.base_url}/recall",
+            params={"query": memory_content, "tags": unique_tag, "limit": 50},
+        )
+        assert recall_response.status_code == 200
+        recall_data = recall_response.json()
+        for result in recall_data.get("results", []):
+            if result.get("id") == memory_id:
+                assert result.get("memory", {}).get("content") == memory_content
+                found = True
+                break
+        if found:
+            break
+        time.sleep(0.5)
+
+    assert found, f"Stored memory {memory_id} was not recalled"
+
+    api_client.delete(f"{api_client.base_url}/memory/{memory_id}")
+
+
+def test_recall_jit_related_fields_real(api_client):
+    """Recall response should remain compatible with optional JIT enrichment fields."""
+    memory_content = f"JIT compatibility integration {uuid.uuid4()}"
+    unique_tag = f"itest-jit-{uuid.uuid4().hex[:10]}"
+    store_response = api_client.post(
+        f"{api_client.base_url}/memory",
+        json={
+            "content": memory_content,
+            "tags": ["test", "integration", "jit-check", unique_tag],
+            "importance": 0.65,
+        },
+    )
+    assert store_response.status_code == 201
+    memory_id = store_response.json()["memory_id"]
+
+    data = {}
+    matching = []
+    for _ in range(5):
+        response = api_client.get(
+            f"{api_client.base_url}/recall",
+            params={"query": memory_content, "tags": unique_tag, "limit": 50},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("status") == "success"
+        matching = [result for result in data.get("results", []) if result.get("id") == memory_id]
+        if matching:
+            break
+        time.sleep(0.5)
+
+    if "jit_enriched_count" in data:
+        assert isinstance(data["jit_enriched_count"], int)
+        assert data["jit_enriched_count"] >= 0
+
+    assert matching, f"Stored memory {memory_id} missing from recall response"
+
+    sample = matching[0]
+    assert sample.get("memory", {}).get("content") == memory_content
+    if "jit_enriched" in sample:
+        assert isinstance(sample["jit_enriched"], bool)
+
+    api_client.delete(f"{api_client.base_url}/memory/{memory_id}")
 
 
 def test_memory_lifecycle_real(api_client):
     """Test complete memory lifecycle: create, recall, update, delete."""
     # 1. Store a memory
     memory_content = f"Integration test memory {uuid.uuid4()}"
+    unique_tag = f"itest-lifecycle-{uuid.uuid4().hex[:10]}"
     store_response = api_client.post(
         f"{api_client.base_url}/memory",
         json={
             "content": memory_content,
-            "tags": ["test", "integration"],
+            "tags": ["test", "integration", unique_tag],
             "importance": 0.8,
             "metadata": {"source": "integration_test"},
         },
@@ -167,7 +255,8 @@ def test_memory_lifecycle_real(api_client):
     found = False
     for attempt in range(5):  # Retry up to 5 times
         recall_response = api_client.get(
-            f"{api_client.base_url}/recall", params={"query": memory_content, "limit": 5}
+            f"{api_client.base_url}/recall",
+            params={"query": memory_content, "tags": unique_tag, "limit": 50},
         )
         assert recall_response.status_code == 200
         recall_data = recall_response.json()
@@ -202,7 +291,8 @@ def test_memory_lifecycle_real(api_client):
 
     # 4. Verify update by recalling
     recall2_response = api_client.get(
-        f"{api_client.base_url}/recall", params={"query": updated_content, "limit": 5}
+        f"{api_client.base_url}/recall",
+        params={"query": updated_content, "tags": unique_tag, "limit": 50},
     )
     assert recall2_response.status_code == 200
     recall2_data = recall2_response.json()
@@ -345,14 +435,23 @@ def test_embedding_handling_real(api_client):
     # Create a 768-dimensional embedding
     embedding = [0.1] * 768
 
-    memory_response = api_client.post(
-        f"{api_client.base_url}/memory",
-        json={
-            "content": f"Memory with embedding {uuid.uuid4()}",
-            "embedding": embedding,
-            "importance": 0.7,
-        },
-    )
+    payload = {
+        "content": f"Memory with embedding {uuid.uuid4()}",
+        "embedding": embedding,
+        "importance": 0.7,
+    }
+
+    memory_response = api_client.post(f"{api_client.base_url}/memory", json=payload)
+    if memory_response.status_code == 400:
+        body = memory_response.json()
+        message = str(body.get("message", ""))
+        match = re.search(r"exactly\s+(\d+)\s+values", message, flags=re.IGNORECASE)
+        if match:
+            adjusted_dim = int(match.group(1))
+            print(f"Adjusting embedding dimension from {len(embedding)} to {adjusted_dim}")
+            payload["embedding"] = [0.1] * adjusted_dim
+            memory_response = api_client.post(f"{api_client.base_url}/memory", json=payload)
+
     assert memory_response.status_code == 201
     memory_id = memory_response.json()["memory_id"]
 

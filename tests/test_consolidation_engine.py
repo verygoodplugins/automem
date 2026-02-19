@@ -7,66 +7,7 @@ import pytest
 
 import consolidation as consolidation_module
 from consolidation import MemoryConsolidator
-
-
-class FakeResult:
-    def __init__(self, rows: List[List[Any]]):
-        self.result_set = rows
-
-
-class FakeGraph:
-    def __init__(self) -> None:
-        self.relationship_counts: Dict[str, int] = {}
-        self.sample_rows: List[List[Any]] = []
-        self.existing_pairs: set[frozenset[str]] = set()
-        self.cluster_rows: List[List[Any]] = []
-        self.decay_rows: List[List[Any]] = []
-        self.forgetting_rows: List[List[Any]] = []
-        self.deleted: List[str] = []
-        self.archived: List[tuple[str, float]] = []
-        self.updated_scores: List[tuple[str, float]] = []
-        self.queries: List[tuple[str, Dict[str, Any]]] = []
-
-    def query(self, query: str, params: Dict[str, Any] | None = None) -> FakeResult:
-        params = params or {}
-        self.queries.append((query, params))
-
-        if "COUNT(DISTINCT r)" in query:
-            memory_id = params.get("id")
-            count = self.relationship_counts.get(memory_id, 0)
-            return FakeResult([[count]])
-
-        if "RETURN COUNT(r) as count" in query and "$id1" in query:
-            key = frozenset((params["id1"], params["id2"]))
-            return FakeResult([[1 if key in self.existing_pairs else 0]])
-
-        if "ORDER BY rand()" in query and "LIMIT $limit" in query:
-            limit = params.get("limit")
-            rows = self.sample_rows if limit is None else self.sample_rows[:limit]
-            return FakeResult(rows)
-
-        if "WHERE m.embeddings IS NOT NULL" in query:
-            return FakeResult(self.cluster_rows)
-
-        if "m.relevance_score as old_score" in query:
-            return FakeResult(self.decay_rows)
-
-        if "m.relevance_score as score" in query and "m.last_accessed as last_accessed" in query:
-            return FakeResult(self.forgetting_rows)
-
-        if "DETACH DELETE m" in query:
-            self.deleted.append(params["id"])
-            return FakeResult([])
-
-        if "SET m.archived = true" in query:
-            self.archived.append((params["id"], params["score"]))
-            return FakeResult([])
-
-        if "SET m.relevance_score = $score" in query:
-            self.updated_scores.append((params["id"], params["score"]))
-            return FakeResult([])
-
-        return FakeResult([])
+from tests.support.fake_graph import FakeGraph  # noqa: F401 - used via dummy_graph fixture
 
 
 class FakeVectorStore:
@@ -97,8 +38,8 @@ def iso_days_ago(days: int) -> str:
     return (base - timedelta(days=days)).isoformat()
 
 
-def test_calculate_relevance_score_accounts_for_relationships() -> None:
-    graph = FakeGraph()
+def test_calculate_relevance_score_accounts_for_relationships(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts["m1"] = 0
     consolidator = MemoryConsolidator(graph)
 
@@ -121,8 +62,8 @@ def test_calculate_relevance_score_accounts_for_relationships() -> None:
     assert 0 < boosted <= 1
 
 
-def test_discover_creative_associations_builds_connections() -> None:
-    graph = FakeGraph()
+def test_discover_creative_associations_builds_connections(dummy_graph) -> None:
+    graph = dummy_graph
     graph.sample_rows = [
         ["decision-a", "Chose approach A", "Decision", [1.0, 0.0, 0.0], iso_days_ago(3)],
         ["decision-b", "Chose approach B", "Decision", [0.0, 1.0, 0.0], iso_days_ago(4)],
@@ -135,8 +76,8 @@ def test_discover_creative_associations_builds_connections() -> None:
     assert any(item["type"] == "CONTRASTS_WITH" for item in associations)
 
 
-def test_cluster_similar_memories_groups_items() -> None:
-    graph = FakeGraph()
+def test_cluster_similar_memories_groups_items(dummy_graph) -> None:
+    graph = dummy_graph
     graph.cluster_rows = [
         ["m1", "Alpha", [1.0, 0.0], "Insight"],
         ["m2", "Alpha follow-up", [0.95, 0.05], "Insight"],
@@ -183,8 +124,8 @@ def build_forgetting_rows() -> List[List[Any]]:
     ]
 
 
-def test_apply_controlled_forgetting_dry_run() -> None:
-    graph = FakeGraph()
+def test_apply_controlled_forgetting_dry_run(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts["recent-keep"] = 5
     graph.forgetting_rows = build_forgetting_rows()
 
@@ -199,8 +140,8 @@ def test_apply_controlled_forgetting_dry_run() -> None:
     assert graph.deleted == []
 
 
-def test_apply_controlled_forgetting_updates_graph_and_vector_store() -> None:
-    graph = FakeGraph()
+def test_apply_controlled_forgetting_updates_graph_and_vector_store(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts["recent-keep"] = 5
     graph.forgetting_rows = build_forgetting_rows()
 
@@ -220,8 +161,8 @@ def test_apply_controlled_forgetting_updates_graph_and_vector_store() -> None:
     assert points == ["old-delete"]
 
 
-def test_apply_decay_updates_scores() -> None:
-    graph = FakeGraph()
+def test_apply_decay_updates_scores(dummy_graph) -> None:
+    graph = dummy_graph
     graph.relationship_counts = {"a": 0, "b": 2}
     graph.decay_rows = [
         ["a", "Early note", iso_days_ago(10), 0.5, iso_days_ago(10), 0.5],

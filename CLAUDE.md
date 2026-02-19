@@ -251,6 +251,9 @@ ENRICHMENT_FAILURE_BACKOFF_SECONDS=5          # Backoff between retries
 ENRICHMENT_ENABLE_SUMMARIES=true              # Toggle automatic summary creation
 ENRICHMENT_SPACY_MODEL=en_core_web_sm         # spaCy model for entity extraction
 
+# JIT enrichment (lightweight inline enrichment during recall)
+JIT_ENRICHMENT_ENABLED=true                   # Run entity/summary extraction inline on recall for unenriched memories
+
 # Search scoring weights (all floats, see docs/ENVIRONMENT_VARIABLES.md)
 SEARCH_WEIGHT_VECTOR=0.35          # Semantic similarity via Qdrant
 SEARCH_WEIGHT_KEYWORD=0.35         # Keyword/TF-IDF matching
