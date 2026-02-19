@@ -225,6 +225,8 @@ from automem.search.runtime_recall_helpers import (
     _vector_search,
     configure_recall_helpers,
 )
+from automem.search.runtime_relations import fetch_relations as _fetch_relations_runtime
+from automem.search.runtime_relations import get_related_memories as _get_related_memories_runtime
 from automem.stores.graph_store import _build_graph_tag_predicate
 from automem.stores.runtime_clients import (
     ensure_qdrant_collection as _ensure_qdrant_collection_runtime,
@@ -1671,30 +1673,14 @@ def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
 
 
 def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
-    try:
-        records = graph.query(
-            """
-            MATCH (m:Memory {id: $id})-[r]->(related:Memory)
-            RETURN type(r) as relation_type, r.strength as strength, related
-            ORDER BY coalesce(r.updated_at, related.timestamp) DESC
-            LIMIT $limit
-            """,
-            {"id": memory_id, "limit": RECALL_RELATION_LIMIT},
-        )
-    except Exception:  # pragma: no cover - log full stack trace in production
-        logger.exception("Failed to fetch relations for memory %s", memory_id)
-        return []
-
-    connections: List[Dict[str, Any]] = []
-    for relation_type, strength, related in records.result_set:
-        connections.append(
-            {
-                "type": relation_type,
-                "strength": strength,
-                "memory": _summarize_relation_node(_serialize_node(related)),
-            }
-        )
-    return connections
+    return _fetch_relations_runtime(
+        graph=graph,
+        memory_id=memory_id,
+        relation_limit=RECALL_RELATION_LIMIT,
+        serialize_node_fn=_serialize_node,
+        summarize_relation_node_fn=_summarize_relation_node,
+        logger=logger,
+    )
 
 
 configure_recall_helpers(
@@ -1714,102 +1700,16 @@ configure_recall_helpers(
 
 @recall_bp.route("/memories/<memory_id>/related", methods=["GET"])
 def get_related_memories(memory_id: str) -> Any:
-    """Return related memories by traversing relationship edges.
-
-    Query params:
-      - relationship_types: comma-separated list of relationship types to traverse
-      - max_depth: traversal depth (default 1, max 3)
-      - limit: max number of related memories to return (default RECALL_RELATION_LIMIT)
-    """
-    graph = get_memory_graph()
-    if graph is None:
-        abort(503, description="FalkorDB is unavailable")
-
-    # Parse and sanitize relationship types
-    rel_types_param = (request.args.get("relationship_types") or "").strip()
-    if rel_types_param:
-        requested = [part.strip().upper() for part in rel_types_param.split(",") if part.strip()]
-        rel_types = [t for t in requested if t in ALLOWED_RELATIONS]
-        if not rel_types:
-            rel_types = sorted(ALLOWED_RELATIONS)
-    else:
-        rel_types = sorted(ALLOWED_RELATIONS)
-
-    # Depth and limit
-    try:
-        max_depth = int(request.args.get("max_depth", 1))
-    except (TypeError, ValueError):
-        max_depth = 1
-    max_depth = max(1, min(max_depth, 3))
-
-    try:
-        limit = int(request.args.get("limit", RECALL_RELATION_LIMIT))
-    except (TypeError, ValueError):
-        limit = RECALL_RELATION_LIMIT
-    limit = max(1, min(limit, 200))
-
-    # Build relationship type pattern like :A|B|C
-    if rel_types:
-        rel_pattern = ":" + "|".join(rel_types)
-    else:
-        rel_pattern = ""
-
-    # Build Cypher query
-    # We prefer full memory nodes (not summaries) for downstream consumers
-    query = f"""
-        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f']-' if rel_pattern else '-[r]-'}(related:Memory)
-        WHERE m.id <> related.id
-        CALL apoc.path.expandConfig(related, {{
-            relationshipFilter: '{'|'.join(rel_types)}',
-            minLevel: 0,
-            maxLevel: $max_depth,
-            bfs: true,
-            filterStartNode: true
-        }}) YIELD path
-        WITH DISTINCT related
-        RETURN related
-        ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
-        LIMIT $limit
-    """
-
-    # If APOC is unavailable, fall back to simple 1..depth traversal without apoc
-    fallback_query = f"""
-        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
-        WHERE m.id <> related.id
-        RETURN DISTINCT related
-        ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
-        LIMIT $limit
-    """
-
-    params = {"id": memory_id, "max_depth": max_depth, "limit": limit}
-
-    try:
-        result = graph.query(query, params)
-    except Exception:
-        # Try fallback if APOC or features not available
-        try:
-            result = graph.query(fallback_query, params)
-        except Exception:
-            logger.exception("Failed to traverse related memories for %s", memory_id)
-            abort(500, description="Failed to fetch related memories")
-
-    related: List[Dict[str, Any]] = []
-    for row in getattr(result, "result_set", []) or []:
-        node = row[0]
-        data = _serialize_node(node)
-        if data.get("id") != memory_id:
-            related.append(data)
-
-    return jsonify(
-        {
-            "status": "success",
-            "memory_id": memory_id,
-            "count": len(related),
-            "related_memories": related,
-            "relationship_types": rel_types,
-            "max_depth": max_depth,
-            "limit": limit,
-        }
+    return _get_related_memories_runtime(
+        memory_id=memory_id,
+        request_args=request.args,
+        get_memory_graph_fn=get_memory_graph,
+        allowed_relations=ALLOWED_RELATIONS,
+        relation_limit=RECALL_RELATION_LIMIT,
+        serialize_node_fn=_serialize_node,
+        logger=logger,
+        abort_fn=abort,
+        jsonify_fn=jsonify,
     )
 
 
