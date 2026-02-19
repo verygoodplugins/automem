@@ -34,7 +34,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         timeout: float = 30.0,
         max_retries: int = 2,
         input_type: Optional[str] = None,
-    ):
+    ) -> None:
         """Initialize Voyage embedding provider.
 
         Args:
@@ -263,12 +263,12 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         if hasattr(self, "client"):
             self.client.close()
 
-    def __enter__(self):
+    def __enter__(self) -> "VoyageEmbeddingProvider":
         return self
 
-    def __exit__(self, *_exc):
+    def __exit__(self, *_exc: object) -> None:
         self.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Clean up HTTP client."""
         self.close()

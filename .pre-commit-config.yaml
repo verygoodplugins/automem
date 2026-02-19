@@ -52,13 +52,21 @@ repos:
         args: [--baseline, .secrets.baseline]
         exclude: (tests/|\.md$|\.json$)
 
-# Run tests before push (optional, can be slow)
-# Uncomment to enable:
-# - repo: local
-#   hooks:
-#     - id: pytest
-#       name: pytest
-#       entry: pytest tests/ --ignore=tests/benchmarks -x -q
-#       language: system
-#       pass_filenames: false
-#       stages: [push]
+  # Local hooks - tests and code review
+  - repo: local
+    hooks:
+      # Run unit tests before push
+      - id: pytest
+        name: pytest (unit tests)
+        entry: bash -c 'PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest tests/ --ignore=tests/benchmarks --ignore=tests/test_integration.py -x -q'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      # CodeRabbit local review on committed changes
+      - id: coderabbit
+        name: coderabbit (local review)
+        entry: bash -c 'command -v coderabbit >/dev/null 2>&1 || { echo "coderabbit CLI not installed, skipping"; exit 0; }; coderabbit review --type committed --plain'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

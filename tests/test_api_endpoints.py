@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -35,13 +36,15 @@ class MockQdrantClient:
 
     def search(
         self,
-        collection_name,
-        query_vector,
-        limit=5,
-        with_payload=True,
-        with_vectors=False,
-    ):
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+    ) -> list[Any]:
         """Mock search operation."""
+        _ = with_payload, with_vectors  # Used by real client, not needed in mock
         self.search_calls.append(
             {"collection": collection_name, "vector": query_vector, "limit": limit}
         )
@@ -198,8 +201,8 @@ def test_recall_with_query(client, mock_state, auth_headers):
         "tags": ["python", "programming"],
         "importance": 0.8,
     }
-    mock_state.memory_graph.memories["test-id"] = {
-        "id": "test-id",
+    mock_state.memory_graph.memories["dddddddd-dddd-dddd-dddd-dddddddddddd"] = {
+        "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
         "content": memory_data["content"],
         "tags": memory_data["tags"],
         "importance": memory_data["importance"],
@@ -241,8 +244,8 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     older_ts = (now - timedelta(days=2)).isoformat()
     newer_ts = (now - timedelta(days=1)).isoformat()
 
-    mock_state.memory_graph.memories["older"] = {
-        "id": "older",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000001"] = {
+        "id": "10000000-0000-0000-0000-000000000001",
         "content": "Older memory",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -250,8 +253,8 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
         "updated_at": older_ts,
         "last_accessed": older_ts,
     }
-    mock_state.memory_graph.memories["newer"] = {
-        "id": "newer",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000002"] = {
+        "id": "10000000-0000-0000-0000-000000000002",
         "content": "Newer memory",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -269,7 +272,7 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     assert data["status"] == "success"
     assert data.get("sort") == "time_desc"
     assert data["results"], "Expected at least one result"
-    assert data["results"][0]["id"] == "newer"
+    assert data["results"][0]["id"] == "10000000-0000-0000-0000-000000000002"
 
 
 def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_headers):
@@ -280,8 +283,8 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
     older_ts = (now - timedelta(days=2)).isoformat()
     newer_ts = (now - timedelta(days=1)).isoformat()
 
-    mock_state.memory_graph.memories["older"] = {
-        "id": "older",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000001"] = {
+        "id": "10000000-0000-0000-0000-000000000001",
         "content": "Older memory default sort",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -289,8 +292,8 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
         "updated_at": older_ts,
         "last_accessed": older_ts,
     }
-    mock_state.memory_graph.memories["newer"] = {
-        "id": "newer",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000002"] = {
+        "id": "10000000-0000-0000-0000-000000000002",
         "content": "Newer memory default sort",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -306,7 +309,7 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
     data = response.get_json()
     assert data["status"] == "success"
     assert data.get("sort") == "time_desc"
-    assert data["results"][0]["id"] == "newer"
+    assert data["results"][0]["id"] == "10000000-0000-0000-0000-000000000002"
 
 
 def test_recall_with_explicit_timestamps(client, mock_state, auth_headers):
@@ -344,8 +347,8 @@ def _store_memory(
 def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
     """Ensure coding-style memories rise to the top when editing Python."""
     mock_state.memory_graph.memories.clear()
-    style_id = "style-mem"
-    other_id = "general-mem"
+    style_id = "aa000000-0000-0000-0000-000000000001"
+    other_id = "aa000000-0000-0000-0000-000000000002"
     _store_memory(
         mock_state,
         other_id,
@@ -375,8 +378,8 @@ def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
 def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers):
     """Ensure style memory appears even when limit would normally omit it."""
     mock_state.memory_graph.memories.clear()
-    style_id = "style-mem-limit"
-    other_id = "general-mem-limit"
+    style_id = "aa000000-0000-0000-0000-000000000003"
+    other_id = "aa000000-0000-0000-0000-000000000004"
     _store_memory(
         mock_state,
         other_id,
@@ -407,7 +410,7 @@ def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers)
 
 def test_get_memory_success_parses_metadata_and_updates_access(client, mock_state, auth_headers):
     """Test successful memory retrieval by ID with parsed metadata and access tracking."""
-    memory_id = "get-memory-123"
+    memory_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
     mock_state.memory_graph.memories[memory_id] = {
         "id": memory_id,
         "content": "Memory content",
@@ -434,16 +437,24 @@ def test_get_memory_success_parses_metadata_and_updates_access(client, mock_stat
     assert last_accessed_queries
 
 
-def test_get_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_get_memory_not_found(client, auth_headers):
     """Test retrieving a non-existent memory by ID."""
-    response = client.get("/memory/non-existent-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000000", headers=auth_headers)
     assert response.status_code == 404
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_get_memory_invalid_id(client, auth_headers):
+    """Test retrieving a memory with an invalid (non-UUID) ID returns 400."""
+    response = client.get("/memory/not-a-uuid", headers=auth_headers)
+    assert response.status_code == 400
 
 
 def test_get_memory_graph_unavailable(client, mock_state, auth_headers):
     """Test get memory endpoint returns 503 when graph is unavailable."""
     mock_state.memory_graph = None
-    response = client.get("/memory/any-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000001", headers=auth_headers)
     assert response.status_code == 503
 
 
@@ -451,13 +462,13 @@ def test_get_memory_query_failure(client, mock_state, auth_headers):
     """Test get memory endpoint returns 500 when graph query fails."""
     mock_graph = mock_state.memory_graph
     mock_graph.query = Mock(side_effect=RuntimeError("query failed"))
-    response = client.get("/memory/failing-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000002", headers=auth_headers)
     assert response.status_code == 500
 
 
 def test_update_memory_success(client, mock_state, auth_headers):
     """Test successful memory update."""
-    memory_id = "test-memory-123"
+    memory_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
 
     # Create initial memory
     mock_state.memory_graph.memories[memory_id] = {
@@ -482,17 +493,31 @@ def test_update_memory_success(client, mock_state, auth_headers):
     assert data["memory_id"] == memory_id
 
 
-def test_update_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_update_memory_invalid_id(client, auth_headers):
+    """Test updating with an invalid (non-UUID) memory ID returns 400."""
+    response = client.patch(
+        "/memory/not-a-uuid",
+        json={"content": "New content"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_update_memory_not_found(client, auth_headers):
     """Test updating non-existent memory."""
     response = client.patch(
-        "/memory/non-existent-id", json={"content": "New content"}, headers=auth_headers
+        "/memory/00000000-0000-0000-0000-000000000099",
+        json={"content": "New content"},
+        headers=auth_headers,
     )
     assert response.status_code == 404
 
 
 def test_update_memory_partial_fields(client, mock_state, auth_headers):
     """Test updating only some fields of a memory."""
-    memory_id = "test-memory-456"
+    memory_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
     # Create initial memory
     mock_state.memory_graph.memories[memory_id] = {
@@ -518,7 +543,7 @@ def test_update_memory_partial_fields(client, mock_state, auth_headers):
 
 def test_delete_memory_success(client, mock_state, auth_headers):
     """Test successful memory deletion."""
-    memory_id = "delete-test-123"
+    memory_id = "dd000000-0000-0000-0000-000000000001"
 
     # Create memory to delete
     mock_state.memory_graph.memories[memory_id] = {
@@ -542,9 +567,17 @@ def test_delete_memory_success(client, mock_state, auth_headers):
     assert memory_id not in mock_state.memory_graph.memories
 
 
-def test_delete_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_delete_memory_invalid_id(client, auth_headers):
+    """Test deleting with an invalid (non-UUID) memory ID returns 400."""
+    response = client.delete("/memory/not-a-uuid", headers=auth_headers)
+    assert response.status_code == 400
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_delete_memory_not_found(client, auth_headers):
     """Test deleting non-existent memory."""
-    response = client.delete("/memory/non-existent", headers=auth_headers)
+    response = client.delete("/memory/00000000-0000-0000-0000-000000000098", headers=auth_headers)
     assert response.status_code == 404
 
 
@@ -554,8 +587,8 @@ def test_delete_memory_not_found(client, mock_state, auth_headers):
 def test_memory_by_tag_single(client, mock_state, auth_headers):
     """Test retrieving memories by a single tag."""
     # Add some memories with tags
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Python tutorial",
         "tags": ["python", "tutorial"],
         "importance": 0.8,
@@ -589,14 +622,14 @@ def test_memory_by_tag_no_tags(client, mock_state, auth_headers):
 def test_admin_reembed_success(client, mock_state, admin_headers):
     """Test successful re-embedding of memories."""
     # Add memories to reembed
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "First memory to reembed",
         "tags": ["test"],
         "importance": 0.7,
     }
-    mock_state.memory_graph.memories["mem2"] = {
-        "id": "mem2",
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         "content": "Second memory to reembed",
         "tags": ["test"],
         "importance": 0.8,
@@ -624,8 +657,8 @@ def test_admin_reembed_no_openai(client, mock_state, admin_headers):
     mock_state.openai_client = None
 
     # Add memories to reembed
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Memory to reembed with fallback",
         "tags": ["test"],
     }
@@ -663,8 +696,8 @@ def test_admin_reembed_no_admin_token(client, mock_state, auth_headers):
 def test_admin_reembed_force_flag(client, mock_state, admin_headers):
     """Test force reembedding with force flag."""
     # Add memory
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Memory with existing embedding",
         "tags": ["test"],
     }
@@ -732,7 +765,13 @@ def test_enrichment_reprocess(client, mock_state, admin_headers):
     """Test reprocessing memories for enrichment."""
     response = client.post(
         "/enrichment/reprocess",
-        json={"ids": ["mem1", "mem2", "mem3"]},
+        json={
+            "ids": [
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            ]
+        },
         headers=admin_headers,
     )
 
@@ -754,8 +793,14 @@ def test_enrichment_reprocess_no_ids(client, mock_state, admin_headers):
 def test_create_association_all_relationship_types(client, mock_state, auth_headers):
     """Test creating associations with all new relationship types."""
     # Create two memories
-    mock_state.memory_graph.memories["mem1"] = {"id": "mem1", "content": "Memory 1"}
-    mock_state.memory_graph.memories["mem2"] = {"id": "mem2", "content": "Memory 2"}
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "content": "Memory 1",
+    }
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "content": "Memory 2",
+    }
 
     relationship_types = [
         "RELATES_TO",
@@ -775,8 +820,8 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
         response = client.post(
             "/associate",
             json={
-                "memory1_id": "mem1",
-                "memory2_id": "mem2",
+                "memory1_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "memory2_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                 "type": rel_type,
                 "strength": 0.8,
             },
@@ -789,26 +834,26 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
 
 def test_create_association_with_properties(client, mock_state, auth_headers):
     """Test creating association with additional properties."""
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mem1_id = "11111111-1111-1111-1111-111111111111"
+    mem2_id = "22222222-2222-2222-2222-222222222222"
+    mock_state.memory_graph.memories[mem1_id] = {
+        "id": mem1_id,
         "content": "Preferred method",
     }
-    mock_state.memory_graph.memories["mem2"] = {
-        "id": "mem2",
+    mock_state.memory_graph.memories[mem2_id] = {
+        "id": mem2_id,
         "content": "Alternative method",
     }
 
     response = client.post(
         "/associate",
         json={
-            "memory1_id": "mem1",
-            "memory2_id": "mem2",
+            "memory1_id": mem1_id,
+            "memory2_id": mem2_id,
             "type": "PREFERS_OVER",
             "strength": 0.9,
-            "properties": {
-                "reason": "Better performance",
-                "context": "Production environment",
-            },
+            "reason": "Better performance",
+            "context": "Production environment",
         },
         headers=auth_headers,
     )
@@ -816,6 +861,8 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
     assert response.status_code == 201
     data = response.get_json()
     assert data["status"] == "success"
+    assert data["reason"] == "Better performance"
+    assert data["context"] == "Production environment"
 
 
 # ==================== Test Startup Recall ====================
@@ -825,8 +872,8 @@ def test_startup_recall(client, mock_state, auth_headers):
     """Test startup recall endpoint."""
     # Add some recent high-importance memories
     now = utc_now()
-    mock_state.memory_graph.memories["important"] = {
-        "id": "important",
+    mock_state.memory_graph.memories["20000000-0000-0000-0000-000000000001"] = {
+        "id": "20000000-0000-0000-0000-000000000001",
         "content": "Critical information",
         "importance": 0.95,
         "timestamp": now,
@@ -847,15 +894,15 @@ def test_startup_recall(client, mock_state, auth_headers):
 def test_analyze_endpoint(client, mock_state, auth_headers):
     """Test analytics endpoint."""
     # Add varied memories for analytics
-    mock_state.memory_graph.memories["decision1"] = {
-        "id": "decision1",
+    mock_state.memory_graph.memories["30000000-0000-0000-0000-000000000001"] = {
+        "id": "30000000-0000-0000-0000-000000000001",
         "content": "Architectural decision",
         "type": "Decision",
         "confidence": 0.9,
         "importance": 0.85,
     }
-    mock_state.memory_graph.memories["pattern1"] = {
-        "id": "pattern1",
+    mock_state.memory_graph.memories["30000000-0000-0000-0000-000000000002"] = {
+        "id": "30000000-0000-0000-0000-000000000002",
         "content": "Common pattern",
         "type": "Pattern",
         "confidence": 0.7,
@@ -939,28 +986,32 @@ def test_embedding_dimension_validation(client, mock_state, auth_headers):
 
 
 def test_expand_related_memories_filters_strength_and_importance():
-    seed_results = [{"id": "seed1", "final_score": 0.8, "memory": {"id": "seed1"}}]
+    seed_id = "11111111-0000-0000-0000-000000000001"
+    keep_id = "11111111-0000-0000-0000-000000000002"
+    weak_id = "11111111-0000-0000-0000-000000000003"
+    low_imp_id = "11111111-0000-0000-0000-000000000004"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
 
     class _Node(SimpleNamespace):
         pass
 
     class Graph:
-        def query(self, query: str, params: dict):
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
             related = [
                 (
                     "RELATES_TO",
                     0.2,
-                    _Node(properties={"id": "keep", "importance": 0.9}),
+                    _Node(properties={"id": keep_id, "importance": 0.9}),
                 ),
                 (
                     "RELATES_TO",
                     0.05,
-                    _Node(properties={"id": "weak", "importance": 0.9}),
+                    _Node(properties={"id": weak_id, "importance": 0.9}),
                 ),
                 (
                     "RELATES_TO",
                     0.8,
-                    _Node(properties={"id": "low_importance", "importance": 0.1}),
+                    _Node(properties={"id": low_imp_id, "importance": 0.1}),
                 ),
             ]
             return SimpleNamespace(result_set=related)
@@ -997,7 +1048,7 @@ def test_expand_related_memories_filters_strength_and_importance():
     )
 
     ids = {res["id"] for res in results}
-    assert ids == {"keep"}
+    assert ids == {keep_id}
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

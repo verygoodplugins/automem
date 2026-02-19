@@ -35,7 +35,10 @@ def auth_headers():
 
 def test_store_memory_without_content_returns_400(client, auth_headers):
     response = client.post(
-        "/memory", data=json.dumps({}), content_type="application/json", headers=auth_headers
+        "/memory",
+        data=json.dumps({}),
+        content_type="application/json",
+        headers=auth_headers,
     )
     assert response.status_code == 400
     body = response.get_json()
@@ -55,18 +58,23 @@ def test_store_memory_success(client, reset_state, auth_headers):
     assert body["qdrant"] in {"unconfigured", "stored", "failed"}
 
 
-def test_create_association_validates_payload(client, reset_state, auth_headers):
+@pytest.mark.usefixtures("reset_state")
+def test_create_association_validates_payload(client, auth_headers):
+    same_id = "a0000000-0000-0000-0000-000000000001"
     response = client.post(
         "/associate",
-        data=json.dumps({"memory1_id": "a", "memory2_id": "a"}),
+        data=json.dumps({"memory1_id": same_id, "memory2_id": same_id}),
         content_type="application/json",
         headers=auth_headers,
     )
     assert response.status_code == 400
 
 
-def test_create_association_success(client, reset_state, auth_headers):
-    for memory_id in ("a", "b"):
+@pytest.mark.usefixtures("reset_state")
+def test_create_association_success(client, auth_headers):
+    mem_a = "a0000000-0000-0000-0000-000000000001"
+    mem_b = "b0000000-0000-0000-0000-000000000002"
+    for memory_id in (mem_a, mem_b):
         response = client.post(
             "/memory",
             data=json.dumps({"id": memory_id, "content": f"Memory {memory_id}"}),
@@ -79,8 +87,8 @@ def test_create_association_success(client, reset_state, auth_headers):
         "/associate",
         data=json.dumps(
             {
-                "memory1_id": "a",
-                "memory2_id": "b",
+                "memory1_id": mem_a,
+                "memory2_id": mem_b,
                 "type": "relates_to",
                 "strength": 0.9,
             }
@@ -151,10 +159,12 @@ def test_temporal_validity_fields(client, reset_state, auth_headers):
 
 def test_new_relationship_types(client, reset_state, auth_headers):
     """Test new PKG relationship types with properties."""
+    tool1_id = "c0000000-0000-0000-0000-000000000001"
+    tool2_id = "c0000000-0000-0000-0000-000000000002"
     # Create memories for preference relationship
     response = client.post(
         "/memory",
-        data=json.dumps({"id": "tool1", "content": "FalkorDB"}),
+        data=json.dumps({"id": tool1_id, "content": "FalkorDB"}),
         content_type="application/json",
         headers=auth_headers,
     )
@@ -162,7 +172,7 @@ def test_new_relationship_types(client, reset_state, auth_headers):
 
     response = client.post(
         "/memory",
-        data=json.dumps({"id": "tool2", "content": "ArangoDB"}),
+        data=json.dumps({"id": tool2_id, "content": "ArangoDB"}),
         content_type="application/json",
         headers=auth_headers,
     )
@@ -173,8 +183,8 @@ def test_new_relationship_types(client, reset_state, auth_headers):
         "/associate",
         data=json.dumps(
             {
-                "memory1_id": "tool1",
-                "memory2_id": "tool2",
+                "memory1_id": tool1_id,
+                "memory2_id": tool2_id,
                 "type": "PREFERS_OVER",
                 "strength": 0.95,
                 "context": "cost-effectiveness",

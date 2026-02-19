@@ -139,21 +139,29 @@ Memories are classified into types for better organization:
 AutoMem uses a provider pattern with multiple embedding backends:
 
 #### Provider Priority (Auto-Selection)
-1. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
+
+1. **Voyage AI** (`voyage:voyage-4`) - If `VOYAGE_API_KEY` is set
+   - High-quality embeddings with flexible model family (voyage-4, voyage-4-large, voyage-4-lite)
+   - Supports output dimensions: 256, 512, 1024, 2048
+   - Requires network and API key
+
+2. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
    - High-quality semantic embeddings via API
-   - Requires network and API costs
    - 3072 dimensions by default (configurable via `EMBEDDING_MODEL` and `VECTOR_SIZE`)
    - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.)
    - The `dimensions` parameter is only sent to OpenAI's own API; omitted for third-party providers
 
-2. **FastEmbed** (`fastembed:BAAI/bge-base-en-v1.5`) - Local ONNX model
+3. **Ollama** (`ollama:nomic-embed-text`) - If `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is configured
+   - Fully local, easy model swapping
+   - Requires running Ollama server
+
+4. **FastEmbed** (`fastembed:BAAI/bge-base-en-v1.5`) - Local ONNX model
    - Good quality semantic embeddings
    - No API key or internet required (after first download)
    - Downloads ~210MB model to `~/.config/automem/models/` on first use
    - 768 dimensions (default), also supports 384 and 1024 dim models
-   - Note: Pin `onnxruntime<1.20` to avoid compatibility issues with fastembed 0.4.x
 
-3. **Placeholder** (`placeholder`) - Hash-based fallback
+5. **Placeholder** (`placeholder`) - Hash-based fallback
    - Deterministic vectors from content hash
    - No semantic meaning, last resort only
 
@@ -162,14 +170,16 @@ AutoMem uses a provider pattern with multiple embedding backends:
 #### Provider Configuration
 
 Control via `EMBEDDING_PROVIDER` environment variable:
-- `auto` (default): Try OpenAI → FastEmbed → Placeholder
+- `auto` (default): Try Voyage → OpenAI → Ollama → FastEmbed → Placeholder
+- `voyage`: Use Voyage only (fail if unavailable)
 - `openai`: Use OpenAI only (fail if unavailable). Also works with OpenAI-compatible providers when `OPENAI_BASE_URL` is set.
+- `ollama`: Use Ollama only (fail if unavailable)
 - `local`: Use FastEmbed only (fail if unavailable)
 - `placeholder`: Use placeholder embeddings
 
 Graph writes always succeed even if vector storage fails (graceful degradation).
 
-**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with implementations: `OpenAIEmbeddingProvider` (also handles compatible providers), `FastEmbedProvider`, `OllamaEmbeddingProvider`, `PlaceholderEmbeddingProvider`.
+**Module:** `automem/embedding/` provides `EmbeddingProvider` abstraction with implementations: `VoyageEmbeddingProvider`, `OpenAIEmbeddingProvider` (also handles compatible providers), `OllamaEmbeddingProvider`, `FastEmbedProvider`, `PlaceholderEmbeddingProvider`.
 
 ## Testing
 
@@ -221,7 +231,7 @@ AUTOMEM_API_TOKEN=           # Required for authentication
 ADMIN_API_TOKEN=             # For admin endpoints
 
 # Embedding configuration
-EMBEDDING_PROVIDER=auto      # auto|openai|local|placeholder
+EMBEDDING_PROVIDER=auto      # auto|voyage|openai|ollama|local|placeholder
 OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
 OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs (optional)
 

@@ -7,6 +7,7 @@ custom gateway.
 """
 
 import logging
+import os
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from openai import OpenAI
@@ -63,20 +64,26 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         Raises:
             Exception: If client initialization fails.
         """
-        client_kwargs = dict(api_key=api_key, timeout=timeout, max_retries=max_retries)
-        if base_url is not None:
-            client_kwargs["base_url"] = base_url
+        env_base_url = os.getenv("OPENAI_BASE_URL") or None
+        effective_base_url = base_url or env_base_url
+        client_kwargs: Dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": timeout,
+            "max_retries": max_retries,
+        }
+        if effective_base_url is not None:
+            client_kwargs["base_url"] = effective_base_url
         self.client = OpenAI(**client_kwargs)
         self.model = model
         self._dimension = dimension
-        self._base_url = base_url
-        self._send_dimensions = _is_openai_native(base_url)
+        self._base_url = effective_base_url
+        self._send_dimensions = _is_openai_native(effective_base_url)
         logger.info(
             "OpenAI-compatible embedding provider initialized "
             "(model=%s, dimensions=%d, base_url=%s, send_dimensions=%s, timeout=%.1fs, retries=%d)",
             model,
             dimension,
-            base_url or "(default: api.openai.com)",
+            effective_base_url or "(default: api.openai.com)",
             self._send_dimensions,
             timeout,
             max_retries,
@@ -162,6 +169,6 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         Returns:
             Provider identifier including base URL hint when non-default.
         """
-        if self._base_url:
+        if self._base_url and not _is_openai_native(self._base_url):
             return f"openai-compatible:{self.model}"
         return f"openai:{self.model}"
