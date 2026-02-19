@@ -152,11 +152,12 @@ def test_health_check_real(api_client):
 def test_store_then_recall_real_smoke(api_client):
     """Store then recall should return the same memory id/content."""
     memory_content = f"Store-then-recall smoke {uuid.uuid4()}"
+    unique_tag = f"itest-smoke-{uuid.uuid4().hex[:10]}"
     store_response = api_client.post(
         f"{api_client.base_url}/memory",
         json={
             "content": memory_content,
-            "tags": ["test", "integration", "smoke"],
+            "tags": ["test", "integration", "smoke", unique_tag],
             "importance": 0.7,
         },
     )
@@ -166,7 +167,8 @@ def test_store_then_recall_real_smoke(api_client):
     found = False
     for _ in range(5):
         recall_response = api_client.get(
-            f"{api_client.base_url}/recall", params={"query": memory_content, "limit": 10}
+            f"{api_client.base_url}/recall",
+            params={"query": memory_content, "tags": unique_tag, "limit": 50},
         )
         assert recall_response.status_code == 200
         recall_data = recall_response.json()
@@ -187,11 +189,12 @@ def test_store_then_recall_real_smoke(api_client):
 def test_recall_jit_related_fields_real(api_client):
     """Recall response should remain compatible with optional JIT enrichment fields."""
     memory_content = f"JIT compatibility integration {uuid.uuid4()}"
+    unique_tag = f"itest-jit-{uuid.uuid4().hex[:10]}"
     store_response = api_client.post(
         f"{api_client.base_url}/memory",
         json={
             "content": memory_content,
-            "tags": ["test", "integration", "jit-check"],
+            "tags": ["test", "integration", "jit-check", unique_tag],
             "importance": 0.65,
         },
     )
@@ -202,7 +205,8 @@ def test_recall_jit_related_fields_real(api_client):
     matching = []
     for _ in range(5):
         response = api_client.get(
-            f"{api_client.base_url}/recall", params={"query": memory_content, "limit": 10}
+            f"{api_client.base_url}/recall",
+            params={"query": memory_content, "tags": unique_tag, "limit": 50},
         )
         assert response.status_code == 200
         data = response.json()
@@ -230,11 +234,12 @@ def test_memory_lifecycle_real(api_client):
     """Test complete memory lifecycle: create, recall, update, delete."""
     # 1. Store a memory
     memory_content = f"Integration test memory {uuid.uuid4()}"
+    unique_tag = f"itest-lifecycle-{uuid.uuid4().hex[:10]}"
     store_response = api_client.post(
         f"{api_client.base_url}/memory",
         json={
             "content": memory_content,
-            "tags": ["test", "integration"],
+            "tags": ["test", "integration", unique_tag],
             "importance": 0.8,
             "metadata": {"source": "integration_test"},
         },
@@ -250,7 +255,8 @@ def test_memory_lifecycle_real(api_client):
     found = False
     for attempt in range(5):  # Retry up to 5 times
         recall_response = api_client.get(
-            f"{api_client.base_url}/recall", params={"query": memory_content, "limit": 5}
+            f"{api_client.base_url}/recall",
+            params={"query": memory_content, "tags": unique_tag, "limit": 50},
         )
         assert recall_response.status_code == 200
         recall_data = recall_response.json()
@@ -285,7 +291,8 @@ def test_memory_lifecycle_real(api_client):
 
     # 4. Verify update by recalling
     recall2_response = api_client.get(
-        f"{api_client.base_url}/recall", params={"query": updated_content, "limit": 5}
+        f"{api_client.base_url}/recall",
+        params={"query": updated_content, "tags": unique_tag, "limit": 50},
     )
     assert recall2_response.status_code == 200
     recall2_data = recall2_response.json()
