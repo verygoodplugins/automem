@@ -73,6 +73,20 @@ from automem.api.auth_helpers import require_admin_token as _require_admin_token
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
 from automem.api.stream import create_stream_blueprint, emit_event
 from automem.classification.memory_classifier import MemoryClassifier
+from automem.consolidation.runtime_helpers import (
+    apply_scheduler_overrides as _apply_scheduler_overrides_runtime,
+)
+from automem.consolidation.runtime_helpers import (
+    build_consolidator_from_config as _build_consolidator_from_config_runtime,
+)
+from automem.consolidation.runtime_helpers import (
+    load_control_record as _load_control_record_runtime,
+)
+from automem.consolidation.runtime_helpers import load_recent_runs as _load_recent_runs_runtime
+from automem.consolidation.runtime_helpers import (
+    persist_consolidation_run as _persist_consolidation_run_runtime,
+)
+from automem.consolidation.runtime_helpers import tasks_for_mode as _tasks_for_mode_runtime
 from automem.embedding.provider_init import init_embedding_provider as _init_embedding_provider
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
@@ -191,6 +205,9 @@ from automem.stores.runtime_clients import (
 from automem.stores.runtime_clients import init_falkordb as _init_falkordb_runtime
 from automem.stores.runtime_clients import init_qdrant as _init_qdrant_runtime
 from automem.stores.vector_store import _build_qdrant_tag_filter
+from automem.sync.runtime_worker import init_sync_worker as _init_sync_worker_runtime
+from automem.sync.runtime_worker import run_sync_check as _run_sync_check_runtime
+from automem.sync.runtime_worker import sync_worker as _sync_worker_runtime
 from automem.utils.entity_extraction import (
     _slugify,
     configure_entity_extraction,
@@ -443,153 +460,51 @@ def update_last_accessed(memory_ids: List[str]) -> None:
 
 
 def _load_control_record(graph: Any) -> Dict[str, Any]:
-    """Fetch or create the consolidation control node."""
-    bootstrap_timestamp = utc_now()
-    bootstrap_fields = sorted(set(CONSOLIDATION_TASK_FIELDS.values()))
-    bootstrap_set_clause = ",\n                ".join(
-        f"c.{field} = coalesce(c.{field}, $now)" for field in bootstrap_fields
+    return _load_control_record_runtime(
+        graph,
+        logger=logger,
+        control_label=CONSOLIDATION_CONTROL_LABEL,
+        control_node_id=CONSOLIDATION_CONTROL_NODE_ID,
+        task_fields=CONSOLIDATION_TASK_FIELDS,
+        utc_now_fn=utc_now,
     )
-    try:
-        result = graph.query(
-            f"""
-            MERGE (c:{CONSOLIDATION_CONTROL_LABEL} {{id: $id}})
-            SET {bootstrap_set_clause}
-            RETURN c
-            """,
-            {"id": CONSOLIDATION_CONTROL_NODE_ID, "now": bootstrap_timestamp},
-        )
-    except Exception:
-        logger.exception("Failed to load consolidation control record")
-        return {}
-
-    if not getattr(result, "result_set", None):
-        return {}
-
-    node = result.result_set[0][0]
-    properties = getattr(node, "properties", None)
-    if isinstance(properties, dict):
-        return dict(properties)
-    if isinstance(node, dict):
-        return dict(node)
-    return {}
 
 
 def _load_recent_runs(graph: Any, limit: int) -> List[Dict[str, Any]]:
-    """Return recent consolidation run records."""
-    try:
-        result = graph.query(
-            f"""
-            MATCH (r:{CONSOLIDATION_RUN_LABEL})
-            RETURN r
-            ORDER BY r.started_at DESC
-            LIMIT $limit
-            """,
-            {"limit": limit},
-        )
-    except Exception:
-        logger.exception("Failed to load consolidation history")
-        return []
-
-    runs: List[Dict[str, Any]] = []
-    for row in getattr(result, "result_set", []) or []:
-        node = row[0]
-        properties = getattr(node, "properties", None)
-        if isinstance(properties, dict):
-            runs.append(dict(properties))
-        elif isinstance(node, dict):
-            runs.append(dict(node))
-    return runs
+    return _load_recent_runs_runtime(
+        graph,
+        limit,
+        logger=logger,
+        run_label=CONSOLIDATION_RUN_LABEL,
+    )
 
 
 def _apply_scheduler_overrides(scheduler: ConsolidationScheduler) -> None:
-    """Override default scheduler intervals using configuration."""
-    overrides = {
-        "decay": timedelta(seconds=CONSOLIDATION_DECAY_INTERVAL_SECONDS),
-        "creative": timedelta(seconds=CONSOLIDATION_CREATIVE_INTERVAL_SECONDS),
-        "cluster": timedelta(seconds=CONSOLIDATION_CLUSTER_INTERVAL_SECONDS),
-        "forget": timedelta(seconds=CONSOLIDATION_FORGET_INTERVAL_SECONDS),
-    }
-
-    for task, interval in overrides.items():
-        if task in scheduler.schedules:
-            scheduler.schedules[task]["interval"] = interval
+    _apply_scheduler_overrides_runtime(
+        scheduler,
+        decay_interval_seconds=CONSOLIDATION_DECAY_INTERVAL_SECONDS,
+        creative_interval_seconds=CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
+        cluster_interval_seconds=CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
+        forget_interval_seconds=CONSOLIDATION_FORGET_INTERVAL_SECONDS,
+    )
 
 
 def _tasks_for_mode(mode: str) -> List[str]:
-    """Map a consolidation mode to its task identifiers."""
-    if mode == "full":
-        return ["decay", "creative", "cluster", "forget", "full"]
-    if mode in CONSOLIDATION_TASK_FIELDS:
-        return [mode]
-    return [mode]
+    return _tasks_for_mode_runtime(mode, CONSOLIDATION_TASK_FIELDS)
 
 
 def _persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:
-    """Record consolidation outcomes and update scheduler metadata."""
-    mode = result.get("mode", "unknown")
-    completed_at = result.get("completed_at") or utc_now()
-    started_at = result.get("started_at") or completed_at
-    success = bool(result.get("success"))
-    dry_run = bool(result.get("dry_run"))
-
-    try:
-        graph.query(
-            f"""
-            CREATE (r:{CONSOLIDATION_RUN_LABEL} {{
-                id: $id,
-                mode: $mode,
-                task: $task,
-                success: $success,
-                dry_run: $dry_run,
-                started_at: $started_at,
-                completed_at: $completed_at,
-                result: $result
-            }})
-            """,
-            {
-                "id": uuid.uuid4().hex,
-                "mode": mode,
-                "task": mode,
-                "success": success,
-                "dry_run": dry_run,
-                "started_at": started_at,
-                "completed_at": completed_at,
-                "result": json.dumps(result, default=str),
-            },
-        )
-    except Exception:
-        logger.exception("Failed to record consolidation run history")
-
-    for task in _tasks_for_mode(mode):
-        field = CONSOLIDATION_TASK_FIELDS.get(task)
-        if not field:
-            continue
-        try:
-            graph.query(
-                f"""
-                MERGE (c:{CONSOLIDATION_CONTROL_LABEL} {{id: $id}})
-                SET c.{field} = $timestamp
-                """,
-                {
-                    "id": CONSOLIDATION_CONTROL_NODE_ID,
-                    "timestamp": completed_at,
-                },
-            )
-        except Exception:
-            logger.exception("Failed to update consolidation control for task %s", task)
-
-    try:
-        graph.query(
-            f"""
-            MATCH (r:{CONSOLIDATION_RUN_LABEL})
-            WITH r ORDER BY r.started_at DESC
-            SKIP $keep
-            DELETE r
-            """,
-            {"keep": CONSOLIDATION_HISTORY_LIMIT},
-        )
-    except Exception:
-        logger.exception("Failed to prune consolidation history")
+    _persist_consolidation_run_runtime(
+        graph,
+        result,
+        logger=logger,
+        run_label=CONSOLIDATION_RUN_LABEL,
+        control_label=CONSOLIDATION_CONTROL_LABEL,
+        control_node_id=CONSOLIDATION_CONTROL_NODE_ID,
+        task_fields=CONSOLIDATION_TASK_FIELDS,
+        history_limit=CONSOLIDATION_HISTORY_LIMIT,
+        utc_now_fn=utc_now,
+    )
 
 
 def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
@@ -609,9 +524,10 @@ def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
 
 
 def _build_consolidator_from_config(graph: Any, vector_store: Any) -> MemoryConsolidator:
-    return MemoryConsolidator(
+    return _build_consolidator_from_config_runtime(
         graph,
         vector_store,
+        memory_consolidator_cls=MemoryConsolidator,
         delete_threshold=CONSOLIDATION_DELETE_THRESHOLD,
         archive_threshold=CONSOLIDATION_ARCHIVE_THRESHOLD,
         grace_period_days=CONSOLIDATION_GRACE_PERIOD_DAYS,
@@ -944,108 +860,37 @@ def generate_and_store_embedding(memory_id: str, content: str) -> None:
 
 
 def init_sync_worker() -> None:
-    """Initialize the background sync worker if auto-repair is enabled."""
-    if not SYNC_AUTO_REPAIR:
-        logger.info("Sync auto-repair disabled (SYNC_AUTO_REPAIR=false)")
-        return
-
-    if state.sync_thread is not None:
-        return
-
-    state.sync_stop_event = Event()
-    state.sync_thread = Thread(target=sync_worker, daemon=True)
-    state.sync_thread.start()
-    logger.info("Sync worker initialized (interval: %ds)", SYNC_CHECK_INTERVAL_SECONDS)
+    _init_sync_worker_runtime(
+        state=state,
+        logger=logger,
+        sync_auto_repair=SYNC_AUTO_REPAIR,
+        sync_check_interval_seconds=SYNC_CHECK_INTERVAL_SECONDS,
+        stop_event_cls=Event,
+        thread_cls=Thread,
+        worker_target=sync_worker,
+    )
 
 
 def sync_worker() -> None:
-    """Background worker that detects and repairs FalkorDB/Qdrant sync drift.
-
-    This is non-destructive: only adds missing embeddings, never removes existing ones.
-    """
-    while not state.sync_stop_event.is_set():
-        try:
-            # Wait for the interval (or until stop event)
-            if state.sync_stop_event.wait(timeout=SYNC_CHECK_INTERVAL_SECONDS):
-                break  # Stop event set
-
-            _run_sync_check()
-
-        except Exception:
-            logger.exception("Error in sync worker")
-            # Sleep briefly on error before retrying
-            time.sleep(60)
+    _sync_worker_runtime(
+        state=state,
+        logger=logger,
+        sync_check_interval_seconds=SYNC_CHECK_INTERVAL_SECONDS,
+        run_sync_check_fn=_run_sync_check,
+        sleep_fn=time.sleep,
+    )
 
 
 def _run_sync_check() -> None:
-    """Check for sync drift and repair if needed."""
-    graph = get_memory_graph()
-    qdrant = get_qdrant_client()
-
-    if graph is None or qdrant is None:
-        logger.debug("Sync check skipped: services unavailable")
-        return
-
-    try:
-        # Get memory IDs from FalkorDB
-        falkor_result = graph.query("MATCH (m:Memory) RETURN m.id AS id")
-        falkor_ids: Set[str] = set()
-        for row in getattr(falkor_result, "result_set", []) or []:
-            if row[0]:
-                falkor_ids.add(str(row[0]))
-
-        # Get point IDs from Qdrant
-        qdrant_ids: Set[str] = set()
-        offset = None
-        while True:
-            result = qdrant.scroll(
-                collection_name=COLLECTION_NAME,
-                limit=1000,
-                offset=offset,
-                with_payload=False,
-                with_vectors=False,
-            )
-            points, next_offset = result
-            for point in points:
-                qdrant_ids.add(str(point.id))
-            if next_offset is None:
-                break
-            offset = next_offset
-
-        # Check for drift
-        missing_ids = falkor_ids - qdrant_ids
-
-        state.sync_last_run = utc_now()
-        state.sync_last_result = {
-            "falkordb_count": len(falkor_ids),
-            "qdrant_count": len(qdrant_ids),
-            "missing_count": len(missing_ids),
-        }
-
-        if not missing_ids:
-            logger.debug("Sync check: no drift detected (%d memories)", len(falkor_ids))
-            return
-
-        logger.warning(
-            "Sync drift detected: %d memories missing from Qdrant (will auto-repair)",
-            len(missing_ids),
-        )
-
-        # Queue missing memories for embedding
-        for memory_id in missing_ids:
-            # Fetch content to queue
-            mem_result = graph.query(
-                "MATCH (m:Memory {id: $id}) RETURN m.content", {"id": memory_id}
-            )
-            if getattr(mem_result, "result_set", None):
-                content = mem_result.result_set[0][0]
-                if content:
-                    enqueue_embedding(memory_id, content)
-
-        logger.info("Queued %d memories for sync repair", len(missing_ids))
-
-    except Exception:
-        logger.exception("Sync check failed")
+    _run_sync_check_runtime(
+        state=state,
+        logger=logger,
+        get_memory_graph_fn=get_memory_graph,
+        get_qdrant_client_fn=get_qdrant_client,
+        collection_name=COLLECTION_NAME,
+        utc_now_fn=utc_now,
+        enqueue_embedding_fn=enqueue_embedding,
+    )
 
 
 def jit_enrich_lightweight(memory_id: str, properties: Dict[str, Any]) -> Optional[Dict[str, Any]]:
