@@ -72,6 +72,7 @@ from automem.api.auth_helpers import extract_api_token as _extract_api_token_hel
 from automem.api.auth_helpers import require_admin_token as _require_admin_token_helper
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
 from automem.api.stream import create_stream_blueprint, emit_event
+from automem.classification.memory_classifier import MemoryClassifier
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
 from automem.embedding.runtime_helpers import (
@@ -267,175 +268,6 @@ configure_entity_extraction(
 )
 
 
-class MemoryClassifier:
-    """Classifies memories into specific types based on content patterns."""
-
-    PATTERNS = {
-        "Decision": [
-            r"decided to",
-            r"chose (\w+) over",
-            r"going with",
-            r"picked",
-            r"selected",
-            r"will use",
-            r"choosing",
-            r"opted for",
-        ],
-        "Pattern": [
-            r"usually",
-            r"typically",
-            r"tend to",
-            r"pattern i noticed",
-            r"often",
-            r"frequently",
-            r"regularly",
-            r"consistently",
-        ],
-        "Preference": [
-            r"prefer",
-            r"like.*better",
-            r"favorite",
-            r"always use",
-            r"rather than",
-            r"instead of",
-            r"favor",
-        ],
-        "Style": [
-            r"wrote.*in.*style",
-            r"communicated",
-            r"responded to",
-            r"formatted as",
-            r"using.*tone",
-            r"expressed as",
-        ],
-        "Habit": [
-            r"always",
-            r"every time",
-            r"habitually",
-            r"routine",
-            r"daily",
-            r"weekly",
-            r"monthly",
-        ],
-        "Insight": [
-            r"realized",
-            r"discovered",
-            r"learned that",
-            r"understood",
-            r"figured out",
-            r"insight",
-            r"revelation",
-        ],
-        "Context": [
-            r"during",
-            r"while working on",
-            r"in the context of",
-            r"when",
-            r"at the time",
-            r"situation was",
-        ],
-    }
-
-    SYSTEM_PROMPT = """You are a memory classification system. Classify each memory into exactly ONE of these types:
-
-- **Decision**: Choices made, selected options, what was decided
-- **Pattern**: Recurring behaviors, typical approaches, consistent tendencies
-- **Preference**: Likes/dislikes, favorites, personal tastes
-- **Style**: Communication approach, formatting, tone used
-- **Habit**: Regular routines, repeated actions, schedules
-- **Insight**: Discoveries, learnings, realizations, key findings
-- **Context**: Situational background, what was happening, circumstances
-
-Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
-
-    def classify(self, content: str, *, use_llm: bool = True) -> tuple[str, float]:
-        """
-        Classify memory type and return confidence score.
-        Returns: (type, confidence)
-
-        Args:
-            content: Memory content to classify
-            use_llm: If True, falls back to LLM when regex patterns don't match
-        """
-        content_lower = content.lower()
-
-        # Try regex patterns first (fast, free)
-        for memory_type, patterns in self.PATTERNS.items():
-            for pattern in patterns:
-                if re.search(pattern, content_lower):
-                    # Start with base confidence based on pattern match
-                    confidence = 0.6
-
-                    # Boost confidence for multiple pattern matches
-                    matches = sum(1 for p in patterns if re.search(p, content_lower))
-                    if matches > 1:
-                        confidence = min(0.95, confidence + (matches * 0.1))
-
-                    return memory_type, confidence
-
-        # If no regex match and LLM enabled, use LLM classification
-        if use_llm:
-            try:
-                result = self._classify_with_llm(content)
-                if result:
-                    return result
-            except Exception:
-                logger.exception("LLM classification failed, using fallback")
-
-        # Default to base Memory type with lower confidence
-        return "Memory", 0.3
-
-    def _classify_with_llm(self, content: str) -> Optional[tuple[str, float]]:
-        """Use OpenAI to classify memory type (fallback for complex content)."""
-        # Reuse existing client if available
-        if state.openai_client is None:
-            init_openai()
-
-        if state.openai_client is None:
-            return None
-
-        try:
-            # Build model-specific params (o-series and gpt-5 don't support temperature)
-            extra_params: dict = {}
-            if CLASSIFICATION_MODEL.startswith(("o", "gpt-5")):
-                extra_params["max_completion_tokens"] = 50
-            else:
-                extra_params["max_tokens"] = 50
-                extra_params["temperature"] = 0.3
-            response = state.openai_client.chat.completions.create(
-                model=CLASSIFICATION_MODEL,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": content[:1000]},  # Limit to 1000 chars
-                ],
-                response_format={"type": "json_object"},
-                **extra_params,
-            )
-
-            result = json.loads(response.choices[0].message.content)
-            raw_type = result.get("type", "Memory")
-            confidence = float(result.get("confidence", 0.7))
-
-            # Normalize type (handles aliases and case variations)
-            memory_type, was_normalized = normalize_memory_type(raw_type)
-            if not memory_type:
-                logger.warning("LLM returned unmappable type '%s', using Context", raw_type)
-                return "Context", 0.5
-
-            if was_normalized and memory_type != raw_type:
-                logger.debug("LLM type normalized '%s' -> '%s'", raw_type, memory_type)
-
-            logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
-            return memory_type, confidence
-
-        except Exception as exc:
-            logger.warning("LLM classification failed: %s", exc)
-            return None
-
-
-memory_classifier = MemoryClassifier()
-
-
 state = ServiceState()
 
 
@@ -486,6 +318,15 @@ def init_openai() -> None:
     except Exception:
         logger.exception("Failed to initialize OpenAI client")
         state.openai_client = None
+
+
+memory_classifier = MemoryClassifier(
+    normalize_memory_type=normalize_memory_type,
+    ensure_openai_client=init_openai,
+    get_openai_client=get_openai_client,
+    classification_model=CLASSIFICATION_MODEL,
+    logger=logger,
+)
 
 
 def init_embedding_provider() -> None:
