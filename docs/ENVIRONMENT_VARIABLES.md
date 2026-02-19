@@ -252,8 +252,11 @@ Controls entity extraction and relationship linking.
 | `ENRICHMENT_FAILURE_BACKOFF_SECONDS` | Backoff on failure | `5` |
 | `ENRICHMENT_ENABLE_SUMMARIES` | Enable summarization | `true` |
 | `ENRICHMENT_SPACY_MODEL` | spaCy model name | `en_core_web_sm` |
+| `JIT_ENRICHMENT_ENABLED` | Inline enrichment during recall | `true` |
 
 **Note**: Enrichment requires spaCy: `pip install spacy && python -m spacy download en_core_web_sm`
+
+**JIT Enrichment**: When enabled, memories that haven't been processed by the async worker yet receive lightweight inline enrichment (entity extraction + summary) during recall. This adds ~50ms per unenriched result but ensures entity tags and summaries are available immediately. The async worker still runs expensive operations (temporal links, patterns, semantic neighbors) later.
 
 ### Search Weights
 

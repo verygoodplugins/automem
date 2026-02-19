@@ -967,6 +967,7 @@ def handle_recall(
     relation_limit: Optional[int] = None,
     expansion_limit_default: Optional[int] = None,
     on_access: Optional[Callable[[List[str]], None]] = None,
+    jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -1411,6 +1412,18 @@ def handle_recall(
             ]
         results = seed_results + expansion_results + entity_expansion_results
 
+    # JIT-enrich unenriched memories inline (cheap: entities + summary ~50ms each)
+    jit_enriched_count = 0
+    if jit_enrich_fn is not None:
+        for result in results:
+            mem = result.get("memory") or {}
+            if not mem.get("enriched") and mem.get("id") and mem.get("content"):
+                updated = jit_enrich_fn(mem["id"], mem)
+                if updated:
+                    result["memory"] = updated
+                    result["jit_enriched"] = True
+                    jit_enriched_count += 1
+
     response = {
         "status": "success",
         "query": query_text,
@@ -1451,6 +1464,8 @@ def handle_recall(
         response["exclude_tags"] = exclude_tags
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
+    if jit_enriched_count:
+        response["jit_enriched_count"] = jit_enriched_count
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
     if any_context_profile:
         response["context_priority"] = {
@@ -1526,6 +1541,7 @@ def create_recall_blueprint(
     serialize_node: Callable[[Any], Dict[str, Any]] | None = None,
     summarize_relation_node: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
     on_access: Optional[Callable[[List[str]], None]] = None,
+    jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
 ) -> Blueprint:
     bp = Blueprint("recall", __name__)
 
@@ -1549,6 +1565,7 @@ def create_recall_blueprint(
             relation_limit=relation_limit,
             expansion_limit_default=RECALL_EXPANSION_LIMIT,
             on_access=on_access,
+            jit_enrich_fn=jit_enrich_fn,
         )
 
     @bp.route("/startup-recall", methods=["GET"])

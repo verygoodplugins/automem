@@ -152,6 +152,7 @@ from automem.config import (
     ENRICHMENT_SPACY_MODEL,
     FALKORDB_PORT,
     GRAPH_NAME,
+    JIT_ENRICHMENT_ENABLED,
     MEMORY_TYPES,
     RECALL_EXPANSION_LIMIT,
     RECALL_RELATION_LIMIT,
@@ -2209,6 +2210,124 @@ def _run_sync_check() -> None:
         logger.exception("Sync check failed")
 
 
+def jit_enrich_lightweight(memory_id: str, properties: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Run lightweight JIT enrichment inline during recall.
+
+    Extracts entities, generates summary, and updates tags — the cheap parts
+    of enrichment (~50ms).  Does NOT set ``processed=true`` so the async worker
+    still runs the expensive operations (temporal links, patterns, neighbors).
+
+    Returns the updated *properties* dict on success, or ``None`` on failure.
+    """
+    graph = get_memory_graph()
+    if graph is None:
+        return None
+
+    content = properties.get("content", "") or ""
+    if not content:
+        return None
+
+    # --- cheap enrichment steps -------------------------------------------
+    entities = extract_entities(content)
+
+    tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
+    entity_tags: Set[str] = set()
+
+    metadata_raw = properties.get("metadata")
+    metadata = _parse_metadata_field(metadata_raw) or {}
+    if not isinstance(metadata, dict):
+        metadata = {"_raw_metadata": metadata}
+
+    if entities:
+        entities_section = metadata.setdefault("entities", {})
+        if not isinstance(entities_section, dict):
+            entities_section = {}
+        for category, values in entities.items():
+            if not values:
+                continue
+            entities_section[category] = sorted(values)
+            for value in values:
+                slug = _slugify(value)
+                if slug:
+                    entity_tags.add(f"entity:{category}:{slug}")
+        metadata["entities"] = entities_section
+
+    if entity_tags:
+        tags = list(dict.fromkeys(tags + sorted(entity_tags)))
+
+    tag_prefixes = _compute_tag_prefixes(tags)
+
+    summary = None
+    if ENRICHMENT_ENABLE_SUMMARIES:
+        summary = generate_summary(content, properties.get("summary"))
+    else:
+        summary = properties.get("summary")
+
+    enriched_at = utc_now()
+
+    # Record that JIT ran (the full worker will overwrite this later)
+    enrichment_meta = metadata.setdefault("enrichment", {})
+    if not isinstance(enrichment_meta, dict):
+        enrichment_meta = {}
+    enrichment_meta["jit"] = True
+    enrichment_meta["jit_at"] = enriched_at
+    metadata["enrichment"] = enrichment_meta
+
+    # --- persist to graph (do NOT set processed=true) ---------------------
+    update_payload = {
+        "id": memory_id,
+        "metadata": json.dumps(metadata, default=str),
+        "tags": tags,
+        "tag_prefixes": tag_prefixes,
+        "summary": summary,
+        "enriched_at": enriched_at,
+    }
+    try:
+        graph.query(
+            """
+            MATCH (m:Memory {id: $id})
+            SET m.metadata = $metadata,
+                m.tags = $tags,
+                m.tag_prefixes = $tag_prefixes,
+                m.summary = $summary,
+                m.enriched = true,
+                m.enriched_at = $enriched_at
+            """,
+            update_payload,
+        )
+    except Exception:
+        logger.exception("JIT enrichment graph update failed for %s", memory_id)
+        return None
+
+    # --- sync to Qdrant payload -------------------------------------------
+    qdrant_client = get_qdrant_client()
+    if qdrant_client is not None:
+        try:
+            qdrant_client.set_payload(
+                collection_name=COLLECTION_NAME,
+                points=[memory_id],
+                payload={
+                    "tags": tags,
+                    "tag_prefixes": tag_prefixes,
+                    "metadata": metadata,
+                },
+            )
+        except Exception:
+            logger.debug("JIT Qdrant payload sync skipped for %s", memory_id)
+
+    # --- return updated properties for the current recall response --------
+    updated = dict(properties)
+    updated["tags"] = tags
+    updated["tag_prefixes"] = tag_prefixes
+    updated["metadata"] = metadata
+    updated["summary"] = summary
+    updated["enriched"] = True
+    updated["enriched_at"] = enriched_at
+
+    logger.debug("JIT-enriched memory %s (entities=%s)", memory_id, bool(entities))
+    return updated
+
+
 def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
     """Enrich a memory with relationships, patterns, and entity extraction."""
     graph = get_memory_graph()
@@ -3784,6 +3903,7 @@ recall_bp = create_recall_blueprint(
     _serialize_node,
     _summarize_relation_node,
     update_last_accessed,
+    jit_enrich_fn=jit_enrich_lightweight if JIT_ENRICHMENT_ENABLED else None,
 )
 
 memory_bp = create_memory_blueprint_full(
