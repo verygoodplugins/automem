@@ -68,6 +68,9 @@ except ImportError:
     OpenAI = None  # type: ignore
 
 # SSE streaming for real-time observability
+from automem.api.auth_helpers import extract_api_token as _extract_api_token_helper
+from automem.api.auth_helpers import require_admin_token as _require_admin_token_helper
+from automem.api.auth_helpers import require_api_token as _require_api_token_helper
 from automem.api.stream import create_stream_blueprint, emit_event
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
@@ -437,22 +440,7 @@ state = ServiceState()
 
 
 def _extract_api_token() -> Optional[str]:
-    if not API_TOKEN:
-        return None
-
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:].strip()
-
-    api_key_header = request.headers.get("X-API-Key")
-    if api_key_header:
-        return api_key_header.strip()
-
-    api_key_param = request.args.get("api_key")
-    if api_key_param:
-        return api_key_param.strip()
-
-    return None
+    return _extract_api_token_helper(request, API_TOKEN)
 
 
 def get_openai_client() -> Optional[OpenAI]:
@@ -460,32 +448,21 @@ def get_openai_client() -> Optional[OpenAI]:
 
 
 def _require_admin_token() -> None:
-    if not ADMIN_TOKEN:
-        abort(403, description="Admin token not configured")
-
-    provided = (
-        request.headers.get("X-Admin-Token")
-        or request.headers.get("X-Admin-Api-Key")
-        or request.args.get("admin_token")
+    _require_admin_token_helper(
+        request_obj=request,
+        admin_token=ADMIN_TOKEN,
+        abort_fn=abort,
     )
-
-    if provided != ADMIN_TOKEN:
-        abort(401, description="Admin authorization required")
 
 
 @app.before_request
 def require_api_token() -> None:
-    if not API_TOKEN:
-        return
-
-    # Allow unauthenticated health checks (supports blueprint endpoint names)
-    endpoint = request.endpoint or ""
-    if endpoint.endswith("health") or request.path == "/health":
-        return
-
-    token = _extract_api_token()
-    if token != API_TOKEN:
-        abort(401, description="Unauthorized")
+    _require_api_token_helper(
+        request_obj=request,
+        api_token=API_TOKEN,
+        extract_api_token_fn=_extract_api_token,
+        abort_fn=abort,
+    )
 
 
 def init_openai() -> None:
