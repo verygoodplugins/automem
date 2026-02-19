@@ -121,6 +121,10 @@ from automem.enrichment.runtime_helpers import (
     link_semantic_neighbors as _link_semantic_neighbors_runtime,
 )
 from automem.enrichment.runtime_helpers import temporal_cutoff as _temporal_cutoff_runtime
+from automem.enrichment.runtime_orchestration import enrich_memory as _enrich_memory_runtime
+from automem.enrichment.runtime_orchestration import (
+    jit_enrich_lightweight as _jit_enrich_lightweight_runtime,
+)
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
 # Environment is loaded by automem.config
@@ -814,269 +818,45 @@ def _run_sync_check() -> None:
 
 
 def jit_enrich_lightweight(memory_id: str, properties: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Run lightweight JIT enrichment inline during recall.
-
-    Extracts entities, generates summary, and updates tags — the cheap parts
-    of enrichment (~50ms).  Does NOT set ``processed=true`` so the async worker
-    still runs the expensive operations (temporal links, patterns, neighbors).
-
-    Returns the updated *properties* dict on success, or ``None`` on failure.
-    """
-    graph = get_memory_graph()
-    if graph is None:
-        return None
-
-    # Check canonical enrichment state to avoid re-enriching Qdrant-sourced memories
-    try:
-        check = graph.query(
-            "MATCH (m:Memory {id: $id}) RETURN m.enriched, m.processed",
-            {"id": memory_id},
-        )
-        if getattr(check, "result_set", None):
-            row = check.result_set[0]
-            if row[0] or row[1]:  # already enriched or processed — skip
-                logger.debug("JIT skipped for %s (already enriched/processed)", memory_id)
-                return None
-    except Exception as exc:  # noqa: BLE001 - best-effort guard, proceed if check fails
-        logger.debug("JIT state-check failed for %s: %s", memory_id, exc)
-
-    content = properties.get("content", "") or ""
-    if not content:
-        return None
-
-    # --- cheap enrichment steps -------------------------------------------
-    entities = extract_entities(content)
-
-    tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
-    entity_tags: Set[str] = set()
-
-    metadata_raw = properties.get("metadata")
-    metadata = _parse_metadata_field(metadata_raw) or {}
-    if not isinstance(metadata, dict):
-        metadata = {"_raw_metadata": metadata}
-
-    if entities:
-        entities_section = metadata.setdefault("entities", {})
-        if not isinstance(entities_section, dict):
-            entities_section = {}
-        for category, values in entities.items():
-            if not values:
-                continue
-            entities_section[category] = sorted(values)
-            for value in values:
-                slug = _slugify(value)
-                if slug:
-                    entity_tags.add(f"entity:{category}:{slug}")
-        metadata["entities"] = entities_section
-
-    if entity_tags:
-        tags = list(dict.fromkeys(tags + sorted(entity_tags)))
-
-    tag_prefixes = _compute_tag_prefixes(tags)
-
-    summary = None
-    if ENRICHMENT_ENABLE_SUMMARIES:
-        summary = generate_summary(content, properties.get("summary"))
-    else:
-        summary = properties.get("summary")
-
-    enriched_at = utc_now()
-
-    # Record that JIT ran (the full worker will overwrite this later)
-    enrichment_meta = metadata.setdefault("enrichment", {})
-    if not isinstance(enrichment_meta, dict):
-        enrichment_meta = {}
-    enrichment_meta["jit"] = True
-    enrichment_meta["jit_at"] = enriched_at
-    metadata["enrichment"] = enrichment_meta
-
-    # --- persist to graph (do NOT set processed=true) ---------------------
-    update_payload = {
-        "id": memory_id,
-        "metadata": json.dumps(metadata, default=str),
-        "tags": tags,
-        "tag_prefixes": tag_prefixes,
-        "summary": summary,
-        "enriched_at": enriched_at,
-    }
-    try:
-        graph.query(
-            """
-            MATCH (m:Memory {id: $id})
-            SET m.metadata = $metadata,
-                m.tags = $tags,
-                m.tag_prefixes = $tag_prefixes,
-                m.summary = $summary,
-                m.enriched = true,
-                m.enriched_at = $enriched_at
-            """,
-            update_payload,
-        )
-    except Exception:
-        logger.exception("JIT enrichment graph update failed for %s", memory_id)
-        return None
-
-    # --- sync to Qdrant payload -------------------------------------------
-    qdrant_client = get_qdrant_client()
-    if qdrant_client is not None:
-        try:
-            qdrant_client.set_payload(
-                collection_name=COLLECTION_NAME,
-                points=[memory_id],
-                payload={
-                    "tags": tags,
-                    "tag_prefixes": tag_prefixes,
-                    "metadata": metadata,
-                },
-            )
-        except Exception as exc:  # noqa: BLE001 - Qdrant client raises multiple exception types
-            logger.debug("JIT Qdrant payload sync skipped for %s: %s", memory_id, exc)
-
-    # --- return updated properties for the current recall response --------
-    updated = dict(properties)
-    updated["tags"] = tags
-    updated["tag_prefixes"] = tag_prefixes
-    updated["metadata"] = metadata
-    updated["summary"] = summary
-    updated["enriched"] = True
-    updated["enriched_at"] = enriched_at
-
-    logger.debug("JIT-enriched memory %s (entities=%s)", memory_id, bool(entities))
-    return updated
+    return _jit_enrich_lightweight_runtime(
+        memory_id=memory_id,
+        properties=properties,
+        get_memory_graph_fn=get_memory_graph,
+        get_qdrant_client_fn=get_qdrant_client,
+        parse_metadata_field_fn=_parse_metadata_field,
+        normalize_tag_list_fn=_normalize_tag_list,
+        extract_entities_fn=extract_entities,
+        slugify_fn=_slugify,
+        compute_tag_prefixes_fn=_compute_tag_prefixes,
+        enrichment_enable_summaries=ENRICHMENT_ENABLE_SUMMARIES,
+        generate_summary_fn=generate_summary,
+        utc_now_fn=utc_now,
+        collection_name=COLLECTION_NAME,
+        logger=logger,
+    )
 
 
 def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
-    """Enrich a memory with relationships, patterns, and entity extraction."""
-    graph = get_memory_graph()
-    if graph is None:
-        raise RuntimeError("FalkorDB unavailable for enrichment")
-
-    result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
-
-    if not result.result_set:
-        logger.debug("Skipping enrichment for %s; memory not found", memory_id)
-        return False
-
-    node = result.result_set[0][0]
-    properties = getattr(node, "properties", None)
-    if not isinstance(properties, dict):
-        properties = dict(getattr(node, "__dict__", {}))
-
-    metadata_raw = properties.get("metadata")
-    metadata = _parse_metadata_field(metadata_raw) or {}
-    if not isinstance(metadata, dict):
-        metadata = {"_raw_metadata": metadata}
-
-    already_processed = bool(properties.get("processed"))
-    if already_processed and not forced:
-        return False
-
-    content = properties.get("content", "") or ""
-    entities = extract_entities(content)
-
-    tags = list(dict.fromkeys(_normalize_tag_list(properties.get("tags"))))
-    entity_tags: Set[str] = set()
-
-    if entities:
-        entities_section = metadata.setdefault("entities", {})
-        if not isinstance(entities_section, dict):
-            entities_section = {}
-        for category, values in entities.items():
-            if not values:
-                continue
-            entities_section[category] = sorted(values)
-            for value in values:
-                slug = _slugify(value)
-                if slug:
-                    entity_tags.add(f"entity:{category}:{slug}")
-        metadata["entities"] = entities_section
-
-    if entity_tags:
-        tags = list(dict.fromkeys(tags + sorted(entity_tags)))
-
-    tag_prefixes = _compute_tag_prefixes(tags)
-
-    temporal_links = find_temporal_relationships(graph, memory_id)
-    pattern_info = detect_patterns(graph, memory_id, content)
-    semantic_neighbors = link_semantic_neighbors(graph, memory_id)
-
-    if ENRICHMENT_ENABLE_SUMMARIES:
-        existing_summary = properties.get("summary")
-        summary = generate_summary(content, existing_summary if forced else None)
-    else:
-        summary = properties.get("summary")
-
-    enrichment_meta = metadata.setdefault("enrichment", {})
-    if not isinstance(enrichment_meta, dict):
-        enrichment_meta = {}
-    enrichment_meta.update(
-        {
-            "last_run": utc_now(),
-            "forced": forced,
-            "temporal_links": temporal_links,
-            "patterns_detected": pattern_info,
-            "semantic_neighbors": [
-                {"id": neighbour_id, "score": score} for neighbour_id, score in semantic_neighbors
-            ],
-        }
+    return _enrich_memory_runtime(
+        memory_id=memory_id,
+        forced=forced,
+        get_memory_graph_fn=get_memory_graph,
+        get_qdrant_client_fn=get_qdrant_client,
+        parse_metadata_field_fn=_parse_metadata_field,
+        normalize_tag_list_fn=_normalize_tag_list,
+        extract_entities_fn=extract_entities,
+        slugify_fn=_slugify,
+        compute_tag_prefixes_fn=_compute_tag_prefixes,
+        find_temporal_relationships_fn=find_temporal_relationships,
+        detect_patterns_fn=detect_patterns,
+        link_semantic_neighbors_fn=link_semantic_neighbors,
+        enrichment_enable_summaries=ENRICHMENT_ENABLE_SUMMARIES,
+        generate_summary_fn=generate_summary,
+        utc_now_fn=utc_now,
+        collection_name=COLLECTION_NAME,
+        unexpected_response_exc=UnexpectedResponse,
+        logger=logger,
     )
-    metadata["enrichment"] = enrichment_meta
-
-    update_payload = {
-        "id": memory_id,
-        "metadata": json.dumps(metadata, default=str),
-        "tags": tags,
-        "tag_prefixes": tag_prefixes,
-        "summary": summary,
-        "enriched_at": utc_now(),
-    }
-
-    graph.query(
-        """
-        MATCH (m:Memory {id: $id})
-        SET m.metadata = $metadata,
-            m.tags = $tags,
-            m.tag_prefixes = $tag_prefixes,
-            m.summary = $summary,
-            m.enriched = true,
-            m.enriched_at = $enriched_at,
-            m.processed = true
-        """,
-        update_payload,
-    )
-
-    qdrant_client = get_qdrant_client()
-    if qdrant_client is not None:
-        try:
-            qdrant_client.set_payload(
-                collection_name=COLLECTION_NAME,
-                points=[memory_id],
-                payload={
-                    "tags": tags,
-                    "tag_prefixes": tag_prefixes,
-                    "metadata": metadata,
-                },
-            )
-        except UnexpectedResponse as exc:
-            # 404 means embedding upload hasn't completed yet (race condition)
-            if exc.status_code == 404:
-                logger.debug(
-                    "Qdrant payload sync skipped - point not yet uploaded: %s", memory_id[:8]
-                )
-            else:
-                logger.warning("Qdrant payload sync failed (%d): %s", exc.status_code, memory_id)
-        except Exception:
-            logger.exception("Failed to sync Qdrant payload for enriched memory %s", memory_id)
-
-    logger.debug(
-        "Enriched memory %s (temporal=%s, patterns=%s, semantic=%s)",
-        memory_id,
-        temporal_links,
-        pattern_info,
-        len(semantic_neighbors),
-    )
-
-    return True
 
 
 def _temporal_cutoff() -> str:
