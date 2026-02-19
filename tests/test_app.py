@@ -474,7 +474,7 @@ def test_result_passes_filters_mixed_naive_aware():
 # ============================================================================
 
 
-def test_jit_enrich_lightweight_basic(reset_state, monkeypatch):
+def test_jit_enrich_lightweight_basic(reset_state) -> None:
     """JIT enrichment extracts entities, generates summary, and does NOT set processed."""
     properties = {
         "id": "mem-jit-1",
@@ -505,7 +505,7 @@ def test_jit_enrich_lightweight_basic(reset_state, monkeypatch):
     assert not graph_queries, "JIT should NOT set processed=true"
 
 
-def test_jit_enrich_lightweight_empty_content(reset_state):
+def test_jit_enrich_lightweight_empty_content() -> None:
     """JIT enrichment returns None for empty content."""
     result = app.jit_enrich_lightweight("mem-empty", {"content": "", "tags": []})
     assert result is None
@@ -514,7 +514,7 @@ def test_jit_enrich_lightweight_empty_content(reset_state):
     assert result is None
 
 
-def test_jit_enrich_lightweight_no_graph(reset_state, monkeypatch):
+def test_jit_enrich_lightweight_no_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     """JIT enrichment returns None when graph is unavailable."""
     state = app.ServiceState()
     state.memory_graph = None
@@ -524,7 +524,7 @@ def test_jit_enrich_lightweight_no_graph(reset_state, monkeypatch):
     assert result is None
 
 
-def test_recall_jit_enriches_unenriched(client, reset_state, auth_headers, monkeypatch):
+def test_recall_jit_enriches_unenriched(client, auth_headers, monkeypatch) -> None:
     """Recall should JIT-enrich unenriched memories when enabled."""
     jit_calls = []
 
@@ -554,7 +554,7 @@ def test_recall_jit_enriches_unenriched(client, reset_state, auth_headers, monke
     assert result["enriched"] is True
 
 
-def test_recall_skips_jit_for_already_enriched():
+def test_recall_skips_jit_for_already_enriched() -> None:
     """JIT pass should skip memories that already have enriched=True."""
     # This tests the logic in recall.py - already-enriched memories are skipped
     # because the condition checks `not mem.get("enriched")`
@@ -570,8 +570,9 @@ def test_recall_skips_jit_for_already_enriched():
 
     for result in [mem_enriched, mem_unenriched]:
         mem = result.get("memory") or {}
-        if not mem.get("enriched") and mem.get("id") and mem.get("content"):
-            updated = fake_jit(mem["id"], mem)
+        mem_id = mem.get("id") or result.get("id") or mem.get("memory_id") or mem.get("uuid")
+        if not mem.get("enriched") and mem_id and mem.get("content"):
+            updated = fake_jit(str(mem_id), mem)
             if updated:
                 result["memory"] = updated
 

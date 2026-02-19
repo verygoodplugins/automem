@@ -1417,8 +1417,9 @@ def handle_recall(
     if jit_enrich_fn is not None:
         for result in results:
             mem = result.get("memory") or {}
-            if not mem.get("enriched") and mem.get("id") and mem.get("content"):
-                updated = jit_enrich_fn(mem["id"], mem)
+            mem_id = mem.get("id") or result.get("id") or mem.get("memory_id") or mem.get("uuid")
+            if not mem.get("enriched") and mem_id and mem.get("content"):
+                updated = jit_enrich_fn(str(mem_id), mem)
                 if updated:
                     result["memory"] = updated
                     result["jit_enriched"] = True

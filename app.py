@@ -2312,8 +2312,8 @@ def jit_enrich_lightweight(memory_id: str, properties: Dict[str, Any]) -> Option
                     "metadata": metadata,
                 },
             )
-        except Exception:
-            logger.debug("JIT Qdrant payload sync skipped for %s", memory_id)
+        except Exception as exc:  # noqa: BLE001 - Qdrant client raises multiple exception types
+            logger.debug("JIT Qdrant payload sync skipped for %s: %s", memory_id, exc)
 
     # --- return updated properties for the current recall response --------
     updated = dict(properties)
