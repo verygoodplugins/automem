@@ -5,6 +5,23 @@ from collections import defaultdict
 from typing import Any, Callable, Dict
 
 
+def _parse_metadata_safe(raw_metadata: Any, *, memory_id: Any, logger: Any) -> Dict[str, Any]:
+    if not raw_metadata:
+        return {}
+    if isinstance(raw_metadata, dict):
+        return raw_metadata
+    if isinstance(raw_metadata, str):
+        try:
+            parsed = json.loads(raw_metadata)
+        except json.JSONDecodeError:
+            logger.warning("Malformed metadata JSON for %s; defaulting to empty object", memory_id)
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    logger.warning("Unexpected metadata type for %s; defaulting to empty object", memory_id)
+    return {}
+
+
 def startup_recall(
     *,
     get_memory_graph_fn: Callable[[], Any],
@@ -38,8 +55,12 @@ def startup_recall(
                         "content": row[1],
                         "tags": row[2] if row[2] else [],
                         "importance": row[3] if row[3] else 0.5,
-                        "type": row[4] if row[4] else "Context",
-                        "metadata": json.loads(row[5]) if row[5] else {},
+                        "type": row[4] if row[4] else "Memory",
+                        "metadata": _parse_metadata_safe(
+                            row[5] if len(row) > 5 else None,
+                            memory_id=row[0] if row else None,
+                            logger=logger,
+                        ),
                     }
                 )
 

@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, Dict, List, Set
+
+
+def _validate_memory_id(memory_id: str, abort_fn: Any) -> None:
+    try:
+        uuid.UUID(memory_id)
+    except ValueError:
+        abort_fn(400, description="memory_id must be a valid UUID")
 
 
 def fetch_relations(
@@ -51,6 +59,8 @@ def get_related_memories(
     jsonify_fn: Any,
 ) -> Any:
     """Return related memories by traversing relationship edges."""
+    _validate_memory_id(memory_id, abort_fn)
+
     graph = get_memory_graph_fn()
     if graph is None:
         abort_fn(503, description="FalkorDB is unavailable")

@@ -35,9 +35,6 @@ def recall_memories(
     except (TypeError, ValueError):
         requested_limit = 5
     limit = max(1, min(requested_limit, recall_max_limit))
-    time_query = request_obj.args.get("time_query") or request_obj.args.get("time")
-    start_param = request_obj.args.get("start")
-    end_param = request_obj.args.get("end")
     tags_param = request_obj.args.getlist("tags") or request_obj.args.get("tags")
 
     tag_mode = (request_obj.args.get("tag_mode") or "any").strip().lower()
@@ -47,20 +44,6 @@ def recall_memories(
     tag_match = (request_obj.args.get("tag_match") or "prefix").strip().lower()
     if tag_match not in {"exact", "prefix"}:
         tag_match = "prefix"
-
-    time_start, time_end = parse_time_expression_fn(time_query)
-
-    if start_param:
-        try:
-            time_start = normalize_timestamp_fn(start_param)
-        except ValueError as exc:
-            abort_fn(400, description=f"Invalid start time: {exc}")
-
-    if end_param:
-        try:
-            time_end = normalize_timestamp_fn(end_param)
-        except ValueError as exc:
-            abort_fn(400, description=f"Invalid end time: {exc}")
 
     tag_filters = normalize_tag_list_fn(tags_param)
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, List
+from typing import Any, Callable, Dict, List
 
 from automem.enrichment.runtime_worker import enqueue_enrichment as _enqueue_enrichment_runtime
 from automem.enrichment.runtime_worker import enrichment_worker as _enrichment_worker_runtime
@@ -14,7 +14,7 @@ from automem.enrichment.runtime_worker import update_last_accessed as _update_la
 @dataclass(frozen=True)
 class EnrichmentQueueRuntimeBindings:
     init_enrichment_pipeline: Callable[[], None]
-    enqueue_enrichment: Callable[[str], None]
+    enqueue_enrichment: Callable[..., None]
     update_last_accessed: Callable[[List[str]], None]
     enrichment_worker: Callable[[], None]
 
@@ -33,7 +33,7 @@ def create_enrichment_queue_runtime(
     enrichment_failure_backoff_seconds: float,
     empty_exc: Any,
     enrich_memory_fn: Callable[..., bool],
-    emit_event_fn: Callable[[str, dict[str, Any], Callable[[], str]], None],
+    emit_event_fn: Callable[[str, Dict[str, Any], Callable[[], str]], None],
     perf_counter_fn: Callable[[], float],
     sleep_fn: Callable[[float], None],
 ) -> EnrichmentQueueRuntimeBindings:

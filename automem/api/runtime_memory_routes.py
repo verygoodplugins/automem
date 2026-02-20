@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Dict, List
+
+MEMORY_CONTENT_SOFT_LIMIT = 500
+MEMORY_CONTENT_HARD_LIMIT = 2000
 
 
 def store_memory(
@@ -39,12 +43,28 @@ def store_memory(
     content = (payload.get("content") or "").strip()
     if not content:
         abort_fn(400, description="'content' is required")
+    if len(content) > MEMORY_CONTENT_HARD_LIMIT:
+        abort_fn(
+            400,
+            description=(
+                f"Content exceeds maximum length of {MEMORY_CONTENT_HARD_LIMIT} characters "
+                f"({len(content)} provided)."
+            ),
+        )
+
+    needs_auto_summarize = len(content) > MEMORY_CONTENT_SOFT_LIMIT
+
+    raw_memory_id = payload.get("id")
+    memory_id = str(raw_memory_id).strip() if raw_memory_id else str(uuid4_fn())
+    try:
+        uuid.UUID(memory_id)
+    except (ValueError, TypeError):
+        abort_fn(400, description="'id' must be a valid UUID")
 
     tags = normalize_tags_fn(payload.get("tags"))
     tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
     tag_prefixes = compute_tag_prefixes_fn(tags_lower)
     importance = coerce_importance_fn(payload.get("importance"))
-    memory_id = payload.get("id") or str(uuid4_fn())
 
     metadata_raw = payload.get("metadata")
     if metadata_raw is None:
@@ -53,6 +73,10 @@ def store_memory(
         metadata = metadata_raw
     else:
         abort_fn(400, description="'metadata' must be an object")
+
+    if needs_auto_summarize:
+        metadata["needs_auto_summarize"] = True
+
     metadata_json = json.dumps(metadata, default=str)
 
     raw_type = payload.get("type")
@@ -204,7 +228,11 @@ def store_memory(
                 )
                 qdrant_result = "stored"
             except Exception:  # pragma: no cover - log full stack trace in production
-                logger.exception("Qdrant upsert failed")
+                logger.exception(
+                    "Qdrant upsert failed for memory %s in collection %s",
+                    memory_id,
+                    collection_name,
+                )
                 qdrant_result = "failed"
     elif qdrant_client is not None:
         enqueue_embedding_fn(memory_id, content)
@@ -396,10 +424,17 @@ def update_memory(
                 "last_accessed": last_accessed,
                 "metadata": metadata,
             }
-            qdrant_client.upsert(
-                collection_name=collection_name,
-                points=[point_struct_cls(id=memory_id, vector=vector, payload=qdrant_payload)],
-            )
+            try:
+                qdrant_client.upsert(
+                    collection_name=collection_name,
+                    points=[point_struct_cls(id=memory_id, vector=vector, payload=qdrant_payload)],
+                )
+            except Exception:
+                logger.exception(
+                    "Qdrant upsert failed for memory %s in collection %s",
+                    memory_id,
+                    collection_name,
+                )
 
     return jsonify_fn({"status": "success", "memory_id": memory_id})
 

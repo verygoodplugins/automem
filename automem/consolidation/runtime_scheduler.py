@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 
 def run_consolidation_tick(
@@ -8,7 +8,7 @@ def run_consolidation_tick(
     get_memory_graph_fn: Callable[[], Any],
     build_scheduler_from_graph_fn: Callable[[Any], Any],
     persist_consolidation_run_fn: Callable[[Any, Dict[str, Any]], None],
-    decay_importance_threshold: float | None,
+    decay_importance_threshold: Optional[float],
     emit_event_fn: Callable[[str, Dict[str, Any], Callable[[], str]], None],
     utc_now_fn: Callable[[], str],
     perf_counter_fn: Callable[[], float],
@@ -23,9 +23,9 @@ def run_consolidation_tick(
         return
 
     try:
-        tick_start = perf_counter_fn()
         results = scheduler.run_scheduled_tasks(decay_threshold=decay_importance_threshold)
         for result in results:
+            task_start = perf_counter_fn()
             persist_consolidation_run_fn(graph, result)
 
             task_type = result.get("mode", "unknown")
@@ -42,7 +42,7 @@ def run_consolidation_tick(
                 affected_count += steps["forget"].get("archived", 0)
                 affected_count += steps["forget"].get("deleted", 0)
 
-            elapsed_ms = int((perf_counter_fn() - tick_start) * 1000)
+            elapsed_ms = int((perf_counter_fn() - task_start) * 1000)
             next_runs = scheduler.get_next_runs()
 
             emit_event_fn(

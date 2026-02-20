@@ -18,6 +18,10 @@ _logger: Any = None
 _collection_name: str = ""
 
 
+def _normalize_tags(tags: List[Any]) -> List[str]:
+    return [str(tag).strip().lower() for tag in tags if isinstance(tag, str) and str(tag).strip()]
+
+
 def configure_recall_helpers(
     *,
     parse_iso_datetime: Callable[[Any], Optional[Any]],
@@ -91,11 +95,7 @@ def _result_passes_filters(
             normalized_match = "prefix" if tag_match == "prefix" else "exact"
 
             tags = memory.get("tags") or []
-            lowered_tags = [
-                str(tag).strip().lower()
-                for tag in tags
-                if isinstance(tag, str) and str(tag).strip()
-            ]
+            lowered_tags = _normalize_tags(tags)
 
             if normalized_match == "exact":
                 tag_set = set(lowered_tags)
@@ -144,11 +144,7 @@ def _result_passes_filters(
         normalized_exclude = prepare_tag_filters(exclude_tags)
         if normalized_exclude:
             tags = memory.get("tags") or []
-            lowered_tags = [
-                str(tag).strip().lower()
-                for tag in tags
-                if isinstance(tag, str) and str(tag).strip()
-            ]
+            lowered_tags = _normalize_tags(tags)
 
             tag_set = set(lowered_tags)
             if any(exclude_tag in tag_set for exclude_tag in normalized_exclude):
@@ -427,13 +423,10 @@ def _vector_filter_only_tag_search(
 
         payload = point.payload or {}
         importance = payload.get("importance")
-        if isinstance(importance, (int, float)):
+        try:
             score = float(importance)
-        else:
-            try:
-                score = float(importance) if importance is not None else 0.0
-            except (TypeError, ValueError):
-                score = 0.0
+        except (TypeError, ValueError):
+            score = 0.0
 
         results.append(
             {

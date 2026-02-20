@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Callable, List, Set, Tuple
 
@@ -8,6 +9,7 @@ def load_keyword_runtime() -> Tuple[Set[str], Set[str], Set[str], Callable[[str]
     search_stopwords: Set[str] = set()
     entity_stopwords: Set[str] = set()
     entity_blocklist: Set[str] = set()
+    logger = logging.getLogger(__name__)
 
     try:
         from automem.utils.text import ENTITY_BLOCKLIST as _am_entity_blocklist
@@ -24,8 +26,12 @@ def load_keyword_runtime() -> Tuple[Set[str], Set[str], Set[str], Callable[[str]
             entity_blocklist,
             _am_extract_keywords,
         )
-    except Exception:
+    except ImportError:
         pass
+    except Exception:
+        logger.exception(
+            "Unexpected error importing keyword helpers; falling back to local extractor"
+        )
 
     def _extract_keywords(text: str) -> List[str]:
         if not text:

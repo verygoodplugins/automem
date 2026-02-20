@@ -4,6 +4,10 @@ import json
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 
+class FalkorDBUnavailableError(RuntimeError):
+    """Raised when enrichment requires FalkorDB but no graph client is available."""
+
+
 def jit_enrich_lightweight(
     *,
     memory_id: str,
@@ -162,7 +166,7 @@ def enrich_memory(
     """Enrich a memory with relationships, patterns, and entity extraction."""
     graph = get_memory_graph_fn()
     if graph is None:
-        raise RuntimeError("FalkorDB unavailable for enrichment")
+        raise FalkorDBUnavailableError
 
     result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
 

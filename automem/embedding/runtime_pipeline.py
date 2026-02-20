@@ -171,7 +171,7 @@ def store_embedding_in_qdrant(
                         "tag_prefixes": properties.get("tag_prefixes", []),
                         "importance": properties.get("importance", 0.5),
                         "timestamp": properties.get("timestamp", utc_now_fn()),
-                        "type": properties.get("type", "Context"),
+                        "type": properties.get("type", "Memory"),
                         "confidence": properties.get("confidence", 0.5),
                         "updated_at": properties.get("updated_at", utc_now_fn()),
                         "last_accessed": properties.get("last_accessed", utc_now_fn()),

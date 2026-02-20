@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any, Callable
 
 
@@ -76,15 +78,31 @@ def wire_recall_and_blueprints(
 
 
 def run_default_server(*, module: Any) -> None:
-    port = int(module.os.environ.get("PORT", "8001"))
+    port = int(os.environ.get("PORT", "8001"))
     module.logger.info("Starting Flask API on port %s", port)
-    module.init_falkordb()
-    module.init_qdrant()
-    module.init_openai()  # Still needed for memory type classification
-    module.init_embedding_provider()  # New provider pattern for embeddings
-    module.init_enrichment_pipeline()
-    module.init_embedding_pipeline()
-    module.init_consolidation_scheduler()
-    module.init_sync_worker()
+    init_steps = [
+        ("init_falkordb", module.init_falkordb),
+        ("init_qdrant", module.init_qdrant),
+        ("init_openai", module.init_openai),
+        ("init_embedding_provider", module.init_embedding_provider),
+        ("init_enrichment_pipeline", module.init_enrichment_pipeline),
+        ("init_embedding_pipeline", module.init_embedding_pipeline),
+        ("init_consolidation_scheduler", module.init_consolidation_scheduler),
+        ("init_sync_worker", module.init_sync_worker),
+    ]
+    failed_step = "unknown"
+    try:
+        for failed_step, init_fn in init_steps:
+            init_fn()
+    except Exception:
+        module.logger.exception("Server initialization failed at step %s", failed_step)
+        for cleanup_name in ("stop_sync_worker", "stop_consolidation_scheduler"):
+            cleanup_fn = getattr(module, cleanup_name, None)
+            if callable(cleanup_fn):
+                try:
+                    cleanup_fn()
+                except Exception:
+                    module.logger.exception("Cleanup step %s failed", cleanup_name)
+        sys.exit(1)
     # Use :: for IPv6 dual-stack (Railway internal networking uses IPv6)
     module.app.run(host="::", port=port, debug=False)

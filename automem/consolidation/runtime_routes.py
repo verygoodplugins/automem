@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable, Dict, Set
 
 
@@ -26,6 +27,11 @@ def create_association(
 
     if not memory1_id or not memory2_id:
         abort_fn(400, description="'memory1_id' and 'memory2_id' are required")
+    for field_name, value in (("memory1_id", memory1_id), ("memory2_id", memory2_id)):
+        try:
+            uuid.UUID(value)
+        except ValueError:
+            abort_fn(400, description=f"'{field_name}' must be a valid UUID")
     if memory1_id == memory2_id:
         abort_fn(400, description="Cannot associate a memory with itself")
     if relation_type not in allowed_relations:

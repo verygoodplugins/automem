@@ -70,8 +70,9 @@ def init_qdrant(
         ensure_collection_fn()
         logger.info("Qdrant connection established")
     except ValueError:
+        logger.exception("Invalid Qdrant configuration; running without vector store")
         state.qdrant = None
-        raise
+        return
     except Exception:  # pragma: no cover
         logger.exception("Failed to initialize Qdrant client")
         state.qdrant = None

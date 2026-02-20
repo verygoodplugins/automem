@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Set
 
 from automem.consolidation.runtime_helpers import (
     apply_scheduler_overrides as _apply_scheduler_overrides_runtime,
@@ -33,7 +33,7 @@ class ConsolidationRuntimeBindings:
     load_recent_runs: Callable[[Any, int], List[Dict[str, Any]]]
     persist_consolidation_run: Callable[[Any, Dict[str, Any]], None]
     build_consolidator_from_config: Callable[[Any, Any], MemoryConsolidator]
-    build_scheduler_from_graph: Callable[[Any], Optional[ConsolidationScheduler]]
+    build_scheduler_from_graph: Callable[[Any], ConsolidationScheduler]
     run_consolidation_tick: Callable[[], None]
     consolidation_worker: Callable[[], None]
     init_consolidation_scheduler: Callable[[], None]
@@ -120,7 +120,7 @@ def create_consolidation_runtime(
             protected_types=set(protected_types),
         )
 
-    def build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
+    def build_scheduler_from_graph(graph: Any) -> ConsolidationScheduler:
         vector_store = get_qdrant_client_fn()
         consolidator = build_consolidator_from_config(graph, vector_store)
         scheduler = ConsolidationScheduler(consolidator)

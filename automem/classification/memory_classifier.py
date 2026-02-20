@@ -8,6 +8,8 @@ from typing import Any, Callable, Optional
 class MemoryClassifier:
     """Classifies memories into specific types based on content patterns."""
 
+    MAX_COMPLETION_PREFIXES = ("o1", "o3", "o4", "gpt-4o", "gpt-4.1", "gpt-5")
+
     PATTERNS = {
         "Decision": [
             r"decided to",
@@ -47,7 +49,7 @@ class MemoryClassifier:
             r"expressed as",
         ],
         "Habit": [
-            r"always",
+            r"\balways\b(?!\s+use\b)",
             r"every time",
             r"habitually",
             r"routine",
@@ -135,7 +137,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         try:
             extra_params: dict[str, Any] = {}
             uses_max_completion_tokens = self._classification_model.startswith(
-                ("o1", "o3", "o4", "gpt-4o", "gpt-4.1", "gpt-5")
+                self.MAX_COMPLETION_PREFIXES
             )
             if uses_max_completion_tokens:
                 extra_params["max_completion_tokens"] = 50

@@ -46,17 +46,25 @@ def find_temporal_relationships(
         for (related_id,) in result.result_set:
             if not related_id:
                 continue
-            graph.query(
-                """
-                MATCH (m1:Memory {id: $id1})
-                MATCH (m2:Memory {id: $id2})
-                MERGE (m1)-[r:PRECEDED_BY]->(m2)
-                SET r.updated_at = $timestamp,
-                    r.count = COALESCE(r.count, 0) + 1
-                """,
-                {"id1": memory_id, "id2": related_id, "timestamp": timestamp},
-            )
-            created += 1
+            try:
+                graph.query(
+                    """
+                    MATCH (m1:Memory {id: $id1})
+                    MATCH (m2:Memory {id: $id2})
+                    MERGE (m1)-[r:PRECEDED_BY]->(m2)
+                    SET r.updated_at = $timestamp,
+                        r.count = COALESCE(r.count, 0) + 1
+                    """,
+                    {"id1": memory_id, "id2": related_id, "timestamp": timestamp},
+                )
+                created += 1
+            except Exception:
+                logger.exception(
+                    "Failed PRECEDED_BY relationship create id1=%s id2=%s timestamp=%s",
+                    memory_id,
+                    related_id,
+                    timestamp,
+                )
     except Exception:
         logger.exception("Failed to find temporal relationships")
 
@@ -231,20 +239,12 @@ def link_semantic_neighbors(
             """
             MATCH (a:Memory {id: $id1})
             MATCH (b:Memory {id: $id2})
-            MERGE (a)-[r:SIMILAR_TO]->(b)
-            SET r.score = $score,
-                r.updated_at = $timestamp
-            """,
-            params,
-        )
-
-        graph.query(
-            """
-            MATCH (a:Memory {id: $id1})
-            MATCH (b:Memory {id: $id2})
-            MERGE (b)-[r:SIMILAR_TO]->(a)
-            SET r.score = $score,
-                r.updated_at = $timestamp
+            MERGE (a)-[r1:SIMILAR_TO]->(b)
+            MERGE (b)-[r2:SIMILAR_TO]->(a)
+            SET r1.score = $score,
+                r2.score = $score,
+                r1.updated_at = $timestamp,
+                r2.updated_at = $timestamp
             """,
             params,
         )
