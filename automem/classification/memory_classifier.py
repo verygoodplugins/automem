@@ -134,7 +134,10 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
 
         try:
             extra_params: dict[str, Any] = {}
-            if self._classification_model.startswith(("o", "gpt-5")):
+            uses_max_completion_tokens = self._classification_model.startswith(
+                ("o1", "o3", "o4", "gpt-4o", "gpt-4.1", "gpt-5")
+            )
+            if uses_max_completion_tokens:
                 extra_params["max_completion_tokens"] = 50
             else:
                 extra_params["max_tokens"] = 50
@@ -150,7 +153,17 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
                 **extra_params,
             )
 
-            result = json.loads(response.choices[0].message.content)
+            raw_content = response.choices[0].message.content
+            if not raw_content:
+                self._logger.warning("LLM returned empty classification response")
+                return None
+
+            try:
+                result = json.loads(raw_content)
+            except (json.JSONDecodeError, TypeError):
+                self._logger.warning("LLM returned invalid JSON classification response")
+                return None
+
             raw_type = result.get("type", "Memory")
             confidence = float(result.get("confidence", 0.7))
 

@@ -182,7 +182,7 @@ def analyze_memories(
                         "avg_importance": round(data["total_importance"] / data["count"], 3),
                     }
         except Exception:
-            pass
+            logger.debug("Temporal insights extraction failed", exc_info=True)
 
         conf_result = graph.query(
             """
@@ -233,11 +233,14 @@ def analyze_memories(
         logger.exception("Failed to generate analytics")
         abort_fn(500, description="Failed to generate analytics")
 
-    return jsonify_fn(
-        {
-            "status": "success",
-            "analytics": analytics,
-            "generated_at": utc_now_fn(),
-            "query_time_ms": round((perf_counter_fn() - query_start) * 1000, 2),
-        }
+    return (
+        jsonify_fn(
+            {
+                "status": "success",
+                "analytics": analytics,
+                "generated_at": utc_now_fn(),
+                "query_time_ms": round((perf_counter_fn() - query_start) * 1000, 2),
+            }
+        ),
+        200,
     )

@@ -82,7 +82,7 @@ def get_related_memories(
         rel_pattern = ""
 
     query = f"""
-        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f']-' if rel_pattern else '-[r]-'}(related:Memory)
+        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + ']-' if rel_pattern else '-[r]-'}(related:Memory)
         WHERE m.id <> related.id
         CALL apoc.path.expandConfig(related, {{
             relationshipFilter: '{'|'.join(rel_types)}',
@@ -98,7 +98,7 @@ def get_related_memories(
     """
 
     fallback_query = f"""
-        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
+        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..{max_depth}]-' if rel_pattern else f'-[r*1..{max_depth}]-'}(related:Memory)
         WHERE m.id <> related.id
         RETURN DISTINCT related
         ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC

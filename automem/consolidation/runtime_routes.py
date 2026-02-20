@@ -120,7 +120,7 @@ def consolidate_memories(
 
         return jsonify_fn({"status": "success", "consolidation": results}), 200
     except Exception as e:
-        logger.error(f"Consolidation failed: {e}")
+        logger.exception("Consolidation failed")
         return jsonify_fn({"error": "Consolidation failed", "details": str(e)}), 500
 
 
@@ -163,5 +163,5 @@ def consolidation_status(
             200,
         )
     except Exception as e:
-        logger.error(f"Failed to get consolidation status: {e}")
+        logger.exception("Failed to get consolidation status")
         return jsonify_fn({"error": "Failed to get status", "details": str(e)}), 500

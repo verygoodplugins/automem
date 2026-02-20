@@ -108,7 +108,9 @@ def generate_real_embeddings_batch(
     expected_dim = state.effective_vector_size
     try:
         embeddings = state.embedding_provider.generate_embeddings_batch(contents)
-        if not embeddings or any(len(e) != expected_dim for e in embeddings):
+        if not embeddings or any(
+            not isinstance(e, list) or len(e) != expected_dim for e in embeddings
+        ):
             logger.warning(
                 "Provider %s returned invalid dims in batch; using placeholders",
                 state.embedding_provider.provider_name() if state.embedding_provider else "unknown",

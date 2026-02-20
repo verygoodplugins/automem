@@ -384,7 +384,7 @@ def update_memory(
                 vector = generate_real_embedding_fn(new_content)
 
         if vector is not None:
-            payload = {
+            qdrant_payload = {
                 "content": new_content,
                 "tags": tags,
                 "tag_prefixes": tag_prefixes,
@@ -398,7 +398,7 @@ def update_memory(
             }
             qdrant_client.upsert(
                 collection_name=collection_name,
-                points=[point_struct_cls(id=memory_id, vector=vector, payload=payload)],
+                points=[point_struct_cls(id=memory_id, vector=vector, payload=qdrant_payload)],
             )
 
     return jsonify_fn({"status": "success", "memory_id": memory_id})
@@ -455,7 +455,11 @@ def memories_by_tag(
     if not tags:
         abort_fn(400, description="'tags' query parameter is required")
 
-    limit = max(1, min(int(request_obj.args.get("limit", 20)), 200))
+    try:
+        limit = int(request_obj.args.get("limit", 20))
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 200))
 
     graph = get_memory_graph_fn()
     if graph is None:

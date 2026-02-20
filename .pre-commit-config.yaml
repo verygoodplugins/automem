@@ -2,6 +2,8 @@
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
 
+default_stages: [pre-commit]
+
 repos:
   # Code formatting
   - repo: https://github.com/psf/black

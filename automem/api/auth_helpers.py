@@ -30,6 +30,7 @@ def require_admin_token(
 ) -> None:
     if not admin_token:
         abort_fn(403, description="Admin token not configured")
+        return
 
     provided = (
         request_obj.headers.get("X-Admin-Token")

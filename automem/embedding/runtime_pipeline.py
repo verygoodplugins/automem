@@ -107,7 +107,7 @@ def process_embedding_batch(
     try:
         embeddings = generate_real_embeddings_batch_fn(contents)
 
-        for memory_id, content, embedding in zip(memory_ids, contents, embeddings):
+        for memory_id, content, embedding in zip(memory_ids, contents, embeddings, strict=True):
             try:
                 store_embedding_in_qdrant_fn(memory_id, content, embedding)
                 logger.debug("Generated and stored embedding for %s", memory_id)
@@ -152,6 +152,11 @@ def store_embedding_in_qdrant(
 
     node = result.result_set[0][0]
     properties = getattr(node, "properties", {})
+    try:
+        metadata_payload = json.loads(properties.get("metadata", "{}"))
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Malformed metadata JSON for %s; defaulting to empty object", memory_id)
+        metadata_payload = {}
 
     try:
         qdrant_client.upsert(
@@ -170,7 +175,7 @@ def store_embedding_in_qdrant(
                         "confidence": properties.get("confidence", 0.5),
                         "updated_at": properties.get("updated_at", utc_now_fn()),
                         "last_accessed": properties.get("last_accessed", utc_now_fn()),
-                        "metadata": json.loads(properties.get("metadata", "{}")),
+                        "metadata": metadata_payload,
                         "relevance_score": properties.get("relevance_score"),
                     },
                 )
