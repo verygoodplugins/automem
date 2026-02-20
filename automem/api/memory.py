@@ -310,7 +310,11 @@ def create_memory_blueprint_full(
                     )
                     qdrant_result = "stored"
                 except Exception:
-                    logger.exception("Qdrant upsert failed")
+                    logger.exception(
+                        "Qdrant upsert failed for memory %s in collection %s",
+                        memory_id,
+                        collection_name,
+                    )
                     qdrant_result = "failed"
         elif qdrant_client is not None:
             enqueue_embedding(memory_id, content)
@@ -509,10 +513,17 @@ def create_memory_blueprint_full(
                     "last_accessed": last_accessed,
                     "metadata": metadata,
                 }
-                qdrant_client.upsert(
-                    collection_name=collection_name,
-                    points=[point_struct(id=memory_id, vector=vector, payload=payload)],
-                )
+                try:
+                    qdrant_client.upsert(
+                        collection_name=collection_name,
+                        points=[point_struct(id=memory_id, vector=vector, payload=payload)],
+                    )
+                except Exception:
+                    logger.exception(
+                        "Qdrant upsert failed for memory %s in collection %s",
+                        memory_id,
+                        collection_name,
+                    )
 
         return jsonify({"status": "success", "memory_id": memory_id})
 
