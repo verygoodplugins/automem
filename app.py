@@ -69,6 +69,7 @@ from automem.api.auth_helpers import require_admin_token as _require_admin_token
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
 from automem.api.runtime_bootstrap import register_blueprints as _register_blueprints_runtime
 from automem.api.stream import emit_event
+from automem.app_helper_bindings import create_app_helper_runtime
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_bindings import create_consolidation_runtime
 from automem.embedding.runtime_bindings import create_embedding_runtime
@@ -461,57 +462,31 @@ def handle_exceptions(exc: Exception):
     return jsonify(response), 500
 
 
-def _normalize_tags(value: Any) -> List[str]:
-    try:
-        return _normalize_tags_value(value)
-    except ValueError as exc:
-        abort(400, description=str(exc))
+_app_helpers = create_app_helper_runtime(
+    get_state_fn=lambda: state,
+    abort_fn=abort,
+    init_embedding_provider_fn=init_embedding_provider,
+    get_generate_placeholder_embedding_fn=lambda: _generate_placeholder_embedding,
+    normalize_tags_value_fn=_normalize_tags_value,
+    coerce_importance_value_fn=_coerce_importance_value,
+    coerce_embedding_value_fn=_coerce_embedding_value,
+    generate_placeholder_embedding_value_fn=_generate_placeholder_embedding_value,
+    generate_real_embedding_value_fn=_generate_real_embedding_value,
+    generate_real_embeddings_batch_value_fn=_generate_real_embeddings_batch_value,
+    fetch_relations_runtime_fn=_fetch_relations_runtime,
+    relation_limit=RECALL_RELATION_LIMIT,
+    serialize_node_fn=_serialize_node,
+    summarize_relation_node_fn=_summarize_relation_node,
+    logger=logger,
+)
 
-
-def _coerce_importance(value: Any) -> float:
-    try:
-        return _coerce_importance_value(value)
-    except ValueError as exc:
-        abort(400, description=str(exc))
-
-
-def _coerce_embedding(value: Any) -> Optional[List[float]]:
-    return _coerce_embedding_value(value, state.effective_vector_size)
-
-
-def _generate_placeholder_embedding(content: str) -> List[float]:
-    return _generate_placeholder_embedding_value(content, state.effective_vector_size)
-
-
-def _generate_real_embedding(content: str) -> List[float]:
-    return _generate_real_embedding_value(
-        content,
-        init_embedding_provider=init_embedding_provider,
-        state=state,
-        logger=logger,
-        placeholder_embedding=_generate_placeholder_embedding,
-    )
-
-
-def _generate_real_embeddings_batch(contents: List[str]) -> List[List[float]]:
-    return _generate_real_embeddings_batch_value(
-        contents,
-        init_embedding_provider=init_embedding_provider,
-        state=state,
-        logger=logger,
-        placeholder_embedding=_generate_placeholder_embedding,
-    )
-
-
-def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
-    return _fetch_relations_runtime(
-        graph=graph,
-        memory_id=memory_id,
-        relation_limit=RECALL_RELATION_LIMIT,
-        serialize_node_fn=_serialize_node,
-        summarize_relation_node_fn=_summarize_relation_node,
-        logger=logger,
-    )
+_normalize_tags = _app_helpers.normalize_tags
+_coerce_importance = _app_helpers.coerce_importance
+_coerce_embedding = _app_helpers.coerce_embedding
+_generate_placeholder_embedding = _app_helpers.generate_placeholder_embedding
+_generate_real_embedding = _app_helpers.generate_real_embedding
+_generate_real_embeddings_batch = _app_helpers.generate_real_embeddings_batch
+_fetch_relations = _app_helpers.fetch_relations
 
 
 wire_recall_and_blueprints(
