@@ -352,6 +352,10 @@ def update_memory(
         metadata = metadata_raw
     else:
         abort_fn(400, description="'metadata' must be an object")
+
+    if "content" in payload and new_content and len(new_content) > MEMORY_CONTENT_SOFT_LIMIT:
+        metadata["needs_auto_summarize"] = True
+
     metadata_json = json.dumps(metadata, default=str)
 
     if timestamp:
