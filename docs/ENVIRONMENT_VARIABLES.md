@@ -162,6 +162,19 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 **⚠️ Railway Deployment**: `PORT` **must** be explicitly set to `8001` in Railway. Without it, Flask defaults to port 5000, causing service connection failures. This is **required** for Railway deployments, even though it has a default in local development.
 
+### Viewer Compatibility
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `ENABLE_GRAPH_VIEWER` | Enable `/viewer/*` compatibility routes | `true` | `true` |
+| `GRAPH_VIEWER_URL` | Standalone viewer URL target for redirects/bootstrap | - | `https://automem-graph-viewer.up.railway.app` |
+| `VIEWER_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for browser clients | `*` (when unset) | `https://automem-graph-viewer.up.railway.app,https://staging-viewer.example.com` |
+
+**Behavior**:
+- AutoMem no longer serves built viewer assets in-process.
+- `/viewer` now redirects/bootstraps to `GRAPH_VIEWER_URL` and forwards `server=<automem-origin>`.
+- URL hash tokens (for example `#token=...`) stay client-side and are preserved during redirect.
+
 ### Scripts Only
 
 | Variable | Description | Default | Used By |

@@ -24,6 +24,23 @@ railway up
 
 ---
 
+## Graph Viewer (Standalone)
+
+The visualizer now runs as a separate service/repository (`automem-graph-viewer`).
+AutoMem keeps `/viewer` as a compatibility entrypoint and forwards users to the standalone app.
+
+Set these variables on the AutoMem API service:
+
+```bash
+ENABLE_GRAPH_VIEWER=true
+GRAPH_VIEWER_URL=https://<your-viewer-domain>
+VIEWER_ALLOWED_ORIGINS=https://<your-viewer-domain>
+```
+
+When users open `/viewer/#token=...`, AutoMem preserves the hash token and redirects to the standalone viewer with `server=<automem-origin>`.
+
+---
+
 ## Why AutoMem Exists
 
 Your AI forgets everything between sessions. RAG dumps similar documents. Vector databases match keywords but miss meaning. **None of them learn.**

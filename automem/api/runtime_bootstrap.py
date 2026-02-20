@@ -10,6 +10,7 @@ from automem.api.health import create_health_blueprint
 from automem.api.memory import create_memory_blueprint_full
 from automem.api.recall import create_recall_blueprint
 from automem.api.stream import create_stream_blueprint
+from automem.api.viewer import create_viewer_blueprint, is_viewer_enabled
 
 
 def register_blueprints(
@@ -174,3 +175,8 @@ def register_blueprints(
     app.register_blueprint(consolidation_bp)
     app.register_blueprint(graph_bp)
     app.register_blueprint(stream_bp)
+
+    if is_viewer_enabled():
+        viewer_bp = create_viewer_blueprint()
+        app.register_blueprint(viewer_bp)
+        logger.info("Graph Viewer compatibility route enabled at /viewer/")

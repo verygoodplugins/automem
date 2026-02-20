@@ -156,6 +156,57 @@ def admin_headers():
 # ==================== Test Health Endpoint ====================
 
 
+def test_viewer_bootstrap_response(client, mock_state, monkeypatch):
+    """Test /viewer bootstrap response for standalone visualizer redirect."""
+    _ = mock_state
+    monkeypatch.setenv("GRAPH_VIEWER_URL", "https://viewer.example.com")
+
+    response = client.get("/viewer/?foo=bar")
+
+    assert response.status_code == 200
+    assert response.mimetype == "text/html"
+    body = response.get_data(as_text=True)
+    assert "viewer.example.com" in body
+    assert "server" in body
+
+
+def test_viewer_asset_redirect(client, mock_state, monkeypatch):
+    """Test static asset compatibility route redirects to standalone visualizer."""
+    _ = mock_state
+    monkeypatch.setenv("GRAPH_VIEWER_URL", "https://viewer.example.com")
+
+    response = client.get("/viewer/assets/index.js?v=1", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://viewer.example.com/assets/index.js?v=1"
+
+
+def test_viewer_unavailable_without_target_url(client, mock_state, monkeypatch):
+    """Test /viewer returns 503 when GRAPH_VIEWER_URL is not configured."""
+    _ = mock_state
+    monkeypatch.delenv("GRAPH_VIEWER_URL", raising=False)
+
+    response = client.get("/viewer/")
+
+    assert response.status_code == 503
+    assert "GRAPH_VIEWER_URL" in response.get_data(as_text=True)
+
+
+def test_cors_preflight_for_graph_endpoint(client, mock_state):
+    """Test OPTIONS preflight is not blocked by auth middleware."""
+    _ = mock_state
+    response = client.options(
+        "/graph/stats",
+        headers={
+            "Origin": "https://viewer.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code in (200, 204)
+    assert "Access-Control-Allow-Origin" in response.headers
+
+
 def test_health_endpoint_all_services_up(client, mock_state):
     """Test health endpoint when all services are available."""
     response = client.get("/health")
