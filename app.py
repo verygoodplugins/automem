@@ -100,6 +100,15 @@ from automem.consolidation.runtime_routes import (
     consolidation_status as _consolidation_status_runtime,
 )
 from automem.consolidation.runtime_routes import create_association as _create_association_runtime
+from automem.consolidation.runtime_scheduler import (
+    consolidation_worker as _consolidation_worker_runtime,
+)
+from automem.consolidation.runtime_scheduler import (
+    init_consolidation_scheduler as _init_consolidation_scheduler_runtime,
+)
+from automem.consolidation.runtime_scheduler import (
+    run_consolidation_tick as _run_consolidation_tick_runtime,
+)
 from automem.embedding.provider_init import init_embedding_provider as _init_embedding_provider
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
@@ -139,6 +148,12 @@ from automem.enrichment.runtime_orchestration import enrich_memory as _enrich_me
 from automem.enrichment.runtime_orchestration import (
     jit_enrich_lightweight as _jit_enrich_lightweight_runtime,
 )
+from automem.enrichment.runtime_worker import enqueue_enrichment as _enqueue_enrichment_runtime
+from automem.enrichment.runtime_worker import enrichment_worker as _enrichment_worker_runtime
+from automem.enrichment.runtime_worker import (
+    init_enrichment_pipeline as _init_enrichment_pipeline_runtime,
+)
+from automem.enrichment.runtime_worker import update_last_accessed as _update_last_accessed_runtime
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
 # Environment is loaded by automem.config
@@ -445,30 +460,23 @@ def get_qdrant_client() -> Optional[QdrantClient]:
 
 
 def init_enrichment_pipeline() -> None:
-    """Initialize the background enrichment pipeline."""
-    if state.enrichment_queue is not None:
-        return
-
-    state.enrichment_queue = Queue()
-    state.enrichment_thread = Thread(target=enrichment_worker, daemon=True)
-    state.enrichment_thread.start()
-    logger.info("Enrichment pipeline initialized")
+    _init_enrichment_pipeline_runtime(
+        state=state,
+        logger=logger,
+        queue_cls=Queue,
+        thread_cls=Thread,
+        worker_target=enrichment_worker,
+    )
 
 
 def enqueue_enrichment(memory_id: str, *, forced: bool = False, attempt: int = 0) -> None:
-    if not memory_id or state.enrichment_queue is None:
-        return
-
-    job = EnrichmentJob(memory_id=memory_id, attempt=attempt, forced=forced)
-
-    with state.enrichment_lock:
-        if not forced and (
-            memory_id in state.enrichment_pending or memory_id in state.enrichment_inflight
-        ):
-            return
-
-        state.enrichment_pending.add(memory_id)
-        state.enrichment_queue.put(job)
+    _enqueue_enrichment_runtime(
+        state=state,
+        memory_id=memory_id,
+        forced=forced,
+        attempt=attempt,
+        enrichment_job_cls=EnrichmentJob,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -477,27 +485,12 @@ def enqueue_enrichment(memory_id: str, *, forced: bool = False, attempt: int = 0
 
 
 def update_last_accessed(memory_ids: List[str]) -> None:
-    """Update last_accessed timestamp for retrieved memories (direct, synchronous)."""
-    if not memory_ids:
-        return
-
-    graph = get_memory_graph()
-    if graph is None:
-        return
-
-    timestamp = utc_now()
-    try:
-        graph.query(
-            """
-            UNWIND $ids AS mid
-            MATCH (m:Memory {id: mid})
-            SET m.last_accessed = $ts
-            """,
-            {"ids": memory_ids, "ts": timestamp},
-        )
-        logger.debug("Updated last_accessed for %d memories", len(memory_ids))
-    except Exception:
-        logger.exception("Failed to update last_accessed for memories")
+    _update_last_accessed_runtime(
+        memory_ids=memory_ids,
+        get_memory_graph_fn=get_memory_graph,
+        utc_now_fn=utc_now,
+        logger=logger,
+    )
 
 
 def _load_control_record(graph: Any) -> Dict[str, Any]:
@@ -578,160 +571,53 @@ def _build_consolidator_from_config(graph: Any, vector_store: Any) -> MemoryCons
 
 
 def _run_consolidation_tick() -> None:
-    graph = get_memory_graph()
-    if graph is None:
-        return
-
-    scheduler = _build_scheduler_from_graph(graph)
-    if scheduler is None:
-        return
-
-    try:
-        tick_start = time.perf_counter()
-        results = scheduler.run_scheduled_tasks(
-            decay_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD
-        )
-        for result in results:
-            _persist_consolidation_run(graph, result)
-
-            # Emit SSE event for real-time monitoring
-            task_type = result.get("mode", "unknown")
-            steps = result.get("steps", {})
-            affected_count = 0
-
-            # Count affected memories from each step
-            if "decay" in steps:
-                affected_count += steps["decay"].get("updated", 0)
-            if "creative" in steps:
-                affected_count += steps["creative"].get("created", 0)
-            if "cluster" in steps:
-                affected_count += steps["cluster"].get("meta_memories_created", 0)
-            if "forget" in steps:
-                affected_count += steps["forget"].get("archived", 0)
-                affected_count += steps["forget"].get("deleted", 0)
-
-            elapsed_ms = int((time.perf_counter() - tick_start) * 1000)
-            next_runs = scheduler.get_next_runs()
-
-            emit_event(
-                "consolidation.run",
-                {
-                    "task_type": task_type,
-                    "affected_count": affected_count,
-                    "elapsed_ms": elapsed_ms,
-                    "success": result.get("success", False),
-                    "next_scheduled": next_runs.get(task_type, "unknown"),
-                    "steps": list(steps.keys()),
-                },
-                utc_now,
-            )
-    except Exception:
-        logger.exception("Consolidation scheduler tick failed")
+    _run_consolidation_tick_runtime(
+        get_memory_graph_fn=get_memory_graph,
+        build_scheduler_from_graph_fn=_build_scheduler_from_graph,
+        persist_consolidation_run_fn=_persist_consolidation_run,
+        decay_importance_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
+        emit_event_fn=emit_event,
+        utc_now_fn=utc_now,
+        perf_counter_fn=time.perf_counter,
+        logger=logger,
+    )
 
 
 def consolidation_worker() -> None:
-    """Background loop that triggers consolidation tasks."""
-    logger.info("Consolidation scheduler thread started")
-    while state.consolidation_stop_event and not state.consolidation_stop_event.wait(
-        CONSOLIDATION_TICK_SECONDS
-    ):
-        _run_consolidation_tick()
+    _consolidation_worker_runtime(
+        state=state,
+        logger=logger,
+        consolidation_tick_seconds=CONSOLIDATION_TICK_SECONDS,
+        run_consolidation_tick_fn=_run_consolidation_tick,
+    )
 
 
 def init_consolidation_scheduler() -> None:
-    """Ensure the background consolidation scheduler is running."""
-    if state.consolidation_thread and state.consolidation_thread.is_alive():
-        return
-
-    stop_event = Event()
-    state.consolidation_stop_event = stop_event
-    state.consolidation_thread = Thread(
-        target=consolidation_worker,
-        daemon=True,
-        name="consolidation-scheduler",
+    _init_consolidation_scheduler_runtime(
+        state=state,
+        logger=logger,
+        stop_event_cls=Event,
+        thread_cls=Thread,
+        worker_target=consolidation_worker,
+        run_consolidation_tick_fn=_run_consolidation_tick,
     )
-    state.consolidation_thread.start()
-    # Kick off an initial tick so schedules are populated quickly.
-    _run_consolidation_tick()
-    logger.info("Consolidation scheduler initialized")
 
 
 def enrichment_worker() -> None:
-    """Background worker that processes memories for enrichment."""
-    while True:
-        try:
-            if state.enrichment_queue is None:
-                time.sleep(ENRICHMENT_IDLE_SLEEP_SECONDS)
-                continue
-
-            try:
-                job: EnrichmentJob = state.enrichment_queue.get(
-                    timeout=ENRICHMENT_IDLE_SLEEP_SECONDS
-                )
-            except Empty:
-                continue
-
-            with state.enrichment_lock:
-                state.enrichment_pending.discard(job.memory_id)
-                state.enrichment_inflight.add(job.memory_id)
-
-            enrich_start = time.perf_counter()
-            emit_event(
-                "enrichment.start",
-                {
-                    "memory_id": job.memory_id,
-                    "attempt": job.attempt + 1,
-                },
-                utc_now,
-            )
-
-            try:
-                processed = enrich_memory(job.memory_id, forced=job.forced)
-                state.enrichment_stats.record_success(job.memory_id)
-                elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
-                emit_event(
-                    "enrichment.complete",
-                    {
-                        "memory_id": job.memory_id,
-                        "success": True,
-                        "elapsed_ms": elapsed_ms,
-                        "skipped": not processed,
-                    },
-                    utc_now,
-                )
-                if not processed:
-                    logger.debug("Enrichment skipped for %s (already processed)", job.memory_id)
-            except Exception as exc:  # pragma: no cover - background thread
-                state.enrichment_stats.record_failure(str(exc))
-                elapsed_ms = int((time.perf_counter() - enrich_start) * 1000)
-                emit_event(
-                    "enrichment.failed",
-                    {
-                        "memory_id": job.memory_id,
-                        "error": str(exc)[:100],
-                        "attempt": job.attempt + 1,
-                        "elapsed_ms": elapsed_ms,
-                        "will_retry": job.attempt + 1 < ENRICHMENT_MAX_ATTEMPTS,
-                    },
-                    utc_now,
-                )
-                logger.exception("Failed to enrich memory %s", job.memory_id)
-                if job.attempt + 1 < ENRICHMENT_MAX_ATTEMPTS:
-                    time.sleep(ENRICHMENT_FAILURE_BACKOFF_SECONDS)
-                    enqueue_enrichment(job.memory_id, forced=job.forced, attempt=job.attempt + 1)
-                else:
-                    logger.error(
-                        "Giving up on enrichment for %s after %s attempts",
-                        job.memory_id,
-                        job.attempt + 1,
-                    )
-            finally:
-                with state.enrichment_lock:
-                    state.enrichment_inflight.discard(job.memory_id)
-                state.enrichment_queue.task_done()
-        except Exception:  # pragma: no cover - defensive catch-all
-            logger.exception("Error in enrichment worker loop")
-            time.sleep(ENRICHMENT_FAILURE_BACKOFF_SECONDS)
+    _enrichment_worker_runtime(
+        state=state,
+        logger=logger,
+        enrichment_idle_sleep_seconds=ENRICHMENT_IDLE_SLEEP_SECONDS,
+        enrichment_max_attempts=ENRICHMENT_MAX_ATTEMPTS,
+        enrichment_failure_backoff_seconds=ENRICHMENT_FAILURE_BACKOFF_SECONDS,
+        empty_exc=Empty,
+        enrich_memory_fn=enrich_memory,
+        emit_event_fn=emit_event,
+        utc_now_fn=utc_now,
+        enqueue_enrichment_fn=enqueue_enrichment,
+        perf_counter_fn=time.perf_counter,
+        sleep_fn=time.sleep,
+    )
 
 
 def init_embedding_pipeline() -> None:
