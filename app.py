@@ -86,6 +86,7 @@ from automem.embedding.runtime_helpers import (
 from automem.embedding.runtime_helpers import normalize_tags as _normalize_tags_value
 from automem.enrichment.runtime_bindings import create_enrichment_runtime
 from automem.enrichment.runtime_queue_bindings import create_enrichment_queue_runtime
+from automem.runtime_wiring import run_default_server, wire_recall_and_blueprints
 from automem.service_runtime_bindings import create_service_runtime
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
@@ -513,82 +514,12 @@ def _fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:
     )
 
 
-configure_recall_helpers(
-    parse_iso_datetime=_parse_iso_datetime,
-    prepare_tag_filters=_prepare_tag_filters,
-    build_graph_tag_predicate=_build_graph_tag_predicate,
-    build_qdrant_tag_filter=_build_qdrant_tag_filter,
-    serialize_node=_serialize_node,
-    fetch_relations=_fetch_relations,
-    extract_keywords=_extract_keywords,
-    coerce_embedding=_coerce_embedding,
-    generate_real_embedding=_generate_real_embedding,
-    logger=logger,
-    collection_name=COLLECTION_NAME,
-)
-
-_register_blueprints_runtime(
-    app=app,
-    get_memory_graph_fn=get_memory_graph,
-    get_qdrant_client_fn=get_qdrant_client,
-    state=state,
-    graph_name=GRAPH_NAME,
-    collection_name=COLLECTION_NAME,
-    utc_now_fn=utc_now,
-    require_admin_token_fn=_require_admin_token,
-    enqueue_enrichment_fn=enqueue_enrichment,
-    enrichment_max_attempts=ENRICHMENT_MAX_ATTEMPTS,
-    normalize_tag_list_fn=_normalize_tag_list,
-    normalize_timestamp_fn=_normalize_timestamp,
-    parse_time_expression_fn=_parse_time_expression,
-    extract_keywords_fn=_extract_keywords,
-    compute_metadata_score_fn=_compute_metadata_score,
-    result_passes_filters_fn=_result_passes_filters,
-    graph_keyword_search_fn=_graph_keyword_search,
-    vector_search_fn=_vector_search,
-    vector_filter_only_tag_search_fn=_vector_filter_only_tag_search,
-    recall_max_limit=RECALL_MAX_LIMIT,
-    logger=logger,
-    allowed_relations=ALLOWED_RELATIONS,
-    recall_relation_limit=RECALL_RELATION_LIMIT,
-    serialize_node_fn=_serialize_node,
-    summarize_relation_node_fn=_summarize_relation_node,
-    update_last_accessed_fn=update_last_accessed,
-    jit_enrich_fn=jit_enrich_lightweight if JIT_ENRICHMENT_ENABLED else None,
-    normalize_tags_fn=_normalize_tags,
-    compute_tag_prefixes_fn=_compute_tag_prefixes,
-    coerce_importance_fn=_coerce_importance,
-    coerce_embedding_fn=_coerce_embedding,
-    parse_metadata_field_fn=_parse_metadata_field,
-    generate_real_embedding_fn=_generate_real_embedding,
-    enqueue_embedding_fn=enqueue_embedding,
-    classify_memory_fn=lambda content: memory_classifier.classify(content),
-    point_struct_cls=PointStruct,
-    relationship_types=RELATIONSHIP_TYPES,
-    get_openai_client_fn=get_openai_client,
-    init_openai_fn=init_openai,
-    effective_vector_size_fn=lambda: state.effective_vector_size,
-    embedding_model=EMBEDDING_MODEL,
-    build_consolidator_from_config_fn=_build_consolidator_from_config,
-    persist_consolidation_run_fn=_persist_consolidation_run,
-    build_scheduler_from_graph_fn=_build_scheduler_from_graph,
-    load_recent_runs_fn=_load_recent_runs,
-    consolidation_tick_seconds=CONSOLIDATION_TICK_SECONDS,
-    consolidation_history_limit=CONSOLIDATION_HISTORY_LIMIT,
-    require_api_token_fn=require_api_token,
+wire_recall_and_blueprints(
+    module=sys.modules[__name__],
+    configure_recall_helpers_fn=configure_recall_helpers,
+    register_blueprints_fn=_register_blueprints_runtime,
 )
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8001"))
-    logger.info("Starting Flask API on port %s", port)
-    init_falkordb()
-    init_qdrant()
-    init_openai()  # Still needed for memory type classification
-    init_embedding_provider()  # New provider pattern for embeddings
-    init_enrichment_pipeline()
-    init_embedding_pipeline()
-    init_consolidation_scheduler()
-    init_sync_worker()
-    # Use :: for IPv6 dual-stack (Railway internal networking uses IPv6)
-    app.run(host="::", port=port, debug=False)
+    run_default_server(module=sys.modules[__name__])
