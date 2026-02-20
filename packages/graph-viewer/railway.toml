@@ -1,0 +1,8 @@
+# railway.toml - Graph Viewer service configuration
+
+[build]
+builder = "RAILPACK"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
