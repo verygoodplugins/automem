@@ -219,7 +219,7 @@ def enrich_memory(
 
     if enrichment_enable_summaries:
         existing_summary = properties.get("summary")
-        summary = generate_summary_fn(content, existing_summary if forced else None)
+        summary = generate_summary_fn(content, None if forced else existing_summary)
     else:
         summary = properties.get("summary")
 

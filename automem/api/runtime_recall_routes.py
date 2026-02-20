@@ -26,7 +26,7 @@ def recall_memories(
     recall_expansion_limit: int,
     emit_event_fn: Any,
     utc_now_fn: Any,
-    abort_fn: Any,
+    abort_fn: Any,  # noqa: ARG001 - kept for DI compatibility
 ) -> Any:
     query_start = perf_counter_fn()
     query_text = (request_obj.args.get("query") or "").strip()
@@ -73,8 +73,8 @@ def recall_memories(
         if hasattr(resp_data, "get_json"):
             data = resp_data.get_json(silent=True) or {}
             result_count = len(data.get("memories", []))
-    except Exception as e:
-        logger.debug("Failed to parse response for result_count", exc_info=e)
+    except (TypeError, ValueError, AttributeError) as exc:
+        logger.debug("Failed to parse response for result_count", exc_info=exc)
 
     emit_event_fn(
         "memory.recall",

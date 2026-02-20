@@ -35,7 +35,7 @@ def fetch_relations(
         return []
 
     connections: List[Dict[str, Any]] = []
-    for relation_type, strength, related in records.result_set:
+    for relation_type, strength, related in getattr(records, "result_set", []) or []:
         connections.append(
             {
                 "type": relation_type,
@@ -92,22 +92,6 @@ def get_related_memories(
         rel_pattern = ""
 
     query = f"""
-        MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + ']-' if rel_pattern else '-[r]-'}(related:Memory)
-        WHERE m.id <> related.id
-        CALL apoc.path.expandConfig(related, {{
-            relationshipFilter: '{'|'.join(rel_types)}',
-            minLevel: 0,
-            maxLevel: $max_depth,
-            bfs: true,
-            filterStartNode: true
-        }}) YIELD path
-        WITH DISTINCT related
-        RETURN related
-        ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
-        LIMIT $limit
-    """
-
-    fallback_query = f"""
         MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..{max_depth}]-' if rel_pattern else f'-[r*1..{max_depth}]-'}(related:Memory)
         WHERE m.id <> related.id
         RETURN DISTINCT related
@@ -120,11 +104,8 @@ def get_related_memories(
     try:
         result = graph.query(query, params)
     except Exception:
-        try:
-            result = graph.query(fallback_query, params)
-        except Exception:
-            logger.exception("Failed to traverse related memories for %s", memory_id)
-            abort_fn(500, description="Failed to fetch related memories")
+        logger.exception("Failed to traverse related memories for %s", memory_id)
+        abort_fn(500, description="Failed to fetch related memories")
 
     related: List[Dict[str, Any]] = []
     for row in getattr(result, "result_set", []) or []:

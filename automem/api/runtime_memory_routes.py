@@ -324,6 +324,17 @@ def update_memory(
     current = serialize_node_fn(current_node)
 
     new_content = payload.get("content", current.get("content"))
+    if "content" in payload:
+        if not new_content:
+            abort_fn(400, description="'content' is required")
+        if len(new_content) > MEMORY_CONTENT_HARD_LIMIT:
+            abort_fn(
+                400,
+                description=(
+                    f"Content exceeds maximum length of {MEMORY_CONTENT_HARD_LIMIT} characters "
+                    f"({len(new_content)} provided)."
+                ),
+            )
     tags = normalize_tag_list_fn(payload.get("tags", current.get("tags")))
     tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
     tag_prefixes = compute_tag_prefixes_fn(tags_lower)

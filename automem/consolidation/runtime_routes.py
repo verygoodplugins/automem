@@ -106,7 +106,9 @@ def consolidate_memories(
     logger: Any,
 ) -> Any:
     """Run memory consolidation."""
-    data = request_obj.get_json() or {}
+    data = request_obj.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
     mode = data.get("mode", "full")
     dry_run = data.get("dry_run", True)
 
