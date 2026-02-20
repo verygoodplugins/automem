@@ -73,6 +73,7 @@ from automem.api.stream import emit_event
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_bindings import create_consolidation_runtime
 from automem.embedding.provider_init import init_embedding_provider as _init_embedding_provider
+from automem.embedding.runtime_bindings import create_embedding_runtime
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
 from automem.embedding.runtime_helpers import (
@@ -85,20 +86,6 @@ from automem.embedding.runtime_helpers import (
     generate_real_embeddings_batch as _generate_real_embeddings_batch_value,
 )
 from automem.embedding.runtime_helpers import normalize_tags as _normalize_tags_value
-from automem.embedding.runtime_pipeline import embedding_worker as _embedding_worker_runtime
-from automem.embedding.runtime_pipeline import enqueue_embedding as _enqueue_embedding_runtime
-from automem.embedding.runtime_pipeline import (
-    generate_and_store_embedding as _generate_and_store_embedding_runtime,
-)
-from automem.embedding.runtime_pipeline import (
-    init_embedding_pipeline as _init_embedding_pipeline_runtime,
-)
-from automem.embedding.runtime_pipeline import (
-    process_embedding_batch as _process_embedding_batch_runtime,
-)
-from automem.embedding.runtime_pipeline import (
-    store_embedding_in_qdrant as _store_embedding_in_qdrant_runtime,
-)
 from automem.enrichment.runtime_bindings import create_enrichment_runtime
 from automem.enrichment.runtime_worker import enqueue_enrichment as _enqueue_enrichment_runtime
 from automem.enrichment.runtime_worker import enrichment_worker as _enrichment_worker_runtime
@@ -483,64 +470,31 @@ def enrichment_worker() -> None:
     )
 
 
-def init_embedding_pipeline() -> None:
-    _init_embedding_pipeline_runtime(
-        state=state,
-        logger=logger,
-        queue_cls=Queue,
-        thread_cls=Thread,
-        worker_target=embedding_worker,
-    )
+_embedding_runtime = create_embedding_runtime(
+    get_state_fn=lambda: state,
+    logger=logger,
+    queue_cls=Queue,
+    thread_cls=Thread,
+    batch_size=EMBEDDING_BATCH_SIZE,
+    batch_timeout_seconds=EMBEDDING_BATCH_TIMEOUT_SECONDS,
+    empty_exc=Empty,
+    sleep_fn=time.sleep,
+    time_fn=time.time,
+    get_qdrant_client_fn=get_qdrant_client,
+    get_memory_graph_fn=get_memory_graph,
+    collection_name=COLLECTION_NAME,
+    point_struct_cls=PointStruct,
+    utc_now_fn=utc_now,
+    generate_real_embedding_fn=lambda content: _generate_real_embedding(content),
+    generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(contents),
+)
 
-
-def enqueue_embedding(memory_id: str, content: str) -> None:
-    _enqueue_embedding_runtime(state=state, memory_id=memory_id, content=content)
-
-
-def embedding_worker() -> None:
-    _embedding_worker_runtime(
-        state=state,
-        logger=logger,
-        batch_size=EMBEDDING_BATCH_SIZE,
-        batch_timeout_seconds=EMBEDDING_BATCH_TIMEOUT_SECONDS,
-        empty_exc=Empty,
-        process_batch_fn=_process_embedding_batch,
-        sleep_fn=time.sleep,
-        time_fn=time.time,
-    )
-
-
-def _process_embedding_batch(batch: List[Tuple[str, str]]) -> None:
-    _process_embedding_batch_runtime(
-        state=state,
-        batch=batch,
-        logger=logger,
-        generate_real_embeddings_batch_fn=_generate_real_embeddings_batch,
-        store_embedding_in_qdrant_fn=_store_embedding_in_qdrant,
-    )
-
-
-def _store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[float]) -> None:
-    _store_embedding_in_qdrant_runtime(
-        memory_id=memory_id,
-        content=content,
-        embedding=embedding,
-        get_qdrant_client_fn=get_qdrant_client,
-        get_memory_graph_fn=get_memory_graph,
-        collection_name=COLLECTION_NAME,
-        point_struct_cls=PointStruct,
-        utc_now_fn=utc_now,
-        logger=logger,
-    )
-
-
-def generate_and_store_embedding(memory_id: str, content: str) -> None:
-    _generate_and_store_embedding_runtime(
-        memory_id=memory_id,
-        content=content,
-        generate_real_embedding_fn=_generate_real_embedding,
-        store_embedding_in_qdrant_fn=_store_embedding_in_qdrant,
-    )
+init_embedding_pipeline = _embedding_runtime.init_embedding_pipeline
+enqueue_embedding = _embedding_runtime.enqueue_embedding
+embedding_worker = _embedding_runtime.embedding_worker
+_process_embedding_batch = _embedding_runtime.process_embedding_batch
+_store_embedding_in_qdrant = _embedding_runtime.store_embedding_in_qdrant
+generate_and_store_embedding = _embedding_runtime.generate_and_store_embedding
 
 
 # ---------------------------------------------------------------------------
