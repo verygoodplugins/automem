@@ -87,12 +87,7 @@ from automem.embedding.runtime_helpers import (
 )
 from automem.embedding.runtime_helpers import normalize_tags as _normalize_tags_value
 from automem.enrichment.runtime_bindings import create_enrichment_runtime
-from automem.enrichment.runtime_worker import enqueue_enrichment as _enqueue_enrichment_runtime
-from automem.enrichment.runtime_worker import enrichment_worker as _enrichment_worker_runtime
-from automem.enrichment.runtime_worker import (
-    init_enrichment_pipeline as _init_enrichment_pipeline_runtime,
-)
-from automem.enrichment.runtime_worker import update_last_accessed as _update_last_accessed_runtime
+from automem.enrichment.runtime_queue_bindings import create_enrichment_queue_runtime
 from automem.service_runtime import get_memory_graph as _get_memory_graph_runtime
 from automem.service_runtime import get_qdrant_client as _get_qdrant_client_runtime
 from automem.service_runtime import init_openai as _init_openai_runtime
@@ -381,38 +376,28 @@ def get_qdrant_client() -> Optional[QdrantClient]:
     )
 
 
-def init_enrichment_pipeline() -> None:
-    _init_enrichment_pipeline_runtime(
-        state=state,
-        logger=logger,
-        queue_cls=Queue,
-        thread_cls=Thread,
-        worker_target=enrichment_worker,
-    )
+_enrichment_queue_runtime = create_enrichment_queue_runtime(
+    get_state_fn=lambda: state,
+    logger=logger,
+    queue_cls=Queue,
+    thread_cls=Thread,
+    enrichment_job_cls=EnrichmentJob,
+    get_memory_graph_fn=get_memory_graph,
+    utc_now_fn=utc_now,
+    enrichment_idle_sleep_seconds=ENRICHMENT_IDLE_SLEEP_SECONDS,
+    enrichment_max_attempts=ENRICHMENT_MAX_ATTEMPTS,
+    enrichment_failure_backoff_seconds=ENRICHMENT_FAILURE_BACKOFF_SECONDS,
+    empty_exc=Empty,
+    enrich_memory_fn=lambda memory_id, forced=False: enrich_memory(memory_id, forced=forced),
+    emit_event_fn=emit_event,
+    perf_counter_fn=time.perf_counter,
+    sleep_fn=time.sleep,
+)
 
-
-def enqueue_enrichment(memory_id: str, *, forced: bool = False, attempt: int = 0) -> None:
-    _enqueue_enrichment_runtime(
-        state=state,
-        memory_id=memory_id,
-        forced=forced,
-        attempt=attempt,
-        enrichment_job_cls=EnrichmentJob,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Access Tracking (updates last_accessed on recall)
-# ---------------------------------------------------------------------------
-
-
-def update_last_accessed(memory_ids: List[str]) -> None:
-    _update_last_accessed_runtime(
-        memory_ids=memory_ids,
-        get_memory_graph_fn=get_memory_graph,
-        utc_now_fn=utc_now,
-        logger=logger,
-    )
+init_enrichment_pipeline = _enrichment_queue_runtime.init_enrichment_pipeline
+enqueue_enrichment = _enrichment_queue_runtime.enqueue_enrichment
+update_last_accessed = _enrichment_queue_runtime.update_last_accessed
+enrichment_worker = _enrichment_queue_runtime.enrichment_worker
 
 
 _consolidation_runtime = create_consolidation_runtime(
@@ -451,23 +436,6 @@ _build_scheduler_from_graph = _consolidation_runtime.build_scheduler_from_graph
 _run_consolidation_tick = _consolidation_runtime.run_consolidation_tick
 consolidation_worker = _consolidation_runtime.consolidation_worker
 init_consolidation_scheduler = _consolidation_runtime.init_consolidation_scheduler
-
-
-def enrichment_worker() -> None:
-    _enrichment_worker_runtime(
-        state=state,
-        logger=logger,
-        enrichment_idle_sleep_seconds=ENRICHMENT_IDLE_SLEEP_SECONDS,
-        enrichment_max_attempts=ENRICHMENT_MAX_ATTEMPTS,
-        enrichment_failure_backoff_seconds=ENRICHMENT_FAILURE_BACKOFF_SECONDS,
-        empty_exc=Empty,
-        enrich_memory_fn=enrich_memory,
-        emit_event_fn=emit_event,
-        utc_now_fn=utc_now,
-        enqueue_enrichment_fn=enqueue_enrichment,
-        perf_counter_fn=time.perf_counter,
-        sleep_fn=time.sleep,
-    )
 
 
 _embedding_runtime = create_embedding_runtime(
