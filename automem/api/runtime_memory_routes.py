@@ -308,6 +308,11 @@ def update_memory(
     abort_fn: Any,
     jsonify_fn: Any,
 ) -> Any:
+    try:
+        uuid.UUID(memory_id)
+    except (ValueError, TypeError):
+        abort_fn(400, description="memory_id must be a valid UUID")
+
     payload = request_obj.get_json(silent=True)
     if not isinstance(payload, dict):
         abort_fn(400, description="JSON body is required")
@@ -465,6 +470,11 @@ def delete_memory(
     jsonify_fn: Any,
     logger: Any,
 ) -> Any:
+    try:
+        uuid.UUID(memory_id)
+    except (ValueError, TypeError):
+        abort_fn(400, description="memory_id must be a valid UUID")
+
     graph = get_memory_graph_fn()
     if graph is None:
         abort_fn(503, description="FalkorDB is unavailable")
