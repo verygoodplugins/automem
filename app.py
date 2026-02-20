@@ -99,18 +99,7 @@ from automem.embedding.runtime_pipeline import (
 from automem.embedding.runtime_pipeline import (
     store_embedding_in_qdrant as _store_embedding_in_qdrant_runtime,
 )
-from automem.enrichment.runtime_helpers import detect_patterns as _detect_patterns_runtime
-from automem.enrichment.runtime_helpers import (
-    find_temporal_relationships as _find_temporal_relationships_runtime,
-)
-from automem.enrichment.runtime_helpers import (
-    link_semantic_neighbors as _link_semantic_neighbors_runtime,
-)
-from automem.enrichment.runtime_helpers import temporal_cutoff as _temporal_cutoff_runtime
-from automem.enrichment.runtime_orchestration import enrich_memory as _enrich_memory_runtime
-from automem.enrichment.runtime_orchestration import (
-    jit_enrich_lightweight as _jit_enrich_lightweight_runtime,
-)
+from automem.enrichment.runtime_bindings import create_enrichment_runtime
 from automem.enrichment.runtime_worker import enqueue_enrichment as _enqueue_enrichment_runtime
 from automem.enrichment.runtime_worker import enrichment_worker as _enrichment_worker_runtime
 from automem.enrichment.runtime_worker import (
@@ -595,86 +584,32 @@ def _run_sync_check() -> None:
     )
 
 
-def jit_enrich_lightweight(memory_id: str, properties: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    return _jit_enrich_lightweight_runtime(
-        memory_id=memory_id,
-        properties=properties,
-        get_memory_graph_fn=get_memory_graph,
-        get_qdrant_client_fn=get_qdrant_client,
-        parse_metadata_field_fn=_parse_metadata_field,
-        normalize_tag_list_fn=_normalize_tag_list,
-        extract_entities_fn=extract_entities,
-        slugify_fn=_slugify,
-        compute_tag_prefixes_fn=_compute_tag_prefixes,
-        enrichment_enable_summaries=ENRICHMENT_ENABLE_SUMMARIES,
-        generate_summary_fn=generate_summary,
-        utc_now_fn=utc_now,
-        collection_name=COLLECTION_NAME,
-        logger=logger,
-    )
+_enrichment_runtime = create_enrichment_runtime(
+    get_memory_graph_fn=get_memory_graph,
+    get_qdrant_client_fn=get_qdrant_client,
+    parse_metadata_field_fn=_parse_metadata_field,
+    normalize_tag_list_fn=_normalize_tag_list,
+    extract_entities_fn=extract_entities,
+    slugify_fn=_slugify,
+    compute_tag_prefixes_fn=_compute_tag_prefixes,
+    classify_memory_fn=memory_classifier.classify,
+    search_stopwords=SEARCH_STOPWORDS,
+    enrichment_enable_summaries=ENRICHMENT_ENABLE_SUMMARIES,
+    generate_summary_fn=generate_summary,
+    utc_now_fn=utc_now,
+    collection_name=COLLECTION_NAME,
+    enrichment_similarity_limit=ENRICHMENT_SIMILARITY_LIMIT,
+    enrichment_similarity_threshold=ENRICHMENT_SIMILARITY_THRESHOLD,
+    unexpected_response_exc=UnexpectedResponse,
+    logger=logger,
+)
 
-
-def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
-    return _enrich_memory_runtime(
-        memory_id=memory_id,
-        forced=forced,
-        get_memory_graph_fn=get_memory_graph,
-        get_qdrant_client_fn=get_qdrant_client,
-        parse_metadata_field_fn=_parse_metadata_field,
-        normalize_tag_list_fn=_normalize_tag_list,
-        extract_entities_fn=extract_entities,
-        slugify_fn=_slugify,
-        compute_tag_prefixes_fn=_compute_tag_prefixes,
-        find_temporal_relationships_fn=find_temporal_relationships,
-        detect_patterns_fn=detect_patterns,
-        link_semantic_neighbors_fn=link_semantic_neighbors,
-        enrichment_enable_summaries=ENRICHMENT_ENABLE_SUMMARIES,
-        generate_summary_fn=generate_summary,
-        utc_now_fn=utc_now,
-        collection_name=COLLECTION_NAME,
-        unexpected_response_exc=UnexpectedResponse,
-        logger=logger,
-    )
-
-
-def _temporal_cutoff() -> str:
-    return _temporal_cutoff_runtime()
-
-
-def find_temporal_relationships(graph: Any, memory_id: str, limit: int = 5) -> int:
-    return _find_temporal_relationships_runtime(
-        graph=graph,
-        memory_id=memory_id,
-        limit=limit,
-        cutoff_fn=_temporal_cutoff,
-        utc_now_fn=utc_now,
-        logger=logger,
-    )
-
-
-def detect_patterns(graph: Any, memory_id: str, content: str) -> List[Dict[str, Any]]:
-    return _detect_patterns_runtime(
-        graph=graph,
-        memory_id=memory_id,
-        content=content,
-        classify_fn=memory_classifier.classify,
-        search_stopwords=SEARCH_STOPWORDS,
-        utc_now_fn=utc_now,
-        logger=logger,
-    )
-
-
-def link_semantic_neighbors(graph: Any, memory_id: str) -> List[Tuple[str, float]]:
-    return _link_semantic_neighbors_runtime(
-        graph=graph,
-        memory_id=memory_id,
-        get_qdrant_client_fn=get_qdrant_client,
-        collection_name=COLLECTION_NAME,
-        similarity_limit=ENRICHMENT_SIMILARITY_LIMIT,
-        similarity_threshold=ENRICHMENT_SIMILARITY_THRESHOLD,
-        utc_now_fn=utc_now,
-        logger=logger,
-    )
+jit_enrich_lightweight = _enrichment_runtime.jit_enrich_lightweight
+enrich_memory = _enrichment_runtime.enrich_memory
+_temporal_cutoff = _enrichment_runtime.temporal_cutoff
+find_temporal_relationships = _enrichment_runtime.find_temporal_relationships
+detect_patterns = _enrichment_runtime.detect_patterns
+link_semantic_neighbors = _enrichment_runtime.link_semantic_neighbors
 
 
 @app.errorhandler(Exception)
