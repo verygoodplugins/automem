@@ -12,7 +12,6 @@ import json
 import logging
 import math
 import os
-import re
 import sys
 import time
 import uuid
@@ -20,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 from falkordb import FalkorDB
 from flask import Flask, abort, jsonify, request
@@ -172,6 +171,7 @@ from automem.config import (
     VECTOR_SIZE,
     normalize_memory_type,
 )
+from automem.search.runtime_keywords import load_keyword_runtime
 from automem.search.runtime_recall_helpers import (
     _graph_keyword_search,
     _result_passes_filters,
@@ -213,10 +213,7 @@ EMBEDDING_BATCH_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_BATCH_TIMEOUT_SECON
 
 """Note: default types/relations/weights are imported from automem.config"""
 
-# Keyword/NER constants come from automem.utils.text if available
-SEARCH_STOPWORDS: Set[str] = set()
-ENTITY_STOPWORDS: Set[str] = set()
-ENTITY_BLOCKLIST: Set[str] = set()
+SEARCH_STOPWORDS, ENTITY_STOPWORDS, ENTITY_BLOCKLIST, _extract_keywords = load_keyword_runtime()
 
 # Search weights are imported from automem.config
 
@@ -224,38 +221,6 @@ ENTITY_BLOCKLIST: Set[str] = set()
 RECALL_MAX_LIMIT = int(os.getenv("RECALL_MAX_LIMIT", "100"))
 
 # API tokens are imported from automem.config
-
-
-try:
-    from automem.utils.text import ENTITY_BLOCKLIST as _AM_ENTITY_BLOCKLIST
-    from automem.utils.text import ENTITY_STOPWORDS as _AM_ENTITY_STOPWORDS
-    from automem.utils.text import SEARCH_STOPWORDS as _AM_SEARCH_STOPWORDS
-    from automem.utils.text import _extract_keywords as _AM_extract_keywords
-
-    # Override local constants if package is available
-    SEARCH_STOPWORDS = _AM_SEARCH_STOPWORDS
-    ENTITY_STOPWORDS = _AM_ENTITY_STOPWORDS
-    ENTITY_BLOCKLIST = _AM_ENTITY_BLOCKLIST
-    _extract_keywords = _AM_extract_keywords
-except Exception:
-    # Define local fallback for keyword extraction
-    def _extract_keywords(text: str) -> List[str]:
-        if not text:
-            return []
-        words = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
-        keywords: List[str] = []
-        seen: set[str] = set()
-        for word in words:
-            cleaned = word.strip("-_")
-            if len(cleaned) < 3:
-                continue
-            if cleaned in SEARCH_STOPWORDS:
-                continue
-            if cleaned in seen:
-                continue
-            seen.add(cleaned)
-            keywords.append(cleaned)
-        return keywords
 
 
 configure_entity_extraction(
