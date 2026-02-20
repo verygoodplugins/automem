@@ -28,12 +28,6 @@ tests/benchmarks/longmemeval/results/
 /mcp-sse-server/node_modules/
 node_modules/
 
-# Graph viewer build/cache artifacts
-packages/graph-viewer/dist/
-packages/graph-viewer/node_modules/
-packages/graph-viewer/.vite/
-automem/static/viewer/
-
 # Experiment results (promote notable runs to tests/benchmarks/results/)
 /tests/benchmarks/experiments/results_*/
 
