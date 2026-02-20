@@ -16,7 +16,6 @@ import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 from typing import Any, Dict, List, Optional
@@ -87,38 +86,15 @@ from automem.embedding.runtime_helpers import (
 from automem.embedding.runtime_helpers import normalize_tags as _normalize_tags_value
 from automem.enrichment.runtime_bindings import create_enrichment_runtime
 from automem.enrichment.runtime_queue_bindings import create_enrichment_queue_runtime
+from automem.runtime_environment import configure_logging, ensure_local_package_importable
 from automem.runtime_wiring import run_default_server, wire_recall_and_blueprints
 from automem.service_runtime_bindings import create_service_runtime
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
 # Environment is loaded by automem.config
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    stream=sys.stdout,  # Write to stdout so Railway correctly parses log levels
-)
-logger = logging.getLogger("automem.api")
-
-# Configure Flask and Werkzeug loggers to use stdout instead of stderr
-# This ensures Railway correctly parses log levels instead of treating everything as "error"
-for logger_name in ["werkzeug", "flask.app"]:
-    framework_logger = logging.getLogger(logger_name)
-    framework_logger.handlers.clear()
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setFormatter(
-        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
-    )
-    framework_logger.addHandler(stdout_handler)
-    framework_logger.setLevel(logging.INFO)
-
-# Ensure local package imports work when only app.py is copied
-try:
-    import automem  # type: ignore
-except Exception:
-    root = Path(__file__).resolve().parent
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
+logger = configure_logging(level=logging.INFO)
+ensure_local_package_importable(file_path=__file__)
 
 app = Flask(__name__)
 
