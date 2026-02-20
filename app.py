@@ -155,6 +155,9 @@ from automem.enrichment.runtime_worker import (
     init_enrichment_pipeline as _init_enrichment_pipeline_runtime,
 )
 from automem.enrichment.runtime_worker import update_last_accessed as _update_last_accessed_runtime
+from automem.service_runtime import get_memory_graph as _get_memory_graph_runtime
+from automem.service_runtime import get_qdrant_client as _get_qdrant_client_runtime
+from automem.service_runtime import init_openai as _init_openai_runtime
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
 # Environment is loaded by automem.config
@@ -378,26 +381,12 @@ def require_api_token() -> None:
 
 
 def init_openai() -> None:
-    """Initialize OpenAI client for memory type classification (not embeddings)."""
-    if state.openai_client is not None:
-        return
-
-    # Check if OpenAI is available at all
-    if OpenAI is None:
-        logger.info("OpenAI package not installed (used for memory type classification)")
-        return
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        logger.info("OpenAI API key not provided (used for memory type classification)")
-        return
-
-    try:
-        state.openai_client = OpenAI(api_key=api_key)
-        logger.info("OpenAI client initialized for memory type classification")
-    except Exception:
-        logger.exception("Failed to initialize OpenAI client")
-        state.openai_client = None
+    _init_openai_runtime(
+        state=state,
+        logger=logger,
+        openai_cls=OpenAI,
+        get_env_fn=os.getenv,
+    )
 
 
 memory_classifier = MemoryClassifier(
@@ -451,13 +440,17 @@ def _ensure_qdrant_collection() -> None:
 
 
 def get_memory_graph() -> Any:
-    init_falkordb()
-    return state.memory_graph
+    return _get_memory_graph_runtime(
+        state=state,
+        init_falkordb_fn=init_falkordb,
+    )
 
 
 def get_qdrant_client() -> Optional[QdrantClient]:
-    init_qdrant()
-    return state.qdrant
+    return _get_qdrant_client_runtime(
+        state=state,
+        init_qdrant_fn=init_qdrant,
+    )
 
 
 def init_enrichment_pipeline() -> None:
