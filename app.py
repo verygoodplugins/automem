@@ -208,9 +208,7 @@ from automem.stores.runtime_clients import (
 from automem.stores.runtime_clients import init_falkordb as _init_falkordb_runtime
 from automem.stores.runtime_clients import init_qdrant as _init_qdrant_runtime
 from automem.stores.vector_store import _build_qdrant_tag_filter
-from automem.sync.runtime_worker import init_sync_worker as _init_sync_worker_runtime
-from automem.sync.runtime_worker import run_sync_check as _run_sync_check_runtime
-from automem.sync.runtime_worker import sync_worker as _sync_worker_runtime
+from automem.sync.runtime_bindings import create_sync_runtime
 from automem.utils.entity_extraction import (
     _slugify,
     configure_entity_extraction,
@@ -550,38 +548,24 @@ def generate_and_store_embedding(memory_id: str, content: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def init_sync_worker() -> None:
-    _init_sync_worker_runtime(
-        state=state,
-        logger=logger,
-        sync_auto_repair=SYNC_AUTO_REPAIR,
-        sync_check_interval_seconds=SYNC_CHECK_INTERVAL_SECONDS,
-        stop_event_cls=Event,
-        thread_cls=Thread,
-        worker_target=sync_worker,
-    )
+_sync_runtime = create_sync_runtime(
+    get_state_fn=lambda: state,
+    logger=logger,
+    sync_auto_repair=SYNC_AUTO_REPAIR,
+    sync_check_interval_seconds=SYNC_CHECK_INTERVAL_SECONDS,
+    stop_event_cls=Event,
+    thread_cls=Thread,
+    sleep_fn=time.sleep,
+    get_memory_graph_fn=get_memory_graph,
+    get_qdrant_client_fn=get_qdrant_client,
+    collection_name=COLLECTION_NAME,
+    utc_now_fn=utc_now,
+    enqueue_embedding_fn=enqueue_embedding,
+)
 
-
-def sync_worker() -> None:
-    _sync_worker_runtime(
-        state=state,
-        logger=logger,
-        sync_check_interval_seconds=SYNC_CHECK_INTERVAL_SECONDS,
-        run_sync_check_fn=_run_sync_check,
-        sleep_fn=time.sleep,
-    )
-
-
-def _run_sync_check() -> None:
-    _run_sync_check_runtime(
-        state=state,
-        logger=logger,
-        get_memory_graph_fn=get_memory_graph,
-        get_qdrant_client_fn=get_qdrant_client,
-        collection_name=COLLECTION_NAME,
-        utc_now_fn=utc_now,
-        enqueue_embedding_fn=enqueue_embedding,
-    )
+init_sync_worker = _sync_runtime.init_sync_worker
+sync_worker = _sync_runtime.sync_worker
+_run_sync_check = _sync_runtime.run_sync_check
 
 
 _enrichment_runtime = create_enrichment_runtime(
