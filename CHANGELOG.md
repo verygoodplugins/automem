@@ -2,6 +2,16 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.13.0](https://github.com/verygoodplugins/automem/compare/v0.12.0...v0.13.0) (2026-02-20)
+
+
+### Features
+
+* **viewer:** add standalone graph-viewer runtime files ([5bcb6db](https://github.com/verygoodplugins/automem/commit/5bcb6dba3d9045c6cf67b6a2055cffc98178fcbc))
+* **viewer:** consolidate stable core and split-ready compatibility ([#94](https://github.com/verygoodplugins/automem/issues/94)) ([958da72](https://github.com/verygoodplugins/automem/commit/958da726763bcae4ff616d2bd7bc7c8d59dec35e))
+* **viewer:** externalize visualizer with /viewer compatibility routes ([29bafcf](https://github.com/verygoodplugins/automem/commit/29bafcfb4816e2eb9de0e74619e7b3b8c7bac930))
+* **viewer:** merge visualizer stable core branch ([96b27bf](https://github.com/verygoodplugins/automem/commit/96b27bf0d7a878ab16695cf340b7bbfe13bcfafd))
+
 ## [0.12.0](https://github.com/verygoodplugins/automem/compare/v0.11.0...v0.12.0) (2026-02-20)
 
 
