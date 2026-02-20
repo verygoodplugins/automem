@@ -23,7 +23,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from falkordb import FalkorDB
-from flask import Blueprint, Flask, abort, jsonify, request
+from flask import Flask, abort, jsonify, request
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
@@ -67,17 +67,10 @@ except ImportError:
     OpenAI = None  # type: ignore
 
 # SSE streaming for real-time observability
-from automem.analytics.runtime_helpers import analyze_memories as _analyze_memories_runtime
-from automem.analytics.runtime_helpers import startup_recall as _startup_recall_runtime
 from automem.api.auth_helpers import extract_api_token as _extract_api_token_helper
 from automem.api.auth_helpers import require_admin_token as _require_admin_token_helper
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
 from automem.api.runtime_bootstrap import register_blueprints as _register_blueprints_runtime
-from automem.api.runtime_memory_routes import delete_memory as _delete_memory_runtime
-from automem.api.runtime_memory_routes import memories_by_tag as _memories_by_tag_runtime
-from automem.api.runtime_memory_routes import store_memory as _store_memory_runtime
-from automem.api.runtime_memory_routes import update_memory as _update_memory_runtime
-from automem.api.runtime_recall_routes import recall_memories as _recall_memories_runtime
 from automem.api.stream import emit_event
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_helpers import (
@@ -94,13 +87,6 @@ from automem.consolidation.runtime_helpers import (
     persist_consolidation_run as _persist_consolidation_run_runtime,
 )
 from automem.consolidation.runtime_helpers import tasks_for_mode as _tasks_for_mode_runtime
-from automem.consolidation.runtime_routes import (
-    consolidate_memories as _consolidate_memories_runtime,
-)
-from automem.consolidation.runtime_routes import (
-    consolidation_status as _consolidation_status_runtime,
-)
-from automem.consolidation.runtime_routes import create_association as _create_association_runtime
 from automem.consolidation.runtime_scheduler import (
     consolidation_worker as _consolidation_worker_runtime,
 )
@@ -191,13 +177,6 @@ except Exception:
 
 app = Flask(__name__)
 
-# Legacy blueprint placeholders for deprecated route definitions below.
-# These are not registered with the app and are safe to keep until full removal.
-admin_bp = Blueprint("admin_legacy", __name__)
-memory_bp = Blueprint("memory_legacy", __name__)
-recall_bp = Blueprint("recall_legacy", __name__)
-consolidation_bp = Blueprint("consolidation_legacy", __name__)
-
 # Import canonical configuration constants
 from automem.config import (
     ADMIN_TOKEN,
@@ -257,7 +236,6 @@ from automem.search.runtime_recall_helpers import (
     configure_recall_helpers,
 )
 from automem.search.runtime_relations import fetch_relations as _fetch_relations_runtime
-from automem.search.runtime_relations import get_related_memories as _get_related_memories_runtime
 from automem.stores.graph_store import _build_graph_tag_predicate
 from automem.stores.runtime_clients import (
     ensure_qdrant_collection as _ensure_qdrant_collection_runtime,
@@ -795,17 +773,6 @@ def link_semantic_neighbors(graph: Any, memory_id: str) -> List[Tuple[str, float
     )
 
 
-# Legacy route implementations retained for reference only.
-# NOTE: These are bound to unregistered "*_legacy" blueprints and are not active.
-# Active endpoints live in automem/api/* blueprints registered above.
-
-
-@admin_bp.route("/admin/reembed", methods=["POST"])
-def admin_reembed() -> Any:
-    """Legacy admin handler; route now provided by automem.api.admin blueprint."""
-    abort(410, description="/admin/reembed moved to blueprint")
-
-
 @app.errorhandler(Exception)
 def handle_exceptions(exc: Exception):
     """Return JSON responses for both HTTP and unexpected errors."""
@@ -824,186 +791,6 @@ def handle_exceptions(exc: Exception):
         "message": "Internal server error",
     }
     return jsonify(response), 500
-
-
-@memory_bp.route("/memory", methods=["POST"])
-def store_memory() -> Any:
-    return _store_memory_runtime(
-        request_obj=request,
-        perf_counter_fn=time.perf_counter,
-        normalize_tags_fn=_normalize_tags,
-        compute_tag_prefixes_fn=_compute_tag_prefixes,
-        coerce_importance_fn=_coerce_importance,
-        normalize_memory_type_fn=normalize_memory_type,
-        memory_types=MEMORY_TYPES,
-        type_aliases=TYPE_ALIASES,
-        classify_memory_fn=memory_classifier.classify,
-        normalize_timestamp_fn=_normalize_timestamp,
-        coerce_embedding_fn=_coerce_embedding,
-        get_memory_graph_fn=get_memory_graph,
-        get_qdrant_client_fn=get_qdrant_client,
-        enqueue_enrichment_fn=enqueue_enrichment,
-        enqueue_embedding_fn=enqueue_embedding,
-        collection_name=COLLECTION_NAME,
-        point_struct_cls=PointStruct,
-        state=state,
-        logger=logger,
-        emit_event_fn=emit_event,
-        utc_now_fn=utc_now,
-        uuid4_fn=uuid.uuid4,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-    )
-
-
-@memory_bp.route("/memory/<memory_id>", methods=["PATCH"])
-def update_memory(memory_id: str) -> Any:
-    return _update_memory_runtime(
-        request_obj=request,
-        memory_id=memory_id,
-        get_memory_graph_fn=get_memory_graph,
-        get_qdrant_client_fn=get_qdrant_client,
-        normalize_tag_list_fn=_normalize_tag_list,
-        compute_tag_prefixes_fn=_compute_tag_prefixes,
-        parse_metadata_field_fn=_parse_metadata_field,
-        normalize_timestamp_fn=_normalize_timestamp,
-        generate_real_embedding_fn=_generate_real_embedding,
-        serialize_node_fn=_serialize_node,
-        collection_name=COLLECTION_NAME,
-        point_struct_cls=PointStruct,
-        utc_now_fn=utc_now,
-        logger=logger,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-    )
-
-
-@memory_bp.route("/memory/<memory_id>", methods=["DELETE"])
-def delete_memory(memory_id: str) -> Any:
-    return _delete_memory_runtime(
-        memory_id=memory_id,
-        get_memory_graph_fn=get_memory_graph,
-        get_qdrant_client_fn=get_qdrant_client,
-        qdrant_models_obj=qdrant_models if "qdrant_models" in globals() else None,
-        collection_name=COLLECTION_NAME,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-        logger=logger,
-    )
-
-
-@memory_bp.route("/memory/by-tag", methods=["GET"])
-def memories_by_tag() -> Any:
-    return _memories_by_tag_runtime(
-        request_obj=request,
-        normalize_tag_list_fn=_normalize_tag_list,
-        get_memory_graph_fn=get_memory_graph,
-        serialize_node_fn=_serialize_node,
-        parse_metadata_field_fn=_parse_metadata_field,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-        logger=logger,
-    )
-
-
-@recall_bp.route("/recall", methods=["GET"])
-def recall_memories() -> Any:
-    # Delegate implementation to recall blueprint module (kept for backward-compatibility)
-    from automem.api.recall import handle_recall  # local import to avoid cycles
-
-    return _recall_memories_runtime(
-        request_obj=request,
-        perf_counter_fn=time.perf_counter,
-        parse_time_expression_fn=_parse_time_expression,
-        normalize_timestamp_fn=_normalize_timestamp,
-        normalize_tag_list_fn=_normalize_tag_list,
-        handle_recall_fn=handle_recall,
-        get_memory_graph_fn=get_memory_graph,
-        get_qdrant_client_fn=get_qdrant_client,
-        extract_keywords_fn=_extract_keywords,
-        compute_metadata_score_fn=_compute_metadata_score,
-        result_passes_filters_fn=_result_passes_filters,
-        graph_keyword_search_fn=_graph_keyword_search,
-        vector_search_fn=_vector_search,
-        vector_filter_only_tag_search_fn=_vector_filter_only_tag_search,
-        recall_max_limit=RECALL_MAX_LIMIT,
-        logger=logger,
-        allowed_relations=ALLOWED_RELATIONS,
-        recall_relation_limit=RECALL_RELATION_LIMIT,
-        recall_expansion_limit=RECALL_EXPANSION_LIMIT,
-        emit_event_fn=emit_event,
-        utc_now_fn=utc_now,
-        abort_fn=abort,
-    )
-
-
-@memory_bp.route("/associate", methods=["POST"])
-def create_association() -> Any:
-    return _create_association_runtime(
-        request_obj=request,
-        coerce_importance_fn=_coerce_importance,
-        get_memory_graph_fn=get_memory_graph,
-        allowed_relations=ALLOWED_RELATIONS,
-        relationship_types=RELATIONSHIP_TYPES,
-        utc_now_fn=utc_now,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-        logger=logger,
-    )
-
-
-@consolidation_bp.route("/consolidate", methods=["POST"])
-def consolidate_memories() -> Any:
-    return _consolidate_memories_runtime(
-        request_obj=request,
-        get_memory_graph_fn=get_memory_graph,
-        init_consolidation_scheduler_fn=init_consolidation_scheduler,
-        get_qdrant_client_fn=get_qdrant_client,
-        memory_consolidator_cls=MemoryConsolidator,
-        persist_consolidation_run_fn=_persist_consolidation_run,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-        logger=logger,
-    )
-
-
-@consolidation_bp.route("/consolidate/status", methods=["GET"])
-def consolidation_status() -> Any:
-    return _consolidation_status_runtime(
-        get_memory_graph_fn=get_memory_graph,
-        init_consolidation_scheduler_fn=init_consolidation_scheduler,
-        build_scheduler_from_graph_fn=_build_scheduler_from_graph,
-        load_recent_runs_fn=_load_recent_runs,
-        consolidation_history_limit=CONSOLIDATION_HISTORY_LIMIT,
-        consolidation_tick_seconds=CONSOLIDATION_TICK_SECONDS,
-        state=state,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-        logger=logger,
-    )
-
-
-@recall_bp.route("/startup-recall", methods=["GET"])
-def startup_recall() -> Any:
-    return _startup_recall_runtime(
-        get_memory_graph_fn=get_memory_graph,
-        jsonify_fn=jsonify,
-        abort_fn=abort,
-        logger=logger,
-    )
-
-
-@recall_bp.route("/analyze", methods=["GET"])
-def analyze_memories() -> Any:
-    return _analyze_memories_runtime(
-        get_memory_graph_fn=get_memory_graph,
-        extract_entities_fn=extract_entities,
-        utc_now_fn=utc_now,
-        perf_counter_fn=time.perf_counter,
-        jsonify_fn=jsonify,
-        abort_fn=abort,
-        logger=logger,
-    )
 
 
 def _normalize_tags(value: Any) -> List[str]:
@@ -1072,22 +859,6 @@ configure_recall_helpers(
     logger=logger,
     collection_name=COLLECTION_NAME,
 )
-
-
-@recall_bp.route("/memories/<memory_id>/related", methods=["GET"])
-def get_related_memories(memory_id: str) -> Any:
-    return _get_related_memories_runtime(
-        memory_id=memory_id,
-        request_args=request.args,
-        get_memory_graph_fn=get_memory_graph,
-        allowed_relations=ALLOWED_RELATIONS,
-        relation_limit=RECALL_RELATION_LIMIT,
-        serialize_node_fn=_serialize_node,
-        logger=logger,
-        abort_fn=abort,
-        jsonify_fn=jsonify,
-    )
-
 
 _register_blueprints_runtime(
     app=app,
