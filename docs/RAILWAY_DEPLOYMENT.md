@@ -124,6 +124,18 @@ The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server
 2. Click the three dots menu → **Delete Service**
 3. This saves ~$2-3/month and has no impact on the core memory API
 
+### Optional: Standalone Graph Viewer Service
+
+Deploy `automem-graph-viewer` as a separate Railway service, then configure these on `memory-service`:
+
+| Variable | Value |
+|----------|-------|
+| `ENABLE_GRAPH_VIEWER` | `true` |
+| `GRAPH_VIEWER_URL` | `https://<your-viewer-domain>` |
+| `VIEWER_ALLOWED_ORIGINS` | `https://<your-viewer-domain>` |
+
+AutoMem keeps `/viewer` for compatibility and redirects/bootstraps users to the standalone viewer.
+
 ### Get Your API Tokens
 
 Your tokens were auto-generated during deployment. Find them in:

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from falkordb import FalkorDB
 from flask import Flask, abort, jsonify, request
+from flask_cors import CORS
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
 
@@ -97,6 +98,25 @@ logger = configure_logging(level=logging.INFO)
 ensure_local_package_importable(file_path=__file__)
 
 app = Flask(__name__)
+
+
+def _parse_viewer_allowed_origins() -> Any:
+    raw = (os.getenv("VIEWER_ALLOWED_ORIGINS") or "").strip()
+    if not raw:
+        return "*"
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or "*"
+
+
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": _parse_viewer_allowed_origins(),
+            "allow_headers": ["Content-Type", "X-API-Key", "Authorization"],
+        }
+    },
+)
 
 # Import canonical configuration constants
 from automem.config import (
@@ -230,6 +250,12 @@ def _require_admin_token() -> None:
 
 @app.before_request
 def require_api_token() -> None:
+    if request.method == "OPTIONS":
+        return
+
+    if request.path.startswith("/viewer"):
+        return
+
     _require_api_token_helper(
         request_obj=request,
         api_token=API_TOKEN,

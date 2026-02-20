@@ -25,6 +25,8 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/graph/stats"),
     ("GET", "/graph/types"),
     ("GET", "/graph/relations"),
+    ("GET", "/viewer/"),
+    ("GET", "/viewer/<path:path>"),
     ("GET", "/stream"),
     ("GET", "/stream/status"),
 }

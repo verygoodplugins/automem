@@ -3,6 +3,7 @@ import { Settings } from 'lucide-react'
 
 // Build version - update this when making significant changes
 const BUILD_VERSION = '2024-12-23-obsidian-settings-v1'
+const HAND_CONTROLS_ENABLED = import.meta.env.VITE_ENABLE_HAND_CONTROLS === 'true'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import { useGraphSnapshot } from './hooks/useGraphData'
 import { useAuth } from './hooks/useAuth'
@@ -691,26 +692,28 @@ export default function App() {
           </span>
         </button>
 
-        {/* Gesture Control Toggle */}
-        <button
-          onClick={() => setGestureControlEnabled(!gestureControlEnabled)}
-          className={`
-            flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
-            ${gestureControlEnabled
-              ? 'bg-gradient-to-r from-cyan-500 to-purple-500 text-white shadow-lg shadow-cyan-500/25'
-              : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
-            }
-          `}
-          title={gestureControlEnabled ? 'Disable hand gestures' : 'Enable hand gestures (requires camera)'}
-        >
-          <HandIcon className="w-5 h-5" />
-          <span className="text-sm font-medium hidden sm:inline">
-            {gestureControlEnabled ? 'Gestures ON' : 'Gestures'}
-          </span>
-        </button>
+        {/* Gesture controls are opt-in via VITE_ENABLE_HAND_CONTROLS=true */}
+        {HAND_CONTROLS_ENABLED && (
+          <button
+            onClick={() => setGestureControlEnabled(!gestureControlEnabled)}
+            className={`
+              flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200
+              ${gestureControlEnabled
+                ? 'bg-gradient-to-r from-cyan-500 to-purple-500 text-white shadow-lg shadow-cyan-500/25'
+                : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+              }
+            `}
+            title={gestureControlEnabled ? 'Disable hand gestures' : 'Enable hand gestures (requires camera)'}
+          >
+            <HandIcon className="w-5 h-5" />
+            <span className="text-sm font-medium hidden sm:inline">
+              {gestureControlEnabled ? 'Gestures ON' : 'Gestures'}
+            </span>
+          </button>
+        )}
 
-        {/* Debug Overlay Toggle (only show when gestures enabled) */}
-        {gestureControlEnabled && (
+        {/* Debug Overlay Toggle (only show when gestures are enabled) */}
+        {HAND_CONTROLS_ENABLED && gestureControlEnabled && (
           <button
             onClick={() => setDebugOverlayVisible(!debugOverlayVisible)}
             className={`
@@ -814,7 +817,7 @@ export default function App() {
                 onNodeSelect={handleNodeSelect}
                 onNodeHover={handleNodeHover}
                 onNodeContextMenu={handleNodeContextMenu}
-                gestureControlEnabled={gestureControlEnabled}
+                gestureControlEnabled={HAND_CONTROLS_ENABLED && gestureControlEnabled}
                 trackingSource={trackingSource}
                 onGestureStateChange={handleGestureStateChange}
                 onTrackingInfoChange={setTrackingInfo}
@@ -846,19 +849,19 @@ export default function App() {
               {/* 2D Hand Overlay (on top of canvas, life-size) */}
               <Hand2DOverlay
                 gestureState={gestureState}
-                enabled={gestureControlEnabled}
+                enabled={HAND_CONTROLS_ENABLED && gestureControlEnabled}
                 lock={handLock}
               />
 
               {/* Gesture Debug Overlay */}
               <GestureDebugOverlay
                 gestureState={gestureState}
-                visible={debugOverlayVisible && gestureControlEnabled}
+                visible={HAND_CONTROLS_ENABLED && debugOverlayVisible && gestureControlEnabled}
               />
 
               {/* Hand Control Overlay (lock/grab metrics) */}
               <HandControlOverlay
-                enabled={gestureControlEnabled}
+                enabled={HAND_CONTROLS_ENABLED && gestureControlEnabled}
                 lock={handLock}
                 source={trackingSource}
                 onSourceChange={handleSourceChange}
