@@ -58,8 +58,6 @@ if PointStruct is None:  # pragma: no cover - test shim
 
 from werkzeug.exceptions import HTTPException
 
-from consolidation import ConsolidationScheduler, MemoryConsolidator
-
 # Make OpenAI import optional to allow running without it
 try:
     from openai import OpenAI  # type: ignore
@@ -73,29 +71,7 @@ from automem.api.auth_helpers import require_api_token as _require_api_token_hel
 from automem.api.runtime_bootstrap import register_blueprints as _register_blueprints_runtime
 from automem.api.stream import emit_event
 from automem.classification.memory_classifier import MemoryClassifier
-from automem.consolidation.runtime_helpers import (
-    apply_scheduler_overrides as _apply_scheduler_overrides_runtime,
-)
-from automem.consolidation.runtime_helpers import (
-    build_consolidator_from_config as _build_consolidator_from_config_runtime,
-)
-from automem.consolidation.runtime_helpers import (
-    load_control_record as _load_control_record_runtime,
-)
-from automem.consolidation.runtime_helpers import load_recent_runs as _load_recent_runs_runtime
-from automem.consolidation.runtime_helpers import (
-    persist_consolidation_run as _persist_consolidation_run_runtime,
-)
-from automem.consolidation.runtime_helpers import tasks_for_mode as _tasks_for_mode_runtime
-from automem.consolidation.runtime_scheduler import (
-    consolidation_worker as _consolidation_worker_runtime,
-)
-from automem.consolidation.runtime_scheduler import (
-    init_consolidation_scheduler as _init_consolidation_scheduler_runtime,
-)
-from automem.consolidation.runtime_scheduler import (
-    run_consolidation_tick as _run_consolidation_tick_runtime,
-)
+from automem.consolidation.runtime_bindings import create_consolidation_runtime
 from automem.embedding.provider_init import init_embedding_provider as _init_embedding_provider
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
@@ -465,114 +441,42 @@ def update_last_accessed(memory_ids: List[str]) -> None:
     )
 
 
-def _load_control_record(graph: Any) -> Dict[str, Any]:
-    return _load_control_record_runtime(
-        graph,
-        logger=logger,
-        control_label=CONSOLIDATION_CONTROL_LABEL,
-        control_node_id=CONSOLIDATION_CONTROL_NODE_ID,
-        task_fields=CONSOLIDATION_TASK_FIELDS,
-        utc_now_fn=utc_now,
-    )
+_consolidation_runtime = create_consolidation_runtime(
+    state=state,
+    logger=logger,
+    get_memory_graph_fn=get_memory_graph,
+    get_qdrant_client_fn=get_qdrant_client,
+    emit_event_fn=emit_event,
+    utc_now_fn=utc_now,
+    perf_counter_fn=time.perf_counter,
+    parse_iso_datetime_fn=_parse_iso_datetime,
+    stop_event_cls=Event,
+    thread_cls=Thread,
+    run_label=CONSOLIDATION_RUN_LABEL,
+    control_label=CONSOLIDATION_CONTROL_LABEL,
+    control_node_id=CONSOLIDATION_CONTROL_NODE_ID,
+    task_fields=CONSOLIDATION_TASK_FIELDS,
+    history_limit=CONSOLIDATION_HISTORY_LIMIT,
+    tick_seconds=CONSOLIDATION_TICK_SECONDS,
+    decay_interval_seconds=CONSOLIDATION_DECAY_INTERVAL_SECONDS,
+    creative_interval_seconds=CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
+    cluster_interval_seconds=CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
+    forget_interval_seconds=CONSOLIDATION_FORGET_INTERVAL_SECONDS,
+    delete_threshold=CONSOLIDATION_DELETE_THRESHOLD,
+    archive_threshold=CONSOLIDATION_ARCHIVE_THRESHOLD,
+    grace_period_days=CONSOLIDATION_GRACE_PERIOD_DAYS,
+    importance_protection_threshold=CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+    protected_types=set(CONSOLIDATION_PROTECTED_TYPES),
+    decay_importance_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
+)
 
-
-def _load_recent_runs(graph: Any, limit: int) -> List[Dict[str, Any]]:
-    return _load_recent_runs_runtime(
-        graph,
-        limit,
-        logger=logger,
-        run_label=CONSOLIDATION_RUN_LABEL,
-    )
-
-
-def _apply_scheduler_overrides(scheduler: ConsolidationScheduler) -> None:
-    _apply_scheduler_overrides_runtime(
-        scheduler,
-        decay_interval_seconds=CONSOLIDATION_DECAY_INTERVAL_SECONDS,
-        creative_interval_seconds=CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
-        cluster_interval_seconds=CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
-        forget_interval_seconds=CONSOLIDATION_FORGET_INTERVAL_SECONDS,
-    )
-
-
-def _tasks_for_mode(mode: str) -> List[str]:
-    return _tasks_for_mode_runtime(mode, CONSOLIDATION_TASK_FIELDS)
-
-
-def _persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:
-    _persist_consolidation_run_runtime(
-        graph,
-        result,
-        logger=logger,
-        run_label=CONSOLIDATION_RUN_LABEL,
-        control_label=CONSOLIDATION_CONTROL_LABEL,
-        control_node_id=CONSOLIDATION_CONTROL_NODE_ID,
-        task_fields=CONSOLIDATION_TASK_FIELDS,
-        history_limit=CONSOLIDATION_HISTORY_LIMIT,
-        utc_now_fn=utc_now,
-    )
-
-
-def _build_scheduler_from_graph(graph: Any) -> Optional[ConsolidationScheduler]:
-    vector_store = get_qdrant_client()
-    consolidator = _build_consolidator_from_config(graph, vector_store)
-    scheduler = ConsolidationScheduler(consolidator)
-    _apply_scheduler_overrides(scheduler)
-
-    control = _load_control_record(graph)
-    for task, field in CONSOLIDATION_TASK_FIELDS.items():
-        iso_value = control.get(field)
-        last_run = _parse_iso_datetime(iso_value)
-        if last_run and task in scheduler.schedules:
-            scheduler.schedules[task]["last_run"] = last_run
-
-    return scheduler
-
-
-def _build_consolidator_from_config(graph: Any, vector_store: Any) -> MemoryConsolidator:
-    return _build_consolidator_from_config_runtime(
-        graph,
-        vector_store,
-        memory_consolidator_cls=MemoryConsolidator,
-        delete_threshold=CONSOLIDATION_DELETE_THRESHOLD,
-        archive_threshold=CONSOLIDATION_ARCHIVE_THRESHOLD,
-        grace_period_days=CONSOLIDATION_GRACE_PERIOD_DAYS,
-        importance_protection_threshold=CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
-        protected_types=set(CONSOLIDATION_PROTECTED_TYPES),
-    )
-
-
-def _run_consolidation_tick() -> None:
-    _run_consolidation_tick_runtime(
-        get_memory_graph_fn=get_memory_graph,
-        build_scheduler_from_graph_fn=_build_scheduler_from_graph,
-        persist_consolidation_run_fn=_persist_consolidation_run,
-        decay_importance_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
-        emit_event_fn=emit_event,
-        utc_now_fn=utc_now,
-        perf_counter_fn=time.perf_counter,
-        logger=logger,
-    )
-
-
-def consolidation_worker() -> None:
-    _consolidation_worker_runtime(
-        state=state,
-        logger=logger,
-        consolidation_tick_seconds=CONSOLIDATION_TICK_SECONDS,
-        run_consolidation_tick_fn=_run_consolidation_tick,
-    )
-
-
-def init_consolidation_scheduler() -> None:
-    _init_consolidation_scheduler_runtime(
-        state=state,
-        logger=logger,
-        stop_event_cls=Event,
-        thread_cls=Thread,
-        worker_target=consolidation_worker,
-        run_consolidation_tick_fn=_run_consolidation_tick,
-    )
+_load_recent_runs = _consolidation_runtime.load_recent_runs
+_persist_consolidation_run = _consolidation_runtime.persist_consolidation_run
+_build_consolidator_from_config = _consolidation_runtime.build_consolidator_from_config
+_build_scheduler_from_graph = _consolidation_runtime.build_scheduler_from_graph
+_run_consolidation_tick = _consolidation_runtime.run_consolidation_tick
+consolidation_worker = _consolidation_runtime.consolidation_worker
+init_consolidation_scheduler = _consolidation_runtime.init_consolidation_scheduler
 
 
 def enrichment_worker() -> None:
