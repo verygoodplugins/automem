@@ -72,7 +72,6 @@ from automem.api.runtime_bootstrap import register_blueprints as _register_bluep
 from automem.api.stream import emit_event
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_bindings import create_consolidation_runtime
-from automem.embedding.provider_init import init_embedding_provider as _init_embedding_provider
 from automem.embedding.runtime_bindings import create_embedding_runtime
 from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
 from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
@@ -88,9 +87,7 @@ from automem.embedding.runtime_helpers import (
 from automem.embedding.runtime_helpers import normalize_tags as _normalize_tags_value
 from automem.enrichment.runtime_bindings import create_enrichment_runtime
 from automem.enrichment.runtime_queue_bindings import create_enrichment_queue_runtime
-from automem.service_runtime import get_memory_graph as _get_memory_graph_runtime
-from automem.service_runtime import get_qdrant_client as _get_qdrant_client_runtime
-from automem.service_runtime import init_openai as _init_openai_runtime
+from automem.service_runtime_bindings import create_service_runtime
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
 
 # Environment is loaded by automem.config
@@ -184,11 +181,6 @@ from automem.search.runtime_recall_helpers import (
 )
 from automem.search.runtime_relations import fetch_relations as _fetch_relations_runtime
 from automem.stores.graph_store import _build_graph_tag_predicate
-from automem.stores.runtime_clients import (
-    ensure_qdrant_collection as _ensure_qdrant_collection_runtime,
-)
-from automem.stores.runtime_clients import init_falkordb as _init_falkordb_runtime
-from automem.stores.runtime_clients import init_qdrant as _init_qdrant_runtime
 from automem.stores.vector_store import _build_qdrant_tag_filter
 from automem.sync.runtime_bindings import create_sync_runtime
 from automem.utils.entity_extraction import (
@@ -303,13 +295,33 @@ def require_api_token() -> None:
     )
 
 
-def init_openai() -> None:
-    _init_openai_runtime(
-        state=state,
-        logger=logger,
-        openai_cls=OpenAI,
-        get_env_fn=os.getenv,
-    )
+_service_runtime = create_service_runtime(
+    get_state_fn=lambda: state,
+    logger=logger,
+    openai_cls=OpenAI,
+    get_env_fn=os.getenv,
+    vector_size_config_fn=lambda: VECTOR_SIZE,
+    embedding_model_fn=lambda: EMBEDDING_MODEL,
+    falkordb_cls=FalkorDB,
+    graph_name=GRAPH_NAME,
+    falkordb_port=FALKORDB_PORT,
+    qdrant_client_cls=QdrantClient,
+    collection_name=COLLECTION_NAME,
+    get_effective_vector_size_fn=get_effective_vector_size,
+    vector_params_cls=VectorParams,
+    distance_enum=Distance,
+    payload_schema_type_enum=PayloadSchemaType,
+    get_init_falkordb_fn=lambda: init_falkordb,
+    get_init_qdrant_fn=lambda: init_qdrant,
+)
+
+init_openai = _service_runtime.init_openai
+init_embedding_provider = _service_runtime.init_embedding_provider
+init_falkordb = _service_runtime.init_falkordb
+init_qdrant = _service_runtime.init_qdrant
+_ensure_qdrant_collection = _service_runtime.ensure_qdrant_collection
+get_memory_graph = _service_runtime.get_memory_graph
+get_qdrant_client = _service_runtime.get_qdrant_client
 
 
 memory_classifier = MemoryClassifier(
@@ -319,61 +331,6 @@ memory_classifier = MemoryClassifier(
     classification_model=CLASSIFICATION_MODEL,
     logger=logger,
 )
-
-
-def init_embedding_provider() -> None:
-    _init_embedding_provider(
-        state=state,
-        logger=logger,
-        vector_size_config=VECTOR_SIZE,
-        embedding_model=EMBEDDING_MODEL,
-    )
-
-
-def init_falkordb() -> None:
-    _init_falkordb_runtime(
-        state=state,
-        logger=logger,
-        falkordb_cls=FalkorDB,
-        graph_name=GRAPH_NAME,
-        falkordb_port=FALKORDB_PORT,
-    )
-
-
-def init_qdrant() -> None:
-    _init_qdrant_runtime(
-        state=state,
-        logger=logger,
-        qdrant_client_cls=QdrantClient,
-        ensure_collection_fn=_ensure_qdrant_collection,
-    )
-
-
-def _ensure_qdrant_collection() -> None:
-    _ensure_qdrant_collection_runtime(
-        state=state,
-        logger=logger,
-        collection_name=COLLECTION_NAME,
-        vector_size_config=VECTOR_SIZE,
-        get_effective_vector_size_fn=get_effective_vector_size,
-        vector_params_cls=VectorParams,
-        distance_enum=Distance,
-        payload_schema_type_enum=PayloadSchemaType,
-    )
-
-
-def get_memory_graph() -> Any:
-    return _get_memory_graph_runtime(
-        state=state,
-        init_falkordb_fn=init_falkordb,
-    )
-
-
-def get_qdrant_client() -> Optional[QdrantClient]:
-    return _get_qdrant_client_runtime(
-        state=state,
-        init_qdrant_fn=init_qdrant,
-    )
 
 
 _enrichment_queue_runtime = create_enrichment_queue_runtime(
