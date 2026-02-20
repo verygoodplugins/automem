@@ -2,6 +2,29 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.12.0](https://github.com/verygoodplugins/automem/compare/v0.11.0...v0.12.0) (2026-02-20)
+
+
+### Features
+
+* add LongMemEval benchmark harness (ICLR 2025) ([#83](https://github.com/verygoodplugins/automem/issues/83)) ([8f51895](https://github.com/verygoodplugins/automem/commit/8f518959b789f56e898e73bb1f2535413f4b5f10))
+* just-in-time enrichment on recall ([#86](https://github.com/verygoodplugins/automem/issues/86)) ([#88](https://github.com/verygoodplugins/automem/issues/88)) ([743ab6b](https://github.com/verygoodplugins/automem/commit/743ab6bd52aeba28681964cb10118d2fa54b8767))
+* **lab:** add Recall Quality Lab for data-driven recall optimization ([d53dfdd](https://github.com/verygoodplugins/automem/commit/d53dfdd7a365b9bf99a5001550c1fb4ff8d851e4))
+* **lab:** Recall Quality Lab + fix relevance_score Qdrant sync ([#81](https://github.com/verygoodplugins/automem/issues/81)) ([ba1308a](https://github.com/verygoodplugins/automem/commit/ba1308a340cd6fb796e3b88cf4a9415386eaf5b3))
+
+
+### Bug Fixes
+
+* code quality improvements from CodeRabbit review ([#85](https://github.com/verygoodplugins/automem/issues/85)) ([4c81f0f](https://github.com/verygoodplugins/automem/commit/4c81f0f7ea3c064c8087bdf2037313c8cd6dd9c1))
+* **lab:** address CodeRabbit review — type hints, f-strings, validation ([5fee1e8](https://github.com/verygoodplugins/automem/commit/5fee1e8484e00ad7933d28ec78c24503d7c03219))
+* **lab:** address CodeRabbit review findings ([c121341](https://github.com/verygoodplugins/automem/commit/c121341e6106c5c3a6da5162df575b8f0b39f510))
+* **recall:** sync relevance_score to Qdrant payload for vector search ([55e381b](https://github.com/verygoodplugins/automem/commit/55e381b76265c7bb4e88c35a84e251b1de012dbf))
+
+
+### Documentation
+
+* Update environment variables ([08e6126](https://github.com/verygoodplugins/automem/commit/08e612695395cf623f50ecc5697103778332b554))
+
 ## [0.11.0](https://github.com/verygoodplugins/automem/compare/v0.10.1...v0.11.0) (2026-02-16)
 
 
