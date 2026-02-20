@@ -72,12 +72,13 @@ from automem.analytics.runtime_helpers import startup_recall as _startup_recall_
 from automem.api.auth_helpers import extract_api_token as _extract_api_token_helper
 from automem.api.auth_helpers import require_admin_token as _require_admin_token_helper
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
+from automem.api.runtime_bootstrap import register_blueprints as _register_blueprints_runtime
 from automem.api.runtime_memory_routes import delete_memory as _delete_memory_runtime
 from automem.api.runtime_memory_routes import memories_by_tag as _memories_by_tag_runtime
 from automem.api.runtime_memory_routes import store_memory as _store_memory_runtime
 from automem.api.runtime_memory_routes import update_memory as _update_memory_runtime
 from automem.api.runtime_recall_routes import recall_memories as _recall_memories_runtime
-from automem.api.stream import create_stream_blueprint, emit_event
+from automem.api.stream import emit_event
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_helpers import (
     apply_scheduler_overrides as _apply_scheduler_overrides_runtime,
@@ -1095,127 +1096,56 @@ def get_related_memories(memory_id: str) -> Any:
     )
 
 
-from automem.api.admin import create_admin_blueprint_full
-from automem.api.consolidation import create_consolidation_blueprint_full
-from automem.api.enrichment import create_enrichment_blueprint
-from automem.api.graph import create_graph_blueprint
-
-# Register blueprints after all routes are defined
-from automem.api.health import create_health_blueprint
-from automem.api.memory import create_memory_blueprint_full
-from automem.api.recall import create_recall_blueprint
-
-health_bp = create_health_blueprint(
-    get_memory_graph,
-    get_qdrant_client,
-    state,
-    GRAPH_NAME,
-    COLLECTION_NAME,
-    utc_now,
-)
-
-enrichment_bp = create_enrichment_blueprint(
-    _require_admin_token,
-    state,
-    enqueue_enrichment,
-    ENRICHMENT_MAX_ATTEMPTS,
-)
-
-recall_bp = create_recall_blueprint(
-    get_memory_graph,
-    get_qdrant_client,
-    _normalize_tag_list,
-    _normalize_timestamp,
-    _parse_time_expression,
-    _extract_keywords,
-    _compute_metadata_score,
-    _result_passes_filters,
-    _graph_keyword_search,
-    _vector_search,
-    _vector_filter_only_tag_search,
-    RECALL_MAX_LIMIT,
-    logger,
-    ALLOWED_RELATIONS,
-    RECALL_RELATION_LIMIT,
-    _serialize_node,
-    _summarize_relation_node,
-    update_last_accessed,
+_register_blueprints_runtime(
+    app=app,
+    get_memory_graph_fn=get_memory_graph,
+    get_qdrant_client_fn=get_qdrant_client,
+    state=state,
+    graph_name=GRAPH_NAME,
+    collection_name=COLLECTION_NAME,
+    utc_now_fn=utc_now,
+    require_admin_token_fn=_require_admin_token,
+    enqueue_enrichment_fn=enqueue_enrichment,
+    enrichment_max_attempts=ENRICHMENT_MAX_ATTEMPTS,
+    normalize_tag_list_fn=_normalize_tag_list,
+    normalize_timestamp_fn=_normalize_timestamp,
+    parse_time_expression_fn=_parse_time_expression,
+    extract_keywords_fn=_extract_keywords,
+    compute_metadata_score_fn=_compute_metadata_score,
+    result_passes_filters_fn=_result_passes_filters,
+    graph_keyword_search_fn=_graph_keyword_search,
+    vector_search_fn=_vector_search,
+    vector_filter_only_tag_search_fn=_vector_filter_only_tag_search,
+    recall_max_limit=RECALL_MAX_LIMIT,
+    logger=logger,
+    allowed_relations=ALLOWED_RELATIONS,
+    recall_relation_limit=RECALL_RELATION_LIMIT,
+    serialize_node_fn=_serialize_node,
+    summarize_relation_node_fn=_summarize_relation_node,
+    update_last_accessed_fn=update_last_accessed,
     jit_enrich_fn=jit_enrich_lightweight if JIT_ENRICHMENT_ENABLED else None,
+    normalize_tags_fn=_normalize_tags,
+    compute_tag_prefixes_fn=_compute_tag_prefixes,
+    coerce_importance_fn=_coerce_importance,
+    coerce_embedding_fn=_coerce_embedding,
+    parse_metadata_field_fn=_parse_metadata_field,
+    generate_real_embedding_fn=_generate_real_embedding,
+    enqueue_embedding_fn=enqueue_embedding,
+    classify_memory_fn=lambda content: memory_classifier.classify(content),
+    point_struct_cls=PointStruct,
+    relationship_types=RELATIONSHIP_TYPES,
+    get_openai_client_fn=get_openai_client,
+    init_openai_fn=init_openai,
+    effective_vector_size_fn=lambda: state.effective_vector_size,
+    embedding_model=EMBEDDING_MODEL,
+    build_consolidator_from_config_fn=_build_consolidator_from_config,
+    persist_consolidation_run_fn=_persist_consolidation_run,
+    build_scheduler_from_graph_fn=_build_scheduler_from_graph,
+    load_recent_runs_fn=_load_recent_runs,
+    consolidation_tick_seconds=CONSOLIDATION_TICK_SECONDS,
+    consolidation_history_limit=CONSOLIDATION_HISTORY_LIMIT,
+    require_api_token_fn=require_api_token,
 )
-
-memory_bp = create_memory_blueprint_full(
-    get_memory_graph,
-    get_qdrant_client,
-    _normalize_tags,
-    _normalize_tag_list,
-    _compute_tag_prefixes,
-    _coerce_importance,
-    _coerce_embedding,
-    _normalize_timestamp,
-    utc_now,
-    _serialize_node,
-    _parse_metadata_field,
-    _generate_real_embedding,
-    enqueue_enrichment,
-    enqueue_embedding,
-    lambda content: memory_classifier.classify(content),
-    PointStruct,
-    COLLECTION_NAME,
-    ALLOWED_RELATIONS,
-    RELATIONSHIP_TYPES,
-    state,
-    logger,
-    update_last_accessed,
-    get_openai_client,
-)
-
-admin_bp = create_admin_blueprint_full(
-    _require_admin_token,
-    init_openai,
-    get_openai_client,
-    get_qdrant_client,
-    get_memory_graph,
-    PointStruct,
-    COLLECTION_NAME,
-    lambda: state.effective_vector_size,  # Use runtime-detected dimension
-    EMBEDDING_MODEL,
-    utc_now,
-    logger,
-)
-
-consolidation_bp = create_consolidation_blueprint_full(
-    get_memory_graph,
-    get_qdrant_client,
-    _build_consolidator_from_config,
-    _persist_consolidation_run,
-    _build_scheduler_from_graph,
-    _load_recent_runs,
-    state,
-    CONSOLIDATION_TICK_SECONDS,
-    CONSOLIDATION_HISTORY_LIMIT,
-    logger,
-)
-
-graph_bp = create_graph_blueprint(
-    get_memory_graph,
-    get_qdrant_client,
-    _serialize_node,
-    COLLECTION_NAME,
-    logger,
-)
-
-stream_bp = create_stream_blueprint(
-    require_api_token=require_api_token,
-)
-
-app.register_blueprint(health_bp)
-app.register_blueprint(enrichment_bp)
-app.register_blueprint(memory_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(recall_bp)
-app.register_blueprint(consolidation_bp)
-app.register_blueprint(graph_bp)
-app.register_blueprint(stream_bp)
 
 
 if __name__ == "__main__":
