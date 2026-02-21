@@ -45,7 +45,11 @@ services:
       AUTOMEM_API_TOKEN: ${AUTOMEM_API_TOKEN:-test-token}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-test-admin-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}  # auto|openai|local|placeholder
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      VECTOR_SIZE: ${VECTOR_SIZE:-1024}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}  # auto|voyage|openai|local|placeholder
+      MEMORY_CONTENT_HARD_LIMIT: ${MEMORY_CONTENT_HARD_LIMIT:-2000}
+      MEMORY_AUTO_SUMMARIZE: ${MEMORY_AUTO_SUMMARIZE:-true}
       AUTOMEM_MODELS_DIR: /root/.config/automem/models  # Keep in sync with volume mount
     depends_on:
       falkordb:

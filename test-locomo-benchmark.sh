@@ -11,7 +11,7 @@
 #   ./test-locomo-benchmark.sh --help             # Show help
 #
 
-set -e
+set -uo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -23,8 +23,30 @@ NC='\033[0m' # No Color
 # Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Health check helper — retries until API responds or max_attempts reached
+wait_for_api() {
+    local url="$1"
+    local max_attempts="${2:-60}"
+    local attempt=0
+    echo -e "${BLUE}Waiting for API at ${url}...${NC}"
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -fsS "${url}/health" > /dev/null 2>&1; then
+            echo -e "${GREEN}API ready after ${attempt}s${NC}"
+            return 0
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+        if [ $((attempt % 10)) -eq 0 ]; then
+            echo -e "${YELLOW}  Still waiting... (${attempt}s)${NC}"
+        fi
+    done
+    echo -e "${RED}ERROR: API not ready after ${max_attempts}s${NC}"
+    return 1
+}
+
 # Default configuration
 RUN_LIVE=false
+CONVERSATIONS=""
 RECALL_LIMIT=10
 NO_CLEANUP=false
 OUTPUT_FILE=""
@@ -48,12 +70,17 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_FILE="$2"
             shift 2
             ;;
+        --conversations)
+            CONVERSATIONS="$2"
+            shift 2
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --live              Run against Railway deployment (default: local Docker)"
             echo "  --recall-limit N    Number of memories to recall per question (default: 10)"
+            echo "  --conversations I,J Comma-separated conversation indices (e.g. 0,1 for mini mode)"
             echo "  --no-cleanup        Don't cleanup test data after evaluation"
             echo "  --output FILE       Save results to JSON file"
             echo "  --help, -h          Show this help message"
@@ -61,6 +88,7 @@ while [[ $# -gt 0 ]]; do
             echo "Examples:"
             echo "  $0                                    # Run locally"
             echo "  $0 --live                             # Run against Railway"
+            echo "  $0 --conversations 0,1                # Mini mode (2 conversations)"
             echo "  $0 --recall-limit 20 --output results.json"
             exit 0
             ;;
@@ -141,19 +169,18 @@ else
         exit 1
     fi
 
-    # Check if services are running
-    if ! docker compose ps | grep -q "flask-api.*running"; then
-        echo -e "${YELLOW}⚠️  AutoMem services not running${NC}"
+    # Check if services are running and healthy
+    if ! curl -fsS "http://localhost:8001/health" > /dev/null 2>&1; then
+        echo -e "${YELLOW}AutoMem services not running or unhealthy${NC}"
         echo -e "${BLUE}Starting services...${NC}"
         docker compose up -d
-        echo -e "${BLUE}Waiting for services to be ready...${NC}"
-        sleep 10
+        wait_for_api "http://localhost:8001" 60 || exit 1
     fi
 
     export AUTOMEM_TEST_BASE_URL="http://localhost:8001"
     export AUTOMEM_TEST_API_TOKEN="test-token"
 
-    echo -e "${GREEN}✅ Docker services ready${NC}"
+    echo -e "${GREEN}Docker services ready${NC}"
 fi
 
 # Build python command
@@ -164,6 +191,10 @@ PYTHON_CMD="$PYTHON_CMD --recall-limit $RECALL_LIMIT"
 
 if [ "$NO_CLEANUP" = true ]; then
     PYTHON_CMD="$PYTHON_CMD --no-cleanup"
+fi
+
+if [ -n "$CONVERSATIONS" ]; then
+    PYTHON_CMD="$PYTHON_CMD --conversations $CONVERSATIONS"
 fi
 
 if [ -n "$OUTPUT_FILE" ]; then

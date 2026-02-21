@@ -645,8 +645,12 @@ Answer:"""
             status = "CORRECT" if result["is_correct"] else "WRONG"
             print(f"  {status} | recalled={result['recalled_count']} | " f"{result['explanation']}")
             if not result["is_correct"]:
-                print(f"    Expected: {result['reference'][:80]}")
-                print(f"    Got:      {result['hypothesis'][:80]}")
+                expected = result.get("reference")
+                hypothesis = result.get("hypothesis")
+                expected_preview = ("" if expected is None else str(expected))[:80]
+                hypothesis_preview = ("" if hypothesis is None else str(hypothesis))[:80]
+                print(f"    Expected: {expected_preview}")
+                print(f"    Got:      {hypothesis_preview}")
 
             # 3. Clean up this question's data
             if cleanup_after:

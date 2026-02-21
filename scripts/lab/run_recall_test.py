@@ -158,31 +158,59 @@ def restore_config(original: Dict[str, Optional[str]]) -> None:
 def restart_api_with_config(config: Dict[str, str]) -> None:
     """Restart the Docker API container with new environment variables.
 
-    For env vars that are read at import time (like scoring weights),
-    we need to restart the Flask process.
+    Writes overrides to .env.bench and uses --env-file to ensure Docker
+    actually picks up the new values (not just the subprocess environment).
     """
     # Check if any scoring/consolidation weights changed — these need restart
     needs_restart = any(
         k.startswith(("SEARCH_WEIGHT_", "CONSOLIDATION_", "RECALL_")) for k in config
     )
 
-    if needs_restart:
-        # Update docker compose env and restart
-        subprocess.run(
-            ["docker", "compose", "up", "-d", "--no-deps", "flask-api"],
-            capture_output=True,
-            env={**os.environ, **config},
-            cwd=str(Path(__file__).parent.parent.parent),
-        )
-        # Wait for API to be ready
-        for _ in range(30):
-            try:
-                resp = requests.get(f"{API_URL}/health", timeout=2)
-                if resp.status_code == 200:
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
+    if not needs_restart:
+        return
+
+    repo_root = Path(__file__).parent.parent.parent
+    env_bench_path = repo_root / ".env.bench"
+
+    # Write override env file so Docker Compose reads it at container start
+    with open(env_bench_path, "w") as f:
+        for k, v in config.items():
+            f.write(f"{k}={v}\n")
+
+    # Restart with override file applied on top of .env
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            ".env",
+            "--env-file",
+            ".env.bench",
+            "up",
+            "-d",
+            "--no-deps",
+            "--force-recreate",
+            "flask-api",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+    )
+    if result.returncode != 0:
+        print(f"WARNING: docker compose restart failed: {result.stderr}")
+
+    # Wait for API to be healthy (fail loudly on timeout)
+    for attempt in range(60):
+        try:
+            resp = requests.get(f"{API_URL}/health", timeout=2)
+            if resp.status_code == 200:
+                print(f"API ready after config change ({attempt}s)")
+                return
+        except Exception:
+            pass
+        time.sleep(1)
+
+    raise TimeoutError("API did not become healthy after config change (60s timeout)")
 
 
 # ---------- Test Runner ----------

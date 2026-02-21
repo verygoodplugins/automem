@@ -48,6 +48,7 @@ def register_blueprints(
     coerce_embedding_fn: Callable[[Any], Optional[list[float]]],
     parse_metadata_field_fn: Callable[[Any], Any],
     generate_real_embedding_fn: Callable[[str], list[float]],
+    generate_real_embeddings_batch_fn: Optional[Callable[[list[str]], list[list[float]]]] = None,
     enqueue_embedding_fn: Callable[[str, str], None],
     classify_memory_fn: Callable[[str], tuple[str, float]],
     point_struct_cls: Any,
@@ -126,6 +127,7 @@ def register_blueprints(
         logger,
         update_last_accessed_fn,
         get_openai_client_fn,
+        generate_real_embeddings_batch_fn,
     )
 
     admin_bp = create_admin_blueprint_full(
