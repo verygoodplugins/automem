@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live clean logs deploy
+.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy
 
 # Default target
 help:
@@ -19,10 +19,17 @@ help:
 	@echo "  make clean      - Clean up containers and volumes"
 	@echo ""
 	@echo "Benchmarks:"
-	@echo "  make test-locomo          - Run LoCoMo benchmark (local)"
-	@echo "  make test-locomo-live     - Run LoCoMo benchmark (Railway)"
-	@echo "  make test-longmemeval     - Run LongMemEval benchmark (local)"
-	@echo "  make test-longmemeval-live - Run LongMemEval benchmark (Railway)"
+	@echo "  make bench-mini-locomo    - Mini LoCoMo (2 conversations, <5 min)"
+	@echo "  make bench-mini-longmemeval - Mini LongMemEval (20 questions)"
+	@echo "  make bench-mini           - Both mini benchmarks"
+	@echo "  make bench-ingest BENCH=locomo - Ingest + snapshot (run once)"
+	@echo "  make bench-eval BENCH=locomo CONFIG=baseline - Eval from snapshot (~2 min)"
+	@echo "  make bench-compare BENCH=locomo CONFIG=bm25 BASELINE=baseline - A/B compare"
+	@echo "  make test-locomo          - Full LoCoMo benchmark (local)"
+	@echo "  make test-locomo-live     - Full LoCoMo benchmark (Railway)"
+	@echo "  make test-longmemeval     - Full LongMemEval benchmark (local)"
+	@echo "  make test-longmemeval-live - Full LongMemEval benchmark (Railway)"
+	@echo "  make test-longmemeval-watch - Full LongMemEval with notifications"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make deploy     - Deploy to Railway"
@@ -110,6 +117,35 @@ test-longmemeval:
 # Run LongMemEval benchmark (Railway)
 test-longmemeval-live:
 	@./test-longmemeval-benchmark.sh --live
+
+# Run LongMemEval benchmark with persistent log + local notifications
+test-longmemeval-watch:
+	@./scripts/run_longmemeval_watch.sh
+
+# Mini benchmarks (fast iteration, <5 minutes)
+bench-mini-locomo:
+	@./test-locomo-benchmark.sh --conversations 0,1
+
+bench-mini-longmemeval:
+	@./test-longmemeval-benchmark.sh --max-questions 20
+
+bench-mini: bench-mini-locomo bench-mini-longmemeval
+
+# Snapshot-based benchmarks (ingest once, eval many)
+bench-ingest:
+	@scripts/bench/ingest_and_snapshot.sh $(or $(BENCH),locomo)
+
+bench-eval:
+	@scripts/bench/restore_and_eval.sh $(or $(BENCH),locomo) $(or $(CONFIG),baseline)
+
+bench-compare:
+	@scripts/bench/compare_configs.sh $(or $(BENCH),locomo) $(or $(BASELINE),baseline) $(CONFIG)
+
+bench-compare-branch:
+	@scripts/bench/compare_branch.sh $(BRANCH) $(or $(CONFIG),baseline) $(or $(BENCH),locomo)
+
+bench-snapshots:
+	@ls -la benchmarks/snapshots/ 2>/dev/null || echo "No snapshots yet. Run: make bench-ingest BENCH=locomo"
 
 # Recall Quality Lab
 lab-clone:

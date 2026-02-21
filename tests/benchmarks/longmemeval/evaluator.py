@@ -18,8 +18,17 @@ except ImportError:
     OpenAI = None
 
 
-def normalize_text(text: str) -> str:
-    """Normalize text for comparison: lowercase, strip, remove articles."""
+def normalize_text(text: Any) -> str:
+    """Normalize text for comparison: lowercase, strip, remove articles.
+
+    LongMemEval references can occasionally be non-strings (for example ints).
+    Coerce to string to keep scorer robust instead of crashing mid-run.
+    """
+    if text is None:
+        text = ""
+    elif not isinstance(text, str):
+        text = str(text)
+
     text = text.lower().strip()
     # Remove common articles and filler
     text = re.sub(r"\b(the|a|an|is|was|were|are|am)\b", " ", text)

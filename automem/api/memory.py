@@ -83,6 +83,7 @@ def create_memory_blueprint_full(
     logger: Any,
     on_access: Optional[Callable[[List[str]], None]] = None,
     get_openai_client: Optional[Callable[[], Any]] = None,
+    generate_real_embeddings_batch: Optional[Callable[[List[str]], List[List[float]]]] = None,
 ) -> Blueprint:
     bp = Blueprint("memory", __name__)
 
@@ -680,5 +681,222 @@ def create_memory_blueprint_full(
             if prop in relationship_props:
                 response[prop] = relationship_props[prop]
         return jsonify(response), 201
+
+    @bp.route("/memory/batch", methods=["POST"])
+    def store_batch() -> Any:
+        """Store multiple memories in a single request.
+
+        Optimised for benchmark ingestion: batches embedding generation,
+        graph writes (UNWIND), and Qdrant upserts into single operations.
+
+        Body: {"memories": [{"content": "...", "tags": [...], ...}, ...]}
+        Max 500 memories per request.
+        """
+        query_start = time.perf_counter()
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            abort(400, description="JSON body with 'memories' array required")
+
+        memories_input = payload.get("memories", [])
+        if not isinstance(memories_input, list) or len(memories_input) == 0:
+            abort(400, description="'memories' must be a non-empty array")
+        if len(memories_input) > 500:
+            abort(400, description="Batch size limit is 500 memories per request")
+
+        # 1. Validate and prepare all memories
+        validated = []
+        for i, mem in enumerate(memories_input):
+            content = (mem.get("content") or "").strip()
+            if not content:
+                abort(400, description=f"Memory at index {i} missing 'content'")
+            if len(content) > MEMORY_CONTENT_HARD_LIMIT:
+                abort(
+                    400,
+                    description=f"Memory at index {i} exceeds content limit "
+                    f"({len(content)}/{MEMORY_CONTENT_HARD_LIMIT})",
+                )
+
+            memory_id = str(uuid.uuid4())
+            tags = normalize_tags(mem.get("tags"))
+            tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
+            tag_prefixes = compute_tag_prefixes(tags_lower)
+            importance = coerce_importance(mem.get("importance"))
+            now = utc_now()
+            created_at = now
+            if mem.get("timestamp"):
+                try:
+                    created_at = normalize_timestamp(mem["timestamp"])
+                except ValueError:
+                    pass
+
+            metadata_raw = mem.get("metadata")
+            metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+            metadata_json = json.dumps(metadata, default=str)
+
+            memory_type = mem.get("type")
+            type_confidence = mem.get("confidence")
+            if memory_type:
+                type_confidence = coerce_importance(type_confidence) if type_confidence else 0.9
+            else:
+                memory_type, type_confidence = memory_classify(content)
+
+            validated.append(
+                {
+                    "id": memory_id,
+                    "content": content,
+                    "tags": tags,
+                    "tag_prefixes": tag_prefixes,
+                    "importance": importance,
+                    "timestamp": created_at,
+                    "type": memory_type,
+                    "confidence": type_confidence,
+                    "updated_at": created_at,
+                    "last_accessed": created_at,
+                    "metadata": metadata_json,
+                    "metadata_dict": metadata,
+                    "t_valid": created_at,
+                    "t_invalid": None,
+                }
+            )
+
+        # 2. Batch embed all contents
+        contents = [v["content"] for v in validated]
+        embeddings: List[Optional[List[float]]] = [None] * len(validated)
+
+        if generate_real_embeddings_batch:
+            try:
+                embeddings = generate_real_embeddings_batch(contents)
+            except Exception:
+                logger.exception("Batch embedding failed, falling back to individual")
+                for j, c in enumerate(contents):
+                    try:
+                        embeddings[j] = generate_real_embedding(c)
+                    except Exception:
+                        pass
+        else:
+            # Fall back to individual embedding calls
+            for j, c in enumerate(contents):
+                try:
+                    embeddings[j] = generate_real_embedding(c)
+                except Exception:
+                    pass
+
+        # 3. Batch graph write via UNWIND
+        graph = get_memory_graph()
+        if graph is None:
+            abort(503, description="FalkorDB is unavailable")
+
+        try:
+            graph.query(
+                """
+                UNWIND $memories AS m
+                MERGE (node:Memory {id: m.id})
+                ON CREATE SET
+                    node.content = m.content,
+                    node.timestamp = m.timestamp,
+                    node.importance = m.importance,
+                    node.tags = m.tags,
+                    node.tag_prefixes = m.tag_prefixes,
+                    node.type = m.type,
+                    node.confidence = m.confidence,
+                    node.t_valid = m.t_valid,
+                    node.t_invalid = m.t_invalid,
+                    node.updated_at = m.updated_at,
+                    node.last_accessed = m.last_accessed,
+                    node.metadata = m.metadata,
+                    node.processed = false
+                SET
+                    node.content = m.content,
+                    node.timestamp = m.timestamp,
+                    node.importance = m.importance,
+                    node.tags = m.tags,
+                    node.tag_prefixes = m.tag_prefixes,
+                    node.type = m.type,
+                    node.confidence = m.confidence,
+                    node.t_valid = m.t_valid,
+                    node.t_invalid = m.t_invalid,
+                    node.updated_at = m.updated_at,
+                    node.last_accessed = m.last_accessed,
+                    node.metadata = m.metadata,
+                    node.processed = false
+                RETURN node.id
+                """,
+                {"memories": validated},
+            )
+        except Exception:
+            logger.exception("Batch graph write failed")
+            abort(500, description="Failed to store memories in FalkorDB")
+
+        # 4. Batch Qdrant upsert
+        qdrant_client = get_qdrant_client()
+        qdrant_status = "unconfigured"
+        if qdrant_client is not None:
+            points = []
+            for v, emb in zip(validated, embeddings):
+                if emb is not None:
+                    points.append(
+                        point_struct(
+                            id=v["id"],
+                            vector=emb,
+                            payload={
+                                "content": v["content"],
+                                "tags": v["tags"],
+                                "tag_prefixes": v["tag_prefixes"],
+                                "importance": v["importance"],
+                                "timestamp": v["timestamp"],
+                                "type": v["type"],
+                                "confidence": v["confidence"],
+                                "updated_at": v["updated_at"],
+                                "last_accessed": v["last_accessed"],
+                                "metadata": v["metadata_dict"],
+                            },
+                        )
+                    )
+            if points:
+                try:
+                    qdrant_client.upsert(
+                        collection_name=collection_name,
+                        points=points,
+                    )
+                    qdrant_status = f"stored ({len(points)})"
+                except Exception:
+                    logger.exception("Batch Qdrant upsert failed")
+                    qdrant_status = "failed"
+                    # Still queue individual embeddings as fallback
+                    for v in validated:
+                        enqueue_embedding(v["id"], v["content"])
+                    qdrant_status = "queued (fallback)"
+            else:
+                # No embeddings succeeded, queue them all
+                for v in validated:
+                    enqueue_embedding(v["id"], v["content"])
+                qdrant_status = "queued"
+        # Queue enrichment for all
+        for v in validated:
+            enqueue_enrichment(v["id"])
+
+        elapsed_ms = round((time.perf_counter() - query_start) * 1000, 2)
+        logger.info(
+            "batch_stored",
+            extra={
+                "count": len(validated),
+                "latency_ms": elapsed_ms,
+                "qdrant_status": qdrant_status,
+            },
+        )
+
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "stored": len(validated),
+                    "memory_ids": [v["id"] for v in validated],
+                    "qdrant": qdrant_status,
+                    "enrichment": "queued" if state.enrichment_queue else "disabled",
+                    "query_time_ms": elapsed_ms,
+                }
+            ),
+            201,
+        )
 
     return bp

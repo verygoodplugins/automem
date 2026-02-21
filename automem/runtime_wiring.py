@@ -59,6 +59,7 @@ def wire_recall_and_blueprints(
         coerce_embedding_fn=module._coerce_embedding,
         parse_metadata_field_fn=module._parse_metadata_field,
         generate_real_embedding_fn=module._generate_real_embedding,
+        generate_real_embeddings_batch_fn=getattr(module, "_generate_real_embeddings_batch", None),
         enqueue_embedding_fn=module.enqueue_embedding,
         classify_memory_fn=lambda content: module.memory_classifier.classify(content),
         point_struct_cls=module.PointStruct,
