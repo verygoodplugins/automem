@@ -9,7 +9,8 @@ TEST_CONFIG="${3:?Usage: compare_configs.sh <benchmark> <baseline> <test_config>
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
-BLUE='\033[0;34m'; GREEN='\033[0;32m'; NC='\033[0m'
+# Shared utilities (colors + wait_for_api)
+source "$(dirname "$0")/../lib/common.sh"
 
 echo -e "${BLUE}=== Comparing: ${BASELINE} vs ${TEST_CONFIG} (${BENCH}) ===${NC}"
 

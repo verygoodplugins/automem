@@ -46,6 +46,8 @@ def substring_match(hypothesis: Any, reference: Any) -> bool:
     """Check if reference appears as substring in hypothesis."""
     h = normalize_text(hypothesis)
     r = normalize_text(reference)
+    if not h or not r:
+        return False
     return r in h or h in r
 
 

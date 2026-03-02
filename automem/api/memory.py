@@ -706,6 +706,9 @@ def create_memory_blueprint_full(
         # 1. Validate and prepare all memories
         validated = []
         for i, mem in enumerate(memories_input):
+            if not isinstance(mem, dict):
+                abort(400, description=f"Memory at index {i} must be an object")
+
             content = (mem.get("content") or "").strip()
             if not content:
                 abort(400, description=f"Memory at index {i} missing 'content'")
@@ -715,6 +718,28 @@ def create_memory_blueprint_full(
                     description=f"Memory at index {i} exceeds content limit "
                     f"({len(content)}/{MEMORY_CONTENT_HARD_LIMIT})",
                 )
+
+            # Apply soft-limit auto-summarization (same policy as single store)
+            content_action = should_summarize_content(
+                content, MEMORY_CONTENT_SOFT_LIMIT, MEMORY_CONTENT_HARD_LIMIT
+            )
+            if content_action == "summarize" and MEMORY_AUTO_SUMMARIZE:
+                openai_client = get_openai_client() if get_openai_client else None
+                if openai_client:
+                    summary = summarize_content(
+                        content,
+                        openai_client,
+                        CLASSIFICATION_MODEL,
+                        MEMORY_SUMMARY_TARGET_LENGTH,
+                    )
+                    if summary:
+                        logger.info(
+                            "Auto-summarized batch memory %d: %d -> %d chars",
+                            i,
+                            len(content),
+                            len(summary),
+                        )
+                        content = summary
 
             memory_id = str(uuid.uuid4())
             tags = normalize_tags(mem.get("tags"))
@@ -740,7 +765,9 @@ def create_memory_blueprint_full(
             memory_type = mem.get("type")
             type_confidence = mem.get("confidence")
             if memory_type:
-                type_confidence = coerce_importance(type_confidence) if type_confidence else 0.9
+                type_confidence = (
+                    coerce_importance(type_confidence) if type_confidence is not None else 0.9
+                )
             else:
                 memory_type, type_confidence = memory_classify(content)
 
@@ -758,6 +785,8 @@ def create_memory_blueprint_full(
                     "last_accessed": created_at,
                     "metadata": metadata_json,
                     "metadata_dict": metadata,
+                    # t_valid/t_invalid: not accepted in batch endpoint.
+                    # Optimised for benchmark ingestion; use POST /memory for full support.
                     "t_valid": created_at,
                     "t_invalid": None,
                 }
@@ -769,7 +798,15 @@ def create_memory_blueprint_full(
 
         if generate_real_embeddings_batch:
             try:
-                embeddings = generate_real_embeddings_batch(contents)
+                batch_result = generate_real_embeddings_batch(contents)
+                if len(batch_result) != len(contents):
+                    logger.warning(
+                        "Batch embedding returned %d vectors for %d contents, falling back",
+                        len(batch_result),
+                        len(contents),
+                    )
+                    raise ValueError("embedding count mismatch")
+                embeddings = batch_result
             except Exception:
                 logger.exception("Batch embedding failed, falling back to individual")
                 for j, c in enumerate(contents):

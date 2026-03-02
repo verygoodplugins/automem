@@ -5,11 +5,17 @@ set -euo pipefail
 
 BENCH_NAME="${1:-locomo}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SNAPSHOT_DIR="${REPO_ROOT}/benchmarks/snapshots/${BENCH_NAME}"
-COMPOSE_PROJECT="automem"
 
 # Shared utilities (colors + wait_for_api)
 source "$(dirname "$0")/../lib/common.sh"
+
+if [[ ! "$BENCH_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo -e "${RED}Invalid benchmark name: ${BENCH_NAME}${NC}"
+    exit 1
+fi
+
+SNAPSHOT_DIR="${REPO_ROOT}/benchmarks/snapshots/${BENCH_NAME}"
+COMPOSE_PROJECT="automem"
 
 echo -e "${BLUE}=== Ingest & Snapshot: ${BENCH_NAME} ===${NC}"
 

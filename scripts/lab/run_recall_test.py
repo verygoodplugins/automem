@@ -155,7 +155,7 @@ def restore_config(original: Dict[str, Optional[str]]) -> None:
             os.environ[key] = value
 
 
-def restart_api_with_config(config: Dict[str, str]) -> None:
+def restart_api_with_config(config: Dict[str, str], api_url: str = API_URL) -> None:
     """Restart the Docker API container with new environment variables.
 
     Writes overrides to .env.bench and uses --env-file to ensure Docker
@@ -198,14 +198,14 @@ def restart_api_with_config(config: Dict[str, str]) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            "docker compose restart failed: " f"{result.stderr.strip() or result.stdout.strip()}"
+            f"docker compose restart failed: {result.stderr.strip() or result.stdout.strip()}"
         )
 
     # Wait for API to be healthy (fail loudly on timeout)
     last_exc = None
     for attempt in range(60):
         try:
-            resp = requests.get(f"{API_URL}/health", timeout=2)
+            resp = requests.get(f"{api_url}/health", timeout=2)
             if resp.status_code == 200:
                 print(f"API ready after config change ({attempt}s)")
                 return
@@ -508,7 +508,7 @@ def main() -> None:
             config = {param_name: val}
 
             print(f"\n--- Testing {param_name}={val} ---")
-            restart_api_with_config(config)
+            restart_api_with_config(config, api_url=args.api_url)
             time.sleep(2)
 
             result = run_test(config_name, queries, args.api_url)
@@ -535,14 +535,14 @@ def main() -> None:
         config_b = load_config(args.config)
 
         print(f"\n--- Running baseline: {args.compare} ---")
-        restart_api_with_config(config_a)
+        restart_api_with_config(config_a, api_url=args.api_url)
         time.sleep(2)
         result_a = run_test(args.compare, queries, args.api_url)
         print_summary(result_a)
         save_results(result_a, output_dir)
 
         print(f"\n--- Running candidate: {args.config} ---")
-        restart_api_with_config(config_b)
+        restart_api_with_config(config_b, api_url=args.api_url)
         time.sleep(2)
         result_b = run_test(args.config, queries, args.api_url)
         print_summary(result_b)
@@ -554,7 +554,7 @@ def main() -> None:
         # Single config mode
         config = load_config(args.config)
         print(f"\n--- Running: {args.config} ---")
-        restart_api_with_config(config)
+        restart_api_with_config(config, api_url=args.api_url)
         time.sleep(2)
 
         result = run_test(args.config, queries, args.api_url)

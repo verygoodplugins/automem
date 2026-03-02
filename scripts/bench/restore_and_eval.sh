@@ -6,12 +6,18 @@ set -euo pipefail
 BENCH_NAME="${1:-locomo}"
 CONFIG="${2:-baseline}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SNAPSHOT_DIR="${REPO_ROOT}/benchmarks/snapshots/${BENCH_NAME}"
-COMPOSE_PROJECT="automem"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # Shared utilities (colors + wait_for_api)
 source "$(dirname "$0")/../lib/common.sh"
+
+if [[ ! "$BENCH_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo -e "${RED}Invalid benchmark name: ${BENCH_NAME}${NC}"
+    exit 1
+fi
+
+SNAPSHOT_DIR="${REPO_ROOT}/benchmarks/snapshots/${BENCH_NAME}"
+COMPOSE_PROJECT="automem"
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
 # Verify snapshot exists
 if [[ ! -f "${SNAPSHOT_DIR}/falkordb.tar.gz" ]] || [[ ! -f "${SNAPSHOT_DIR}/qdrant.tar.gz" ]]; then

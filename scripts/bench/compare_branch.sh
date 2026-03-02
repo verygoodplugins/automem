@@ -14,7 +14,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 RESULTS_DIR="${REPO_ROOT}/benchmarks/results"
 
-BLUE='\033[0;34m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+# Shared utilities (colors + wait_for_api)
+source "$(dirname "$0")/../lib/common.sh"
 
 CURRENT_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
 STASH_CREATED=false

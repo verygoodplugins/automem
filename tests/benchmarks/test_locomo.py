@@ -75,7 +75,7 @@ class LoCoMoEvaluator:
             "Authorization": f"Bearer {config.api_token}",
             "Content-Type": "application/json",
         }
-        self.memory_map = {}  # Maps dialog IDs to memory IDs
+        # memory_map is returned per-conversation by _load_batch/_load_individual
         self.results = defaultdict(list)  # Category -> [True/False scores]
 
         # Phase 2: Initialize OpenAI client for LLM-based answer extraction
@@ -189,6 +189,7 @@ class LoCoMoEvaluator:
                 print(
                     f"WARNING: Hit max cleanup iterations ({max_iterations}), {total_deleted} deleted so far"
                 )
+                return False
 
             print(f"Cleaned up {total_deleted} test memories")
             return True

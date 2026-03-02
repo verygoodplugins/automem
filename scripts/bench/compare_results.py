@@ -13,8 +13,15 @@ from pathlib import Path
 
 
 def load_results(path: str) -> dict:
-    with open(path) as f:
-        return json.load(f)
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"ERROR: Result file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Invalid JSON in {path}: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def format_pct(val: float) -> str:
@@ -61,8 +68,8 @@ def compare_locomo(baseline: dict, test: dict) -> dict:
     t_cats = test.get("categories", {})
 
     category_deltas = {}
-    for cat_id in sorted(set(list(b_cats.keys()) + list(t_cats.keys()))):
-        cat_key = str(cat_id)
+    cat_keys = {str(k) for k in b_cats.keys()} | {str(k) for k in t_cats.keys()}
+    for cat_key in sorted(cat_keys, key=lambda k: (not k.isdigit(), int(k) if k.isdigit() else k)):
         b_cat = b_cats.get(cat_key, {})
         t_cat = t_cats.get(cat_key, {})
 
@@ -70,7 +77,11 @@ def compare_locomo(baseline: dict, test: dict) -> dict:
         t_cat_acc = t_cat.get("accuracy", 0)
         cat_delta = t_cat_acc - b_cat_acc
 
-        name = category_names.get(int(cat_id), f"Category {cat_id}")
+        name = (
+            category_names.get(int(cat_key), f"Category {cat_key}")
+            if cat_key.isdigit()
+            else f"Category {cat_key}"
+        )
 
         print(
             f"  {name:<25} {format_pct(b_cat_acc):>10} {format_pct(t_cat_acc):>10} {format_delta(cat_delta):>10}"
@@ -129,8 +140,16 @@ def main() -> None:
     print(f"\nBaseline: {Path(args.baseline).name}")
     print(f"Test:     {Path(args.test).name}")
 
-    # Detect format (LoCoMo has "categories", LongMemEval has "questions")
-    if "categories" in baseline or "categories" in test:
+    # Detect and validate format consistency before comparison
+    baseline_is_locomo = "categories" in baseline
+    test_is_locomo = "categories" in test
+    if baseline_is_locomo != test_is_locomo:
+        print("ERROR: Cannot compare results from different benchmark formats")
+        print(f"  Baseline: {'LoCoMo' if baseline_is_locomo else 'LongMemEval'}")
+        print(f"  Test:     {'LoCoMo' if test_is_locomo else 'LongMemEval'}")
+        sys.exit(1)
+
+    if baseline_is_locomo:
         comparison = compare_locomo(baseline, test)
     else:
         comparison = compare_longmemeval(baseline, test)
