@@ -2,6 +2,30 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.13.0](https://github.com/verygoodplugins/automem/compare/v0.12.0...v0.13.0) (2026-03-02)
+
+
+### Features
+
+* **bench:** benchmark testing infrastructure for rapid iteration ([#97](https://github.com/verygoodplugins/automem/issues/97)) ([80a6f93](https://github.com/verygoodplugins/automem/commit/80a6f93a783182ddd9efb9f9f17d73cb8d6f3702))
+* **recall:** add min_score threshold and adaptive floor filtering ([#73](https://github.com/verygoodplugins/automem/issues/73)) ([#101](https://github.com/verygoodplugins/automem/issues/101)) ([8df3c08](https://github.com/verygoodplugins/automem/commit/8df3c08fc2dcefc8b848a42698af1d2ebec2e680))
+* **viewer:** add standalone graph-viewer runtime files ([5bcb6db](https://github.com/verygoodplugins/automem/commit/5bcb6dba3d9045c6cf67b6a2055cffc98178fcbc))
+* **viewer:** consolidate stable core and split-ready compatibility ([#94](https://github.com/verygoodplugins/automem/issues/94)) ([958da72](https://github.com/verygoodplugins/automem/commit/958da726763bcae4ff616d2bd7bc7c8d59dec35e))
+* **viewer:** externalize visualizer with /viewer compatibility routes ([29bafcf](https://github.com/verygoodplugins/automem/commit/29bafcfb4816e2eb9de0e74619e7b3b8c7bac930))
+* **viewer:** merge visualizer stable core branch ([96b27bf](https://github.com/verygoodplugins/automem/commit/96b27bf0d7a878ab16695cf340b7bbfe13bcfafd))
+
+
+### Bug Fixes
+
+* FalkorDB data not persisting across restarts ([3bbc834](https://github.com/verygoodplugins/automem/commit/3bbc83441124884d9a89b34c32d0373c79eb7d37))
+* FalkorDB data not persisting across restarts ([#99](https://github.com/verygoodplugins/automem/issues/99)) ([8490d36](https://github.com/verygoodplugins/automem/commit/8490d3641cafa97246edfb3a913ce200ef26478d))
+* **mcp-sse:** sync tool schemas for SSE/MCP parity ([#104](https://github.com/verygoodplugins/automem/issues/104)) ([d99b86d](https://github.com/verygoodplugins/automem/commit/d99b86d9ed2a2612abe5770bcbf729493d7c7bf7))
+
+
+### Documentation
+
+* **bench:** add PR [#73](https://github.com/verygoodplugins/automem/issues/73), [#80](https://github.com/verygoodplugins/automem/issues/80), and [#87](https://github.com/verygoodplugins/automem/issues/87) experiment results ([#103](https://github.com/verygoodplugins/automem/issues/103)) ([8533fac](https://github.com/verygoodplugins/automem/commit/8533face4dc7319392e1f4b8890f9e24c66ae916))
+
 ## [0.12.0](https://github.com/verygoodplugins/automem/compare/v0.11.0...v0.12.0) (2026-02-20)
 
 
