@@ -879,17 +879,27 @@ def create_memory_blueprint_full(
                             },
                         )
                     )
+            # Enqueue embedding retry for items that failed individually
+            failed_emb_ids = [
+                v["id"] for v, emb in zip(validated, embeddings, strict=True) if emb is None
+            ]
+            for fid in failed_emb_ids:
+                v_match = next(v for v in validated if v["id"] == fid)
+                enqueue_embedding(fid, v_match["content"])
+
             if points:
                 try:
                     qdrant_client.upsert(
                         collection_name=collection_name,
                         points=points,
                     )
-                    qdrant_status = f"stored ({len(points)})"
+                    if failed_emb_ids:
+                        qdrant_status = f"stored ({len(points)}), queued ({len(failed_emb_ids)})"
+                    else:
+                        qdrant_status = f"stored ({len(points)})"
                 except Exception:
                     logger.exception("Batch Qdrant upsert failed")
-                    qdrant_status = "failed"
-                    # Still queue individual embeddings as fallback
+                    # Still queue all embeddings as fallback
                     for v in validated:
                         enqueue_embedding(v["id"], v["content"])
                     qdrant_status = "queued (fallback)"

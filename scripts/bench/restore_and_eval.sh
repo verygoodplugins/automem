@@ -54,12 +54,17 @@ if [[ ! "$CONFIG" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     echo -e "${RED}Invalid config name: ${CONFIG}${NC}"
     exit 1
 fi
-if [[ "${CONFIG}" != "baseline" ]] && [[ -f "${REPO_ROOT}/scripts/lab/configs/${CONFIG}.json" ]]; then
+if [[ "${CONFIG}" != "baseline" ]]; then
+    CONFIG_FILE="${REPO_ROOT}/scripts/lab/configs/${CONFIG}.json"
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo -e "${RED}Config file not found: ${CONFIG_FILE}${NC}"
+        exit 1
+    fi
     echo -e "${BLUE}Applying config: ${CONFIG}${NC}"
     # Convert JSON config to .env.bench format
     python3 -c "
 import json, sys
-with open('${REPO_ROOT}/scripts/lab/configs/${CONFIG}.json') as f:
+with open('${CONFIG_FILE}') as f:
     config = json.load(f)
 for k, v in config.items():
     print(f'{k}={v}')
@@ -100,7 +105,7 @@ elif [[ "$BENCH_NAME" == longmemeval* ]]; then
         "${LONGMEM_ARGS[@]}"
 else
     echo -e "${RED}Unknown benchmark: ${BENCH_NAME}${NC}"
-    echo "Supported: locomo, locomo-mini, longmemeval-mini"
+    echo "Supported: locomo, locomo-mini, longmemeval, longmemeval-mini"
     exit 1
 fi
 

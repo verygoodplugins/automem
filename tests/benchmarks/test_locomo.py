@@ -240,7 +240,8 @@ class LoCoMoEvaluator:
                         dt = dt.replace(tzinfo=timezone.utc)
                     session_datetime = dt.astimezone(timezone.utc).isoformat()
                 except (ValueError, OverflowError):
-                    session_datetime = session_datetime_raw
+                    print(f"WARNING: Could not parse session datetime: {session_datetime_raw!r}")
+                    session_datetime = ""
 
             for turn in session_data:
                 speaker = turn.get("speaker", "unknown")
@@ -335,10 +336,43 @@ class LoCoMoEvaluator:
                     print(f"  Batch stored {total_stored}/{len(memories)} memories...")
                 else:
                     print(
-                        f"WARNING: Batch store failed ({response.status_code}): {response.text[:200]}"
+                        f"WARNING: Batch store failed ({response.status_code}): "
+                        f"{response.text[:200]}. Falling back to individual POSTs."
                     )
+                    # Fall back to individual POSTs for this batch
+                    for dia_id, mem_payload in zip(dia_ids, batch):
+                        try:
+                            r = requests.post(
+                                f"{self.config.base_url}/memory",
+                                headers=self.headers,
+                                json=mem_payload,
+                                timeout=10,
+                            )
+                            if r.status_code in [200, 201]:
+                                res = r.json()
+                                mid = res.get("memory_id") or res.get("id")
+                                memory_map[dia_id] = mid
+                                total_stored += 1
+                        except Exception as ind_e:
+                            print(f"WARNING: Individual store failed for {dia_id}: {ind_e}")
             except Exception as e:
-                print(f"WARNING: Batch store error: {e}")
+                print(f"WARNING: Batch store error: {e}. Falling back to individual POSTs.")
+                # Fall back to individual POSTs for this batch
+                for dia_id, mem_payload in zip(dia_ids, batch):
+                    try:
+                        r = requests.post(
+                            f"{self.config.base_url}/memory",
+                            headers=self.headers,
+                            json=mem_payload,
+                            timeout=10,
+                        )
+                        if r.status_code in [200, 201]:
+                            res = r.json()
+                            mid = res.get("memory_id") or res.get("id")
+                            memory_map[dia_id] = mid
+                            total_stored += 1
+                    except Exception as ind_e:
+                        print(f"WARNING: Individual store failed for {dia_id}: {ind_e}")
 
         print(f"Loaded {total_stored} memories from conversation {sample_id} (batch API)")
         return memory_map
@@ -551,7 +585,11 @@ class LoCoMoEvaluator:
         return False
 
     def recall_for_question(
-        self, question: str, sample_id: str, session_context: str = None, evidence_count: int = 1
+        self,
+        question: str,
+        sample_id: str,
+        session_context: str = None,
+        evidence_count: int = 1,
     ) -> List[Dict[str, Any]]:
         """
         Query AutoMem to recall memories relevant to a question.
@@ -718,7 +756,11 @@ class LoCoMoEvaluator:
         return evidence_memories
 
     def multi_hop_recall_with_graph(
-        self, question: str, sample_id: str, initial_limit: int = 20, max_connected: int = 50
+        self,
+        question: str,
+        sample_id: str,
+        initial_limit: int = 20,
+        max_connected: int = 50,
     ) -> List[Dict[str, Any]]:
         """
         Quick Win #2: Use graph traversal to find connected memories for multi-hop questions.
@@ -976,7 +1018,11 @@ Respond in JSON format:
                     if self.is_temporal_question(question) and self.match_dates_fuzzy(
                         question, joined_text
                     ):
-                        return True, 0.95, "Multi-hop: date match across joined evidence"
+                        return (
+                            True,
+                            0.95,
+                            "Multi-hop: date match across joined evidence",
+                        )
 
                     expected_str = str(expected_answer).lower()
                     expected_norm = self.normalize_answer(expected_str)
@@ -1030,7 +1076,11 @@ Respond in JSON format:
 
                         # Quick Win #1: Fuzzy date matching for temporal questions
                         if self.match_dates_fuzzy(question, content + " " + session_datetime):
-                            return True, 0.95, f"Date match in evidence dialog {dialog_id}"
+                            return (
+                                True,
+                                0.95,
+                                f"Date match in evidence dialog {dialog_id}",
+                            )
                     else:
                         searchable_text = content_normalized
 
@@ -1067,7 +1117,11 @@ Respond in JSON format:
             if expected_normalized in content_normalized:
                 confidence = 1.0
                 found_in_memory = memory.get("id")
-                return True, confidence, f"Exact match in memory (confidence: {confidence:.2f})"
+                return (
+                    True,
+                    confidence,
+                    f"Exact match in memory (confidence: {confidence:.2f})",
+                )
 
             # Fuzzy word overlap
             expected_words = set(expected_normalized.split())
@@ -1085,7 +1139,11 @@ Respond in JSON format:
 
         # If word overlap is sufficient, skip expensive embedding computation
         if max_confidence >= 0.5:
-            return True, max_confidence, f"Found answer (confidence: {max_confidence:.2f})"
+            return (
+                True,
+                max_confidence,
+                f"Found answer (confidence: {max_confidence:.2f})",
+            )
 
         # For multi-hop with insufficient word overlap, try embedding similarity
         if is_multi_hop and self.use_embedding_similarity and max_confidence < 0.5:
@@ -1316,7 +1374,8 @@ Respond in JSON format:
 
         # Cleanup existing test data (skip if eval-only)
         if not eval_only:
-            self.cleanup_test_data()
+            if not self.cleanup_test_data():
+                print("WARNING: Cleanup was incomplete; results may include stale data")
 
         # Load dataset
         print(f"\nLoading LoCoMo dataset from: {self.config.data_file}")
@@ -1325,8 +1384,22 @@ Respond in JSON format:
 
         # Filter to specific conversations if requested
         if conversation_indices:
-            indices = [int(i.strip()) for i in conversation_indices.split(",")]
-            conversations = [conversations[i] for i in indices if i < len(conversations)]
+            tokens = [t.strip() for t in conversation_indices.split(",") if t.strip()]
+            indices = []
+            for token in tokens:
+                try:
+                    idx = int(token)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid conversation index '{token}' in '{conversation_indices}'"
+                    )
+                if idx < 0 or idx >= len(conversations):
+                    raise ValueError(
+                        f"Conversation index {idx} out of range "
+                        f"(0-{len(conversations) - 1}) in '{conversation_indices}'"
+                    )
+                indices.append(idx)
+            conversations = [conversations[i] for i in indices]
             print(f"Running {len(conversations)} conversations (indices: {conversation_indices})")
         else:
             print(f"Loaded {len(conversations)} conversations")
@@ -1428,7 +1501,8 @@ Respond in JSON format:
 
         # Cleanup
         if cleanup_after:
-            self.cleanup_test_data()
+            if not self.cleanup_test_data():
+                print("WARNING: Post-evaluation cleanup was incomplete")
 
         # Return comprehensive results
         return {
@@ -1465,14 +1539,21 @@ def main():
     )
     parser.add_argument("--data-file", default=None, help="Path to locomo10.json")
     parser.add_argument(
-        "--recall-limit", type=int, default=10, help="Number of memories to recall per question"
+        "--recall-limit",
+        type=int,
+        default=10,
+        help="Number of memories to recall per question",
     )
     parser.add_argument(
-        "--no-cleanup", action="store_true", help="Don't cleanup test data after evaluation"
+        "--no-cleanup",
+        action="store_true",
+        help="Don't cleanup test data after evaluation",
     )
     parser.add_argument("--output", default=None, help="Save results to JSON file")
     parser.add_argument(
-        "--test-one", action="store_true", help="Test with just one conversation for debugging"
+        "--test-one",
+        action="store_true",
+        help="Test with just one conversation for debugging",
     )
     parser.add_argument(
         "--conversations",

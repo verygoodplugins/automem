@@ -81,7 +81,7 @@ def check_abstention_response(hypothesis: Any) -> bool:
         hypothesis = ""
     elif not isinstance(hypothesis, str):
         hypothesis = str(hypothesis)
-    h = hypothesis.lower().strip()
+    h = normalize_text(hypothesis)
     abstention_phrases = [
         "i don't know",
         "i do not know",
