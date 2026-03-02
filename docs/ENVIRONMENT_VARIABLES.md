@@ -212,6 +212,8 @@ Controls memory merging, pattern detection, and decay.
 | `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Min importance to keep | `0.3` | 0-1 |
 | `CONSOLIDATION_HISTORY_LIMIT` | Max consolidation history | `20` | count |
 | `CONSOLIDATION_CONTROL_NODE_ID` | Control node identifier | `global` | string |
+| `CONSOLIDATION_BASE_DECAY_RATE` | Daily exponential decay rate | `0.01` | float |
+| `CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR` | Minimum relevance as fraction of importance | `0.3` | 0-1 |
 | `CONSOLIDATION_DELETE_THRESHOLD` | Delete threshold (`0` disables) | `0.0` | 0-1 |
 | `CONSOLIDATION_ARCHIVE_THRESHOLD` | Archive threshold (`0` disables) | `0.0` | 0-1 |
 | `CONSOLIDATION_GRACE_PERIOD_DAYS` | Protect recent memories | `90` | days |

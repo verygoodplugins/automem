@@ -106,20 +106,20 @@ def build_forgetting_rows() -> List[List[Any]]:
         [
             "archive-candidate",
             "Memory to archive",
-            0.2,
+            0.1,
             iso_days_ago(15),
             "Memory",
-            0.4,
+            0.1,
             iso_days_ago(15),
         ],
         [
             "old-delete",
             "Superseded note",
-            0.05,
-            iso_days_ago(90),
+            0.01,
+            iso_days_ago(365),
             "Memory",
-            0.2,
-            iso_days_ago(90),
+            0.1,
+            iso_days_ago(365),
         ],
     ]
 
