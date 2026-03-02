@@ -20,9 +20,9 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
 import requests
+
+logger = logging.getLogger(__name__)
 
 API_URL = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
 API_TOKEN = os.getenv("AUTOMEM_TEST_API_TOKEN", os.getenv("AUTOMEM_API_TOKEN", "test-token"))
@@ -74,7 +74,7 @@ def check_score_distribution(base_url: str, api_token: Optional[str] = None) -> 
             )
             resp.raise_for_status()
             data = resp.json()
-        except Exception as e:
+        except (requests.RequestException, ValueError) as e:
             per_query.append({"query": query, "error": str(e)})
             continue
 
@@ -148,7 +148,7 @@ def check_entity_quality(
         )
         resp.raise_for_status()
         data = resp.json()
-    except Exception as e:
+    except (requests.RequestException, ValueError) as e:
         return {"check": "entity_quality", "verdict": f"ERROR: {e}", "sampled": 0}
 
     results = data.get("results", [])
@@ -215,11 +215,12 @@ def check_cross_query_overlap(base_url: str, api_token: Optional[str] = None) ->
             )
             resp.raise_for_status()
             data = resp.json()
-        except Exception:
+        except (requests.RequestException, ValueError):
             logger.exception("Cross-query overlap check failed for query: %s", query[:60])
             continue
 
-        ids = [r.get("id", r.get("memory", {}).get("id", "")) for r in data.get("results", [])]
+        raw_ids = [r.get("id", r.get("memory", {}).get("id", "")) for r in data.get("results", [])]
+        ids = [memory_id for memory_id in raw_ids if memory_id]
         query_results[query[:40]] = ids
 
     if len(query_results) < 2:
