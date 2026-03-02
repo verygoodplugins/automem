@@ -10,7 +10,7 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | Tier | Benchmark | Runtime | Cost | When to use |
 |------|-----------|---------|------|-------------|
 | 0 | `make test` (unit) | 30s | free | Every change |
-| 1 | `locomo-mini` (2 convos, 198 Qs) | 2-3 min | free | Rapid iteration |
+| 1 | `locomo-mini` (2 convos, 304 Qs) | 2-3 min | free | Rapid iteration |
 | 2 | `locomo` (10 convos, 1986 Qs) | 5-10 min | free | Before merge |
 | 3 | `longmemeval-mini` (20 Qs) | 15 min | ~$1 | Scoring/entity changes |
 | 4 | `longmemeval` (500 Qs) | 1-2 hr | ~$10 | Milestones only |

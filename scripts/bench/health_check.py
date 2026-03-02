@@ -121,12 +121,24 @@ def check_score_distribution(base_url: str, api_token: Optional[str] = None) -> 
             "min": round(min(all_scores), 4) if all_scores else 0,
             "max": round(max(all_scores), 4) if all_scores else 0,
             "mean": round(statistics.mean(all_scores), 4) if all_scores else 0,
-            "stddev": round(statistics.stdev(all_scores), 4) if len(all_scores) > 1 else 0,
+            "stddev": (round(statistics.stdev(all_scores), 4) if len(all_scores) > 1 else 0),
             "spread": round(spread, 4),
         },
         "latency": {
             "p50_ms": round(statistics.median(latencies), 1) if latencies else 0,
-            "p95_ms": round(sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0, 1),
+            "p95_ms": (
+                round(
+                    sorted(latencies)[
+                        max(
+                            0,
+                            min(len(latencies) - 1, math.ceil(0.95 * len(latencies)) - 1),
+                        )
+                    ],
+                    1,
+                )
+                if latencies
+                else 0
+            ),
             "mean_ms": round(statistics.mean(latencies), 1) if latencies else 0,
         },
         "per_query": per_query,
@@ -232,7 +244,10 @@ def check_cross_query_overlap(base_url: str, api_token: Optional[str] = None) ->
         query_results[query[:40]] = ids
 
     if len(query_results) < 2:
-        return {"check": "cross_query_overlap", "verdict": "SKIP: not enough queries succeeded"}
+        return {
+            "check": "cross_query_overlap",
+            "verdict": "SKIP: not enough queries succeeded",
+        }
 
     id_lists = list(query_results.values())
     overlap_pairs = 0
