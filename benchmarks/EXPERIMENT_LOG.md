@@ -20,6 +20,9 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | Date | Issue/PR | Branch | LoCoMo-mini | LoCoMo-full | LME-mini | Notes |
 |------|----------|--------|-------------|-------------|----------|-------|
 | 2026-03-02 | baseline | main | 76.97% (234/304) | 80.06% (1590/1986) | -- | Voyage 4, 1024d. Health: DEGRADED (low score variance) |
+| 2026-03-02 | #73 | exp/73-min-score-threshold | 76.97% (+0.0) | -- | -- | min_score + adaptive floor. No regression. Needs #78 for impact |
+| 2026-03-02 | PR #80 | jescalan/feat/enhanced-recall | BLOCKED | -- | -- | Merge conflicts with main (recall.py), needs rebase before eval |
+| 2026-03-02 | PR #87 | jescalan/feat/write-time-dedup | 76.97% (+0.0) | -- | -- | Write-time dedup gate. Neutral on recall (expected) |
 
 ## How to add an entry
 
