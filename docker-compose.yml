@@ -11,7 +11,11 @@ services:
       - ./backups/falkordb:/backups # Local backups
     environment:
       # Aggressive persistence: save every 60s if 1 key changed, enable AOF
-      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --dir /data
+      # Note: --dir is NOT set here because FalkorDB's run.sh always appends
+      # --dir $FALKORDB_DATA_PATH after REDIS_ARGS, so any --dir in REDIS_ARGS
+      # is silently overridden. We set FALKORDB_DATA_PATH=/data instead.
+      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec
+      - FALKORDB_DATA_PATH=/data
       - REDIS_PASSWORD=${FALKORDB_PASSWORD:-}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
