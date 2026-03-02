@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compare two scoring configs against the same snapshot.
 # Usage: ./scripts/bench/compare_configs.sh <benchmark> <baseline_config> <test_config>
-set -uo pipefail
+set -euo pipefail
 
 BENCH="${1:-locomo}"
 BASELINE="${2:-baseline}"

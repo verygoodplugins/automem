@@ -25,7 +25,7 @@ import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -132,7 +132,7 @@ class LoCoMoEvaluator:
             return 0.0
         return dot / (norm_a * norm_b)
 
-    def cleanup_test_data(self, tag_prefix: str = "locomo-test", max_iterations: int = 200):
+    def cleanup_test_data(self, tag_prefix: str = "locomo-test", max_iterations: int = 200) -> bool:
         """Remove all test memories from AutoMem"""
         print(f"\nCleaning up test memories with tag: {tag_prefix}")
         try:
@@ -228,9 +228,18 @@ class LoCoMoEvaluator:
         for session_key in session_keys:
             session_num = session_key.split("_")[1]
             session_data = conversation["conversation"][session_key]
-            session_datetime = conversation["conversation"].get(
+            session_datetime_raw = conversation["conversation"].get(
                 f"session_{session_num}_date_time", ""
             )
+            session_datetime = ""
+            if session_datetime_raw:
+                try:
+                    dt = date_parser.parse(session_datetime_raw)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    session_datetime = dt.astimezone(timezone.utc).isoformat()
+                except (ValueError, OverflowError):
+                    session_datetime = session_datetime_raw
 
             for turn in session_data:
                 speaker = turn.get("speaker", "unknown")
@@ -292,7 +301,6 @@ class LoCoMoEvaluator:
         print(f"\nLoading conversation {sample_id} into AutoMem...")
 
         all_memories = self._prepare_conversation_memories(conversation, sample_id)
-        memory_map = {}
 
         if self._has_batch_api():
             return self._load_batch(all_memories, sample_id)
@@ -1301,6 +1309,9 @@ Respond in JSON format:
         if not self.health_check():
             raise ConnectionError("AutoMem API is not accessible")
         print("AutoMem is healthy")
+
+        if ingest_only and eval_only:
+            raise ValueError("ingest_only and eval_only are mutually exclusive")
 
         # Cleanup existing test data (skip if eval-only)
         if not eval_only:

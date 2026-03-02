@@ -1,35 +1,21 @@
 #!/usr/bin/env bash
 # Ingest benchmark dataset into AutoMem and snapshot the Docker volumes.
 # Usage: ./scripts/bench/ingest_and_snapshot.sh [locomo|longmemeval-mini]
-set -uo pipefail
+set -euo pipefail
 
 BENCH_NAME="${1:-locomo}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SNAPSHOT_DIR="${REPO_ROOT}/benchmarks/snapshots/${BENCH_NAME}"
 COMPOSE_PROJECT="automem"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'; NC='\033[0m'
-
-wait_for_api() {
-    local url="$1" max="${2:-60}" attempt=0
-    echo -e "${BLUE}Waiting for API at ${url}...${NC}"
-    while [ $attempt -lt $max ]; do
-        if curl -fsS "${url}/health" > /dev/null 2>&1; then
-            echo -e "${GREEN}API ready after ${attempt}s${NC}"
-            return 0
-        fi
-        sleep 1; attempt=$((attempt + 1))
-        [ $((attempt % 10)) -eq 0 ] && echo -e "${YELLOW}  Still waiting... (${attempt}s)${NC}"
-    done
-    echo -e "${RED}ERROR: API not ready after ${max}s${NC}"
-    return 1
-}
+# Shared utilities (colors + wait_for_api)
+source "$(dirname "$0")/../lib/common.sh"
 
 echo -e "${BLUE}=== Ingest & Snapshot: ${BENCH_NAME} ===${NC}"
 
 # 1. Start services with benchmark-friendly env
 echo -e "${BLUE}Starting services...${NC}"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || { echo -e "${RED}Failed to cd to ${REPO_ROOT}${NC}"; exit 1; }
 MEMORY_CONTENT_HARD_LIMIT=50000 MEMORY_AUTO_SUMMARIZE=false docker compose up -d
 wait_for_api "http://localhost:8001" 60 || exit 1
 
@@ -43,7 +29,7 @@ if [[ "$BENCH_NAME" == "locomo" ]]; then
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
         --ingest-only --no-cleanup
-elif [[ "$BENCH_NAME" == locomo-mini ]]; then
+elif [[ "$BENCH_NAME" == "locomo-mini" ]]; then
     python3 tests/benchmarks/test_locomo.py \
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \

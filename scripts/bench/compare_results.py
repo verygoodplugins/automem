@@ -71,8 +71,6 @@ def compare_locomo(baseline: dict, test: dict) -> dict:
         cat_delta = t_cat_acc - b_cat_acc
 
         name = category_names.get(int(cat_id), f"Category {cat_id}")
-        b_detail = f"{b_cat.get('correct', '?')}/{b_cat.get('total', '?')}"
-        t_detail = f"{t_cat.get('correct', '?')}/{t_cat.get('total', '?')}"
 
         print(
             f"  {name:<25} {format_pct(b_cat_acc):>10} {format_pct(t_cat_acc):>10} {format_delta(cat_delta):>10}"
@@ -118,7 +116,7 @@ def compare_longmemeval(baseline: dict, test: dict) -> dict:
     return {"baseline_accuracy": b_acc, "test_accuracy": t_acc, "delta": delta}
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Compare two benchmark result files")
     parser.add_argument("--baseline", required=True, help="Path to baseline results JSON")
     parser.add_argument("--test", required=True, help="Path to test results JSON")

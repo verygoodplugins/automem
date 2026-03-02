@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Restore a benchmark snapshot and run evaluation (no re-ingestion).
 # Usage: ./scripts/bench/restore_and_eval.sh [benchmark_name] [config_name]
-set -uo pipefail
+set -euo pipefail
 
 BENCH_NAME="${1:-locomo}"
 CONFIG="${2:-baseline}"
@@ -10,22 +10,8 @@ SNAPSHOT_DIR="${REPO_ROOT}/benchmarks/snapshots/${BENCH_NAME}"
 COMPOSE_PROJECT="automem"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'; NC='\033[0m'
-
-wait_for_api() {
-    local url="$1" max="${2:-60}" attempt=0
-    echo -e "${BLUE}Waiting for API at ${url}...${NC}"
-    while [ $attempt -lt $max ]; do
-        if curl -fsS "${url}/health" > /dev/null 2>&1; then
-            echo -e "${GREEN}API ready after ${attempt}s${NC}"
-            return 0
-        fi
-        sleep 1; attempt=$((attempt + 1))
-        [ $((attempt % 10)) -eq 0 ] && echo -e "${YELLOW}  Still waiting... (${attempt}s)${NC}"
-    done
-    echo -e "${RED}ERROR: API not ready after ${max}s${NC}"
-    return 1
-}
+# Shared utilities (colors + wait_for_api)
+source "$(dirname "$0")/../lib/common.sh"
 
 # Verify snapshot exists
 if [[ ! -f "${SNAPSHOT_DIR}/falkordb.tar.gz" ]] || [[ ! -f "${SNAPSHOT_DIR}/qdrant.tar.gz" ]]; then
@@ -38,7 +24,7 @@ echo -e "${BLUE}=== Restore & Eval: ${BENCH_NAME} (config: ${CONFIG}) ===${NC}"
 
 # 1. Stop all containers
 echo -e "${BLUE}Stopping containers...${NC}"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || { echo -e "${RED}Failed to cd to ${REPO_ROOT}${NC}"; exit 1; }
 docker compose down 2>/dev/null || true
 
 # 2. Recreate volumes from snapshot
@@ -58,6 +44,10 @@ docker run --rm \
     alpine sh -c "cd /qdrant_storage && tar xzf /backup/qdrant.tar.gz"
 
 # 3. Start services with optional config overrides
+if [[ ! "$CONFIG" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo -e "${RED}Invalid config name: ${CONFIG}${NC}"
+    exit 1
+fi
 if [[ "${CONFIG}" != "baseline" ]] && [[ -f "${REPO_ROOT}/scripts/lab/configs/${CONFIG}.json" ]]; then
     echo -e "${BLUE}Applying config: ${CONFIG}${NC}"
     # Convert JSON config to .env.bench format

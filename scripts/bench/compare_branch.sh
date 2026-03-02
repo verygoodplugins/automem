@@ -5,7 +5,7 @@
 # Example:
 #   ./scripts/bench/compare_branch.sh feat/enhanced-recall baseline locomo
 #   make bench-compare-branch BRANCH=feat/enhanced-recall
-set -uo pipefail
+set -euo pipefail
 
 BRANCH="${1:?Usage: compare_branch.sh <branch> [config] [benchmark]}"
 CONFIG="${2:-baseline}"
@@ -17,6 +17,18 @@ RESULTS_DIR="${REPO_ROOT}/benchmarks/results"
 BLUE='\033[0;34m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
 CURRENT_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+
+# Cleanup trap: restore original branch on exit
+cleanup() {
+    local current
+    current="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ "$current" != "$CURRENT_BRANCH" ]]; then
+        echo -e "${BLUE}Restoring branch ${CURRENT_BRANCH}...${NC}"
+        git -C "$REPO_ROOT" checkout "$CURRENT_BRANCH" 2>/dev/null || true
+        git -C "$REPO_ROOT" stash pop 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
 
 echo -e "${BLUE}=== Branch Comparison ===${NC}"
 echo "  Current: ${CURRENT_BRANCH}"
@@ -40,7 +52,7 @@ CURRENT_RESULT="${RESULTS_DIR}/${BENCH}_${CONFIG}_current_${TIMESTAMP}.json"
 
 # 2. Stash, switch, rebuild, evaluate
 echo -e "${BLUE}--- Switching to branch: ${BRANCH} ---${NC}"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || { echo -e "${RED}Failed to cd to ${REPO_ROOT}${NC}"; exit 1; }
 git stash --include-untracked 2>/dev/null || true
 git checkout "$BRANCH"
 
@@ -59,10 +71,11 @@ fi
 cp "$BRANCH_RESULT" "${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH//\//_}_${TIMESTAMP}.json"
 BRANCH_RESULT="${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH//\//_}_${TIMESTAMP}.json"
 
-# 3. Restore original branch
+# 3. Restore original branch (trap handles cleanup on failure too)
 echo -e "${BLUE}Restoring ${CURRENT_BRANCH}...${NC}"
 git checkout "$CURRENT_BRANCH"
 git stash pop 2>/dev/null || true
+trap - EXIT  # Disable cleanup trap since we restored manually
 
 # Rebuild original branch API
 docker compose build flask-api

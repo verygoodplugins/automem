@@ -771,15 +771,15 @@ def create_memory_blueprint_full(
                 for j, c in enumerate(contents):
                     try:
                         embeddings[j] = generate_real_embedding(c)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Individual embedding failed for item %d: %s", j, e)
         else:
             # Fall back to individual embedding calls
             for j, c in enumerate(contents):
                 try:
                     embeddings[j] = generate_real_embedding(c)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Individual embedding failed for item %d: %s", j, e)
 
         # 3. Batch graph write via UNWIND
         graph = get_memory_graph()
@@ -832,7 +832,7 @@ def create_memory_blueprint_full(
         qdrant_status = "unconfigured"
         if qdrant_client is not None:
             points = []
-            for v, emb in zip(validated, embeddings):
+            for v, emb in zip(validated, embeddings, strict=True):
                 if emb is not None:
                     points.append(
                         point_struct(

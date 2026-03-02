@@ -37,19 +37,19 @@ def normalize_text(text: Any) -> str:
     return text
 
 
-def exact_match(hypothesis: str, reference: str) -> bool:
+def exact_match(hypothesis: Any, reference: Any) -> bool:
     """Check if normalized hypothesis matches reference."""
     return normalize_text(hypothesis) == normalize_text(reference)
 
 
-def substring_match(hypothesis: str, reference: str) -> bool:
+def substring_match(hypothesis: Any, reference: Any) -> bool:
     """Check if reference appears as substring in hypothesis."""
     h = normalize_text(hypothesis)
     r = normalize_text(reference)
     return r in h or h in r
 
 
-def f1_token_overlap(hypothesis: str, reference: str) -> float:
+def f1_token_overlap(hypothesis: Any, reference: Any) -> float:
     """Compute F1 score based on token overlap."""
     h_tokens = normalize_text(hypothesis).split()
     r_tokens = normalize_text(reference).split()
@@ -96,7 +96,7 @@ def check_abstention_response(hypothesis: str) -> bool:
     return any(phrase in h for phrase in abstention_phrases)
 
 
-def quick_score(hypothesis: str, reference: str, question_id: str) -> Dict[str, Any]:
+def quick_score(hypothesis: Any, reference: Any, question_id: str) -> Dict[str, Any]:
     """
     Quick local scoring without LLM calls.
 

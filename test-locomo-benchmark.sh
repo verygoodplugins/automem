@@ -11,38 +11,13 @@
 #   ./test-locomo-benchmark.sh --help             # Show help
 #
 
-set -uo pipefail
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+set -euo pipefail
 
 # Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Health check helper — retries until API responds or max_attempts reached
-wait_for_api() {
-    local url="$1"
-    local max_attempts="${2:-60}"
-    local attempt=0
-    echo -e "${BLUE}Waiting for API at ${url}...${NC}"
-    while [ $attempt -lt $max_attempts ]; do
-        if curl -fsS "${url}/health" > /dev/null 2>&1; then
-            echo -e "${GREEN}API ready after ${attempt}s${NC}"
-            return 0
-        fi
-        sleep 1
-        attempt=$((attempt + 1))
-        if [ $((attempt % 10)) -eq 0 ]; then
-            echo -e "${YELLOW}  Still waiting... (${attempt}s)${NC}"
-        fi
-    done
-    echo -e "${RED}ERROR: API not ready after ${max_attempts}s${NC}"
-    return 1
-}
+# Shared utilities (colors + wait_for_api)
+source "${SCRIPT_DIR}/scripts/lib/common.sh"
 
 # Default configuration
 RUN_LIVE=false

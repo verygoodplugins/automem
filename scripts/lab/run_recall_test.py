@@ -200,17 +200,20 @@ def restart_api_with_config(config: Dict[str, str]) -> None:
         print(f"WARNING: docker compose restart failed: {result.stderr}")
 
     # Wait for API to be healthy (fail loudly on timeout)
+    last_exc = None
     for attempt in range(60):
         try:
             resp = requests.get(f"{API_URL}/health", timeout=2)
             if resp.status_code == 200:
                 print(f"API ready after config change ({attempt}s)")
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            last_exc = e
+            if attempt % 10 == 0 and attempt > 0:
+                print(f"  Still waiting for API... ({attempt}s, last error: {e})")
         time.sleep(1)
 
-    raise TimeoutError("API did not become healthy after config change (60s timeout)")
+    raise TimeoutError("API did not become healthy after config change (60s timeout)") from last_exc
 
 
 # ---------- Test Runner ----------
