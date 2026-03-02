@@ -39,3 +39,4 @@ node_modules/
 # Benchmark overrides and snapshots
 .env.bench
 /benchmarks/snapshots/
+/benchmarks/results/

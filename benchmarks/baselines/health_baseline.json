@@ -1,0 +1,126 @@
+{
+  "overall": "DEGRADED",
+  "timestamp": "2026-03-02T11:19:03Z",
+  "base_url": "http://localhost:8001",
+  "checks": [
+    {
+      "check": "score_distribution",
+      "verdict": "WARN: low score variance \u2014 weak differentiation",
+      "total_scores": 50,
+      "global_stats": {
+        "min": 0.2093,
+        "max": 0.4506,
+        "mean": 0.3562,
+        "stddev": 0.0497,
+        "spread": 0.2413
+      },
+      "latency": {
+        "p50_ms": 504.3,
+        "p95_ms": 715.2,
+        "mean_ms": 541.6
+      },
+      "per_query": [
+        {
+          "query": "What was discussed about authentication and security?",
+          "count": 10,
+          "scores": {
+            "min": 0.2903,
+            "max": 0.3311,
+            "mean": 0.2982,
+            "spread": 0.0408
+          },
+          "latency_ms": 504.3,
+          "query_time_ms": 489.8
+        },
+        {
+          "query": "Tell me about the birthday party last weekend",
+          "count": 10,
+          "scores": {
+            "min": 0.3719,
+            "max": 0.4156,
+            "mean": 0.3871,
+            "spread": 0.0437
+          },
+          "latency_ms": 461.4,
+          "query_time_ms": 452.16
+        },
+        {
+          "query": "What programming languages does the team use?",
+          "count": 10,
+          "scores": {
+            "min": 0.3589,
+            "max": 0.413,
+            "mean": 0.379,
+            "spread": 0.054
+          },
+          "latency_ms": 483.5,
+          "query_time_ms": 473.6
+        },
+        {
+          "query": "Plans for the upcoming vacation trip",
+          "count": 10,
+          "scores": {
+            "min": 0.3952,
+            "max": 0.4506,
+            "mean": 0.41,
+            "spread": 0.0554
+          },
+          "latency_ms": 715.2,
+          "query_time_ms": 706.11
+        },
+        {
+          "query": "Recent decisions about database architecture",
+          "count": 10,
+          "scores": {
+            "min": 0.2093,
+            "max": 0.3287,
+            "mean": 0.3066,
+            "spread": 0.1194
+          },
+          "latency_ms": 543.5,
+          "query_time_ms": 533.7
+        }
+      ]
+    },
+    {
+      "check": "entity_quality",
+      "verdict": "OK: 0.0% garbage (0/32)",
+      "sampled_memories": 30,
+      "memories_with_entities": 26,
+      "memories_without_entities": 4,
+      "total_entity_tags": 32,
+      "garbage_tags": 0,
+      "garbage_pct": 0.0,
+      "garbage_examples": []
+    },
+    {
+      "check": "cross_query_overlap",
+      "verdict": "OK: different queries return different results",
+      "overlap_pairs": 0,
+      "total_pairs": 3,
+      "query_results": {
+        "What was discussed about authentication ": [
+          "4dafb907-0779-4085-8058-90a9ff97e858",
+          "c711668b-b70f-4bd9-b12a-5f4e587100fe",
+          "90021543-0f07-4572-b5a3-870a9aed9f63",
+          "4b34c8e0-31ee-41f1-ad2d-b8c74c2fb713",
+          "7997eb95-e7f8-42fa-8960-1f0d9cf2be58"
+        ],
+        "Tell me about the birthday party last we": [
+          "25fef83e-5a6a-4798-8dd3-2cb10d2dc7a0",
+          "eb1d8f46-bb8f-4539-90e9-27ef9f769fc7",
+          "1bd67e29-77e0-400a-8aeb-69161c957cc7",
+          "72feb3cf-0f35-4593-8476-8b2c79dc0319",
+          "0f889be1-3406-4afb-aba0-c534e044d03f"
+        ],
+        "What programming languages does the team": [
+          "fc05eb7e-b9c4-4ea4-a63a-43f553da9730",
+          "928bdcd7-0f89-4fe2-8053-54375e199555",
+          "1bdf3cc4-bbf7-462f-8050-cb957f8dbc26",
+          "b32e87a8-b064-46fa-bc70-53c01dbaab3d",
+          "955e3c23-728f-4b4d-bfdc-a433631bc261"
+        ]
+      }
+    }
+  ]
+}

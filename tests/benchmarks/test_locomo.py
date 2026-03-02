@@ -575,10 +575,12 @@ class LoCoMoEvaluator:
         if not question_dates or not memory_dates:
             return False
 
-        # Check for matches within tolerance
+        # Check for matches within tolerance (strip tz for safe comparison)
         for q_date in question_dates:
+            q_naive = q_date.replace(tzinfo=None)
             for m_date in memory_dates:
-                days_diff = abs((q_date - m_date).days)
+                m_naive = m_date.replace(tzinfo=None)
+                days_diff = abs((q_naive - m_naive).days)
                 if days_diff <= tolerance_days:
                     return True
 
