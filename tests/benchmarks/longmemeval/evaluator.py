@@ -18,8 +18,17 @@ except ImportError:
     OpenAI = None
 
 
-def normalize_text(text: str) -> str:
-    """Normalize text for comparison: lowercase, strip, remove articles."""
+def normalize_text(text: Any) -> str:
+    """Normalize text for comparison: lowercase, strip, remove articles.
+
+    LongMemEval references can occasionally be non-strings (for example ints).
+    Coerce to string to keep scorer robust instead of crashing mid-run.
+    """
+    if text is None:
+        text = ""
+    elif not isinstance(text, str):
+        text = str(text)
+
     text = text.lower().strip()
     # Remove common articles and filler
     text = re.sub(r"\b(the|a|an|is|was|were|are|am)\b", " ", text)
@@ -28,19 +37,21 @@ def normalize_text(text: str) -> str:
     return text
 
 
-def exact_match(hypothesis: str, reference: str) -> bool:
+def exact_match(hypothesis: Any, reference: Any) -> bool:
     """Check if normalized hypothesis matches reference."""
     return normalize_text(hypothesis) == normalize_text(reference)
 
 
-def substring_match(hypothesis: str, reference: str) -> bool:
+def substring_match(hypothesis: Any, reference: Any) -> bool:
     """Check if reference appears as substring in hypothesis."""
     h = normalize_text(hypothesis)
     r = normalize_text(reference)
+    if not h or not r:
+        return False
     return r in h or h in r
 
 
-def f1_token_overlap(hypothesis: str, reference: str) -> float:
+def f1_token_overlap(hypothesis: Any, reference: Any) -> float:
     """Compute F1 score based on token overlap."""
     h_tokens = normalize_text(hypothesis).split()
     r_tokens = normalize_text(reference).split()
@@ -64,9 +75,13 @@ def is_abstention_question(question_id: str) -> bool:
     return question_id.endswith("_abs")
 
 
-def check_abstention_response(hypothesis: str) -> bool:
+def check_abstention_response(hypothesis: Any) -> bool:
     """Check if the model correctly abstained from answering."""
-    h = hypothesis.lower().strip()
+    if hypothesis is None:
+        hypothesis = ""
+    elif not isinstance(hypothesis, str):
+        hypothesis = str(hypothesis)
+    h = normalize_text(hypothesis)
     abstention_phrases = [
         "i don't know",
         "i do not know",
@@ -87,7 +102,7 @@ def check_abstention_response(hypothesis: str) -> bool:
     return any(phrase in h for phrase in abstention_phrases)
 
 
-def quick_score(hypothesis: str, reference: str, question_id: str) -> Dict[str, Any]:
+def quick_score(hypothesis: Any, reference: Any, question_id: str) -> Dict[str, Any]:
     """
     Quick local scoring without LLM calls.
 

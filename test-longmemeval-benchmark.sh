@@ -14,17 +14,13 @@
 #   ./test-longmemeval-benchmark.sh --help                 # Show help
 #
 
-set -e
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+set -euo pipefail
 
 # Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Shared utilities (colors + wait_for_api)
+source "${SCRIPT_DIR}/scripts/lib/common.sh"
 
 # Default configuration
 RUN_LIVE=false
@@ -177,13 +173,11 @@ else
     fi
 
     # Check if services are running and healthy
-    running_services="$(docker compose ps --status running --services 2>/dev/null || true)"
-    if [ -z "$running_services" ] || ! curl -fsS "http://localhost:8001/health" > /dev/null 2>&1; then
-        echo -e "${YELLOW}AutoMem services not running${NC}"
+    if ! curl -fsS "http://localhost:8001/health" > /dev/null 2>&1; then
+        echo -e "${YELLOW}AutoMem services not running or unhealthy${NC}"
         echo -e "${BLUE}Starting services...${NC}"
         docker compose up -d
-        echo -e "${BLUE}Waiting for services to be ready...${NC}"
-        sleep 10
+        wait_for_api "http://localhost:8001" 60 || exit 1
     fi
 
     export AUTOMEM_TEST_BASE_URL="http://localhost:8001"
