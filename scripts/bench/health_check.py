@@ -121,7 +121,16 @@ def check_score_distribution(base_url: str) -> Dict[str, Any]:
         },
         "latency": {
             "p50_ms": round(statistics.median(latencies), 1) if latencies else 0,
-            "p95_ms": round(sorted(latencies)[int(len(latencies) * 0.95)] if latencies else 0, 1),
+            "p95_ms": (
+                round(
+                    sorted(latencies)[
+                        max(0, min(len(latencies) - 1, math.ceil(0.95 * len(latencies)) - 1))
+                    ],
+                    1,
+                )
+                if latencies
+                else 0
+            ),
             "mean_ms": round(statistics.mean(latencies), 1) if latencies else 0,
         },
         "per_query": per_query,

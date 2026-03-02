@@ -27,8 +27,7 @@ jobs:
       - name: Check file-doc mapping
         id: check
         run: |
-          MAP=$(curl -sf "https://raw.githubusercontent.com/verygoodplugins/automem-website/main/scripts/file-doc-map.json")
-          if [ $? -ne 0 ]; then
+          if ! MAP=$(curl -sf "https://raw.githubusercontent.com/verygoodplugins/automem-website/main/scripts/file-doc-map.json"); then
             echo "Failed to fetch file-doc-map.json, skipping"
             echo "affected=none" >> $GITHUB_OUTPUT
             exit 0

@@ -1427,9 +1427,11 @@ def handle_recall(
             ]
         results = seed_results + expansion_results + entity_expansion_results
 
+    pre_filter_count = len(results)
+
     # Apply adaptive score floor: detect steep dropoff and cut low-quality tail
     score_floor_applied = None
-    if adaptive_floor and len(results) > 3:
+    if sort_param == "score" and adaptive_floor and len(results) > 3:
         scores = sorted([float(r.get("final_score", 0.0)) for r in results], reverse=True)
         # Find the largest gap between consecutive scores in the top half
         max_gap = 0.0
@@ -1448,7 +1450,6 @@ def handle_recall(
             ]
 
     # Apply explicit min_score on final assembled results (catches expansions)
-    pre_filter_count = len(results)
     if min_score is not None and min_score > 0:
         results = [r for r in results if float(r.get("final_score", 0.0)) >= min_score]
 
@@ -1511,7 +1512,7 @@ def handle_recall(
         response["score_filter"] = {
             "min_score": min_score,
             "adaptive_floor": score_floor_applied,
-            "filtered_count": pre_filter_count - len(results) if min_score else 0,
+            "filtered_count": pre_filter_count - len(results),
         }
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
     if any_context_profile:
