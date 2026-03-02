@@ -83,7 +83,7 @@ export AUTOMEM_TEST_API_TOKEN="test-token"
 
 RESULTS_DIR="${REPO_ROOT}/benchmarks/results"
 mkdir -p "${RESULTS_DIR}"
-OUTPUT="${RESULTS_DIR}/${BENCH_NAME}_${CONFIG}_${TIMESTAMP}"
+OUTPUT="${RESULTS_DIR}/${BENCH_NAME}_${CONFIG}_${TIMESTAMP}.json"
 
 if [[ "$BENCH_NAME" == locomo* ]]; then
     EVAL_ARGS="--eval-only --no-cleanup --output ${OUTPUT}"
@@ -111,4 +111,4 @@ fi
 
 echo ""
 echo -e "${GREEN}=== Evaluation complete ===${NC}"
-echo -e "${GREEN}  Results: ${OUTPUT}.json${NC}"
+echo -e "${GREEN}  Results: ${OUTPUT}${NC}"

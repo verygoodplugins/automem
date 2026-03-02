@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy
+.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy bench-health
 
 # Default target
 help:
@@ -25,6 +25,7 @@ help:
 	@echo "  make bench-ingest BENCH=locomo - Ingest + snapshot (run once)"
 	@echo "  make bench-eval BENCH=locomo CONFIG=baseline - Eval from snapshot (~2 min)"
 	@echo "  make bench-compare BENCH=locomo CONFIG=bm25 BASELINE=baseline - A/B compare"
+	@echo "  make bench-health             - Recall health check (score dist, entities, latency)"
 	@echo "  make test-locomo          - Full LoCoMo benchmark (local)"
 	@echo "  make test-locomo-live     - Full LoCoMo benchmark (Railway)"
 	@echo "  make test-longmemeval     - Full LongMemEval benchmark (local)"
@@ -143,6 +144,9 @@ bench-compare:
 
 bench-compare-branch:
 	@scripts/bench/compare_branch.sh $(BRANCH) $(or $(CONFIG),baseline) $(or $(BENCH),locomo)
+
+bench-health:
+	@python3 scripts/bench/health_check.py --base-url $(or $(BASE_URL),http://localhost:8001)
 
 bench-snapshots:
 	@ls -la benchmarks/snapshots/ 2>/dev/null || echo "No snapshots yet. Run: make bench-ingest BENCH=locomo"
