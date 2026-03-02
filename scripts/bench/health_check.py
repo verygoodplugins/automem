@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import math
 import os
 import re
@@ -18,6 +19,8 @@ import statistics
 import sys
 import time
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 import requests
 
@@ -45,11 +48,12 @@ GARBAGE_ENTITY_PATTERNS = [
 ]
 
 
-def get_headers() -> dict:
-    return {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
+def get_headers(api_token: Optional[str] = None) -> dict:
+    token = api_token or API_TOKEN
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def check_score_distribution(base_url: str) -> Dict[str, Any]:
+def check_score_distribution(base_url: str, api_token: Optional[str] = None) -> Dict[str, Any]:
     """Hit recall with diverse queries and analyze score distributions.
 
     Catches the "everything scores the same" problem (#78) where importance
@@ -65,7 +69,7 @@ def check_score_distribution(base_url: str) -> Dict[str, Any]:
             resp = requests.get(
                 f"{base_url}/recall",
                 params={"query": query, "limit": 10},
-                headers=get_headers(),
+                headers=get_headers(api_token),
                 timeout=30,
             )
             resp.raise_for_status()
@@ -128,7 +132,9 @@ def check_score_distribution(base_url: str) -> Dict[str, Any]:
     }
 
 
-def check_entity_quality(base_url: str, sample_size: int = 30) -> Dict[str, Any]:
+def check_entity_quality(
+    base_url: str, sample_size: int = 30, api_token: Optional[str] = None
+) -> Dict[str, Any]:
     """Sample memories and check entity tag quality.
 
     Catches #72 (misclassified entities) and #71 (name confusion).
@@ -137,7 +143,7 @@ def check_entity_quality(base_url: str, sample_size: int = 30) -> Dict[str, Any]
         resp = requests.get(
             f"{base_url}/recall",
             params={"query": "conversation people places things", "limit": sample_size},
-            headers=get_headers(),
+            headers=get_headers(api_token),
             timeout=30,
         )
         resp.raise_for_status()
@@ -192,7 +198,7 @@ def check_entity_quality(base_url: str, sample_size: int = 30) -> Dict[str, Any]
     }
 
 
-def check_cross_query_overlap(base_url: str) -> Dict[str, Any]:
+def check_cross_query_overlap(base_url: str, api_token: Optional[str] = None) -> Dict[str, Any]:
     """Check if different queries return identical results (the original #78 symptom).
 
     If 3 unrelated queries return the same top-5 IDs, the scoring formula is broken.
@@ -204,12 +210,13 @@ def check_cross_query_overlap(base_url: str) -> Dict[str, Any]:
             resp = requests.get(
                 f"{base_url}/recall",
                 params={"query": query, "limit": 5},
-                headers=get_headers(),
+                headers=get_headers(api_token),
                 timeout=30,
             )
             resp.raise_for_status()
             data = resp.json()
         except Exception:
+            logger.exception("Cross-query overlap check failed for query: %s", query[:60])
             continue
 
         ids = [r.get("id", r.get("memory", {}).get("id", "")) for r in data.get("results", [])]
@@ -245,20 +252,20 @@ def check_cross_query_overlap(base_url: str) -> Dict[str, Any]:
     }
 
 
-def run_all_checks(base_url: str) -> Dict[str, Any]:
+def run_all_checks(base_url: str, api_token: Optional[str] = None) -> Dict[str, Any]:
     """Run all health checks and return a summary."""
     print(f"Running health checks against {base_url}...")
 
     checks = []
 
     print("  [1/3] Score distribution & latency...")
-    checks.append(check_score_distribution(base_url))
+    checks.append(check_score_distribution(base_url, api_token=api_token))
 
     print("  [2/3] Entity quality...")
-    checks.append(check_entity_quality(base_url))
+    checks.append(check_entity_quality(base_url, api_token=api_token))
 
     print("  [3/3] Cross-query overlap...")
-    checks.append(check_cross_query_overlap(base_url))
+    checks.append(check_cross_query_overlap(base_url, api_token=api_token))
 
     failures = sum(1 for c in checks if c.get("verdict", "").startswith("BAD"))
     warnings = sum(1 for c in checks if c.get("verdict", "").startswith("WARN"))
@@ -303,11 +310,7 @@ def main() -> None:
     parser.add_argument("--output", default=None, help="Save results to JSON file")
     args = parser.parse_args()
 
-    if args.api_token:
-        global API_TOKEN  # noqa: PLW0603
-        API_TOKEN = args.api_token
-
-    report = run_all_checks(args.base_url)
+    report = run_all_checks(args.base_url, api_token=args.api_token)
 
     if args.output:
         with open(args.output, "w") as f:
