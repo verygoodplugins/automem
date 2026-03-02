@@ -20,6 +20,7 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | Date | Issue/PR | Branch | LoCoMo-mini | LoCoMo-full | LME-mini | Notes |
 |------|----------|--------|-------------|-------------|----------|-------|
 | 2026-03-02 | baseline | main | 76.97% (234/304) | 80.06% (1590/1986) | -- | Voyage 4, 1024d. Health: DEGRADED (low score variance) |
+| 2026-03-02 | #73 | exp/73-min-score-threshold | 76.97% (+0.0) | -- | -- | min_score + adaptive floor. No regression. Needs #78 for impact |
 
 ## How to add an entry
 
