@@ -23,6 +23,7 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 2026-03-02 | #73 | exp/73-min-score-threshold | 76.97% (+0.0) | -- | -- | min_score + adaptive floor. No regression. Needs #78 for impact |
 | 2026-03-02 | PR #80 | jescalan/feat/enhanced-recall | BLOCKED | -- | -- | Merge conflicts with main (recall.py), needs rebase before eval |
 | 2026-03-02 | PR #87 | jescalan/feat/write-time-dedup | 76.97% (+0.0) | -- | -- | Write-time dedup gate. Neutral on recall (expected) |
+| 2026-03-02 | #78 | exp/78-decay-fix | 76.97% (+0.0) | 79.51% (-0.55) | -- | Decay rate 0.1→0.01, importance floor, archive filter. Within variance. Impact is on production (rehabilitated via rescore) |
 
 ## How to add an entry
 

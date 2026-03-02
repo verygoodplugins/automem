@@ -67,6 +67,8 @@ def create_consolidation_runtime(
     importance_protection_threshold: float,
     protected_types: Set[str],
     decay_importance_threshold: float,
+    base_decay_rate: float = 0.01,
+    importance_floor_factor: float = 0.3,
 ) -> ConsolidationRuntimeBindings:
     def _load_control_record(graph: Any) -> Dict[str, Any]:
         return _load_control_record_runtime(
@@ -118,6 +120,8 @@ def create_consolidation_runtime(
             grace_period_days=grace_period_days,
             importance_protection_threshold=importance_protection_threshold,
             protected_types=set(protected_types),
+            base_decay_rate=base_decay_rate,
+            importance_floor_factor=importance_floor_factor,
         )
 
     def build_scheduler_from_graph(graph: Any) -> ConsolidationScheduler:
