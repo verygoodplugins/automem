@@ -8,7 +8,13 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
 
-from automem.config import ALLOWED_RELATIONS, RECALL_EXPANSION_LIMIT, RECALL_RELATION_LIMIT
+from automem.config import (
+    ALLOWED_RELATIONS,
+    RECALL_ADAPTIVE_FLOOR,
+    RECALL_EXPANSION_LIMIT,
+    RECALL_MIN_SCORE,
+    RECALL_RELATION_LIMIT,
+)
 from automem.utils.graph import _serialize_node
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
@@ -1084,6 +1090,10 @@ def handle_recall(
     expand_min_importance = _parse_threshold("expand_min_importance")
     expand_min_strength = _parse_threshold("expand_min_strength")
 
+    min_score_param = _parse_threshold("min_score")
+    min_score = min_score_param if min_score_param is not None else (RECALL_MIN_SCORE or None)
+    adaptive_floor = _parse_bool_param(request.args.get("adaptive_floor"), RECALL_ADAPTIVE_FLOOR)
+
     context_label = (request.args.get("context") or "").strip().lower()
     active_path = (
         request.args.get("active_path")
@@ -1241,6 +1251,11 @@ def handle_recall(
                 res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
             )
         ]
+
+        if min_score is not None and min_score > 0:
+            local_results = [
+                res for res in local_results if float(res.get("final_score", 0.0)) >= min_score
+            ]
 
         if sort_param == "score":
             local_results.sort(
@@ -1412,6 +1427,31 @@ def handle_recall(
             ]
         results = seed_results + expansion_results + entity_expansion_results
 
+    # Apply adaptive score floor: detect steep dropoff and cut low-quality tail
+    score_floor_applied = None
+    if adaptive_floor and len(results) > 3:
+        scores = sorted([float(r.get("final_score", 0.0)) for r in results], reverse=True)
+        # Find the largest gap between consecutive scores in the top half
+        max_gap = 0.0
+        gap_idx = -1
+        halfway = max(3, len(scores) // 2)
+        for i in range(1, halfway):
+            gap = scores[i - 1] - scores[i]
+            if gap > max_gap:
+                max_gap = gap
+                gap_idx = i
+        # If there's a steep dropoff (>15% of max score), cut below it
+        if max_gap > 0.15 * scores[0] and gap_idx > 0:
+            score_floor_applied = scores[gap_idx]
+            results = [
+                r for r in results if float(r.get("final_score", 0.0)) >= score_floor_applied
+            ]
+
+    # Apply explicit min_score on final assembled results (catches expansions)
+    pre_filter_count = len(results)
+    if min_score is not None and min_score > 0:
+        results = [r for r in results if float(r.get("final_score", 0.0)) >= min_score]
+
     # JIT-enrich unenriched memories inline (cheap: entities + summary ~50ms each)
     jit_enriched_count = 0
     if jit_enrich_fn is not None:
@@ -1467,6 +1507,12 @@ def handle_recall(
     response["tag_match"] = tag_match
     if jit_enriched_count:
         response["jit_enriched_count"] = jit_enriched_count
+    if min_score or score_floor_applied:
+        response["score_filter"] = {
+            "min_score": min_score,
+            "adaptive_floor": score_floor_applied,
+            "filtered_count": pre_filter_count - len(results) if min_score else 0,
+        }
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
     if any_context_profile:
         response["context_priority"] = {

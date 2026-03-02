@@ -92,6 +92,8 @@ CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
+RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.0"))
+RECALL_ADAPTIVE_FLOOR = os.getenv("RECALL_ADAPTIVE_FLOOR", "true").lower() in ("true", "1", "yes")
 
 # Memory content size limits (governs auto-summarization on store)
 # Soft limit: Content above this triggers auto-summarization
