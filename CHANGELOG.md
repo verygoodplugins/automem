@@ -17,8 +17,7 @@ All notable changes to AutoMem will be documented in this file.
 
 ### Bug Fixes
 
-* FalkorDB data not persisting across restarts ([3bbc834](https://github.com/verygoodplugins/automem/commit/3bbc83441124884d9a89b34c32d0373c79eb7d37))
-* FalkorDB data not persisting across restarts ([#99](https://github.com/verygoodplugins/automem/issues/99)) ([8490d36](https://github.com/verygoodplugins/automem/commit/8490d3641cafa97246edfb3a913ce200ef26478d))
+* FalkorDB data not persisting across restarts ([`#99`](https://github.com/verygoodplugins/automem/issues/99)) ([3bbc834](https://github.com/verygoodplugins/automem/commit/3bbc83441124884d9a89b34c32d0373c79eb7d37), [8490d36](https://github.com/verygoodplugins/automem/commit/8490d3641cafa97246edfb3a913ce200ef26478d))
 * **mcp-sse:** sync tool schemas for SSE/MCP parity ([#104](https://github.com/verygoodplugins/automem/issues/104)) ([d99b86d](https://github.com/verygoodplugins/automem/commit/d99b86d9ed2a2612abe5770bcbf729493d7c7bf7))
 
 
