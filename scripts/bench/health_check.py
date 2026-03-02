@@ -18,6 +18,7 @@ import re
 import statistics
 import sys
 import time
+import uuid as uuid_mod
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -219,8 +220,15 @@ def check_cross_query_overlap(base_url: str, api_token: Optional[str] = None) ->
             logger.exception("Cross-query overlap check failed for query: %s", query[:60])
             continue
 
-        raw_ids = [r.get("id", r.get("memory", {}).get("id", "")) for r in data.get("results", [])]
-        ids = [memory_id for memory_id in raw_ids if memory_id]
+        ids: List[str] = []
+        for r in data.get("results", []):
+            raw = r.get("id", r.get("memory", {}).get("id", ""))
+            if not raw or not isinstance(raw, str):
+                continue
+            try:
+                ids.append(str(uuid_mod.UUID(raw.strip())))
+            except ValueError:
+                continue
         query_results[query[:40]] = ids
 
     if len(query_results) < 2:
