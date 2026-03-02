@@ -110,7 +110,7 @@ def compare_longmemeval(baseline: dict, test: dict) -> dict:
     print(
         f"  {'Accuracy':<25} {format_pct(b_acc):>10} {format_pct(t_acc):>10} {format_delta(delta):>10}"
     )
-    print(f"  {'Questions':<25} {str(b_total):>10} {str(t_total):>10}")
+    print(f"  {'Questions':<25} {b_total!s:>10} {t_total!s:>10}")
     print("=" * 65)
 
     return {"baseline_accuracy": b_acc, "test_accuracy": t_acc, "delta": delta}

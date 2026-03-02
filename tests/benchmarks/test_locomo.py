@@ -328,7 +328,7 @@ class LoCoMoEvaluator:
                 if response.status_code in [200, 201]:
                     result = response.json()
                     returned_ids = result.get("memory_ids", [])
-                    for dia_id, mem_id in zip(dia_ids, returned_ids):
+                    for dia_id, mem_id in zip(dia_ids, returned_ids, strict=True):
                         memory_map[dia_id] = mem_id
                     total_stored += result.get("stored", len(returned_ids))
                     print(f"  Batch stored {total_stored}/{len(memories)} memories...")
@@ -1285,7 +1285,7 @@ Respond in JSON format:
     def run_benchmark(
         self,
         cleanup_after: bool = True,
-        conversation_indices: str = None,
+        conversation_indices: Optional[str] = None,
         ingest_only: bool = False,
         eval_only: bool = False,
     ) -> Dict[str, Any]:
@@ -1515,7 +1515,9 @@ def main():
         print(f"\n💾 Results saved to: {args.output}")
 
     # Return exit code based on success
-    return 0 if results["overall"]["accuracy"] > 0 else 1
+    if results.get("mode") == "ingest-only":
+        return 0
+    return 0 if results.get("overall", {}).get("accuracy", 0) > 0 else 1
 
 
 if __name__ == "__main__":

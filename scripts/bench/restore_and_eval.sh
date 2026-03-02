@@ -84,10 +84,18 @@ if [[ "$BENCH_NAME" == locomo* ]]; then
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
         ${EVAL_ARGS}
 elif [[ "$BENCH_NAME" == longmemeval* ]]; then
+    LONGMEM_ARGS=(--config "$CONFIG" --no-cleanup --output "${OUTPUT}")
+    if [[ "$BENCH_NAME" == "longmemeval-mini" ]]; then
+        LONGMEM_ARGS+=(--max-questions 20)
+    fi
     python3 tests/benchmarks/longmemeval/test_longmemeval.py \
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
-        --no-cleanup --output "${OUTPUT}"
+        "${LONGMEM_ARGS[@]}"
+else
+    echo -e "${RED}Unknown benchmark: ${BENCH_NAME}${NC}"
+    echo "Supported: locomo, locomo-mini, longmemeval-mini"
+    exit 1
 fi
 
 echo ""

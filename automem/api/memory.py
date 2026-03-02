@@ -727,7 +727,11 @@ def create_memory_blueprint_full(
                 try:
                     created_at = normalize_timestamp(mem["timestamp"])
                 except ValueError:
-                    pass
+                    logger.warning(
+                        "Invalid timestamp at index %d (%s), using current time",
+                        i,
+                        mem["timestamp"],
+                    )
 
             metadata_raw = mem.get("metadata")
             metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
@@ -791,20 +795,6 @@ def create_memory_blueprint_full(
                 """
                 UNWIND $memories AS m
                 MERGE (node:Memory {id: m.id})
-                ON CREATE SET
-                    node.content = m.content,
-                    node.timestamp = m.timestamp,
-                    node.importance = m.importance,
-                    node.tags = m.tags,
-                    node.tag_prefixes = m.tag_prefixes,
-                    node.type = m.type,
-                    node.confidence = m.confidence,
-                    node.t_valid = m.t_valid,
-                    node.t_invalid = m.t_invalid,
-                    node.updated_at = m.updated_at,
-                    node.last_accessed = m.last_accessed,
-                    node.metadata = m.metadata,
-                    node.processed = false
                 SET
                     node.content = m.content,
                     node.timestamp = m.timestamp,

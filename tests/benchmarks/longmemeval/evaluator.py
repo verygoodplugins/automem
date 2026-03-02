@@ -73,8 +73,12 @@ def is_abstention_question(question_id: str) -> bool:
     return question_id.endswith("_abs")
 
 
-def check_abstention_response(hypothesis: str) -> bool:
+def check_abstention_response(hypothesis: Any) -> bool:
     """Check if the model correctly abstained from answering."""
+    if hypothesis is None:
+        hypothesis = ""
+    elif not isinstance(hypothesis, str):
+        hypothesis = str(hypothesis)
     h = hypothesis.lower().strip()
     abstention_phrases = [
         "i don't know",

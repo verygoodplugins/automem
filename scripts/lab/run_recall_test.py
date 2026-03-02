@@ -197,7 +197,9 @@ def restart_api_with_config(config: Dict[str, str]) -> None:
         cwd=str(repo_root),
     )
     if result.returncode != 0:
-        print(f"WARNING: docker compose restart failed: {result.stderr}")
+        raise RuntimeError(
+            "docker compose restart failed: " f"{result.stderr.strip() or result.stdout.strip()}"
+        )
 
     # Wait for API to be healthy (fail loudly on timeout)
     last_exc = None

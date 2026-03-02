@@ -17,6 +17,7 @@ RESULTS_DIR="${REPO_ROOT}/benchmarks/results"
 BLUE='\033[0;34m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
 CURRENT_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+STASH_CREATED=false
 
 # Cleanup trap: restore original branch on exit
 cleanup() {
@@ -25,6 +26,8 @@ cleanup() {
     if [[ "$current" != "$CURRENT_BRANCH" ]]; then
         echo -e "${BLUE}Restoring branch ${CURRENT_BRANCH}...${NC}"
         git -C "$REPO_ROOT" checkout "$CURRENT_BRANCH" 2>/dev/null || true
+    fi
+    if [[ "$STASH_CREATED" == true ]]; then
         git -C "$REPO_ROOT" stash pop 2>/dev/null || true
     fi
 }
@@ -53,7 +56,11 @@ CURRENT_RESULT="${RESULTS_DIR}/${BENCH}_${CONFIG}_current_${TIMESTAMP}.json"
 # 2. Stash, switch, rebuild, evaluate
 echo -e "${BLUE}--- Switching to branch: ${BRANCH} ---${NC}"
 cd "$REPO_ROOT" || { echo -e "${RED}Failed to cd to ${REPO_ROOT}${NC}"; exit 1; }
-git stash --include-untracked 2>/dev/null || true
+if ! git diff --quiet || ! git diff --cached --quiet || \
+   [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+    git stash push --include-untracked -m "bench-compare-${TIMESTAMP}" >/dev/null
+    STASH_CREATED=true
+fi
 git checkout "$BRANCH"
 
 echo -e "${BLUE}Rebuilding flask-api for ${BRANCH}...${NC}"
@@ -65,7 +72,9 @@ BRANCH_RESULT=$(ls -t "${RESULTS_DIR}/${BENCH}_${CONFIG}_"*.json 2>/dev/null | h
 if [[ -z "$BRANCH_RESULT" ]]; then
     echo -e "${RED}No result file found for branch ${BRANCH}${NC}"
     git checkout "$CURRENT_BRANCH"
-    git stash pop 2>/dev/null || true
+    if [[ "$STASH_CREATED" == true ]]; then
+        git stash pop 2>/dev/null || true
+    fi
     exit 1
 fi
 cp "$BRANCH_RESULT" "${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH//\//_}_${TIMESTAMP}.json"
@@ -74,7 +83,9 @@ BRANCH_RESULT="${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH//\//_}_${TIMESTAMP}.js
 # 3. Restore original branch (trap handles cleanup on failure too)
 echo -e "${BLUE}Restoring ${CURRENT_BRANCH}...${NC}"
 git checkout "$CURRENT_BRANCH"
-git stash pop 2>/dev/null || true
+if [[ "$STASH_CREATED" == true ]]; then
+    git stash pop 2>/dev/null || true
+fi
 trap - EXIT  # Disable cleanup trap since we restored manually
 
 # Rebuild original branch API

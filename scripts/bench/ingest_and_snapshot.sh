@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ingest benchmark dataset into AutoMem and snapshot the Docker volumes.
-# Usage: ./scripts/bench/ingest_and_snapshot.sh [locomo|longmemeval-mini]
+# Usage: ./scripts/bench/ingest_and_snapshot.sh [locomo|locomo-mini|longmemeval-mini]
 set -euo pipefail
 
 BENCH_NAME="${1:-locomo}"
@@ -34,7 +34,7 @@ elif [[ "$BENCH_NAME" == "locomo-mini" ]]; then
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
         --conversations 0,1 --ingest-only --no-cleanup
-elif [[ "$BENCH_NAME" == longmemeval-mini ]]; then
+elif [[ "$BENCH_NAME" == "longmemeval-mini" ]]; then
     python3 tests/benchmarks/longmemeval/test_longmemeval.py \
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
