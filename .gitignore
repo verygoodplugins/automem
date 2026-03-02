@@ -35,3 +35,9 @@ node_modules/
 /lab/snapshots/
 /lab/results/
 /lab/test_sets/
+
+# Benchmark overrides and snapshots
+.env.bench
+/benchmarks/snapshots/
+/benchmarks/results/
+benchmarks/baselines/locomo_baseline.json

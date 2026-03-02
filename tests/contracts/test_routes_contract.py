@@ -5,6 +5,7 @@ import app
 EXPECTED_ROUTE_METHODS = {
     ("GET", "/health"),
     ("POST", "/memory"),
+    ("POST", "/memory/batch"),
     ("GET", "/memory/<memory_id>"),
     ("PATCH", "/memory/<memory_id>"),
     ("DELETE", "/memory/<memory_id>"),

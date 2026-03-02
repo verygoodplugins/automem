@@ -25,7 +25,7 @@ import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -75,7 +75,7 @@ class LoCoMoEvaluator:
             "Authorization": f"Bearer {config.api_token}",
             "Content-Type": "application/json",
         }
-        self.memory_map = {}  # Maps dialog IDs to memory IDs
+        # memory_map is returned per-conversation by _load_batch/_load_individual
         self.results = defaultdict(list)  # Category -> [True/False scores]
 
         # Phase 2: Initialize OpenAI client for LLM-based answer extraction
@@ -132,22 +132,23 @@ class LoCoMoEvaluator:
             return 0.0
         return dot / (norm_a * norm_b)
 
-    def cleanup_test_data(self, tag_prefix: str = "locomo-test"):
+    def cleanup_test_data(self, tag_prefix: str = "locomo-test", max_iterations: int = 200) -> bool:
         """Remove all test memories from AutoMem"""
-        print(f"\n🧹 Cleaning up test memories with tag: {tag_prefix}")
+        print(f"\nCleaning up test memories with tag: {tag_prefix}")
         try:
-            # Use /recall endpoint which is more reliable for tag search
-            # Loop until no more memories found (handles pagination)
             total_deleted = 0
-            while True:
+            iteration = 0
+            while iteration < max_iterations:
+                iteration += 1
                 response = requests.get(
                     f"{self.config.base_url}/recall",
                     headers=self.headers,
                     params={"tags": tag_prefix, "tag_match": "prefix", "limit": 100},
+                    timeout=10,
                 )
 
                 if response.status_code != 200:
-                    print(f"⚠️  Could not fetch test memories: {response.status_code}")
+                    print(f"WARNING: Could not fetch test memories: {response.status_code}")
                     break
 
                 results = response.json().get("results", [])
@@ -155,83 +156,113 @@ class LoCoMoEvaluator:
                     break
 
                 # Delete each memory
+                deleted_this_batch = 0
                 for r in results:
                     memory_id = r.get("id")
                     if memory_id:
-                        requests.delete(
-                            f"{self.config.base_url}/memory/{memory_id}", headers=self.headers
-                        )
-                        total_deleted += 1
+                        try:
+                            resp = requests.delete(
+                                f"{self.config.base_url}/memory/{memory_id}",
+                                headers=self.headers,
+                                timeout=5,
+                            )
+                            if resp.status_code in [200, 204]:
+                                deleted_this_batch += 1
+                        except Exception as e:
+                            print(f"WARNING: Failed to delete {memory_id}: {e}")
+
+                total_deleted += deleted_this_batch
+
+                if iteration % 10 == 0:
+                    print(f"  Cleanup progress: {total_deleted} deleted ({iteration} batches)...")
+
+                # No progress — break to avoid infinite loop
+                if deleted_this_batch == 0:
+                    print(f"WARNING: No deletions in batch {iteration}, stopping cleanup")
+                    break
 
                 # If fewer than 100 returned, we're done
                 if len(results) < 100:
                     break
 
-            print(f"✅ Cleaned up {total_deleted} test memories")
+            if iteration >= max_iterations:
+                print(
+                    f"WARNING: Hit max cleanup iterations ({max_iterations}), {total_deleted} deleted so far"
+                )
+                return False
+
+            print(f"Cleaned up {total_deleted} test memories")
             return True
 
         except Exception as e:
-            print(f"⚠️  Cleanup error: {e}")
+            print(f"WARNING: Cleanup error: {e}")
             return False
 
-    def load_conversation_into_automem(
+    def _has_batch_api(self) -> bool:
+        """Check if the server supports POST /memory/batch."""
+        if not hasattr(self, "_batch_api_available"):
+            try:
+                # Try a minimal batch call — if endpoint exists, we get 400 (missing body)
+                # If not, we get 404/405
+                resp = requests.post(
+                    f"{self.config.base_url}/memory/batch",
+                    headers=self.headers,
+                    json={"memories": []},
+                    timeout=5,
+                )
+                self._batch_api_available = resp.status_code in [400, 201]
+            except Exception:
+                self._batch_api_available = False
+        return self._batch_api_available
+
+    def _prepare_conversation_memories(
         self, conversation: Dict[str, Any], sample_id: str
-    ) -> Dict[str, str]:
-        """
-        Load a LoCoMo conversation into AutoMem as individual memories.
-
-        Returns mapping of dialog_id -> memory_id
-        """
-        memory_map = {}
-        memory_count = 0
-
-        print(f"\n📥 Loading conversation {sample_id} into AutoMem...")
-
-        # Extract conversation metadata
-        speaker_a = conversation["conversation"].get("speaker_a", "Speaker A")
-        speaker_b = conversation["conversation"].get("speaker_b", "Speaker B")
-
-        # Process each session
+    ) -> List[Dict[str, Any]]:
+        """Prepare memory payloads from a conversation without sending them."""
+        memories = []
         session_keys = sorted(
-            [
-                k
-                for k in conversation["conversation"].keys()
-                if k.startswith("session_") and not k.endswith("_date_time")
-            ]
+            k
+            for k in conversation["conversation"].keys()
+            if k.startswith("session_") and not k.endswith("_date_time")
         )
 
         for session_key in session_keys:
             session_num = session_key.split("_")[1]
             session_data = conversation["conversation"][session_key]
-            session_datetime = conversation["conversation"].get(
+            session_datetime_raw = conversation["conversation"].get(
                 f"session_{session_num}_date_time", ""
             )
+            session_datetime = ""
+            if session_datetime_raw:
+                try:
+                    dt = date_parser.parse(session_datetime_raw)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    session_datetime = dt.astimezone(timezone.utc).isoformat()
+                except (ValueError, OverflowError):
+                    print(f"WARNING: Could not parse session datetime: {session_datetime_raw!r}")
+                    session_datetime = ""
 
-            # Store each dialog turn as a memory
             for turn in session_data:
                 speaker = turn.get("speaker", "unknown")
-                dia_id = turn.get("dia_id", f"unknown_{memory_count}")
+                dia_id = turn.get("dia_id", f"unknown_{len(memories)}")
                 text = turn.get("text", "")
-                img_url = turn.get("img_url")
                 blip_caption = turn.get("blip_caption")
 
                 if not text:
                     continue
 
-                # Build memory content
                 content = f"{speaker}: {text}"
                 if blip_caption:
                     content += f" [Image: {blip_caption}]"
 
-                # Build tags
                 tags = [
-                    f"locomo-test",
+                    "locomo-test",
                     f"conversation:{sample_id}",
                     f"session:{session_num}",
                     f"speaker:{speaker.lower().replace(' ', '-')}",
                 ]
 
-                # Build metadata
                 metadata = {
                     "source": "locomo_benchmark",
                     "conversation_id": sample_id,
@@ -241,45 +272,143 @@ class LoCoMoEvaluator:
                     "session_datetime": session_datetime,
                 }
 
+                img_url = turn.get("img_url")
                 if img_url:
                     metadata["image_url"] = img_url
                 if blip_caption:
                     metadata["image_caption"] = blip_caption
 
-                # Store memory
-                try:
-                    response = requests.post(
-                        f"{self.config.base_url}/memory",
-                        headers=self.headers,
-                        json={
-                            "content": content,
-                            "tags": tags,
-                            "importance": self.config.importance_threshold,
-                            "metadata": metadata,
-                            "type": "Context",
-                        },
+                memories.append(
+                    {
+                        "content": content,
+                        "tags": tags,
+                        "importance": self.config.importance_threshold,
+                        "metadata": metadata,
+                        "type": "Context",
+                        "_dia_id": dia_id,  # Internal tracking, stripped before send
+                    }
+                )
+
+        return memories
+
+    def load_conversation_into_automem(
+        self, conversation: Dict[str, Any], sample_id: str
+    ) -> Dict[str, str]:
+        """
+        Load a LoCoMo conversation into AutoMem as individual memories.
+        Uses batch API if available, falls back to individual POSTs.
+
+        Returns mapping of dialog_id -> memory_id
+        """
+        print(f"\nLoading conversation {sample_id} into AutoMem...")
+
+        all_memories = self._prepare_conversation_memories(conversation, sample_id)
+
+        if self._has_batch_api():
+            return self._load_batch(all_memories, sample_id)
+        else:
+            return self._load_individual(all_memories, sample_id)
+
+    def _load_batch(self, memories: List[Dict[str, Any]], sample_id: str) -> Dict[str, str]:
+        """Load memories using batch API (much faster)."""
+        memory_map = {}
+        batch_size = 100
+        total_stored = 0
+
+        for start in range(0, len(memories), batch_size):
+            batch = memories[start : start + batch_size]
+            dia_ids = [m.pop("_dia_id") for m in batch]
+
+            try:
+                response = requests.post(
+                    f"{self.config.base_url}/memory/batch",
+                    headers=self.headers,
+                    json={"memories": batch},
+                    timeout=60,
+                )
+
+                if response.status_code in [200, 201]:
+                    result = response.json()
+                    returned_ids = result.get("memory_ids", [])
+                    for dia_id, mem_id in zip(dia_ids, returned_ids, strict=True):
+                        memory_map[dia_id] = mem_id
+                    total_stored += result.get("stored", len(returned_ids))
+                    print(f"  Batch stored {total_stored}/{len(memories)} memories...")
+                else:
+                    print(
+                        f"WARNING: Batch store failed ({response.status_code}): "
+                        f"{response.text[:200]}. Falling back to individual POSTs."
                     )
-
-                    if response.status_code in [200, 201]:  # Accept both OK and Created
-                        result = response.json()
-                        # API returns memory_id; be robust to historical 'id'
-                        memory_id = result.get("memory_id") or result.get("id")
-                        memory_map[dia_id] = memory_id
-                        memory_count += 1
-
-                        # Pause every N memories
-                        if memory_count % self.config.batch_size == 0:
-                            print(f"  Stored {memory_count} memories...")
-                            time.sleep(self.config.pause_between_batches)
-                    else:
-                        print(
-                            f"⚠️  Failed to store memory for {dia_id}: {response.status_code} - {response.text[:100]}"
+                    # Fall back to individual POSTs for this batch
+                    for dia_id, mem_payload in zip(dia_ids, batch):
+                        try:
+                            r = requests.post(
+                                f"{self.config.base_url}/memory",
+                                headers=self.headers,
+                                json=mem_payload,
+                                timeout=10,
+                            )
+                            if r.status_code in [200, 201]:
+                                res = r.json()
+                                mid = res.get("memory_id") or res.get("id")
+                                memory_map[dia_id] = mid
+                                total_stored += 1
+                        except Exception as ind_e:
+                            print(f"WARNING: Individual store failed for {dia_id}: {ind_e}")
+            except Exception as e:
+                print(f"WARNING: Batch store error: {e}. Falling back to individual POSTs.")
+                # Fall back to individual POSTs for this batch
+                for dia_id, mem_payload in zip(dia_ids, batch):
+                    try:
+                        r = requests.post(
+                            f"{self.config.base_url}/memory",
+                            headers=self.headers,
+                            json=mem_payload,
+                            timeout=10,
                         )
+                        if r.status_code in [200, 201]:
+                            res = r.json()
+                            mid = res.get("memory_id") or res.get("id")
+                            memory_map[dia_id] = mid
+                            total_stored += 1
+                    except Exception as ind_e:
+                        print(f"WARNING: Individual store failed for {dia_id}: {ind_e}")
 
-                except Exception as e:
-                    print(f"⚠️  Error storing memory for {dia_id}: {e}")
+        print(f"Loaded {total_stored} memories from conversation {sample_id} (batch API)")
+        return memory_map
 
-        print(f"✅ Loaded {memory_count} memories from conversation {sample_id}")
+    def _load_individual(self, memories: List[Dict[str, Any]], sample_id: str) -> Dict[str, str]:
+        """Load memories one at a time (legacy fallback)."""
+        memory_map = {}
+        memory_count = 0
+
+        for mem in memories:
+            dia_id = mem.pop("_dia_id")
+            try:
+                response = requests.post(
+                    f"{self.config.base_url}/memory",
+                    headers=self.headers,
+                    json=mem,
+                    timeout=10,
+                )
+
+                if response.status_code in [200, 201]:
+                    result = response.json()
+                    memory_id = result.get("memory_id") or result.get("id")
+                    memory_map[dia_id] = memory_id
+                    memory_count += 1
+
+                    if memory_count % self.config.batch_size == 0:
+                        print(f"  Stored {memory_count} memories...")
+                        time.sleep(self.config.pause_between_batches)
+                else:
+                    print(
+                        f"WARNING: Failed to store {dia_id}: {response.status_code} - {response.text[:100]}"
+                    )
+            except Exception as e:
+                print(f"WARNING: Error storing {dia_id}: {e}")
+
+        print(f"Loaded {memory_count} memories from conversation {sample_id}")
         return memory_map
 
     def _extract_speaker_from_question(self, question: str) -> Optional[str]:
@@ -446,17 +575,31 @@ class LoCoMoEvaluator:
         if not question_dates or not memory_dates:
             return False
 
-        # Check for matches within tolerance
+        # Check for matches within tolerance (normalize to UTC before comparing)
         for q_date in question_dates:
+            q_utc = (
+                q_date.astimezone(timezone.utc)
+                if q_date.tzinfo is not None
+                else q_date.replace(tzinfo=timezone.utc)
+            )
             for m_date in memory_dates:
-                days_diff = abs((q_date - m_date).days)
+                m_utc = (
+                    m_date.astimezone(timezone.utc)
+                    if m_date.tzinfo is not None
+                    else m_date.replace(tzinfo=timezone.utc)
+                )
+                days_diff = abs((q_utc - m_utc).total_seconds()) / 86400
                 if days_diff <= tolerance_days:
                     return True
 
         return False
 
     def recall_for_question(
-        self, question: str, sample_id: str, session_context: str = None, evidence_count: int = 1
+        self,
+        question: str,
+        sample_id: str,
+        session_context: str = None,
+        evidence_count: int = 1,
     ) -> List[Dict[str, Any]]:
         """
         Query AutoMem to recall memories relevant to a question.
@@ -623,7 +766,11 @@ class LoCoMoEvaluator:
         return evidence_memories
 
     def multi_hop_recall_with_graph(
-        self, question: str, sample_id: str, initial_limit: int = 20, max_connected: int = 50
+        self,
+        question: str,
+        sample_id: str,
+        initial_limit: int = 20,
+        max_connected: int = 50,
     ) -> List[Dict[str, Any]]:
         """
         Quick Win #2: Use graph traversal to find connected memories for multi-hop questions.
@@ -677,8 +824,7 @@ class LoCoMoEvaluator:
                         connected_memories.extend(related)
 
                 except Exception as e:
-                    # Silently continue if endpoint doesn't exist yet
-                    pass
+                    print(f"WARNING: Graph traversal failed for {mem_id}: {e}")
 
             # Step 4: Combine and deduplicate
             all_memories = initial_memories + connected_memories
@@ -882,7 +1028,11 @@ Respond in JSON format:
                     if self.is_temporal_question(question) and self.match_dates_fuzzy(
                         question, joined_text
                     ):
-                        return True, 0.95, "Multi-hop: date match across joined evidence"
+                        return (
+                            True,
+                            0.95,
+                            "Multi-hop: date match across joined evidence",
+                        )
 
                     expected_str = str(expected_answer).lower()
                     expected_norm = self.normalize_answer(expected_str)
@@ -936,7 +1086,11 @@ Respond in JSON format:
 
                         # Quick Win #1: Fuzzy date matching for temporal questions
                         if self.match_dates_fuzzy(question, content + " " + session_datetime):
-                            return True, 0.95, f"Date match in evidence dialog {dialog_id}"
+                            return (
+                                True,
+                                0.95,
+                                f"Date match in evidence dialog {dialog_id}",
+                            )
                     else:
                         searchable_text = content_normalized
 
@@ -973,7 +1127,11 @@ Respond in JSON format:
             if expected_normalized in content_normalized:
                 confidence = 1.0
                 found_in_memory = memory.get("id")
-                return True, confidence, f"Exact match in memory (confidence: {confidence:.2f})"
+                return (
+                    True,
+                    confidence,
+                    f"Exact match in memory (confidence: {confidence:.2f})",
+                )
 
             # Fuzzy word overlap
             expected_words = set(expected_normalized.split())
@@ -991,7 +1149,11 @@ Respond in JSON format:
 
         # If word overlap is sufficient, skip expensive embedding computation
         if max_confidence >= 0.5:
-            return True, max_confidence, f"Found answer (confidence: {max_confidence:.2f})"
+            return (
+                True,
+                max_confidence,
+                f"Found answer (confidence: {max_confidence:.2f})",
+            )
 
         # For multi-hop with insufficient word overlap, try embedding similarity
         if is_multi_hop and self.use_embedding_similarity and max_confidence < 0.5:
@@ -1031,6 +1193,72 @@ Respond in JSON format:
             explanation = f"No good match (max: {max_confidence:.2f})"
 
         return is_correct, max_confidence, explanation
+
+    def _evaluate_only(self, conversation: Dict[str, Any], sample_id: str) -> Dict[str, Any]:
+        """Evaluate a conversation without ingesting data (assumes already loaded)."""
+        print(f"\n{'='*60}")
+        print(f"Evaluating Conversation (eval-only): {sample_id}")
+        print(f"{'='*60}")
+
+        # Skip straight to evaluation — same logic as evaluate_conversation but no load step
+        qa_results = []
+        questions = conversation.get("qa", [])
+        print(f"\nEvaluating {len(questions)} questions...")
+
+        for i, qa in enumerate(questions):
+            question = qa.get("question", "")
+            answer = qa.get("answer", "")
+            category = qa.get("category", 0)
+            evidence = qa.get("evidence", [])
+
+            if evidence and len(evidence) > 1:
+                recalled_memories = self.multi_hop_recall_with_graph(
+                    question,
+                    sample_id,
+                    initial_limit=20,
+                    max_connected=60,
+                )
+            else:
+                recalled_memories = self.recall_for_question(
+                    question,
+                    sample_id,
+                    evidence_count=len(evidence),
+                )
+
+            is_correct, confidence, explanation = self.check_answer_in_memories(
+                question, answer, recalled_memories, evidence, sample_id
+            )
+
+            qa_results.append(
+                {
+                    "question": question,
+                    "expected_answer": answer,
+                    "category": category,
+                    "is_correct": is_correct,
+                    "confidence": confidence,
+                    "recalled_count": len(recalled_memories),
+                    "explanation": explanation,
+                }
+            )
+            self.results[category].append(is_correct)
+
+            if (i + 1) % 10 == 0:
+                print(f"  Processed {i+1}/{len(questions)} questions...")
+
+        correct_count = sum(1 for r in qa_results if r["is_correct"])
+        total_count = len(qa_results)
+        accuracy = correct_count / total_count if total_count > 0 else 0.0
+
+        print(f"\nConversation Results: {accuracy:.2%} ({correct_count}/{total_count})")
+
+        return {
+            "sample_id": sample_id,
+            "total_questions": total_count,
+            "correct": correct_count,
+            "accuracy": accuracy,
+            "qa_results": qa_results,
+            "memory_count": 0,  # Not tracked in eval-only mode
+        }
 
     def evaluate_conversation(self, conversation: Dict[str, Any], sample_id: str) -> Dict[str, Any]:
         """
@@ -1123,31 +1351,88 @@ Respond in JSON format:
             "memory_count": len(memory_map),
         }
 
-    def run_benchmark(self, cleanup_after: bool = True) -> Dict[str, Any]:
+    def run_benchmark(
+        self,
+        cleanup_after: bool = True,
+        conversation_indices: Optional[str] = None,
+        ingest_only: bool = False,
+        eval_only: bool = False,
+    ) -> Dict[str, Any]:
         """
         Run the complete LoCoMo benchmark evaluation.
+
+        Args:
+            cleanup_after: Remove test data after evaluation
+            conversation_indices: Comma-separated indices to run (e.g. "0,1")
+            ingest_only: Only ingest data, skip evaluation
+            eval_only: Only evaluate, skip ingestion (data must already be loaded)
 
         Returns comprehensive results including per-category accuracy.
         """
         print("\n" + "=" * 60)
-        print("🧠 AutoMem LoCoMo Benchmark Evaluation")
+        print("AutoMem LoCoMo Benchmark Evaluation")
         print("=" * 60)
 
         # Health check
-        print("\n🏥 Checking AutoMem health...")
+        print("\nChecking AutoMem health...")
         if not self.health_check():
             raise ConnectionError("AutoMem API is not accessible")
-        print("✅ AutoMem is healthy")
+        print("AutoMem is healthy")
 
-        # Cleanup existing test data
-        self.cleanup_test_data()
+        if ingest_only and eval_only:
+            raise ValueError("ingest_only and eval_only are mutually exclusive")
+
+        # Cleanup existing test data (skip if eval-only)
+        if not eval_only:
+            if not self.cleanup_test_data():
+                print("WARNING: Cleanup was incomplete; results may include stale data")
 
         # Load dataset
-        print(f"\n📂 Loading LoCoMo dataset from: {self.config.data_file}")
+        print(f"\nLoading LoCoMo dataset from: {self.config.data_file}")
         with open(self.config.data_file, "r") as f:
             conversations = json.load(f)
 
-        print(f"✅ Loaded {len(conversations)} conversations")
+        # Filter to specific conversations if requested
+        if conversation_indices:
+            tokens = [t.strip() for t in conversation_indices.split(",") if t.strip()]
+            indices = []
+            for token in tokens:
+                try:
+                    idx = int(token)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid conversation index '{token}' in '{conversation_indices}'"
+                    )
+                if idx < 0 or idx >= len(conversations):
+                    raise ValueError(
+                        f"Conversation index {idx} out of range "
+                        f"(0-{len(conversations) - 1}) in '{conversation_indices}'"
+                    )
+                indices.append(idx)
+            conversations = [conversations[i] for i in indices]
+            print(f"Running {len(conversations)} conversations (indices: {conversation_indices})")
+        else:
+            print(f"Loaded {len(conversations)} conversations")
+
+        # Ingest-only mode: load data and exit
+        if ingest_only:
+            print("\nINGEST-ONLY MODE: Loading data without evaluation")
+            manifest = {}
+            for i, conversation in enumerate(conversations):
+                sample_id = conversation.get("sample_id", f"sample_{i}")
+                memory_map = self.load_conversation_into_automem(conversation, sample_id)
+                manifest[sample_id] = memory_map
+            # Save manifest for eval-only mode
+            manifest_path = Path(self.config.data_file).parent / "manifest.json"
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f, indent=2)
+            print(f"\nManifest saved to: {manifest_path}")
+            print(f"Total memories ingested: {sum(len(m) for m in manifest.values())}")
+            return {
+                "mode": "ingest-only",
+                "manifest": str(manifest_path),
+                "conversations": len(manifest),
+            }
 
         # Evaluate each conversation
         conversation_results = []
@@ -1157,10 +1442,17 @@ Respond in JSON format:
             sample_id = conversation.get("sample_id", f"sample_{i}")
 
             try:
-                result = self.evaluate_conversation(conversation, sample_id)
+                if eval_only:
+                    # Skip ingestion, go straight to evaluation
+                    result = self._evaluate_only(conversation, sample_id)
+                else:
+                    result = self.evaluate_conversation(conversation, sample_id)
                 conversation_results.append(result)
             except Exception as e:
-                print(f"❌ Error evaluating conversation {sample_id}: {e}")
+                print(f"ERROR: evaluating conversation {sample_id}: {e}")
+                import traceback
+
+                traceback.print_exc()
                 continue
 
         elapsed_time = time.time() - start_time
@@ -1219,7 +1511,8 @@ Respond in JSON format:
 
         # Cleanup
         if cleanup_after:
-            self.cleanup_test_data()
+            if not self.cleanup_test_data():
+                print("WARNING: Post-evaluation cleanup was incomplete")
 
         # Return comprehensive results
         return {
@@ -1256,14 +1549,36 @@ def main():
     )
     parser.add_argument("--data-file", default=None, help="Path to locomo10.json")
     parser.add_argument(
-        "--recall-limit", type=int, default=10, help="Number of memories to recall per question"
+        "--recall-limit",
+        type=int,
+        default=10,
+        help="Number of memories to recall per question",
     )
     parser.add_argument(
-        "--no-cleanup", action="store_true", help="Don't cleanup test data after evaluation"
+        "--no-cleanup",
+        action="store_true",
+        help="Don't cleanup test data after evaluation",
     )
     parser.add_argument("--output", default=None, help="Save results to JSON file")
     parser.add_argument(
-        "--test-one", action="store_true", help="Test with just one conversation for debugging"
+        "--test-one",
+        action="store_true",
+        help="Test with just one conversation for debugging",
+    )
+    parser.add_argument(
+        "--conversations",
+        default=None,
+        help="Comma-separated conversation indices to run (e.g. '0,1' for first two)",
+    )
+    parser.add_argument(
+        "--ingest-only",
+        action="store_true",
+        help="Only ingest data (no evaluation), then exit. Use with snapshots.",
+    )
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Only evaluate (skip ingestion). Assumes data already loaded.",
     )
 
     args = parser.parse_args()
@@ -1278,7 +1593,12 @@ def main():
 
     # Run evaluation
     evaluator = LoCoMoEvaluator(config)
-    results = evaluator.run_benchmark(cleanup_after=not args.no_cleanup)
+    results = evaluator.run_benchmark(
+        cleanup_after=not args.no_cleanup,
+        conversation_indices=args.conversations,
+        ingest_only=args.ingest_only,
+        eval_only=args.eval_only,
+    )
 
     # Save results
     if args.output:
@@ -1287,7 +1607,9 @@ def main():
         print(f"\n💾 Results saved to: {args.output}")
 
     # Return exit code based on success
-    return 0 if results["overall"]["accuracy"] > 0 else 1
+    if results.get("mode") == "ingest-only":
+        return 0
+    return 0 if results.get("overall", {}).get("accuracy", 0) > 0 else 1
 
 
 if __name__ == "__main__":

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Ingest benchmark dataset into AutoMem and snapshot the Docker volumes.
+# Usage: ./scripts/bench/ingest_and_snapshot.sh [locomo|locomo-mini|longmemeval-mini]
+set -euo pipefail
+
+BENCH_NAME="${1:-locomo}"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# Shared utilities (colors + wait_for_api)
+source "$(dirname "$0")/../lib/common.sh"
+
+if [[ ! "$BENCH_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo -e "${RED}Invalid benchmark name: ${BENCH_NAME}${NC}"
+    exit 1
+fi
+
+SNAPSHOT_DIR="${REPO_ROOT}/benchmarks/snapshots/${BENCH_NAME}"
+COMPOSE_PROJECT="automem"
+
+echo -e "${BLUE}=== Ingest & Snapshot: ${BENCH_NAME} ===${NC}"
+
+# 1. Start services with benchmark-friendly env
+echo -e "${BLUE}Starting services...${NC}"
+cd "$REPO_ROOT" || { echo -e "${RED}Failed to cd to ${REPO_ROOT}${NC}"; exit 1; }
+MEMORY_CONTENT_HARD_LIMIT=50000 MEMORY_AUTO_SUMMARIZE=false docker compose up -d
+wait_for_api "http://localhost:8001" 60 || exit 1
+
+# 2. Run ingestion only
+echo -e "${BLUE}Ingesting ${BENCH_NAME} data...${NC}"
+export AUTOMEM_TEST_BASE_URL="http://localhost:8001"
+export AUTOMEM_TEST_API_TOKEN="test-token"
+
+if [[ "$BENCH_NAME" == "locomo" ]]; then
+    python3 tests/benchmarks/test_locomo.py \
+        --base-url "$AUTOMEM_TEST_BASE_URL" \
+        --api-token "$AUTOMEM_TEST_API_TOKEN" \
+        --ingest-only --no-cleanup
+elif [[ "$BENCH_NAME" == "locomo-mini" ]]; then
+    python3 tests/benchmarks/test_locomo.py \
+        --base-url "$AUTOMEM_TEST_BASE_URL" \
+        --api-token "$AUTOMEM_TEST_API_TOKEN" \
+        --conversations 0,1 --ingest-only --no-cleanup
+elif [[ "$BENCH_NAME" == "longmemeval-mini" ]]; then
+    python3 tests/benchmarks/longmemeval/test_longmemeval.py \
+        --base-url "$AUTOMEM_TEST_BASE_URL" \
+        --api-token "$AUTOMEM_TEST_API_TOKEN" \
+        --max-questions 20 --no-cleanup
+else
+    echo -e "${RED}Unknown benchmark: ${BENCH_NAME}${NC}"
+    echo "Supported: locomo, locomo-mini, longmemeval-mini"
+    exit 1
+fi
+
+# 3. Stop containers to flush all data to volumes
+echo -e "${BLUE}Stopping containers to flush data...${NC}"
+docker compose stop flask-api
+sleep 2
+docker compose stop falkordb qdrant
+sleep 1
+
+# 4. Snapshot the volumes
+echo -e "${BLUE}Creating snapshot...${NC}"
+mkdir -p "${SNAPSHOT_DIR}"
+
+docker run --rm \
+    -v "${COMPOSE_PROJECT}_falkordb_data:/data:ro" \
+    -v "${SNAPSHOT_DIR}:/backup" \
+    alpine tar czf /backup/falkordb.tar.gz -C /data .
+
+docker run --rm \
+    -v "${COMPOSE_PROJECT}_qdrant_data:/qdrant_storage:ro" \
+    -v "${SNAPSHOT_DIR}:/backup" \
+    alpine tar czf /backup/qdrant.tar.gz -C /qdrant_storage .
+
+# 5. Restart services
+echo -e "${BLUE}Restarting services...${NC}"
+docker compose up -d
+
+echo ""
+echo -e "${GREEN}=== Snapshot complete ===${NC}"
+echo -e "${GREEN}  Location: ${SNAPSHOT_DIR}${NC}"
+ls -lh "${SNAPSHOT_DIR}"/*.tar.gz
+echo ""
+echo -e "${BLUE}To evaluate against this snapshot:${NC}"
+echo "  make bench-eval BENCH=${BENCH_NAME} CONFIG=baseline"
