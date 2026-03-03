@@ -238,6 +238,8 @@ OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs (optio
 # Consolidation intervals (seconds)
 CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD=0.3  # Only skip truly low-importance items
+CONSOLIDATION_BASE_DECAY_RATE=0.01            # Daily decay rate (0.01 ≈ 69-day half-life)
+CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR=0.3     # Min relevance = importance * this (floor)
 CONSOLIDATION_CREATIVE_INTERVAL_SECONDS=604800  # 1 week (default)
 CONSOLIDATION_CLUSTER_INTERVAL_SECONDS=2592000  # 1 month (default)
 CONSOLIDATION_FORGET_INTERVAL_SECONDS=0       # Disabled by default (set to enable)

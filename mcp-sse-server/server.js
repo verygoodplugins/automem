@@ -228,26 +228,37 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
 export function buildMcpServer(client) {
   const server = new Server({ name: 'automem-mcp-sse', version: '0.1.0' }, { capabilities: { tools: {} } });
 
+  // Relationship types must stay in sync with automem/config.py RELATIONSHIP_TYPES
+  const RELATION_TYPES = [
+    'RELATES_TO', 'LEADS_TO', 'OCCURRED_BEFORE', 'SIMILAR_TO', 'PRECEDED_BY',
+    'PREFERS_OVER', 'EXEMPLIFIES', 'CONTRADICTS', 'REINFORCES', 'INVALIDATED_BY',
+    'EVOLVED_INTO', 'DERIVED_FROM', 'PART_OF', 'EXPLAINS', 'SHARES_THEME',
+    'PARALLEL_CONTEXT',
+  ];
+
+  const MEMORY_TYPES = ['Decision', 'Pattern', 'Preference', 'Style', 'Habit', 'Insight', 'Context'];
+
   const tools = [
     {
       name: 'store_memory',
       description: 'Store a memory with optional tags, importance, metadata, timestamps, and embedding',
+      annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         type: 'object',
         properties: {
-          content: { type: 'string' },
-          tags: { type: 'array', items: { type: 'string' } },
-          importance: { type: 'number', minimum: 0, maximum: 1 },
-          embedding: { type: 'array', items: { type: 'number' } },
-          metadata: { type: 'object' },
-          timestamp: { type: 'string' },
-          type: { type: 'string' },
-          confidence: { type: 'number', minimum: 0, maximum: 1 },
-          id: { type: 'string' },
-          t_valid: { type: 'string' },
-          t_invalid: { type: 'string' },
-          updated_at: { type: 'string' },
-          last_accessed: { type: 'string' }
+          content: { type: 'string', description: 'Memory content text' },
+          type: { type: 'string', enum: MEMORY_TYPES, description: 'Memory type for classification' },
+          confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Classification confidence (0-1, default 0.9 when type provided)' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Tags for categorization and filtering' },
+          importance: { type: 'number', minimum: 0, maximum: 1, description: 'Importance score (0-1, default 0.5)' },
+          metadata: { type: 'object', description: 'Arbitrary key-value metadata' },
+          timestamp: { type: 'string', description: 'ISO 8601 creation timestamp (defaults to now)' },
+          id: { type: 'string', description: 'Custom memory ID (auto-generated if omitted)' },
+          t_valid: { type: 'string', description: 'ISO 8601 timestamp when the memory becomes valid' },
+          t_invalid: { type: 'string', description: 'ISO 8601 timestamp when the memory expires' },
+          embedding: { type: 'array', items: { type: 'number' }, description: 'Pre-computed embedding vector (auto-generated if omitted)' },
+          updated_at: { type: 'string', description: 'ISO 8601 last-updated timestamp' },
+          last_accessed: { type: 'string', description: 'ISO 8601 last-accessed timestamp' },
         },
         required: ['content']
       }
@@ -255,6 +266,7 @@ export function buildMcpServer(client) {
     {
       name: 'recall_memory',
       description: 'Recall memories with hybrid semantic/keyword search and optional time/tag filters',
+      annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: {
         type: 'object',
         properties: {
@@ -269,13 +281,12 @@ export function buildMcpServer(client) {
           sort: {
             type: 'string',
             enum: ['score', 'time_desc', 'time_asc', 'updated_desc', 'updated_asc'],
-            description: 'Result ordering (use time_* for chronological recaps).',
+            description: 'Result ordering (use time_* for chronological recaps)',
           },
           tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
-          tag_mode: { type: 'string', enum: ['any', 'all'], description: 'How to combine multiple tags' },
-          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags' },
+          tag_mode: { type: 'string', enum: ['any', 'all'], description: 'How to combine multiple tags (default: any)' },
+          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags (default: exact)' },
 
-          // Advanced AutoMem /recall options
           expand_relations: { type: 'boolean', description: 'Enable graph relation expansion' },
           expand_entities: { type: 'boolean', description: 'Enable entity-based multi-hop expansion' },
           auto_decompose: { type: 'boolean', description: 'Auto-generate supplementary queries from query text' },
@@ -302,32 +313,40 @@ export function buildMcpServer(client) {
     {
       name: 'associate_memories',
       description: 'Create an association between two memories with a relationship type and strength',
+      annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         type: 'object',
         properties: {
-          memory1_id: { type: 'string' },
-          memory2_id: { type: 'string' },
-          type: { type: 'string' },
-          strength: { type: 'number', minimum: 0, maximum: 1 }
+          memory1_id: { type: 'string', description: 'ID of the first memory (source)' },
+          memory2_id: { type: 'string', description: 'ID of the second memory (target)' },
+          type: {
+            type: 'string',
+            enum: RELATION_TYPES,
+            description: 'Relationship type between the two memories',
+          },
+          strength: { type: 'number', minimum: 0, maximum: 1, description: 'Relationship strength (0-1)' },
         },
         required: ['memory1_id', 'memory2_id', 'type', 'strength']
       }
     },
     {
       name: 'update_memory',
-      description: 'Update an existing memory (content, tags, metadata, timestamps, importance)',
+      description: 'Update an existing memory (content, tags, metadata, timestamps, importance, type, confidence)',
+      annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         type: 'object',
         properties: {
-          memory_id: { type: 'string' },
-          content: { type: 'string' },
-          tags: { type: 'array', items: { type: 'string' } },
-          importance: { type: 'number', minimum: 0, maximum: 1 },
-          embedding: { type: 'array', items: { type: 'number' } },
-          metadata: { type: 'object' },
-          timestamp: { type: 'string' },
-          updated_at: { type: 'string' },
-          last_accessed: { type: 'string' }
+          memory_id: { type: 'string', description: 'ID of the memory to update' },
+          content: { type: 'string', description: 'Updated memory content' },
+          type: { type: 'string', enum: MEMORY_TYPES, description: 'Updated memory type' },
+          confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Updated classification confidence (0-1)' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Updated tags (replaces existing)' },
+          importance: { type: 'number', minimum: 0, maximum: 1, description: 'Updated importance score (0-1)' },
+          metadata: { type: 'object', description: 'Updated metadata (merged with existing)' },
+          timestamp: { type: 'string', description: 'Updated ISO 8601 creation timestamp' },
+          embedding: { type: 'array', items: { type: 'number' }, description: 'Updated embedding vector' },
+          updated_at: { type: 'string', description: 'ISO 8601 last-updated timestamp' },
+          last_accessed: { type: 'string', description: 'ISO 8601 last-accessed timestamp' },
         },
         required: ['memory_id']
       }
@@ -335,15 +354,19 @@ export function buildMcpServer(client) {
     {
       name: 'delete_memory',
       description: 'Delete a memory by ID',
+      annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: {
         type: 'object',
-        properties: { memory_id: { type: 'string' } },
+        properties: {
+          memory_id: { type: 'string', description: 'ID of the memory to delete' },
+        },
         required: ['memory_id']
       }
     },
     {
       name: 'check_database_health',
-      description: 'Check AutoMem service health',
+      description: 'Check AutoMem service health (FalkorDB, Qdrant, embedding provider)',
+      annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: { type: 'object', properties: {} }
     }
   ];

@@ -300,7 +300,7 @@ def _graph_keyword_search(
     phrase = normalized if len(normalized) >= 3 else ""
 
     try:
-        base_where = ["m.content IS NOT NULL"]
+        base_where = ["m.content IS NOT NULL", "coalesce(m.archived, false) = false"]
         params: Dict[str, Any] = {"limit": limit}
         if start_time:
             base_where.append("m.timestamp >= $start_time")
@@ -419,9 +419,12 @@ def _vector_filter_only_tag_search(
         memory_id = str(point.id)
         if memory_id in seen_ids:
             continue
-        seen_ids.add(memory_id)
 
         payload = point.payload or {}
+        if payload.get("archived"):
+            continue
+
+        seen_ids.add(memory_id)
         importance = payload.get("importance")
         try:
             score = float(importance)
@@ -511,8 +514,11 @@ def _vector_search(
         if memory_id in seen_ids:
             continue
 
-        seen_ids.add(memory_id)
         payload = hit.payload or {}
+        if payload.get("archived"):
+            continue
+
+        seen_ids.add(memory_id)
         relations = fetch_relations(graph, memory_id) if graph is not None else []
         score = float(hit.score) if hit.score is not None else 0.0
 

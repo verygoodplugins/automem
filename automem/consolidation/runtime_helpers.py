@@ -194,6 +194,8 @@ def build_consolidator_from_config(
     grace_period_days: int,
     importance_protection_threshold: float,
     protected_types: Set[str],
+    base_decay_rate: float = 0.01,
+    importance_floor_factor: float = 0.3,
 ) -> Any:
     return memory_consolidator_cls(
         graph,
@@ -203,4 +205,6 @@ def build_consolidator_from_config(
         grace_period_days=grace_period_days,
         importance_protection_threshold=importance_protection_threshold,
         protected_types=protected_types,
+        base_decay_rate=base_decay_rate,
+        importance_floor_factor=importance_floor_factor,
     )
