@@ -50,14 +50,14 @@ AutoMem searches across all memories with optional tag filters. It's not multi-t
 #### Search Configuration
 Select: **Simple Single embedding**
 
-AutoMem uses dense vectors (OpenAI embeddings) for semantic search. Keyword matching is handled separately by FalkorDB, so sparse vectors are not needed.
+AutoMem uses dense text embeddings (Voyage/OpenAI/etc.) for semantic search. Keyword matching is handled separately by FalkorDB, so sparse vectors are not needed.
 
 #### Vector Configuration
 
 | Setting | Value | Notes |
 |---------|-------|-------|
 | **Dense vector name** | Leave as default or use `memories` | Field name for embeddings |
-| **Dimensions** | `3072` | For `text-embedding-3-large` (default) |
+| **Dimensions** | `1024` | For `voyage-4` (default) |
 | **Metric** | `Cosine` | Best for text embeddings |
 
 <a href="img/qdrant-configuration.jpg" target="_blank"><img src="img/qdrant-configuration.jpg" alt="Qdrant collection configuration" width="400"></a>
@@ -137,15 +137,16 @@ If `qdrant` shows `"disconnected"` or `"not configured"`:
 
 ### Embedding Models & Dimensions
 
-| Model | Dimensions | Cost | Quality |
-|-------|------------|------|---------|
-| `text-embedding-3-large` | 3072 | Higher | Best semantic precision |
-| `text-embedding-3-small` | 768 | Lower | Good for most use cases |
+| Provider / Model | Dimensions | Cost | Quality |
+|------------------|------------|------|---------|
+| `voyage-4` (recommended) | 1024 | ~$0.05/1M tokens | Excellent for short text |
+| `text-embedding-3-small` | 1536 native (truncatable) | $0.02/1M tokens | Good OpenAI fallback |
+| `text-embedding-3-large` | 3072 native (truncatable) | $0.13/1M tokens | Maximum precision |
 
-**To switch models**:
-1. Set `EMBEDDING_MODEL` to your choice
-2. Set `VECTOR_SIZE` to match (3072 or 768)
-3. Create a new Qdrant collection with matching dimensions
+**To switch providers**:
+1. Set `EMBEDDING_PROVIDER` and any required API key
+2. Set `VECTOR_SIZE` to match the provider's output dimension
+3. Create a new Qdrant collection with matching dimensions (or use `VECTOR_SIZE_AUTODETECT=true`)
 4. Redeploy AutoMem
 
 > ⚠️ **Warning**: Changing embedding models requires re-embedding all existing memories. See [MIGRATIONS.md](MIGRATIONS.md) for the reembed script.
@@ -202,8 +203,9 @@ If you exceed 1GB:
 ### "Vector dimension mismatch"
 
 AutoMem expects dimensions to match `VECTOR_SIZE`:
-- `text-embedding-3-large` → `VECTOR_SIZE=3072`
-- `text-embedding-3-small` → `VECTOR_SIZE=768`
+- `voyage-4` → `VECTOR_SIZE=1024` (default)
+- `text-embedding-3-small` → `VECTOR_SIZE` ≤ 1536 (default: 768; auto-upgrades to `text-embedding-3-large` if exceeded)
+- `text-embedding-3-large` → `VECTOR_SIZE` ≤ 3072 (truncatable via Matryoshka)
 
 If you created the collection with wrong dimensions:
 1. Delete the collection in Qdrant dashboard
