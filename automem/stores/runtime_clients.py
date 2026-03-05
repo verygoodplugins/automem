@@ -64,8 +64,10 @@ def init_qdrant(
     if state.qdrant is not None:
         return
 
-    url = os.getenv("QDRANT_URL")
-    api_key = os.getenv("QDRANT_API_KEY")
+    from automem.config import QDRANT_API_KEY, QDRANT_URL
+
+    url = QDRANT_URL
+    api_key = QDRANT_API_KEY
 
     if not url:
         logger.info("Qdrant URL not provided; skipping client initialization")

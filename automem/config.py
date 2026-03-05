@@ -12,6 +12,16 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 # Qdrant / FalkorDB configuration
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "memories")
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "1024"))
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+
+# QDRANT_URL takes precedence; otherwise construct from QDRANT_HOST + QDRANT_PORT.
+# This keeps Railway templates simple (just set QDRANT_HOST=qdrant.railway.internal).
+_qdrant_host = os.getenv("QDRANT_HOST")
+QDRANT_URL: str | None = os.getenv("QDRANT_URL") or (
+    f"http://{_qdrant_host}:{QDRANT_PORT}" if _qdrant_host else None
+)
+
 GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "memories")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 
