@@ -45,7 +45,7 @@ def load_environment() -> None:
     load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 
-def _init_provider():
+def _init_provider() -> Any:
     """Initialize an embedding provider using the same abstraction as the server."""
     from types import SimpleNamespace
 
@@ -197,7 +197,7 @@ def reembed_memories(memories: List[Dict[str, Any]], batch_size: int, provider: 
             vectors = [provider.generate_embedding(t) for t in texts]
 
         points: List[PointStruct] = []
-        for mem, vector in zip(batch, vectors):
+        for mem, vector in zip(batch, vectors, strict=True):
             payload = {
                 "content": mem["content"],
                 "tags": mem["tags"],
