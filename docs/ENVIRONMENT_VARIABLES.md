@@ -232,10 +232,11 @@ Controls embedding provider and classification model settings.
 | `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
 
 **Embedding Provider Comparison:**
+
 | Provider / Model | Dimensions | Cost/1M tokens | Quality | Use Case |
 |------------------|-----------|----------------|---------|----------|
 | `voyage-4` | 1024 | ~$0.05 | Excellent | **Recommended default** |
-| `text-embedding-3-small` | 768 native | $0.02 | Good | OpenAI fallback (truncated to `VECTOR_SIZE` via Matryoshka) |
+| `text-embedding-3-small` | 1536 native (truncatable) | $0.02 | Good | OpenAI fallback (truncated to `VECTOR_SIZE` via Matryoshka) |
 | `text-embedding-3-large` | 3072 native | $0.13 | Excellent | Maximum precision (legacy default) |
 
 Recommended setup (Voyage):

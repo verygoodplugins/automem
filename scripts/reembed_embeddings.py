@@ -5,8 +5,15 @@ Usage:
     python scripts/reembed_embeddings.py [--batch-size 32] [--limit 0]
 
 Environment:
+    OPENAI_API_KEY: Required. OpenAI API key for generating embeddings.
     EMBEDDING_MODEL: OpenAI embedding model (default: text-embedding-3-small)
     VECTOR_SIZE: Embedding dimension (default: 1024; set to your current collection size before migrating)
+
+Note:
+    This script sends the ``dimensions`` parameter to the OpenAI embeddings API,
+    which may not be supported by all OpenAI-compatible endpoints (e.g. local
+    inference servers).  Ensure your endpoint supports the ``dimensions`` parameter
+    or set EMBEDDING_MODEL and VECTOR_SIZE to match the model's native output.
 """
 from __future__ import annotations
 
@@ -183,6 +190,14 @@ def main() -> None:
     args = parser.parse_args()
 
     load_environment()
+
+    if not os.environ.get("OPENAI_API_KEY"):
+        logger.error(
+            "OPENAI_API_KEY is not set. This script requires an OpenAI API key "
+            "to generate embeddings. Set it in your .env or environment."
+        )
+        sys.exit(1)
+
     graph = get_graph()
     limit = args.limit if args.limit > 0 else None
     memories = fetch_memories(graph, limit=limit)

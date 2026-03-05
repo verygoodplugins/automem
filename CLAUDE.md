@@ -79,7 +79,7 @@ The `automem/api` module provides **28 endpoints** (admin: 2, memory: 10, recall
 ### Data Flow
 1. **Flask API** (port 8001) - Request validation, orchestration, authentication
 2. **FalkorDB** (port 6379) - Graph storage for Memory nodes and relationship edges
-3. **Qdrant** (optional, port 6333) - 768-dimensional vector search for semantic similarity
+3. **Qdrant** (optional, port 6333) - Vector search for semantic similarity (dimension depends on embedding provider; see `VECTOR_SIZE`)
 4. **Consolidation Engine** - Background processing for memory maintenance
 5. **FalkorDB Browser** (optional, port 3001) - Web UI for graph visualization (start with `docker compose --profile browser up`)
 
@@ -146,7 +146,8 @@ AutoMem uses a provider pattern with multiple embedding backends:
    - Requires network and API key
 
 2. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-small`) - If `OPENAI_API_KEY` is set
-   - Semantic embeddings via API, truncated to `VECTOR_SIZE` via Matryoshka
+   - Semantic embeddings via API, truncated to `VECTOR_SIZE` via Matryoshka (OpenAI native only)
+   - If `VECTOR_SIZE` > 1536, auto-upgrades to `text-embedding-3-large` (set `EMBEDDING_MODEL=text-embedding-3-large` to silence)
    - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.)
    - The `dimensions` parameter is only sent to OpenAI's own API; omitted for third-party providers
 
@@ -223,6 +224,7 @@ QDRANT_URL=                  # Vector database URL (optional)
 QDRANT_API_KEY=              # Qdrant cloud API key (optional)
 QDRANT_COLLECTION=memories   # Collection name
 VECTOR_SIZE=1024             # Embedding dimensions (1024 for voyage-4, 768 for small, 3072 for large)
+VECTOR_SIZE_AUTODETECT=true  # Adopt existing collection dim on startup (false = fail on mismatch)
 
 # API configuration
 PORT=8001                    # API port

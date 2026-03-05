@@ -11,7 +11,9 @@ _SMALL_MODEL_MAX_DIM = 1536
 
 def _resolve_openai_model(embedding_model: str, vector_size: int, logger: Any) -> str:
     """Auto-upgrade to text-embedding-3-large when the dimension exceeds small model capacity."""
-    if vector_size > _SMALL_MODEL_MAX_DIM and "small" in embedding_model:
+    small_name = "text-embedding-3-small"
+    large_name = "text-embedding-3-large"
+    if vector_size > _SMALL_MODEL_MAX_DIM and embedding_model.endswith(small_name):
         logger.warning(
             "VECTOR_SIZE=%d exceeds text-embedding-3-small capacity (%dd). "
             "Auto-upgrading to text-embedding-3-large. "
@@ -19,7 +21,7 @@ def _resolve_openai_model(embedding_model: str, vector_size: int, logger: Any) -
             vector_size,
             _SMALL_MODEL_MAX_DIM,
         )
-        return embedding_model.replace("small", "large")
+        return embedding_model[: -len(small_name)] + large_name
     return embedding_model
 
 

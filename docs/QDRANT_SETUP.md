@@ -50,7 +50,7 @@ AutoMem searches across all memories with optional tag filters. It's not multi-t
 #### Search Configuration
 Select: **Simple Single embedding**
 
-AutoMem uses dense vectors (OpenAI embeddings) for semantic search. Keyword matching is handled separately by FalkorDB, so sparse vectors are not needed.
+AutoMem uses dense text embeddings (Voyage/OpenAI/etc.) for semantic search. Keyword matching is handled separately by FalkorDB, so sparse vectors are not needed.
 
 #### Vector Configuration
 
@@ -140,7 +140,7 @@ If `qdrant` shows `"disconnected"` or `"not configured"`:
 | Provider / Model | Dimensions | Cost | Quality |
 |------------------|------------|------|---------|
 | `voyage-4` (recommended) | 1024 | ~$0.05/1M tokens | Excellent for short text |
-| `text-embedding-3-small` | 768 native (truncatable) | $0.02/1M tokens | Good OpenAI fallback |
+| `text-embedding-3-small` | 1536 native (truncatable) | $0.02/1M tokens | Good OpenAI fallback |
 | `text-embedding-3-large` | 3072 native (truncatable) | $0.13/1M tokens | Maximum precision |
 
 **To switch providers**:
@@ -204,8 +204,8 @@ If you exceed 1GB:
 
 AutoMem expects dimensions to match `VECTOR_SIZE`:
 - `voyage-4` → `VECTOR_SIZE=1024` (default)
-- `text-embedding-3-small` → `VECTOR_SIZE=768` (or truncated to any smaller dim)
-- `text-embedding-3-large` → `VECTOR_SIZE=3072` (or truncated to any smaller dim)
+- `text-embedding-3-small` → `VECTOR_SIZE` ≤ 1536 (default: 768; auto-upgrades to `text-embedding-3-large` if exceeded)
+- `text-embedding-3-large` → `VECTOR_SIZE` ≤ 3072 (truncatable via Matryoshka)
 
 If you created the collection with wrong dimensions:
 1. Delete the collection in Qdrant dashboard

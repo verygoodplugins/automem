@@ -550,23 +550,23 @@ Retrieve memories using hybrid search.
 
 **Query Parameters:**
 
-| Parameter      | Description                                       | Example                             |
-| -------------- | ------------------------------------------------- | ----------------------------------- |
-| `query`        | Full-text search string                           | `database migration`                |
-| `embedding`    | 768-d vector (comma-separated)                    | `0.12,0.56,...`                     |
-| `limit`        | Max results (1-50)                                | `10`                                |
-| `time_query`   | Natural time phrases                              | `today`, `last week`, `last 7 days` |
-| `start`        | ISO timestamp (lower bound)                       | `2025-09-01T00:00:00Z`              |
-| `end`          | ISO timestamp (upper bound)                       | `2025-09-30T23:59:59Z`              |
-| `tags`         | Tag filters (multiple allowed)                    | `slack`, `decision`                 |
-| `tag_mode`     | `any` or `all`                                    | `any` (default)                     |
-| `tag_match`    | `prefix` or `exact`                               | `prefix` (default)                  |
-| `context`      | High-level context label                          | `coding-style`, `preference`        |
-| `language`     | Explicit language hint                            | `python`, `typescript`              |
-| `active_path`  | Active file path (used to infer language/context) | `/Users/jack/project/app.py`        |
-| `context_tags` | Comma or list of tags to prioritize               | `coding-style,python`               |
-| `context_types`| Memory types to prioritize                        | `Style,Preference`                  |
-| `priority_ids` | Specific memory IDs to treat as anchors           | `uuid-1,uuid-2`                     |
+| Parameter      | Description                                                | Example                             |
+| -------------- | ---------------------------------------------------------- | ----------------------------------- |
+| `query`        | Full-text search string                                    | `database migration`                |
+| `embedding`    | Vector (comma-separated, dimension matches `VECTOR_SIZE`)  | `0.12,0.56,...`                     |
+| `limit`        | Max results (1-50)                                         | `10`                                |
+| `time_query`   | Natural time phrases                                       | `today`, `last week`, `last 7 days` |
+| `start`        | ISO timestamp (lower bound)                                | `2025-09-01T00:00:00Z`              |
+| `end`          | ISO timestamp (upper bound)                                | `2025-09-30T23:59:59Z`              |
+| `tags`         | Tag filters (multiple allowed)                             | `slack`, `decision`                 |
+| `tag_mode`     | `any` or `all`                                             | `any` (default)                     |
+| `tag_match`    | `prefix` or `exact`                                        | `prefix` (default)                  |
+| `context`      | High-level context label                                   | `coding-style`, `preference`        |
+| `language`     | Explicit language hint                                     | `python`, `typescript`              |
+| `active_path`  | Active file path (used to infer language/context)          | `/Users/jack/project/app.py`        |
+| `context_tags` | Comma or list of tags to prioritize                        | `coding-style,python`               |
+| `context_types`| Memory types to prioritize                                 | `Style,Preference`                  |
+| `priority_ids` | Specific memory IDs to treat as anchors                    | `uuid-1,uuid-2`                     |
 
 **Examples:**
 
@@ -915,10 +915,10 @@ See **[TESTING.md](TESTING.md)** for complete testing documentation.
 - **Check:** Test connection: `redis-cli -h $FALKORDB_HOST -p $FALKORDB_PORT ping`
 - **Railway:** Ensure FalkorDB service is running and internal hostname is correct
 
-#### `Embedding must contain exactly 768 values`
+#### `Embedding dimension mismatch`
 
 - **Cause:** Incorrect embedding dimension
-- **Fix:** Supply full 768-d vector or omit field entirely
+- **Fix:** Supply a vector matching `VECTOR_SIZE` or omit field entirely
 - **Note:** Service generates placeholder if embedding omitted
 
 #### Qdrant Errors (Logged but Non-Blocking)

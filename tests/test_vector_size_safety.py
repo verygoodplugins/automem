@@ -40,11 +40,9 @@ def _make_qdrant_client_no_collection():
 class TestAutodetectDefault:
     """VECTOR_SIZE_AUTODETECT defaults to true — mismatch adopts collection dim."""
 
-    @patch.dict("os.environ", {"VECTOR_SIZE": "1024"}, clear=False)
     @patch.dict("os.environ", {}, clear=False)
     def test_mismatch_adopts_collection_dim(self):
         """When autodetect=true (default) and collection is 3072d, adopt 3072."""
-        # Remove VECTOR_SIZE_AUTODETECT so the default (true) is used
         import os
 
         os.environ.pop("VECTOR_SIZE_AUTODETECT", None)

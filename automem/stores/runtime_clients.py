@@ -76,7 +76,8 @@ def init_qdrant(
         state.qdrant = qdrant_client_cls(url=url, api_key=api_key)
         ensure_collection_fn()
         logger.info("Qdrant connection established")
-    except VectorDimensionMismatchError:
+    except VectorDimensionMismatchError as e:
+        logger.error("%s", e)
         state.qdrant = None
         raise
     except ValueError:

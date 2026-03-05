@@ -92,7 +92,11 @@ JIT_ENRICHMENT_ENABLED = os.getenv("JIT_ENRICHMENT_ENABLED", "true").lower() not
 
 # Model configuration
 # voyage-4 (1024d): Recommended default via EMBEDDING_PROVIDER=auto
-# text-embedding-3-small: OpenAI fallback (truncated to VECTOR_SIZE via Matryoshka)
+# text-embedding-3-small (1536d native): OpenAI fallback; truncated to VECTOR_SIZE via
+#   Matryoshka when the upstream API supports the ``dimensions`` parameter.
+#   For OpenAI-compatible endpoints that don't support ``dimensions``, the model
+#   returns its native 1536-d output and VECTOR_SIZE is ignored.
+#   If VECTOR_SIZE > 1536, auto-upgrades to text-embedding-3-large.
 # text-embedding-3-large: OpenAI high-precision, use VECTOR_SIZE=3072
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")

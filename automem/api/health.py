@@ -74,6 +74,8 @@ def create_health_blueprint(
             status = "healthy"
 
         effective_dim = getattr(state, "effective_vector_size", None)
+        # Only report mismatch when the embedding provider has initialized
+        # (effective_dim is set); suppresses false positives during startup.
         dim_mismatch = (
             collection_vector_size is not None
             and effective_dim is not None
