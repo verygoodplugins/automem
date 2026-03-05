@@ -3,6 +3,25 @@ from __future__ import annotations
 import os
 from typing import Any
 
+# text-embedding-3-small native output is 1536d; it can be truncated to
+# any dimension <= 1536 via the Matryoshka ``dimensions`` parameter but
+# CANNOT produce vectors larger than 1536d.
+_SMALL_MODEL_MAX_DIM = 1536
+
+
+def _resolve_openai_model(embedding_model: str, vector_size: int, logger: Any) -> str:
+    """Auto-upgrade to text-embedding-3-large when the dimension exceeds small model capacity."""
+    if vector_size > _SMALL_MODEL_MAX_DIM and "small" in embedding_model:
+        logger.warning(
+            "VECTOR_SIZE=%d exceeds text-embedding-3-small capacity (%dd). "
+            "Auto-upgrading to text-embedding-3-large. "
+            "Set EMBEDDING_MODEL=text-embedding-3-large explicitly to silence this warning.",
+            vector_size,
+            _SMALL_MODEL_MAX_DIM,
+        )
+        return embedding_model.replace("small", "large")
+    return embedding_model
+
 
 def init_embedding_provider(
     *,
@@ -60,12 +79,13 @@ def init_embedding_provider(
         if not api_key:
             raise RuntimeError("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
         openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
+        effective_model = _resolve_openai_model(embedding_model, vector_size, logger)
         try:
             from automem.embedding.openai import OpenAIEmbeddingProvider
 
             state.embedding_provider = OpenAIEmbeddingProvider(
                 api_key=api_key,
-                model=embedding_model,
+                model=effective_model,
                 dimension=vector_size,
                 base_url=openai_base_url,
             )
@@ -141,9 +161,10 @@ def init_embedding_provider(
                 from automem.embedding.openai import OpenAIEmbeddingProvider
 
                 openai_base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
+                effective_model = _resolve_openai_model(embedding_model, vector_size, logger)
                 state.embedding_provider = OpenAIEmbeddingProvider(
                     api_key=api_key,
-                    model=embedding_model,
+                    model=effective_model,
                     dimension=vector_size,
                     base_url=openai_base_url,
                 )

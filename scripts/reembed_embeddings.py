@@ -5,8 +5,8 @@ Usage:
     python scripts/reembed_embeddings.py [--batch-size 32] [--limit 0]
 
 Environment:
-    EMBEDDING_MODEL: OpenAI embedding model (default: text-embedding-3-large)
-    VECTOR_SIZE: Embedding dimension (default: 3072; set to your current collection size before migrating)
+    EMBEDDING_MODEL: OpenAI embedding model (default: text-embedding-3-small)
+    VECTOR_SIZE: Embedding dimension (default: 1024; set to your current collection size before migrating)
 """
 from __future__ import annotations
 

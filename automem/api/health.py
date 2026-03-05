@@ -17,6 +17,8 @@ def create_health_blueprint(
 
     @bp.route("/health", methods=["GET"])
     def health() -> Any:
+        from automem.config import VECTOR_SIZE
+
         graph_available = get_memory_graph() is not None
         qdrant_available = get_qdrant_client() is not None
 
@@ -39,14 +41,16 @@ def create_health_blueprint(
             except Exception:
                 pass
 
-        # Get vector count from Qdrant (gracefully fail if unavailable)
+        # Get vector count and dimension from Qdrant (gracefully fail if unavailable)
         vector_count: Optional[int] = None
+        collection_vector_size: Optional[int] = None
         if qdrant_available:
             try:
                 qdrant = get_qdrant_client()
                 if qdrant:
                     info = qdrant.get_collection(collection_name)
                     vector_count = info.points_count
+                    collection_vector_size = info.config.params.vectors.size
             except Exception:
                 pass
 
@@ -69,6 +73,13 @@ def create_health_blueprint(
         else:
             status = "healthy"
 
+        effective_dim = getattr(state, "effective_vector_size", None)
+        dim_mismatch = (
+            collection_vector_size is not None
+            and effective_dim is not None
+            and collection_vector_size != VECTOR_SIZE
+        )
+
         health_data = {
             "status": status,
             "falkordb": "connected" if graph_available else "disconnected",
@@ -76,9 +87,15 @@ def create_health_blueprint(
             "memory_count": memory_count,
             "vector_count": vector_count,
             "sync_status": sync_status,
+            "vector_dimensions": {
+                "configured": VECTOR_SIZE,
+                "effective": effective_dim,
+                "collection": collection_vector_size,
+                "mismatch": dim_mismatch,
+            },
             "enrichment": {
                 "status": "running" if enrichment_thread_alive else "stopped",
-                "queue_depth": state.enrichment_queue.qsize() if state.enrichment_queue else 0,
+                "queue_depth": (state.enrichment_queue.qsize() if state.enrichment_queue else 0),
                 "pending": enrichment_pending,
                 "inflight": enrichment_inflight,
                 "processed": state.enrichment_stats.successes,

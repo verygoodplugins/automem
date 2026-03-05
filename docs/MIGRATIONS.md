@@ -2,7 +2,7 @@
 
 This document provides step-by-step instructions for migrating between different AutoMem configurations.
 
-**Heads up for existing deployments:** The default embedding dimension is now **3072d** for new installs. If your Qdrant collection is still 768d, set `VECTOR_SIZE=768` (and keep `text-embedding-3-small`) until you complete the upgrade steps below. AutoMem will fail fast if the configured dimension does not match your collection to prevent accidental corruption. If you must start with the existing dimension without migrating, set `VECTOR_SIZE_AUTODETECT=true` to adopt the collection size (use with caution).
+**Heads up for existing deployments:** The default embedding dimension is now **1024d** (voyage-4) for new installs. If your Qdrant collection uses a different dimension (e.g. 3072d from `text-embedding-3-large` or 768d from `text-embedding-3-small`), **no action is needed** — `VECTOR_SIZE_AUTODETECT=true` (the default) automatically adopts your existing collection dimension on startup. To explicitly pin your dimension, set `VECTOR_SIZE=<your-dimension>` in your `.env`. To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`.
 
 ## Table of Contents
 - [Upgrading to 3072d Embeddings](#upgrading-to-3072d-embeddings)
@@ -149,17 +149,17 @@ Then run `reembed_embeddings.py` to recreate the collection with 768d vectors.
 
 ### Error: "Vector dimension mismatch"
 
-**Symptom:**
+**Symptom** (only when `VECTOR_SIZE_AUTODETECT=false`):
 ```
-ValueError: VECTOR DIMENSION MISMATCH
-Qdrant collection 'memories': 768d
-Config VECTOR_SIZE: 3072d
+FATAL: Vector dimension mismatch detected!
+  Existing Qdrant collection: 3072d
+  Configured VECTOR_SIZE:     1024d
 ```
 
-**Solution:**
-Either:
-- Keep existing: `export VECTOR_SIZE=768`
-- Migrate: Follow "Upgrading to 3072d Embeddings" above
+**Solution** (pick one):
+1. Set `VECTOR_SIZE_AUTODETECT=true` (default) to automatically adopt the existing collection dimension
+2. Set `VECTOR_SIZE=<existing-dimension>` in your `.env` to match your data
+3. Migrate to the new dimension: follow the upgrade steps above
 
 ### Error: "OpenAI API rate limit"
 

@@ -11,7 +11,7 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 # Qdrant / FalkorDB configuration
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "memories")
-VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "3072"))
+VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "1024"))
 GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "memories")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 
@@ -91,9 +91,10 @@ JIT_ENRICHMENT_ENABLED = os.getenv("JIT_ENRICHMENT_ENABLED", "true").lower() not
 }
 
 # Model configuration
-# text-embedding-3-large (3072d): Better semantic precision, recommended for production
-# text-embedding-3-small (768d): Cheaper, use VECTOR_SIZE=768 if switching
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
+# voyage-4 (1024d): Recommended default via EMBEDDING_PROVIDER=auto
+# text-embedding-3-small: OpenAI fallback (truncated to VECTOR_SIZE via Matryoshka)
+# text-embedding-3-large: OpenAI high-precision, use VECTOR_SIZE=3072
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
