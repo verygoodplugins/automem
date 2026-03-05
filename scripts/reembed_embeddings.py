@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Re-embed existing memories and upsert vectors into Qdrant.
 
+Uses the same embedding provider abstraction as the server (Voyage, OpenAI,
+Ollama, FastEmbed, etc.), so whatever provider you have configured will be
+used automatically.
+
 Usage:
     python scripts/reembed_embeddings.py [--batch-size 32] [--limit 0]
 
 Environment:
-    OPENAI_API_KEY: Required. OpenAI API key for generating embeddings.
-    EMBEDDING_MODEL: OpenAI embedding model (default: text-embedding-3-small)
-    VECTOR_SIZE: Embedding dimension (default: 1024; set to your current collection size before migrating)
-
-Note:
-    This script sends the ``dimensions`` parameter to the OpenAI embeddings API,
-    which may not be supported by all OpenAI-compatible endpoints (e.g. local
-    inference servers).  Ensure your endpoint supports the ``dimensions`` parameter
-    or set EMBEDDING_MODEL and VECTOR_SIZE to match the model's native output.
+    EMBEDDING_PROVIDER: Provider selection (default: auto)
+    VOYAGE_API_KEY:     Required for Voyage provider
+    OPENAI_API_KEY:     Required for OpenAI provider
+    EMBEDDING_MODEL:    OpenAI model (default: text-embedding-3-small)
+    VECTOR_SIZE:        Embedding dimension (default: 1024)
 """
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from dotenv import load_dotenv
 from falkordb import FalkorDB
-from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 
@@ -35,13 +34,42 @@ from automem.config import EMBEDDING_MODEL, VECTOR_SIZE
 
 logger = logging.getLogger("reembed")
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s", stream=sys.stdout
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    stream=sys.stdout,
 )
 
 
 def load_environment() -> None:
     load_dotenv()
     load_dotenv(Path.home() / ".config" / "automem" / ".env")
+
+
+def _init_provider():
+    """Initialize an embedding provider using the same abstraction as the server."""
+    from types import SimpleNamespace
+
+    from automem.embedding.provider_init import init_embedding_provider
+
+    state = SimpleNamespace(
+        embedding_provider=None,
+        qdrant=None,
+        effective_vector_size=VECTOR_SIZE,
+    )
+    init_embedding_provider(
+        state=state,
+        logger=logger,
+        vector_size_config=VECTOR_SIZE,
+        embedding_model=EMBEDDING_MODEL,
+    )
+    if state.embedding_provider is None:
+        logger.error(
+            "No embedding provider could be initialized. "
+            "Set VOYAGE_API_KEY, OPENAI_API_KEY, or EMBEDDING_PROVIDER=local."
+        )
+        sys.exit(1)
+    logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
+    return state.embedding_provider
 
 
 def get_graph() -> Any:
@@ -55,7 +83,10 @@ def get_graph() -> Any:
     password = os.getenv("FALKORDB_PASSWORD")
 
     logger.info(
-        "Connecting to FalkorDB at %s:%s (auth: %s)", host, port, "yes" if password else "no"
+        "Connecting to FalkorDB at %s:%s (auth: %s)",
+        host,
+        port,
+        "yes" if password else "no",
     )
 
     if password:
@@ -138,17 +169,20 @@ def chunked(iterable: List[Dict[str, Any]], size: int) -> Iterable[List[Dict[str
         yield iterable[idx : idx + size]
 
 
-def reembed_memories(memories: List[Dict[str, Any]], batch_size: int) -> None:
-    client = OpenAI()
+def reembed_memories(memories: List[Dict[str, Any]], batch_size: int, provider: Any) -> None:
     qdrant = get_qdrant_client()
     if qdrant is None:
         raise SystemExit(1)
 
     collection = os.getenv("QDRANT_COLLECTION", "memories")
     vector_size = VECTOR_SIZE
-    embedding_model = EMBEDDING_MODEL
 
-    logger.info("Using embedding model: %s (dimension: %d)", embedding_model, vector_size)
+    logger.info(
+        "Re-embedding %d memories (dimension: %d, batch_size: %d)",
+        len(memories),
+        vector_size,
+        batch_size,
+    )
 
     total = len(memories)
     processed = 0
@@ -156,14 +190,14 @@ def reembed_memories(memories: List[Dict[str, Any]], batch_size: int) -> None:
     for batch in chunked(memories, batch_size):
         texts = [m["content"] or "" for m in batch]
         logger.info("Embedding batch %d-%d of %d", processed + 1, processed + len(batch), total)
-        response = client.embeddings.create(
-            model=embedding_model,
-            input=texts,
-            dimensions=vector_size,
-        )
+
+        if hasattr(provider, "generate_embeddings_batch"):
+            vectors = provider.generate_embeddings_batch(texts)
+        else:
+            vectors = [provider.generate_embedding(t) for t in texts]
+
         points: List[PointStruct] = []
-        for mem, data in zip(batch, response.data):
-            vector = data.embedding
+        for mem, vector in zip(batch, vectors):
             payload = {
                 "content": mem["content"],
                 "tags": mem["tags"],
@@ -191,12 +225,7 @@ def main() -> None:
 
     load_environment()
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        logger.error(
-            "OPENAI_API_KEY is not set. This script requires an OpenAI API key "
-            "to generate embeddings. Set it in your .env or environment."
-        )
-        sys.exit(1)
+    provider = _init_provider()
 
     graph = get_graph()
     limit = args.limit if args.limit > 0 else None
@@ -204,7 +233,7 @@ def main() -> None:
     if not memories:
         logger.info("No memories found")
         return
-    reembed_memories(memories, batch_size=max(1, args.batch_size))
+    reembed_memories(memories, batch_size=max(1, args.batch_size), provider=provider)
 
 
 if __name__ == "__main__":
