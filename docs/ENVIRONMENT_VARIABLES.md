@@ -227,7 +227,7 @@ Controls embedding provider and classification model settings.
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
 | `EMBEDDING_MODEL` | OpenAI embedding model (used when provider is `openai`) | `text-embedding-3-small` | `text-embedding-3-small`, `text-embedding-3-large` |
-| `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4, 768=text-embedding-3-small native, 3072=text-embedding-3-large native) |
+| `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4, 1536=text-embedding-3-small native; choose ≤1536 when truncating, 3072=text-embedding-3-large native) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
 | `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
 
