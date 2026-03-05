@@ -64,18 +64,32 @@ def init_qdrant(
     if state.qdrant is not None:
         return
 
-    from automem.config import QDRANT_API_KEY, QDRANT_URL
+    from urllib.parse import urlparse
 
-    url = QDRANT_URL
-    api_key = QDRANT_API_KEY
+    from automem.config import QDRANT_API_KEY, QDRANT_PORT, QDRANT_URL
 
-    if not url:
+    if not QDRANT_URL:
         logger.info("Qdrant URL not provided; skipping client initialization")
         return
 
     try:
-        logger.info("Connecting to Qdrant at %s", url)
-        state.qdrant = qdrant_client_cls(url=url, api_key=api_key)
+        parsed = urlparse(QDRANT_URL)
+        use_https = parsed.scheme == "https"
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if use_https else QDRANT_PORT)
+        logger.info(
+            "Connecting to Qdrant at %s (host=%s, port=%d, https=%s)",
+            QDRANT_URL,
+            host,
+            port,
+            use_https,
+        )
+        state.qdrant = qdrant_client_cls(
+            host=host,
+            port=port,
+            https=use_https,
+            api_key=QDRANT_API_KEY,
+        )
         ensure_collection_fn()
         logger.info("Qdrant connection established")
     except VectorDimensionMismatchError as e:
