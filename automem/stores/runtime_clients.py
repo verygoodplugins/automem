@@ -53,7 +53,14 @@ def init_qdrant(
     qdrant_client_cls: Any,
     ensure_collection_fn: Callable[[], None],
 ) -> None:
-    """Initialize Qdrant connection and ensure the collection exists."""
+    """Initialize Qdrant connection and ensure the collection exists.
+
+    Raises VectorDimensionMismatchError (via ensure_collection_fn) if the
+    existing collection dimension conflicts with VECTOR_SIZE and autodetect
+    is disabled.  This is intentionally fatal — callers should NOT catch it.
+    """
+    from automem.utils.validation import VectorDimensionMismatchError
+
     if state.qdrant is not None:
         return
 
@@ -69,6 +76,10 @@ def init_qdrant(
         state.qdrant = qdrant_client_cls(url=url, api_key=api_key)
         ensure_collection_fn()
         logger.info("Qdrant connection established")
+    except VectorDimensionMismatchError as e:
+        logger.error("%s", e)
+        state.qdrant = None
+        raise
     except ValueError:
         logger.exception("Invalid Qdrant configuration; running without vector store")
         state.qdrant = None

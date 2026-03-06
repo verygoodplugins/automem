@@ -385,9 +385,9 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `QDRANT_URL`        | Qdrant API endpoint                   | _unset_    |
 | `QDRANT_API_KEY`    | Qdrant authentication                 | _optional_ |
 | `QDRANT_COLLECTION` | Qdrant collection name                | `memories` |
-| `VECTOR_SIZE`       | Embedding dimension                   | `3072`     |
+| `VECTOR_SIZE`       | Embedding dimension                   | `1024`     |
 | `EMBEDDING_PROVIDER`| Embedding provider selection          | `auto`     |
-| `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-large` |
+| `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-small` |
 | `VOYAGE_API_KEY`    | Voyage API key (Voyage provider)      | _unset_    |
 | `VOYAGE_MODEL`      | Voyage model (Voyage provider)        | `voyage-4` |
 | `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
@@ -395,9 +395,9 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
 
-> Existing deployments on 768d should set `VECTOR_SIZE=768` (and keep `EMBEDDING_MODEL=text-embedding-3-small`) until after running `scripts/reembed_embeddings.py`. The server now fails fast if your configured dimension does not match the Qdrant collection.
+> **Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed when updating — existing 3072d or 768d collections continue to work.
 >
-> Voyage models support specific dimensions (256, 512, 1024, 2048). If you use `EMBEDDING_PROVIDER=voyage`, set `VECTOR_SIZE` to one of those values and keep it consistent with your Qdrant collection.
+> The recommended setup is Voyage (`voyage-4`) at 1024d. If you only have an OpenAI key, `text-embedding-3-small` is used as fallback and truncated to `VECTOR_SIZE` via Matryoshka.
 
 #### Enrichment Pipeline
 
@@ -479,7 +479,7 @@ Store a new memory.
 | `confidence`    | float  | No       | Confidence in type 0.0-1.0 (default: `0.9` if type provided, auto-computed otherwise) |
 | `metadata`      | object | No       | Custom metadata (any JSON object)                                                     |
 | `timestamp`     | string | No       | ISO 8601 timestamp (default: current time)                                            |
-| `embedding`     | array  | No       | Vector embedding (auto-generated if omitted; default 3072d or 768d with small model)  |
+| `embedding`     | array  | No       | Vector embedding (auto-generated if omitted; default 1024d with voyage-4)  |
 | `t_valid`       | string | No       | ISO timestamp when memory becomes valid                                               |
 | `t_invalid`     | string | No       | ISO timestamp when memory expires                                                     |
 | `updated_at`    | string | No       | ISO timestamp of last update (default: `timestamp`)                                   |
@@ -550,23 +550,23 @@ Retrieve memories using hybrid search.
 
 **Query Parameters:**
 
-| Parameter      | Description                                       | Example                             |
-| -------------- | ------------------------------------------------- | ----------------------------------- |
-| `query`        | Full-text search string                           | `database migration`                |
-| `embedding`    | 768-d vector (comma-separated)                    | `0.12,0.56,...`                     |
-| `limit`        | Max results (1-50)                                | `10`                                |
-| `time_query`   | Natural time phrases                              | `today`, `last week`, `last 7 days` |
-| `start`        | ISO timestamp (lower bound)                       | `2025-09-01T00:00:00Z`              |
-| `end`          | ISO timestamp (upper bound)                       | `2025-09-30T23:59:59Z`              |
-| `tags`         | Tag filters (multiple allowed)                    | `slack`, `decision`                 |
-| `tag_mode`     | `any` or `all`                                    | `any` (default)                     |
-| `tag_match`    | `prefix` or `exact`                               | `prefix` (default)                  |
-| `context`      | High-level context label                          | `coding-style`, `preference`        |
-| `language`     | Explicit language hint                            | `python`, `typescript`              |
-| `active_path`  | Active file path (used to infer language/context) | `/Users/jack/project/app.py`        |
-| `context_tags` | Comma or list of tags to prioritize               | `coding-style,python`               |
-| `context_types`| Memory types to prioritize                        | `Style,Preference`                  |
-| `priority_ids` | Specific memory IDs to treat as anchors           | `uuid-1,uuid-2`                     |
+| Parameter      | Description                                                | Example                             |
+| -------------- | ---------------------------------------------------------- | ----------------------------------- |
+| `query`        | Full-text search string                                    | `database migration`                |
+| `embedding`    | Vector (comma-separated, dimension matches `VECTOR_SIZE`)  | `0.12,0.56,...`                     |
+| `limit`        | Max results (1-50)                                         | `10`                                |
+| `time_query`   | Natural time phrases                                       | `today`, `last week`, `last 7 days` |
+| `start`        | ISO timestamp (lower bound)                                | `2025-09-01T00:00:00Z`              |
+| `end`          | ISO timestamp (upper bound)                                | `2025-09-30T23:59:59Z`              |
+| `tags`         | Tag filters (multiple allowed)                             | `slack`, `decision`                 |
+| `tag_mode`     | `any` or `all`                                             | `any` (default)                     |
+| `tag_match`    | `prefix` or `exact`                                        | `prefix` (default)                  |
+| `context`      | High-level context label                                   | `coding-style`, `preference`        |
+| `language`     | Explicit language hint                                     | `python`, `typescript`              |
+| `active_path`  | Active file path (used to infer language/context)          | `/Users/jack/project/app.py`        |
+| `context_tags` | Comma or list of tags to prioritize                        | `coding-style,python`               |
+| `context_types`| Memory types to prioritize                                 | `Style,Preference`                  |
+| `priority_ids` | Specific memory IDs to treat as anchors                    | `uuid-1,uuid-2`                     |
 
 **Examples:**
 
@@ -915,10 +915,10 @@ See **[TESTING.md](TESTING.md)** for complete testing documentation.
 - **Check:** Test connection: `redis-cli -h $FALKORDB_HOST -p $FALKORDB_PORT ping`
 - **Railway:** Ensure FalkorDB service is running and internal hostname is correct
 
-#### `Embedding must contain exactly 768 values`
+#### `Embedding dimension mismatch`
 
 - **Cause:** Incorrect embedding dimension
-- **Fix:** Supply full 768-d vector or omit field entirely
+- **Fix:** Supply a vector matching `VECTOR_SIZE` or omit field entirely
 - **Note:** Service generates placeholder if embedding omitted
 
 #### Qdrant Errors (Logged but Non-Blocking)

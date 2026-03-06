@@ -583,10 +583,13 @@ def test_provider_selection_auto_prefers_voyage(monkeypatch):
             mock_openai_class.assert_not_called()
 
 
-@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "EMBEDDING_PROVIDER": "auto"})
-def test_provider_selection_auto_with_openai(mock_openai_client):
-    """Test auto-selection prefers OpenAI when API key is available."""
+def test_provider_selection_auto_with_openai(mock_openai_client, monkeypatch):
+    """Test auto-selection prefers OpenAI when API key is available (and Voyage is not)."""
     import app
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "auto")
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
 
     with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
@@ -798,20 +801,19 @@ def test_provider_initialization_failure_recovery(monkeypatch):
     """Test recovery from provider initialization failures."""
     import app
 
-    # Mock provider that fails to initialize
     def failing_init(*args, **kwargs):
         raise Exception("Init failed")
 
-    # Mock environment to ensure no OpenAI key is available
-    with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
-        with patch("automem.embedding.fastembed.TextEmbedding", side_effect=failing_init):
-            # Should fall back to placeholder when both OpenAI and FastEmbed fail
-            app.state.embedding_provider = None
-            app.init_embedding_provider()
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "auto")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
 
-            assert app.state.embedding_provider is not None
-            # With no OpenAI key and FastEmbed failing, should use placeholder
-            assert app.state.embedding_provider.provider_name() == "placeholder"
+    with patch("automem.embedding.fastembed.TextEmbedding", side_effect=failing_init):
+        app.state.embedding_provider = None
+        app.init_embedding_provider()
+
+        assert app.state.embedding_provider is not None
+        assert app.state.embedding_provider.provider_name() == "placeholder"
 
 
 # ==================== Provider Feature Tests ====================
