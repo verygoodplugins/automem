@@ -21,7 +21,6 @@ COPY . .
 # QDRANT_HOST (internal hostname, e.g. qdrant.railway.internal) + QDRANT_PORT.
 # Using QDRANT_HOST avoids the need to know the port in Railway/internal-network setups.
 ENV QDRANT_URL="" \
-    QDRANT_API_KEY="" \
     QDRANT_HOST="" \
     QDRANT_PORT="6333"
 
