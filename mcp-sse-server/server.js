@@ -104,6 +104,15 @@ function isInitializeLikeRequest(value) {
   );
 }
 
+function isJsonRpcLikeRequest(value) {
+  return !!(
+    value &&
+    typeof value === 'object' &&
+    value.jsonrpc === '2.0' &&
+    typeof value.method === 'string'
+  );
+}
+
 async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs, maxRetries } = {}) {
   const retries = Math.max(0, maxRetries ?? DEFAULT_UPSTREAM_MAX_RETRIES);
 
@@ -950,10 +959,11 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 
     try {
       const sessionId = req.headers['mcp-session-id'];
+      const hasKnownSession = !!(sessionId && sessions.has(sessionId));
       let transport;
 
       // Existing session
-      if (sessionId && sessions.has(sessionId)) {
+      if (hasKnownSession) {
         const session = sessions.get(sessionId);
         if (!(session.transport instanceof StreamableHTTPServerTransport)) {
           return res.status(400).json({
@@ -1002,6 +1012,34 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 
         await server.connect(transport);
       }
+      // Compatibility fallback for clients that reuse stale session IDs.
+      else if (sessionId && req.method === 'POST' && isJsonRpcLikeRequest(req.body)) {
+        const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
+        const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
+        if (!token) {
+          return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
+        }
+
+        const client = new AutoMemClient({ endpoint, apiKey: token });
+        const server = buildMcpServer(client);
+
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        res.on('close', () => {
+          Promise.resolve(transport.close()).catch(() => {});
+        });
+
+        log('warn', 'mcp_stateless_fallback', {
+          reqId: req.requestId,
+          path: req.path,
+          originalSessionId: sessionId,
+          bodyMethod: req.body.method,
+        });
+
+        await server.connect(transport);
+      }
       // Invalid request
       else {
         log('warn', 'mcp_invalid_request', {
@@ -1009,6 +1047,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
           method: req.method,
           path: req.path,
           hasSessionId: !!sessionId,
+          hasKnownSession,
           contentType: req.headers['content-type'] || null,
           accept: req.headers.accept || null,
           bodyType: req.body === undefined ? 'undefined' : Array.isArray(req.body) ? 'array' : typeof req.body,

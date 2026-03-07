@@ -305,6 +305,50 @@ test("POST /mcp/ with initialize-like request reaches transport validation", asy
   }
 });
 
+test("POST /mcp/ with stale session id falls back to stateless JSON response", async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://127.0.0.1:8001";
+
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/mcp/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: "Bearer test-token",
+        "mcp-session-id": "stale-session-id",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.result.tools));
+    assert.ok(body.result.tools.length > 0);
+    assert.equal(body.result.tools[0].name, "store_memory");
+    assert.equal(res.headers.get("mcp-session-id"), null);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
 test("POST /mcp without Accept header returns error", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;
