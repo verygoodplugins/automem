@@ -265,6 +265,46 @@ test("POST /mcp with valid initialize creates session with Mcp-Session-Id", asyn
   }
 });
 
+test("POST /mcp/ with initialize-like request reaches transport validation", async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://127.0.0.1:8001";
+
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/mcp/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+      }),
+    });
+
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error);
+    assert.match(body.error.message, /Server not initialized/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
 test("POST /mcp without Accept header returns error", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;

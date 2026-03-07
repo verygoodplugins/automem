@@ -95,6 +95,15 @@ function formatToolError(error, requestId) {
   return `AutoMem error: ${error?.message || error}${suffix}`;
 }
 
+function isInitializeLikeRequest(value) {
+  return !!(
+    value &&
+    typeof value === 'object' &&
+    value.jsonrpc === '2.0' &&
+    value.method === 'initialize'
+  );
+}
+
 async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs, maxRetries } = {}) {
   const retries = Math.max(0, maxRetries ?? DEFAULT_UPSTREAM_MAX_RETRIES);
 
@@ -957,7 +966,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
         transport = session.transport;
       }
       // New session (POST initialize request only)
-      else if (!sessionId && req.method === 'POST' && isInitializeRequest(req.body)) {
+      else if (!sessionId && req.method === 'POST' && (isInitializeRequest(req.body) || isInitializeLikeRequest(req.body))) {
         const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
         const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
         if (!token) {
@@ -995,6 +1004,18 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
       }
       // Invalid request
       else {
+        log('warn', 'mcp_invalid_request', {
+          reqId: req.requestId,
+          method: req.method,
+          path: req.path,
+          hasSessionId: !!sessionId,
+          contentType: req.headers['content-type'] || null,
+          accept: req.headers.accept || null,
+          bodyType: req.body === undefined ? 'undefined' : Array.isArray(req.body) ? 'array' : typeof req.body,
+          bodyMethod: req.body?.method || null,
+          bodyJsonrpc: req.body?.jsonrpc || null,
+          bodyKeys: req.body && typeof req.body === 'object' ? Object.keys(req.body).slice(0, 12) : [],
+        });
         return res.status(400).json({
           jsonrpc: '2.0',
           error: { code: -32000, message: 'Bad Request: No valid session ID or not an initialize request' },
