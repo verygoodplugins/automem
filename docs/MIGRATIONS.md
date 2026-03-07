@@ -197,9 +197,9 @@ Rate limit exceeded during re-embedding
 ```
 
 **Solution:**
-The `reembed_embeddings.py` script has exponential backoff, but for large datasets:
+The `reembed_embeddings.py` script uses whatever embedding provider is configured (Voyage, OpenAI, local, etc.). For large datasets:
 1. Run during off-peak hours
-2. Increase OpenAI rate limits (pay-as-you-go tier)
+2. Increase your provider's rate limits if applicable
 3. Split migration into batches using `--batch-size` flag
 
 ### Error: "Qdrant collection already exists"
