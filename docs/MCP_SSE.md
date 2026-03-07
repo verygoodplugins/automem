@@ -11,7 +11,7 @@ AutoMem supports two MCP transport protocols:
 | **Streamable HTTP**      | 2025-03-26       | ✅ Recommended | `/mcp`     |
 | SSE (Server-Sent Events) | 2024-11-05       | ⚠️ Deprecated  | `/mcp/sse` |
 
-**Streamable HTTP** is the newer, recommended transport. It uses a single endpoint, supports session resumability, and works better with proxies and load balancers.
+**Streamable HTTP** is the newer, recommended transport. AutoMem serves `/mcp` in stateless mode for broad client compatibility, so clients can treat each request independently and don't need long-lived server-side session continuity.
 
 **SSE** is still supported for backward compatibility with older clients.
 
@@ -174,7 +174,7 @@ Example:
 
 | Transport                     | Endpoint                            | Purpose                                              |
 | ----------------------------- | ----------------------------------- | ---------------------------------------------------- |
-| Streamable HTTP (Recommended) | `POST /mcp`                         | Initialize session & send JSON-RPC                   |
+| Streamable HTTP (Recommended) | `POST /mcp`                         | Stateless JSON-RPC over HTTP                         |
 | Streamable HTTP (Recommended) | `GET /mcp`                          | Optional SSE stream when `Accept: text/event-stream` |
 | SSE (Deprecated)              | `GET /mcp/sse`                      | SSE stream (server → client)                         |
 | SSE (Deprecated)              | `POST /mcp/messages?sessionId=<id>` | Client → server JSON-RPC                             |
@@ -189,7 +189,7 @@ sequenceDiagram
 
     Note over Client,DB: Connection Establishment
     Client->>MCP: POST /mcp (initialize)
-    MCP-->>Client: 200 OK + session info
+    MCP-->>Client: 200 OK + capabilities
 
     Note over Client,DB: Memory Operations
     Client->>MCP: POST /mcp<br/>tool: store_memory
@@ -213,6 +213,10 @@ sequenceDiagram
 ```
 
 ### Authentication
+
+### Stateless Behavior
+
+`/mcp` does not rely on server-side Streamable HTTP sessions. The bridge does not return an `Mcp-Session-Id` from initialize, and any incoming session header on `/mcp` is ignored. This matches current remote-client behavior more reliably across ChatGPT, Claude, and other hosted MCP clients.
 
 **Header-based** (preferred when supported):
 
@@ -345,9 +349,9 @@ retrieve relevant context before answering questions.
 
 **Streamable HTTP (recommended):**
 
-- Supports `Last-Event-ID` header for resuming streams
-- If connection drops, client can resume from last received event
-- Session persists on server until explicitly terminated
+- `/mcp` is stateless, so reconnects do not depend on a server-side session surviving
+- Clients can retry initialize or tool calls directly without waiting for session recovery
+- If a client sends a stale `Mcp-Session-Id`, the bridge ignores it on `/mcp`
 
 **SSE (deprecated):**
 

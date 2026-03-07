@@ -160,7 +160,7 @@ test("AutoMemClient._request retries transient upstream errors", async () => {
 // Streamable HTTP Transport Tests (MCP 2025-03-26)
 // =============================================================================
 
-test("POST /mcp without initialize returns 400 error", async () => {
+test("POST /mcp without valid JSON-RPC body returns parse error", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   process.env.AUTOMEM_API_TOKEN = "test-token";
 
@@ -186,17 +186,14 @@ test("POST /mcp without initialize returns 400 error", async () => {
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.ok(body.error);
-    assert.ok(
-      body.error.message.includes("initialize") ||
-        body.error.message.includes("session")
-    );
+    assert.match(body.error.message, /Parse error/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     process.env.AUTOMEM_API_TOKEN = prevToken;
   }
 });
 
-test("POST /mcp with valid initialize creates session with Mcp-Session-Id", async () => {
+test("POST /mcp with valid initialize returns stateless JSON response", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;
   process.env.AUTOMEM_API_TOKEN = "test-token";
@@ -211,12 +208,8 @@ test("POST /mcp with valid initialize creates session with Mcp-Session-Id", asyn
     const address = server.address();
     const port = address.port;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-
     const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: "POST",
-      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
@@ -234,30 +227,11 @@ test("POST /mcp with valid initialize creates session with Mcp-Session-Id", asyn
       }),
     });
 
-    clearTimeout(timeout);
-
     assert.equal(res.status, 200);
-    const sessionId = res.headers.get("mcp-session-id");
-    assert.ok(sessionId, "should return mcp-session-id header");
-    assert.ok(sessionId.length > 10, "session ID should be a UUID");
-
-    // Read the SSE response to get the initialize result
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (buf.length < 4096) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) buf += decoder.decode(value, { stream: true });
-      if (buf.includes('"protocolVersion"')) break;
-    }
-    await reader.cancel();
-
-    assert.ok(buf.includes("event: message"), "should return SSE event");
-    assert.ok(
-      buf.includes('"protocolVersion"'),
-      "should return initialize result"
-    );
+    assert.equal(res.headers.get("mcp-session-id"), null);
+    const body = await res.json();
+    assert.equal(body.result.protocolVersion, "2025-03-26");
+    assert.equal(body.result.serverInfo.name, "automem-mcp-sse");
   } finally {
     await new Promise((resolve) => server.close(resolve));
     process.env.AUTOMEM_API_TOKEN = prevToken;
@@ -265,7 +239,7 @@ test("POST /mcp with valid initialize creates session with Mcp-Session-Id", asyn
   }
 });
 
-test("POST /mcp/ with initialize-like request reaches transport validation", async () => {
+test("POST /mcp/ with minimal initialize returns transport-level JSON-RPC error", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;
   process.env.AUTOMEM_API_TOKEN = "test-token";
@@ -294,10 +268,11 @@ test("POST /mcp/ with initialize-like request reaches transport validation", asy
       }),
     });
 
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.error);
-    assert.match(body.error.message, /Server not initialized/);
+    assert.equal(body.error.code, -32603);
+    assert.match(body.error.message, /params/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     process.env.AUTOMEM_API_TOKEN = prevToken;
@@ -305,7 +280,7 @@ test("POST /mcp/ with initialize-like request reaches transport validation", asy
   }
 });
 
-test("POST /mcp/ with stale session id falls back to stateless JSON response", async () => {
+test("POST /mcp/ ignores stale session id and returns stateless JSON response", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;
   process.env.AUTOMEM_API_TOKEN = "test-token";
@@ -364,36 +339,10 @@ test("POST /mcp without Accept header returns error", async () => {
     const address = server.address();
     const port = address.port;
 
-    // First create a valid session
-    const initRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: "Bearer test-token",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-03-26",
-          capabilities: {},
-          clientInfo: { name: "test", version: "1.0" },
-        },
-      }),
-    });
-
-    const sessionId = initRes.headers.get("mcp-session-id");
-    // Consume the init response
-    await initRes.text();
-
-    // Now try to use it without Accept header
     const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "mcp-session-id": sessionId,
         // Missing Accept header
       },
       body: JSON.stringify({

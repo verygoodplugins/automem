@@ -10,7 +10,7 @@ import express from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
@@ -93,24 +93,6 @@ function formatToolError(error, requestId) {
   }
 
   return `AutoMem error: ${error?.message || error}${suffix}`;
-}
-
-function isInitializeLikeRequest(value) {
-  return !!(
-    value &&
-    typeof value === 'object' &&
-    value.jsonrpc === '2.0' &&
-    value.method === 'initialize'
-  );
-}
-
-function isJsonRpcLikeRequest(value) {
-  return !!(
-    value &&
-    typeof value === 'object' &&
-    value.jsonrpc === '2.0' &&
-    typeof value.method === 'string'
-  );
 }
 
 async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs, maxRetries } = {}) {
@@ -688,16 +670,16 @@ export function createApp() {
     next();
   });
 
-  // In-memory session store: sessionId -> { transport, server, res, heartbeat, type, lastAccess }
+  // In-memory session store for legacy SSE only.
   const sessions = new Map();
 
-  // Sweep abandoned Streamable HTTP sessions every 5 minutes (1-hour TTL)
+  // Sweep abandoned SSE sessions every 5 minutes (1-hour TTL)
   const SESSION_TTL_MS = 60 * 60 * 1000;
   const sessionSweep = setInterval(() => {
     const now = Date.now();
     for (const [sid, session] of sessions.entries()) {
-      if (session.type === 'streamable-http' && now - (session.lastAccess || 0) > SESSION_TTL_MS) {
-        log('info', 'mcp_session_swept', { sessionId: sid, transport: 'streamable-http' });
+      if (session.type === 'sse' && now - (session.lastAccess || 0) > SESSION_TTL_MS) {
+        log('info', 'mcp_session_swept', { sessionId: sid, transport: 'sse' });
         // Delete first so transport.onclose guard (sessions.has) becomes a no-op
         sessions.delete(sid);
         // close() returns a Promise — catch async rejections to avoid unhandled rejection crashes
@@ -959,109 +941,33 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 
     try {
       const sessionId = req.headers['mcp-session-id'];
-      const hasKnownSession = !!(sessionId && sessions.has(sessionId));
-      let transport;
-
-      // Existing session
-      if (hasKnownSession) {
-        const session = sessions.get(sessionId);
-        if (!(session.transport instanceof StreamableHTTPServerTransport)) {
-          return res.status(400).json({
-            jsonrpc: '2.0',
-            error: { code: -32000, message: 'Session uses different transport protocol' },
-            id: null
-          });
-        }
-        session.lastAccess = Date.now();
-        transport = session.transport;
-      }
-      // New session (POST initialize request only)
-      else if (!sessionId && req.method === 'POST' && (isInitializeRequest(req.body) || isInitializeLikeRequest(req.body))) {
-        const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
-        const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
-        if (!token) {
-          return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
-        }
-
-        const client = new AutoMemClient({ endpoint, apiKey: token });
-        const server = buildMcpServer(client);
-        const eventStore = new InMemoryEventStore();
-
-        transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          eventStore, // Enables Last-Event-ID resumability
-          onsessioninitialized: (sid) => {
-            sessions.set(sid, { transport, server, type: 'streamable-http', eventStore, lastAccess: Date.now() });
-            log('info', 'mcp_session_initialized', {
-              reqId: req.requestId,
-              sessionId: sid,
-              transport: 'streamable-http',
-            });
-          }
-        });
-
-        transport.onclose = () => {
-          const sid = transport.sessionId;
-          if (sid && sessions.has(sid)) {
-            log('info', 'mcp_session_closed', { sessionId: sid, transport: 'streamable-http' });
-            sessions.delete(sid);
-            eventStore.removeStream(sid);
-            eventStore.stopCleanup();
-          }
-        };
-
-        await server.connect(transport);
-      }
-      // Compatibility fallback for clients that reuse stale session IDs.
-      else if (sessionId && req.method === 'POST' && isJsonRpcLikeRequest(req.body)) {
-        const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
-        const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
-        if (!token) {
-          return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
-        }
-
-        const client = new AutoMemClient({ endpoint, apiKey: token });
-        const server = buildMcpServer(client);
-
-        transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-          enableJsonResponse: true,
-        });
-        res.on('close', () => {
-          Promise.resolve(transport.close()).catch(() => {});
-        });
-
-        log('warn', 'mcp_stateless_fallback', {
-          reqId: req.requestId,
-          path: req.path,
-          originalSessionId: sessionId,
-          bodyMethod: req.body.method,
-        });
-
-        await server.connect(transport);
-      }
-      // Invalid request
-      else {
-        log('warn', 'mcp_invalid_request', {
+      if (sessionId) {
+        log('info', 'mcp_session_header_ignored', {
           reqId: req.requestId,
           method: req.method,
           path: req.path,
-          hasSessionId: !!sessionId,
-          hasKnownSession,
-          contentType: req.headers['content-type'] || null,
-          accept: req.headers.accept || null,
-          bodyType: req.body === undefined ? 'undefined' : Array.isArray(req.body) ? 'array' : typeof req.body,
-          bodyMethod: req.body?.method || null,
-          bodyJsonrpc: req.body?.jsonrpc || null,
-          bodyKeys: req.body && typeof req.body === 'object' ? Object.keys(req.body).slice(0, 12) : [],
-        });
-        return res.status(400).json({
-          jsonrpc: '2.0',
-          error: { code: -32000, message: 'Bad Request: No valid session ID or not an initialize request' },
-          id: null
+          sessionId,
         });
       }
 
+      const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
+      const token = getAuthToken(req) || process.env.AUTOMEM_API_TOKEN;
+      if (!token) {
+        return res.status(401).json({ error: 'Missing API token (use Authorization: Bearer, X-API-Key, or ?api_key=)' });
+      }
+
+      const client = new AutoMemClient({ endpoint, apiKey: token });
+      const server = buildMcpServer(client);
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
+      });
+
+      res.on('close', () => {
+        Promise.resolve(transport.close()).catch(() => {});
+      });
+
+      await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (e) {
       log('error', 'mcp_request_failed', {
