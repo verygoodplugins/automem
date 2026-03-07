@@ -35,7 +35,7 @@ def test_extract_speaker_from_question_handles_curly_possessive_name(
     locomo_evaluator: Any,
 ) -> None:
     speaker = locomo_evaluator._extract_speaker_from_question(
-        "Would Caroline’s sister pursue writing as a career?"
+        "Would Caroline\u2019s sister pursue writing as a career?"
     )
 
     assert speaker == "Caroline"
