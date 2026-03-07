@@ -66,7 +66,7 @@ def init_qdrant(
 
     from urllib.parse import urlparse
 
-    from automem.config import QDRANT_API_KEY, QDRANT_PORT, QDRANT_URL
+    from automem.config import QDRANT_API_KEY, QDRANT_URL
 
     if not QDRANT_URL:
         logger.info("Qdrant URL not provided; skipping client initialization")
@@ -74,20 +74,19 @@ def init_qdrant(
 
     try:
         parsed = urlparse(QDRANT_URL)
-        use_https = parsed.scheme == "https"
-        host = parsed.hostname or "localhost"
-        port = parsed.port or (443 if use_https else QDRANT_PORT)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(
+                f"QDRANT_URL must include scheme and host, e.g. http://host:6333"
+                f" (got {QDRANT_URL!r})"
+            )
         logger.info(
-            "Connecting to Qdrant at %s (host=%s, port=%d, https=%s)",
-            QDRANT_URL,
-            host,
-            port,
-            use_https,
+            "Connecting to Qdrant (host=%s, port=%s, https=%s)",
+            parsed.hostname,
+            parsed.port or "default",
+            parsed.scheme == "https",
         )
         state.qdrant = qdrant_client_cls(
-            host=host,
-            port=port,
-            https=use_https,
+            url=QDRANT_URL,
             api_key=QDRANT_API_KEY,
         )
         ensure_collection_fn()
