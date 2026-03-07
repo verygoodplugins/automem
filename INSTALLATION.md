@@ -331,9 +331,10 @@ export FALKORDB_HOST=localhost
 export FALKORDB_PORT=6379
 export PORT=8001
 
-# Optional: Qdrant configuration
-export QDRANT_URL=http://localhost:6333
-# export QDRANT_API_KEY=your_key
+# Optional: Qdrant configuration (pick one)
+export QDRANT_URL=http://localhost:6333    # Full URL (Qdrant Cloud or explicit)
+# export QDRANT_HOST=localhost             # OR just hostname (auto-constructs URL)
+# export QDRANT_API_KEY=your_key           # Only needed for Qdrant Cloud
 
 # Run API
 python app.py
@@ -382,8 +383,10 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 
 | Variable            | Description                           | Default    |
 | ------------------- | ------------------------------------- | ---------- |
-| `QDRANT_URL`        | Qdrant API endpoint                   | _unset_    |
-| `QDRANT_API_KEY`    | Qdrant authentication                 | _optional_ |
+| `QDRANT_URL`        | Qdrant Cloud endpoint (takes precedence over `QDRANT_HOST`) | _unset_ |
+| `QDRANT_HOST`       | Qdrant hostname for self-hosted (auto-constructs `http://host:port`) | _unset_ |
+| `QDRANT_PORT`       | Qdrant port (used with `QDRANT_HOST`) | `6333`     |
+| `QDRANT_API_KEY`    | Qdrant authentication (Cloud only)    | _optional_ |
 | `QDRANT_COLLECTION` | Qdrant collection name                | `memories` |
 | `VECTOR_SIZE`       | Embedding dimension                   | `1024`     |
 | `EMBEDDING_PROVIDER`| Embedding provider selection          | `auto`     |
@@ -393,7 +396,7 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
 | `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
 
-👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
+👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for setup options (self-hosted on Railway or Qdrant Cloud).
 
 > **Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed when updating — existing 3072d or 768d collections continue to work.
 >

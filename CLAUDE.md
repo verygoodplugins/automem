@@ -220,8 +220,10 @@ Key variables (create `.env` or `~/.config/automem/.env`):
 FALKORDB_HOST=localhost       # Graph database host
 FALKORDB_PORT=6379           # Graph database port
 FALKORDB_GRAPH=memories      # Graph name
-QDRANT_URL=                  # Vector database URL (optional)
-QDRANT_API_KEY=              # Qdrant cloud API key (optional)
+QDRANT_URL=                  # Vector database URL — Qdrant Cloud (optional)
+QDRANT_HOST=                 # OR hostname for self-hosted Qdrant (e.g. "qdrant" on Railway)
+QDRANT_PORT=6333             # Port for self-hosted Qdrant (used with QDRANT_HOST)
+QDRANT_API_KEY=              # Qdrant Cloud API key (optional, not needed for self-hosted)
 QDRANT_COLLECTION=memories   # Collection name
 VECTOR_SIZE=1024             # Embedding dimensions (1024 for voyage-4, 768 for small, 3072 for large)
 VECTOR_SIZE_AUTODETECT=true  # Adopt existing collection dim on startup (false = fail on mismatch)
