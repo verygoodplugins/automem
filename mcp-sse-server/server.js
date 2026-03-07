@@ -186,8 +186,6 @@ async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs
       clearTimeout(timer);
     }
   }
-
-  throw new UpstreamRequestError('request failed', { requestId, kind: 'network', endpoint: url });
 }
 
 // Event store for resumable streams (Last-Event-ID support)
