@@ -18,7 +18,7 @@ flowchart TB
     subgraph internet [Public Internet]
         Users[AI Clients<br/>Direct API]
         CloudAI[Cloud AI Platforms<br/>ChatGPT, Claude.ai, ElevenLabs]
-        Local[Local Tools<br/>Cursor, Claude Desktop]
+        Local[Local Tools<br/>Cursor, Claude Desktop, Claude Code]
     end
 
     subgraph railway [Railway Project]
@@ -121,18 +121,21 @@ The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server
 
 | Platform          | How to Connect                                                                                 |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
-| **ChatGPT**       | Settings → Connectors → Add Server → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN` |
-| **Claude.ai**     | Settings → MCP → `https://your-sse.up.railway.app/mcp/sse?api_token=TOKEN`                     |
-| **Claude Mobile** | Settings → MCP Servers → same URL as above                                                     |
-| **ElevenLabs**    | Agent config → MCP → same URL (or use Authorization header)                                    |
+| **ChatGPT**       | Settings → Connectors → Add Server → `https://your-sse.up.railway.app/mcp?api_token=TOKEN` |
+| **Claude.ai**     | Settings → MCP → `https://your-sse.up.railway.app/mcp?api_token=TOKEN`                     |
+| **Claude Mobile** | Settings → MCP Servers → same URL as above                                                   |
+| **Claude Desktop** | Prefer the same remote MCP URL if you want connector state shared with Claude.ai/iOS        |
+| **ElevenLabs**    | Agent config → MCP → same URL (or use Authorization header)                                  |
 
 👉 **See [MCP_SSE.md](MCP_SSE.md)** for detailed setup per platform.
 
-**Don't need the MCP bridge?** If you only use Cursor, Claude Desktop, or direct API access:
+**Don't need the MCP bridge?** If you only use Cursor, Claude Code, or direct API access:
 
 1. Go to Railway Dashboard → `mcp-sse-server` service
 2. Click the three dots menu → **Delete Service**
 3. This saves ~$2-3/month and has no impact on the core memory API
+
+Claude Desktop can still use the local MCP package, but Anthropic now syncs connector state across Desktop, Claude.ai, and iOS. If you want one shared Claude connector, keep the Railway MCP bridge enabled and use the remote URL everywhere.
 
 ### Optional: Standalone Graph Viewer Service
 

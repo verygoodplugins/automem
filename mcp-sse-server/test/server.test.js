@@ -2,6 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AutoMemClient, createApp, formatRecallAsItems } from "../server.js";
 
+async function withServer(app, fn) {
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    return await fn(address.port);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 test("AutoMemClient.recallMemory passes through advanced /recall params", async () => {
   const client = new AutoMemClient({
     endpoint: "http://example.test",
@@ -104,11 +118,49 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   assert.ok(compact.includes("ID: mem-1"));
 });
 
+test("AutoMemClient._request retries transient upstream errors", async () => {
+  const originalFetch = globalThis.fetch;
+  const attempts = [];
+
+  globalThis.fetch = async (_url, options) => {
+    attempts.push(options?.method || "GET");
+    if (attempts.length === 1) {
+      return new Response(JSON.stringify({ message: "temporarily unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ status: "healthy" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const client = new AutoMemClient({
+      endpoint: "http://example.test",
+      apiKey: "k",
+    });
+
+    const result = await client._request("GET", "health", undefined, {
+      requestId: "req-test",
+      timeoutMs: 50,
+      maxRetries: 1,
+    });
+
+    assert.equal(result.status, "healthy");
+    assert.equal(attempts.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // =============================================================================
 // Streamable HTTP Transport Tests (MCP 2025-03-26)
 // =============================================================================
 
-test("POST /mcp without initialize returns 400 error", async () => {
+test("POST /mcp without valid JSON-RPC body returns parse error", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   process.env.AUTOMEM_API_TOKEN = "test-token";
 
@@ -134,17 +186,14 @@ test("POST /mcp without initialize returns 400 error", async () => {
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.ok(body.error);
-    assert.ok(
-      body.error.message.includes("initialize") ||
-        body.error.message.includes("session")
-    );
+    assert.match(body.error.message, /Parse error/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     process.env.AUTOMEM_API_TOKEN = prevToken;
   }
 });
 
-test("POST /mcp with valid initialize creates session with Mcp-Session-Id", async () => {
+test("POST /mcp with valid initialize returns stateless JSON response", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;
   process.env.AUTOMEM_API_TOKEN = "test-token";
@@ -159,12 +208,8 @@ test("POST /mcp with valid initialize creates session with Mcp-Session-Id", asyn
     const address = server.address();
     const port = address.port;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-
     const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: "POST",
-      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
@@ -182,30 +227,96 @@ test("POST /mcp with valid initialize creates session with Mcp-Session-Id", asyn
       }),
     });
 
-    clearTimeout(timeout);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("mcp-session-id"), null);
+    const body = await res.json();
+    assert.equal(body.result.protocolVersion, "2025-03-26");
+    assert.equal(body.result.serverInfo.name, "automem-mcp-sse");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
+test("POST /mcp/ with minimal initialize returns transport-level JSON-RPC error", async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://127.0.0.1:8001";
+
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/mcp/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: "Bearer test-token",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+      }),
+    });
 
     assert.equal(res.status, 200);
-    const sessionId = res.headers.get("mcp-session-id");
-    assert.ok(sessionId, "should return mcp-session-id header");
-    assert.ok(sessionId.length > 10, "session ID should be a UUID");
+    const body = await res.json();
+    assert.ok(body.error);
+    assert.equal(body.error.code, -32603);
+    assert.match(body.error.message, /params/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
 
-    // Read the SSE response to get the initialize result
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (buf.length < 4096) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) buf += decoder.decode(value, { stream: true });
-      if (buf.includes('"protocolVersion"')) break;
-    }
-    await reader.cancel();
+test("POST /mcp/ ignores stale session id and returns stateless JSON response", async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://127.0.0.1:8001";
 
-    assert.ok(buf.includes("event: message"), "should return SSE event");
-    assert.ok(
-      buf.includes('"protocolVersion"'),
-      "should return initialize result"
-    );
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    const port = address.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/mcp/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: "Bearer test-token",
+        "mcp-session-id": "stale-session-id",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.result.tools));
+    assert.ok(body.result.tools.length > 0);
+    assert.equal(body.result.tools[0].name, "store_memory");
+    assert.equal(res.headers.get("mcp-session-id"), null);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     process.env.AUTOMEM_API_TOKEN = prevToken;
@@ -228,36 +339,10 @@ test("POST /mcp without Accept header returns error", async () => {
     const address = server.address();
     const port = address.port;
 
-    // First create a valid session
-    const initRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: "Bearer test-token",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-03-26",
-          capabilities: {},
-          clientInfo: { name: "test", version: "1.0" },
-        },
-      }),
-    });
-
-    const sessionId = initRes.headers.get("mcp-session-id");
-    // Consume the init response
-    await initRes.text();
-
-    // Now try to use it without Accept header
     const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "mcp-session-id": sessionId,
         // Missing Accept header
       },
       body: JSON.stringify({
@@ -279,29 +364,79 @@ test("POST /mcp without Accept header returns error", async () => {
   }
 });
 
-test("GET /health returns both transport types", async () => {
-  const app = createApp();
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, "127.0.0.1", () => resolve(s));
-  });
+test("GET /health returns healthy when upstream is reachable", async () => {
+  const originalFetch = globalThis.fetch;
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://example.test";
+
+  globalThis.fetch = async (url, options) => {
+    if (typeof url === "string" && url.startsWith("http://127.0.0.1:")) {
+      return originalFetch(url, options);
+    }
+
+    return new Response(
+      JSON.stringify({ status: "healthy", falkordb: "connected", qdrant: "connected" }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  };
 
   try {
-    const address = server.address();
-    const port = address.port;
+    await withServer(createApp(), async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/health`);
+      assert.equal(res.status, 200);
 
-    const res = await fetch(`http://127.0.0.1:${port}/health`);
-    assert.equal(res.status, 200);
-
-    const body = await res.json();
-    assert.equal(body.status, "healthy");
-    assert.ok(Array.isArray(body.transports));
-    assert.ok(body.transports.includes("streamable-http"));
-    assert.ok(body.transports.includes("sse"));
-    assert.ok(body.endpoints);
-    assert.equal(body.endpoints.streamableHttp, "/mcp");
-    assert.equal(body.endpoints.sse, "/mcp/sse");
+      const body = await res.json();
+      assert.equal(body.status, "healthy");
+      assert.equal(body.upstream, "reachable");
+      assert.equal(body.upstream_details.status, "healthy");
+      assert.ok(Array.isArray(body.transports));
+      assert.ok(body.transports.includes("streamable-http"));
+      assert.ok(body.transports.includes("sse"));
+      assert.equal(body.endpoints.streamableHttp, "/mcp");
+      assert.equal(body.endpoints.sse, "/mcp/sse");
+      assert.ok(body.request_id);
+    });
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
+test("GET /health returns degraded when upstream is unreachable", async () => {
+  const originalFetch = globalThis.fetch;
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://example.test";
+
+  globalThis.fetch = async (url, options) => {
+    if (typeof url === "string" && url.startsWith("http://127.0.0.1:")) {
+      return originalFetch(url, options);
+    }
+
+    throw new TypeError("fetch failed");
+  };
+
+  try {
+    await withServer(createApp(), async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/health`);
+      assert.equal(res.status, 503);
+
+      const body = await res.json();
+      assert.equal(body.status, "degraded");
+      assert.equal(body.upstream, "unreachable");
+      assert.match(body.upstream_error, /fetch failed/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
   }
 });
 

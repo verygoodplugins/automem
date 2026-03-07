@@ -1,6 +1,6 @@
 # Remote MCP
 
-The Remote MCP server exposes AutoMem over HTTPS, enabling cloud-based AI platforms to access your memories without local installation.
+The Remote MCP server exposes AutoMem over HTTPS, enabling cloud-based AI platforms to access your memories without local installation. It is also the recommended default for Anthropic surfaces when you want one shared MCP connection across Claude Desktop, Claude.ai, and iOS, because connector state now syncs between those clients.
 
 ## Transport Options
 
@@ -11,7 +11,7 @@ AutoMem supports two MCP transport protocols:
 | **Streamable HTTP**      | 2025-03-26       | ✅ Recommended | `/mcp`     |
 | SSE (Server-Sent Events) | 2024-11-05       | ⚠️ Deprecated  | `/mcp/sse` |
 
-**Streamable HTTP** is the newer, recommended transport. It uses a single endpoint, supports session resumability, and works better with proxies and load balancers.
+**Streamable HTTP** is the newer, recommended transport. AutoMem serves `/mcp` in stateless mode for broad client compatibility, so clients can treat each request independently and don't need long-lived server-side session continuity.
 
 **SSE** is still supported for backward compatibility with older clients.
 
@@ -65,7 +65,7 @@ flowchart TB
     API --> Qdrant
 
     Cursor -.->|Direct connection| LocalMCP
-    ClaudeDesktop -.->|Direct connection| LocalMCP
+    ClaudeDesktop -.->|Optional local package| LocalMCP
     ClaudeCode -.->|Direct connection| LocalMCP
     LocalMCP -.->|HTTP| API
 ```
@@ -79,10 +79,12 @@ flowchart TB
 | **Claude Mobile**     | ✅ Yes            | iOS/Android app                 |
 | **ElevenLabs Agents** | ✅ Yes            | Voice AI with tool calling      |
 | **Cursor IDE**        | ❌ No             | Use local `mcp-automem` package |
-| **Claude Desktop**    | ❌ No             | Use local `mcp-automem` package |
+| **Claude Desktop**    | ✅ Usually yes    | Recommended if you want the same connector enabled in Desktop, Claude.ai, and iOS |
 | **Claude Code**       | ❌ No             | Use local `mcp-automem` package |
 
-**If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the MCP bridge—just install the local MCP package:
+**If you only use Cursor or Claude Code**, you usually don't need the MCP bridge. Claude Desktop can still use the local MCP package, but disabling the remote connector there may also disable it for Claude.ai/iOS because Anthropic now syncs connector state across clients.
+
+Local install:
 
 ```bash
 npx @verygoodplugins/mcp-automem cursor  # or 'claude' or 'claude-code'
@@ -172,7 +174,7 @@ Example:
 
 | Transport                     | Endpoint                            | Purpose                                              |
 | ----------------------------- | ----------------------------------- | ---------------------------------------------------- |
-| Streamable HTTP (Recommended) | `POST /mcp`                         | Initialize session & send JSON-RPC                   |
+| Streamable HTTP (Recommended) | `POST /mcp`                         | Stateless JSON-RPC over HTTP                         |
 | Streamable HTTP (Recommended) | `GET /mcp`                          | Optional SSE stream when `Accept: text/event-stream` |
 | SSE (Deprecated)              | `GET /mcp/sse`                      | SSE stream (server → client)                         |
 | SSE (Deprecated)              | `POST /mcp/messages?sessionId=<id>` | Client → server JSON-RPC                             |
@@ -187,7 +189,7 @@ sequenceDiagram
 
     Note over Client,DB: Connection Establishment
     Client->>MCP: POST /mcp (initialize)
-    MCP-->>Client: 200 OK + session info
+    MCP-->>Client: 200 OK + capabilities
 
     Note over Client,DB: Memory Operations
     Client->>MCP: POST /mcp<br/>tool: store_memory
@@ -211,6 +213,10 @@ sequenceDiagram
 ```
 
 ### Authentication
+
+### Stateless Behavior
+
+`/mcp` does not rely on server-side Streamable HTTP sessions. The bridge does not return an `Mcp-Session-Id` from initialize, and any incoming session header on `/mcp` is ignored. This matches current remote-client behavior more reliably across ChatGPT, Claude, and other hosted MCP clients.
 
 **Header-based** (preferred when supported):
 
@@ -343,9 +349,9 @@ retrieve relevant context before answering questions.
 
 **Streamable HTTP (recommended):**
 
-- Supports `Last-Event-ID` header for resuming streams
-- If connection drops, client can resume from last received event
-- Session persists on server until explicitly terminated
+- `/mcp` is stateless, so reconnects do not depend on a server-side session surviving
+- Clients can retry initialize or tool calls directly without waiting for session recovery
+- If a client sends a stale `Mcp-Session-Id`, the bridge ignores it on `/mcp`
 
 **SSE (deprecated):**
 
