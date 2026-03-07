@@ -152,7 +152,7 @@ def _extract_query_entities(query: str) -> List[str]:
         if clean_word in ENTITY_STOPWORDS:
             continue
         # Skip possessives (handle separately)
-        if "'s" in word or "'s" in word:
+        if "'s" in word or "’s" in word:
             continue
 
         # Check for capitalized word (potential name)
@@ -165,8 +165,8 @@ def _extract_query_entities(query: str) -> List[str]:
                 continue
             entities.append(clean_word)
 
-    # Handle possessives like "John's" or "Caroline's"
-    possessives = re.findall(r"\b([A-Z][a-z]+)'s\b", query)
+    # Handle possessives like "John's" or "Caroline’s"
+    possessives = re.findall(r"\b([A-Z][a-z]+)['’]s\b", query)
     for p in possessives:
         if p not in ENTITY_STOPWORDS and p not in entities:
             entities.append(p)
