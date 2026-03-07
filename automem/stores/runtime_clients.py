@@ -53,22 +53,45 @@ def init_qdrant(
     qdrant_client_cls: Any,
     ensure_collection_fn: Callable[[], None],
 ) -> None:
-    """Initialize Qdrant connection and ensure the collection exists."""
+    """Initialize Qdrant connection and ensure the collection exists.
+
+    Raises VectorDimensionMismatchError (via ensure_collection_fn) if the
+    existing collection dimension conflicts with VECTOR_SIZE and autodetect
+    is disabled.  This is intentionally fatal — callers should NOT catch it.
+    """
+    from automem.utils.validation import VectorDimensionMismatchError
+
     if state.qdrant is not None:
         return
 
-    url = os.getenv("QDRANT_URL")
-    api_key = os.getenv("QDRANT_API_KEY")
+    from urllib.parse import urlparse
 
-    if not url:
+    from automem.config import QDRANT_API_KEY, QDRANT_URL
+
+    if not QDRANT_URL:
         logger.info("Qdrant URL not provided; skipping client initialization")
         return
 
     try:
-        logger.info("Connecting to Qdrant at %s", url)
-        state.qdrant = qdrant_client_cls(url=url, api_key=api_key)
+        parsed = urlparse(QDRANT_URL)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("QDRANT_URL must include scheme and host, e.g. http://host:6333")
+        logger.info(
+            "Connecting to Qdrant (host=%s, port=%s, https=%s)",
+            parsed.hostname,
+            parsed.port or "default",
+            parsed.scheme == "https",
+        )
+        state.qdrant = qdrant_client_cls(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+        )
         ensure_collection_fn()
         logger.info("Qdrant connection established")
+    except VectorDimensionMismatchError as e:
+        logger.error("%s", e)
+        state.qdrant = None
+        raise
     except ValueError:
         logger.exception("Invalid Qdrant configuration; running without vector store")
         state.qdrant = None

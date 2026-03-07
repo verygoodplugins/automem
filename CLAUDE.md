@@ -79,7 +79,7 @@ The `automem/api` module provides **28 endpoints** (admin: 2, memory: 10, recall
 ### Data Flow
 1. **Flask API** (port 8001) - Request validation, orchestration, authentication
 2. **FalkorDB** (port 6379) - Graph storage for Memory nodes and relationship edges
-3. **Qdrant** (optional, port 6333) - 768-dimensional vector search for semantic similarity
+3. **Qdrant** (optional, port 6333) - Vector search for semantic similarity (dimension depends on embedding provider; see `VECTOR_SIZE`)
 4. **Consolidation Engine** - Background processing for memory maintenance
 5. **FalkorDB Browser** (optional, port 3001) - Web UI for graph visualization (start with `docker compose --profile browser up`)
 
@@ -145,9 +145,9 @@ AutoMem uses a provider pattern with multiple embedding backends:
    - Supports output dimensions: 256, 512, 1024, 2048
    - Requires network and API key
 
-2. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-large`) - If `OPENAI_API_KEY` is set
-   - High-quality semantic embeddings via API
-   - 3072 dimensions by default (configurable via `EMBEDDING_MODEL` and `VECTOR_SIZE`)
+2. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-small`) - If `OPENAI_API_KEY` is set
+   - Semantic embeddings via API, truncated to `VECTOR_SIZE` via Matryoshka (OpenAI native only)
+   - If `VECTOR_SIZE` > 1536, auto-upgrades to `text-embedding-3-large` (set `EMBEDDING_MODEL=text-embedding-3-large` to silence)
    - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.)
    - The `dimensions` parameter is only sent to OpenAI's own API; omitted for third-party providers
 
@@ -165,7 +165,7 @@ AutoMem uses a provider pattern with multiple embedding backends:
    - Deterministic vectors from content hash
    - No semantic meaning, last resort only
 
-**Upgrade safety:** If your existing Qdrant collection is 768d, keep `VECTOR_SIZE=768` (and `text-embedding-3-small`) until you re-embed. The server fails fast on a dimension mismatch to avoid corrupting data.
+**Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed when updating. To enforce strict matching, set `VECTOR_SIZE_AUTODETECT=false`.
 
 #### Provider Configuration
 
@@ -220,10 +220,13 @@ Key variables (create `.env` or `~/.config/automem/.env`):
 FALKORDB_HOST=localhost       # Graph database host
 FALKORDB_PORT=6379           # Graph database port
 FALKORDB_GRAPH=memories      # Graph name
-QDRANT_URL=                  # Vector database URL (optional)
-QDRANT_API_KEY=              # Qdrant cloud API key (optional)
+QDRANT_URL=                  # Vector database URL — Qdrant Cloud (optional)
+QDRANT_HOST=                 # OR hostname for self-hosted Qdrant (e.g. "qdrant" on Railway)
+QDRANT_PORT=6333             # Port for self-hosted Qdrant (used with QDRANT_HOST)
+QDRANT_API_KEY=              # Qdrant Cloud API key (optional, not needed for self-hosted)
 QDRANT_COLLECTION=memories   # Collection name
-VECTOR_SIZE=3072             # Embedding dimensions (3072 for large, 768 for small)
+VECTOR_SIZE=1024             # Embedding dimensions (1024 for voyage-4, 768 for small, 3072 for large)
+VECTOR_SIZE_AUTODETECT=true  # Adopt existing collection dim on startup (false = fail on mismatch)
 
 # API configuration
 PORT=8001                    # API port
@@ -238,6 +241,8 @@ OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs (optio
 # Consolidation intervals (seconds)
 CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD=0.3  # Only skip truly low-importance items
+CONSOLIDATION_BASE_DECAY_RATE=0.01            # Daily decay rate (0.01 ≈ 69-day half-life)
+CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR=0.3     # Min relevance = importance * this (floor)
 CONSOLIDATION_CREATIVE_INTERVAL_SECONDS=604800  # 1 week (default)
 CONSOLIDATION_CLUSTER_INTERVAL_SECONDS=2592000  # 1 month (default)
 CONSOLIDATION_FORGET_INTERVAL_SECONDS=0       # Disabled by default (set to enable)

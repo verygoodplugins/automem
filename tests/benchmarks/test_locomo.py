@@ -575,10 +575,20 @@ class LoCoMoEvaluator:
         if not question_dates or not memory_dates:
             return False
 
-        # Check for matches within tolerance
+        # Check for matches within tolerance (normalize to UTC before comparing)
         for q_date in question_dates:
+            q_utc = (
+                q_date.astimezone(timezone.utc)
+                if q_date.tzinfo is not None
+                else q_date.replace(tzinfo=timezone.utc)
+            )
             for m_date in memory_dates:
-                days_diff = abs((q_date - m_date).days)
+                m_utc = (
+                    m_date.astimezone(timezone.utc)
+                    if m_date.tzinfo is not None
+                    else m_date.replace(tzinfo=timezone.utc)
+                )
+                days_diff = abs((q_utc - m_utc).total_seconds()) / 86400
                 if days_diff <= tolerance_days:
                     return True
 

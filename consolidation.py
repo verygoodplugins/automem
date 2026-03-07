@@ -119,13 +119,16 @@ class MemoryConsolidator:
         grace_period_days: int = 90,
         importance_protection_threshold: float = 0.7,
         protected_types: Optional[Set[str]] = None,
+        base_decay_rate: float = 0.01,
+        importance_floor_factor: float = 0.3,
     ):
         self.graph = graph
         self.vector_store = vector_store
         self._graph_id = id(graph)  # Unique ID for cache invalidation
 
         # Decay parameters (tunable)
-        self.base_decay_rate = 0.1  # Daily decay rate
+        self.base_decay_rate = base_decay_rate
+        self.importance_floor_factor = importance_floor_factor
         self.reinforcement_bonus = 0.2  # Strength added when accessed
         self.relationship_preservation = 0.3  # Extra weight for connected memories
 
@@ -234,6 +237,11 @@ class MemoryConsolidator:
             * (0.5 + importance)  # Importance scales from 0.5 to 1.5
             * (0.7 + 0.3 * confidence)  # Confidence adds up to 30%
         )
+
+        # Importance-based floor: high-importance memories never decay below
+        # importance * floor_factor (e.g. importance 0.8 * 0.3 = floor 0.24)
+        floor = importance * self.importance_floor_factor
+        relevance = max(relevance, floor)
 
         return min(1.0, relevance)  # Cap at 1.0
 
@@ -635,7 +643,10 @@ class MemoryConsolidator:
                             self.vector_store.set_payload(
                                 collection_name="memories",
                                 points=[memory["id"]],
-                                payload={"relevance_score": relevance},
+                                payload={
+                                    "relevance_score": relevance,
+                                    "archived": True,
+                                },
                             )
                         except Exception:
                             pass

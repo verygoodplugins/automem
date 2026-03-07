@@ -11,7 +11,17 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 # Qdrant / FalkorDB configuration
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "memories")
-VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "3072"))
+VECTOR_SIZE = int(os.getenv("VECTOR_SIZE") or os.getenv("QDRANT_VECTOR_SIZE", "1024"))
+QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
+QDRANT_API_KEY: str | None = os.getenv("QDRANT_API_KEY")
+
+# QDRANT_URL takes precedence; otherwise construct from QDRANT_HOST + QDRANT_PORT.
+# This keeps Railway templates simple (just set QDRANT_HOST=qdrant.railway.internal).
+_qdrant_host = os.getenv("QDRANT_HOST")
+QDRANT_URL: str | None = os.getenv("QDRANT_URL") or (
+    f"http://{_qdrant_host}:{QDRANT_PORT}" if _qdrant_host else None
+)
+
 GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "memories")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 
@@ -34,6 +44,12 @@ CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD = (
     float(_DECAY_THRESHOLD_RAW) if _DECAY_THRESHOLD_RAW else None
 )
 CONSOLIDATION_HISTORY_LIMIT = int(os.getenv("CONSOLIDATION_HISTORY_LIMIT", "20"))
+
+# Decay formula tuning
+CONSOLIDATION_BASE_DECAY_RATE = float(os.getenv("CONSOLIDATION_BASE_DECAY_RATE", "0.01"))
+CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR = float(
+    os.getenv("CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR", "0.3")
+)
 
 # Memory protection configuration (prevents accidental data loss)
 CONSOLIDATION_DELETE_THRESHOLD = float(os.getenv("CONSOLIDATION_DELETE_THRESHOLD", "0.0"))
@@ -85,13 +101,20 @@ JIT_ENRICHMENT_ENABLED = os.getenv("JIT_ENRICHMENT_ENABLED", "true").lower() not
 }
 
 # Model configuration
-# text-embedding-3-large (3072d): Better semantic precision, recommended for production
-# text-embedding-3-small (768d): Cheaper, use VECTOR_SIZE=768 if switching
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
+# voyage-4 (1024d): Recommended default via EMBEDDING_PROVIDER=auto
+# text-embedding-3-small (1536d native): OpenAI fallback; truncated to VECTOR_SIZE via
+#   Matryoshka when the upstream API supports the ``dimensions`` parameter.
+#   For OpenAI-compatible endpoints that don't support ``dimensions``, the model
+#   returns its native 1536-d output and VECTOR_SIZE is ignored.
+#   If VECTOR_SIZE > 1536, auto-upgrades to text-embedding-3-large.
+# text-embedding-3-large: OpenAI high-precision, use VECTOR_SIZE=3072
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
+RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.0"))
+RECALL_ADAPTIVE_FLOOR = os.getenv("RECALL_ADAPTIVE_FLOOR", "true").lower() in ("true", "1", "yes")
 
 # Memory content size limits (governs auto-summarization on store)
 # Soft limit: Content above this triggers auto-summarization
