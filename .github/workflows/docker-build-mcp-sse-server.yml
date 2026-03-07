@@ -15,12 +15,14 @@ on:
         paths:
             - "mcp-sse-server/Dockerfile"
             - "mcp-sse-server/package.json"
+            - "mcp-sse-server/package-lock.json"
             - ".github/workflows/docker-build-mcp-sse-server.yml"
     pull_request:
         branches: [main]
         paths:
             - "mcp-sse-server/Dockerfile"
             - "mcp-sse-server/package.json"
+            - "mcp-sse-server/package-lock.json"
             - ".github/workflows/docker-build-mcp-sse-server.yml"
     workflow_dispatch:
         inputs:
