@@ -2,6 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AutoMemClient, createApp, formatRecallAsItems } from "../server.js";
 
+async function withServer(app, fn) {
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    return await fn(address.port);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 test("AutoMemClient.recallMemory passes through advanced /recall params", async () => {
   const client = new AutoMemClient({
     endpoint: "http://example.test",
@@ -102,6 +116,44 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   const compact = formatRecallAsItems(results, { detailed: false })[0].text;
   assert.ok(compact.includes("score=0.123"));
   assert.ok(compact.includes("ID: mem-1"));
+});
+
+test("AutoMemClient._request retries transient upstream errors", async () => {
+  const originalFetch = globalThis.fetch;
+  const attempts = [];
+
+  globalThis.fetch = async (_url, options) => {
+    attempts.push(options?.method || "GET");
+    if (attempts.length === 1) {
+      return new Response(JSON.stringify({ message: "temporarily unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ status: "healthy" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const client = new AutoMemClient({
+      endpoint: "http://example.test",
+      apiKey: "k",
+    });
+
+    const result = await client._request("GET", "health", undefined, {
+      requestId: "req-test",
+      timeoutMs: 50,
+      maxRetries: 1,
+    });
+
+    assert.equal(result.status, "healthy");
+    assert.equal(attempts.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 // =============================================================================
@@ -279,29 +331,79 @@ test("POST /mcp without Accept header returns error", async () => {
   }
 });
 
-test("GET /health returns both transport types", async () => {
-  const app = createApp();
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, "127.0.0.1", () => resolve(s));
-  });
+test("GET /health returns healthy when upstream is reachable", async () => {
+  const originalFetch = globalThis.fetch;
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://example.test";
+
+  globalThis.fetch = async (url, options) => {
+    if (typeof url === "string" && url.startsWith("http://127.0.0.1:")) {
+      return originalFetch(url, options);
+    }
+
+    return new Response(
+      JSON.stringify({ status: "healthy", falkordb: "connected", qdrant: "connected" }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  };
 
   try {
-    const address = server.address();
-    const port = address.port;
+    await withServer(createApp(), async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/health`);
+      assert.equal(res.status, 200);
 
-    const res = await fetch(`http://127.0.0.1:${port}/health`);
-    assert.equal(res.status, 200);
-
-    const body = await res.json();
-    assert.equal(body.status, "healthy");
-    assert.ok(Array.isArray(body.transports));
-    assert.ok(body.transports.includes("streamable-http"));
-    assert.ok(body.transports.includes("sse"));
-    assert.ok(body.endpoints);
-    assert.equal(body.endpoints.streamableHttp, "/mcp");
-    assert.equal(body.endpoints.sse, "/mcp/sse");
+      const body = await res.json();
+      assert.equal(body.status, "healthy");
+      assert.equal(body.upstream, "reachable");
+      assert.equal(body.upstream_details.status, "healthy");
+      assert.ok(Array.isArray(body.transports));
+      assert.ok(body.transports.includes("streamable-http"));
+      assert.ok(body.transports.includes("sse"));
+      assert.equal(body.endpoints.streamableHttp, "/mcp");
+      assert.equal(body.endpoints.sse, "/mcp/sse");
+      assert.ok(body.request_id);
+    });
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
+test("GET /health returns degraded when upstream is unreachable", async () => {
+  const originalFetch = globalThis.fetch;
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://example.test";
+
+  globalThis.fetch = async (url, options) => {
+    if (typeof url === "string" && url.startsWith("http://127.0.0.1:")) {
+      return originalFetch(url, options);
+    }
+
+    throw new TypeError("fetch failed");
+  };
+
+  try {
+    await withServer(createApp(), async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/health`);
+      assert.equal(res.status, 503);
+
+      const body = await res.json();
+      assert.equal(body.status, "degraded");
+      assert.equal(body.upstream, "unreachable");
+      assert.match(body.upstream_error, /fetch failed/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
   }
 });
 

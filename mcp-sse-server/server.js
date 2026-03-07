@@ -14,6 +14,182 @@ import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest } fr
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 15000;
+const DEFAULT_UPSTREAM_MAX_RETRIES = 2;
+const DEFAULT_HEALTH_TIMEOUT_MS = 5000;
+const DEFAULT_HEALTH_PROBE_INTERVAL_MS = 30000;
+const TRANSIENT_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
+
+function readIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function log(level, msg, extra = {}) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...extra });
+  if (level === 'error') {
+    console.error(line);
+  } else if (level === 'warn') {
+    console.warn(line);
+  } else {
+    console.log(line);
+  }
+}
+
+async function parseResponseBody(res) {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    try {
+      return await res.json();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  const text = await res.text();
+  return text ? { message: text } : {};
+}
+
+function summarizeUpstreamErrorBody(status, data) {
+  const message = data?.message || data?.detail || data?.error;
+  return message ? String(message) : `HTTP ${status}`;
+}
+
+function isRetryableFetchError(error) {
+  if (!error) return false;
+  const name = error.name || '';
+  return name === 'AbortError' || name === 'TimeoutError' || error instanceof TypeError;
+}
+
+class UpstreamRequestError extends Error {
+  constructor(message, { status, requestId, kind, retryable = false, endpoint, cause } = {}) {
+    super(message);
+    this.name = 'UpstreamRequestError';
+    this.status = status;
+    this.requestId = requestId;
+    this.kind = kind || 'upstream';
+    this.retryable = retryable;
+    this.endpoint = endpoint;
+    this.cause = cause;
+  }
+}
+
+function formatToolError(error, requestId) {
+  const suffix = requestId ? ` (request_id: ${requestId})` : '';
+  if (error instanceof UpstreamRequestError) {
+    if (error.kind === 'timeout') {
+      return `AutoMem request timed out. The service may be slow or restarting.${suffix}`;
+    }
+    if (error.status && TRANSIENT_STATUS_CODES.has(error.status)) {
+      return `AutoMem service is temporarily unavailable (${error.message}). Please retry.${suffix}`;
+    }
+    return `AutoMem error: ${error.message}${suffix}`;
+  }
+
+  return `AutoMem error: ${error?.message || error}${suffix}`;
+}
+
+async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs, maxRetries } = {}) {
+  const retries = Math.max(0, maxRetries ?? DEFAULT_UPSTREAM_MAX_RETRIES);
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(url, { method, headers, body, signal: controller.signal });
+      const data = await parseResponseBody(res);
+
+      if (res.ok) {
+        if (attempt > 0) {
+          log('info', 'upstream_request_recovered', {
+            reqId: requestId,
+            url,
+            method,
+            attempt: attempt + 1,
+            status: res.status,
+          });
+        }
+        return data;
+      }
+
+      const message = summarizeUpstreamErrorBody(res.status, data);
+      const retryable = TRANSIENT_STATUS_CODES.has(res.status);
+      log(retryable && attempt < retries ? 'warn' : 'error', 'upstream_http_error', {
+        reqId: requestId,
+        url,
+        method,
+        attempt: attempt + 1,
+        status: res.status,
+        retryable,
+        message,
+      });
+
+      if (retryable && attempt < retries) {
+        await sleep(250 * (2 ** attempt) + Math.floor(Math.random() * 100));
+        continue;
+      }
+
+      throw new UpstreamRequestError(message, {
+        status: res.status,
+        requestId,
+        kind: 'http',
+        retryable,
+        endpoint: url,
+      });
+    } catch (error) {
+      if (error instanceof UpstreamRequestError) {
+        throw error;
+      }
+
+      const aborted = error?.name === 'AbortError';
+      const retryable = isRetryableFetchError(error);
+      if (retryable && attempt < retries) {
+        log('warn', aborted ? 'upstream_timeout_retry' : 'upstream_fetch_retry', {
+          reqId: requestId,
+          url,
+          method,
+          attempt: attempt + 1,
+          timeoutMs,
+          error: error?.message || String(error),
+        });
+        await sleep(250 * (2 ** attempt) + Math.floor(Math.random() * 100));
+        continue;
+      }
+
+      log('error', aborted ? 'upstream_timeout' : 'upstream_fetch_failed', {
+        reqId: requestId,
+        url,
+        method,
+        attempt: attempt + 1,
+        timeoutMs,
+        error: error?.message || String(error),
+      });
+
+      throw new UpstreamRequestError(
+        aborted ? `request timed out after ${timeoutMs}ms` : `fetch failed: ${error?.message || error}`,
+        {
+          requestId,
+          kind: aborted ? 'timeout' : 'network',
+          retryable,
+          endpoint: url,
+          cause: error,
+        }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new UpstreamRequestError('request failed', { requestId, kind: 'network', endpoint: url });
+}
+
 // Event store for resumable streams (Last-Event-ID support)
 class InMemoryEventStore {
   constructor({ ttlMs = 60 * 60 * 1000, sweepMs = 5 * 60 * 1000 } = {}) {
@@ -61,32 +237,25 @@ export class AutoMemClient {
   constructor(config) {
     this.config = config;
   }
-  async _request(method, path, body) {
+  async _request(method, path, body, options = {}) {
     const url = `${this.config.endpoint.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
     const headers = { 'Content-Type': 'application/json' };
     if (this.config.apiKey) headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-    console.log(`[AutoMem] ${method} ${url}`);
-    let res;
-    try {
-      res = await fetch(url, {
-        method,
-        headers,
-        body: method === 'GET' ? undefined : (body ? JSON.stringify(body) : undefined)
-      });
-    } catch (fetchErr) {
-      console.error(`[AutoMem] Fetch failed for ${url}:`, fetchErr.message, fetchErr.cause);
-      throw new Error(`fetch failed: ${fetchErr.message} (endpoint: ${this.config.endpoint})`);
-    }
-    let data;
-    try {
-      data = await res.json();
-    } catch (_) {
-      data = { message: await res.text() };
-    }
-    if (!res.ok) throw new Error(data.message || data.detail || `HTTP ${res.status}`);
-    return data;
+    const requestId = options.requestId || randomUUID();
+    const timeoutMs = options.timeoutMs ?? readIntEnv('UPSTREAM_TIMEOUT_MS', DEFAULT_UPSTREAM_TIMEOUT_MS);
+    const maxRetries = options.maxRetries ?? readIntEnv('UPSTREAM_MAX_RETRIES', DEFAULT_UPSTREAM_MAX_RETRIES);
+
+    log('info', 'upstream_request', { reqId: requestId, method, url, timeoutMs, maxRetries });
+    return fetchWithRetry(url, {
+      method,
+      headers,
+      body: method === 'GET' ? undefined : (body ? JSON.stringify(body) : undefined),
+      requestId,
+      timeoutMs,
+      maxRetries,
+    });
   }
-  async storeMemory(args) {
+  async storeMemory(args, options) {
     const body = {
       content: args.content,
       tags: args.tags || [],
@@ -102,10 +271,10 @@ export class AutoMemClient {
       updated_at: args.updated_at,
       last_accessed: args.last_accessed
     };
-    const r = await this._request('POST', 'memory', body);
+    const r = await this._request('POST', 'memory', body, options);
     return { memory_id: r.memory_id || r.id, message: r.message || 'Memory stored successfully' };
   }
-  async recallMemory(args) {
+  async recallMemory(args, options) {
     const p = new URLSearchParams();
     if (args.query) p.set('query', args.query);
     if (args.limit) p.set('limit', String(args.limit));
@@ -137,34 +306,33 @@ export class AutoMemClient {
     if (Array.isArray(args.priority_ids)) args.priority_ids.forEach(t => { if (t) p.append('priority_ids', t); });
 
     const path = p.toString() ? `recall?${p.toString()}` : 'recall';
-    const r = await this._request('GET', path);
+    const r = await this._request('GET', path, undefined, options);
     return r;
   }
-  async associateMemories(args) {
+  async associateMemories(args, options) {
     const r = await this._request('POST', 'associate', {
       memory1_id: args.memory1_id,
       memory2_id: args.memory2_id,
       type: args.type,
       strength: args.strength
-    });
+    }, options);
     return { success: true, message: r.message || 'Association created successfully' };
   }
-  async updateMemory(args) {
+  async updateMemory(args, options) {
     const { memory_id, ...updates } = args;
-    const r = await this._request('PATCH', `memory/${memory_id}`, updates);
+    const r = await this._request('PATCH', `memory/${memory_id}`, updates, options);
     return { memory_id: r.memory_id || memory_id, message: r.message || 'Memory updated successfully' };
   }
-  async deleteMemory(args) {
-    const r = await this._request('DELETE', `memory/${args.memory_id}`);
+  async deleteMemory(args, options) {
+    const r = await this._request('DELETE', `memory/${args.memory_id}`, undefined, options);
     return { memory_id: r.memory_id || args.memory_id, message: r.message || 'Memory deleted successfully' };
   }
-  async checkHealth() {
-    try {
-      const r = await this._request('GET', 'health');
-      return r;
-    } catch (e) {
-      return { status: 'error', error: e.message };
-    }
+  async checkHealth(options = {}) {
+    return this._request('GET', 'health', undefined, {
+      requestId: options.requestId,
+      timeoutMs: options.timeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
+      maxRetries: options.maxRetries ?? 0,
+    });
   }
 }
 
@@ -375,10 +543,11 @@ export function buildMcpServer(client) {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const requestId = randomUUID();
     try {
       switch (name) {
         case 'store_memory': {
-          const r = await client.storeMemory(args || {});
+          const r = await client.storeMemory(args || {}, { requestId });
           return { content: [{ type: 'text', text: `Memory stored: ${r.memory_id}` }] };
         }
         case 'recall_memory': {
@@ -415,7 +584,7 @@ export function buildMcpServer(client) {
             priority_ids: Array.isArray(args?.priority_ids) ? args.priority_ids : undefined,
           };
 
-          const r = await client.recallMemory(recallArgs);
+          const r = await client.recallMemory(recallArgs, { requestId });
           const results = r.results || r.memories || [];
 
           const count = r.count ?? results.length;
@@ -452,26 +621,33 @@ export function buildMcpServer(client) {
           };
         }
         case 'associate_memories': {
-          const r = await client.associateMemories(args || {});
+          const r = await client.associateMemories(args || {}, { requestId });
           return { content: [{ type: 'text', text: r.message }] };
         }
         case 'update_memory': {
-          const r = await client.updateMemory(args || {});
+          const r = await client.updateMemory(args || {}, { requestId });
           return { content: [{ type: 'text', text: `Updated ${r.memory_id}` }] };
         }
         case 'delete_memory': {
-          const r = await client.deleteMemory(args || {});
+          const r = await client.deleteMemory(args || {}, { requestId });
           return { content: [{ type: 'text', text: `Deleted ${r.memory_id}` }] };
         }
         case 'check_database_health': {
-          const r = await client.checkHealth();
+          const r = await client.checkHealth({ requestId });
           return { content: [{ type: 'text', text: JSON.stringify(r) }] };
         }
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
     } catch (e) {
-      return { content: [{ type: 'text', text: `Error: ${e.message || e}` }], isError: true };
+      log('error', 'tool_request_failed', {
+        reqId: requestId,
+        tool: name,
+        error: e?.message || String(e),
+        status: e?.status,
+        kind: e?.kind,
+      });
+      return { content: [{ type: 'text', text: formatToolError(e, requestId) }], isError: true };
     }
   });
 
@@ -481,6 +657,14 @@ export function buildMcpServer(client) {
 export function createApp() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
+  app.use((req, res, next) => {
+    const requestId = typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id'].trim()
+      ? req.headers['x-request-id'].trim()
+      : randomUUID();
+    req.requestId = requestId;
+    res.set('X-Request-Id', requestId);
+    next();
+  });
 
   // Expose Mcp-Session-Id header for browser-based clients
   app.use((req, res, next) => {
@@ -497,7 +681,7 @@ export function createApp() {
     const now = Date.now();
     for (const [sid, session] of sessions.entries()) {
       if (session.type === 'streamable-http' && now - (session.lastAccess || 0) > SESSION_TTL_MS) {
-        console.log(`[MCP] Sweeping idle Streamable HTTP session: ${sid}`);
+        log('info', 'mcp_session_swept', { sessionId: sid, transport: 'streamable-http' });
         // Delete first so transport.onclose guard (sessions.has) becomes a no-op
         sessions.delete(sid);
         // close() returns a Promise — catch async rejections to avoid unhandled rejection crashes
@@ -514,13 +698,95 @@ export function createApp() {
   }, 5 * 60 * 1000);
   sessionSweep.unref?.();
 
-  // Basic health
-  app.get('/health', (_req, res) => res.json({
-    status: 'healthy',
-    transports: ['streamable-http', 'sse'],
-    endpoints: { streamableHttp: '/mcp', sse: '/mcp/sse' },
-    timestamp: new Date().toISOString()
-  }));
+  const healthState = {
+    checked_at: null,
+    status: 'starting',
+    upstream: 'unknown',
+    details: null,
+    error: null,
+  };
+  let healthProbePromise = null;
+
+  async function probeUpstreamHealth(trigger = 'request') {
+    if (healthProbePromise) return healthProbePromise;
+
+    healthProbePromise = (async () => {
+      const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
+      const token = process.env.AUTOMEM_API_TOKEN;
+      const requestId = `health-${randomUUID()}`;
+
+      if (!token) {
+        healthState.checked_at = new Date().toISOString();
+        healthState.status = 'degraded';
+        healthState.upstream = 'unconfigured';
+        healthState.details = null;
+        healthState.error = 'AUTOMEM_API_TOKEN not configured';
+        log('warn', 'health_probe_unconfigured', { reqId: requestId, trigger });
+        return healthState;
+      }
+
+      try {
+        const client = new AutoMemClient({ endpoint, apiKey: token });
+        const result = await client.checkHealth({
+          requestId,
+          timeoutMs: DEFAULT_HEALTH_TIMEOUT_MS,
+          maxRetries: 0,
+        });
+
+        healthState.checked_at = new Date().toISOString();
+        healthState.status = result?.status === 'healthy' ? 'healthy' : 'degraded';
+        healthState.upstream = 'reachable';
+        healthState.details = result;
+        healthState.error = null;
+        log('info', 'health_probe_ok', {
+          reqId: requestId,
+          trigger,
+          upstreamStatus: result?.status || 'unknown',
+        });
+      } catch (error) {
+        healthState.checked_at = new Date().toISOString();
+        healthState.status = 'degraded';
+        healthState.upstream = 'unreachable';
+        healthState.details = null;
+        healthState.error = error?.message || String(error);
+        log('warn', 'health_probe_failed', { reqId: requestId, trigger, error: healthState.error });
+      }
+
+      return healthState;
+    })();
+
+    try {
+      return await healthProbePromise;
+    } finally {
+      healthProbePromise = null;
+    }
+  }
+
+  const healthProbeTimer = setInterval(() => {
+    void probeUpstreamHealth('interval');
+  }, readIntEnv('HEALTH_PROBE_INTERVAL_MS', DEFAULT_HEALTH_PROBE_INTERVAL_MS));
+  healthProbeTimer.unref?.();
+  void probeUpstreamHealth('startup');
+
+  app.get('/health', async (req, res) => {
+    if (!healthState.checked_at) {
+      await probeUpstreamHealth('request');
+    }
+
+    const body = {
+      status: healthState.status,
+      transports: ['streamable-http', 'sse'],
+      endpoints: { streamableHttp: '/mcp', sse: '/mcp/sse' },
+      upstream: healthState.upstream,
+      upstream_error: healthState.error,
+      upstream_details: healthState.details,
+      checked_at: healthState.checked_at,
+      timestamp: new Date().toISOString(),
+      request_id: req.requestId,
+    };
+
+    res.status(healthState.status === 'healthy' ? 200 : 503).json(body);
+  });
 
 // Helper: validate and extract token from multiple sources
 /**
@@ -622,10 +888,10 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
       return res.json(speech('I did not hear anything to remember.', { endSession: false }));
     }
     try {
-      await client.storeMemory({ content: note, tags });
+      await client.storeMemory({ content: note, tags }, { requestId: req.requestId });
       return res.json(speech('Saved to memory.', { endSession: false }));
     } catch (error) {
-      console.error('[Alexa] storeMemory failed:', error.message);
+      log('error', 'alexa_store_failed', { reqId: req.requestId, error: error?.message || String(error) });
       return res.json(speech('I could not save that right now.', { endSession: false }));
     }
   }
@@ -637,7 +903,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
     }
     try {
       // First try scoped tags; if nothing, fall back to untagged recall
-      const primary = await client.recallMemory({ query, tags, limit: 5 });
+      const primary = await client.recallMemory({ query, tags, limit: 5 }, { requestId: req.requestId });
       const recordsPrimary = Array.isArray(primary?.results)
         ? primary.results
         : Array.isArray(primary?.memories)
@@ -648,7 +914,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
         return res.json(speech(reply, { endSession: false }));
       }
 
-      const fallback = await client.recallMemory({ query, limit: 5 });
+      const fallback = await client.recallMemory({ query, limit: 5 }, { requestId: req.requestId });
       const recordsFallback = Array.isArray(fallback?.results)
         ? fallback.results
         : Array.isArray(fallback?.memories)
@@ -657,7 +923,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
       const reply = formatRecallSpeech(recordsFallback, { limit: 3 });
       return res.json(speech(reply, { endSession: false }));
     } catch (error) {
-      console.error('[Alexa] recallMemory failed:', error.message);
+      log('error', 'alexa_recall_failed', { reqId: req.requestId, error: error?.message || String(error) });
       return res.json(speech('I could not recall anything right now.', { endSession: false }));
     }
   }
@@ -671,7 +937,7 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 
 // Streamable HTTP endpoint (MCP 2025-03-26 protocol)
   app.all('/mcp', async (req, res) => {
-    console.log(`[MCP] ${req.method} /mcp`);
+    log('info', 'mcp_request', { reqId: req.requestId, method: req.method, path: req.path });
     res.set('X-Accel-Buffering', 'no');
     res.set('Cache-Control', 'no-cache, no-transform');
 
@@ -709,14 +975,18 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
           eventStore, // Enables Last-Event-ID resumability
           onsessioninitialized: (sid) => {
             sessions.set(sid, { transport, server, type: 'streamable-http', eventStore, lastAccess: Date.now() });
-            console.log(`[MCP] Streamable HTTP session initialized: ${sid}`);
+            log('info', 'mcp_session_initialized', {
+              reqId: req.requestId,
+              sessionId: sid,
+              transport: 'streamable-http',
+            });
           }
         });
 
         transport.onclose = () => {
           const sid = transport.sessionId;
           if (sid && sessions.has(sid)) {
-            console.log(`[MCP] Streamable HTTP session closed: ${sid}`);
+            log('info', 'mcp_session_closed', { sessionId: sid, transport: 'streamable-http' });
             sessions.delete(sid);
             eventStore.removeStream(sid);
             eventStore.stopCleanup();
@@ -736,11 +1006,16 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
 
       await transport.handleRequest(req, res, req.body);
     } catch (e) {
-      console.error('[MCP] Streamable HTTP error:', e);
+      log('error', 'mcp_request_failed', {
+        reqId: req.requestId,
+        method: req.method,
+        path: req.path,
+        error: e?.message || String(e),
+      });
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: '2.0',
-          error: { code: -32603, message: 'Internal server error' },
+          error: { code: -32603, message: `Internal server error (request_id: ${req.requestId})` },
           id: null
         });
       }
@@ -772,12 +1047,12 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
       sessions.delete(transport.sessionId);
     });
     sessions.set(transport.sessionId, { transport, server, res, heartbeat, type: 'sse' });
-    console.log(`[MCP] New SSE session established: ${transport.sessionId}`);
+    log('info', 'mcp_session_initialized', { reqId: req.requestId, sessionId: transport.sessionId, transport: 'sse' });
 
-    // Now start SSE (writes event: endpoint)
-    await transport.start();
+    // Server.connect() starts the SSE transport in current MCP SDK versions.
   } catch (e) {
-    try { res.status(500).json({ error: String(e) }); } catch (_) { /* ignore */ }
+    log('error', 'mcp_sse_failed', { reqId: req.requestId, error: e?.message || String(e) });
+    try { res.status(500).json({ error: String(e), request_id: req.requestId }); } catch (_) { /* ignore */ }
   }
   });
 
@@ -787,13 +1062,13 @@ function formatRecallSpeech(records, { limit = 2 } = {}) {
   if (!sessionId || typeof sessionId !== 'string') return res.status(400).send('Missing sessionId');
   const s = sessions.get(sessionId);
   if (!s) {
-    console.warn(`[MCP] POST for unknown session: ${sessionId}`);
+    log('warn', 'mcp_unknown_session', { reqId: req.requestId, sessionId });
     return res.status(404).send('Session not found');
   }
   try {
     await s.transport.handlePostMessage(req, res, req.body);
   } catch (e) {
-    console.error(`[MCP] Error handling message for session ${sessionId}:`, e);
+    log('error', 'mcp_message_failed', { reqId: req.requestId, sessionId, error: e?.message || String(e) });
     try { res.status(400).send(String(e)); } catch (_) { /* ignore */ }
   }
   });
@@ -807,6 +1082,6 @@ const port = process.env.PORT || 8080;
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const app = createApp();
   app.listen(port, () => {
-    console.log(`AutoMem MCP SSE server listening on :${port}`);
+    log('info', 'mcp_bridge_listening', { port });
   });
 }

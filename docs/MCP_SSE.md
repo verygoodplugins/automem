@@ -1,6 +1,6 @@
 # Remote MCP
 
-The Remote MCP server exposes AutoMem over HTTPS, enabling cloud-based AI platforms to access your memories without local installation.
+The Remote MCP server exposes AutoMem over HTTPS, enabling cloud-based AI platforms to access your memories without local installation. It is also the recommended default for Anthropic surfaces when you want one shared MCP connection across Claude Desktop, Claude.ai, and iOS, because connector state now syncs between those clients.
 
 ## Transport Options
 
@@ -65,7 +65,7 @@ flowchart TB
     API --> Qdrant
 
     Cursor -.->|Direct connection| LocalMCP
-    ClaudeDesktop -.->|Direct connection| LocalMCP
+    ClaudeDesktop -.->|Optional local package| LocalMCP
     ClaudeCode -.->|Direct connection| LocalMCP
     LocalMCP -.->|HTTP| API
 ```
@@ -79,10 +79,12 @@ flowchart TB
 | **Claude Mobile**     | ✅ Yes            | iOS/Android app                 |
 | **ElevenLabs Agents** | ✅ Yes            | Voice AI with tool calling      |
 | **Cursor IDE**        | ❌ No             | Use local `mcp-automem` package |
-| **Claude Desktop**    | ❌ No             | Use local `mcp-automem` package |
+| **Claude Desktop**    | ✅ Usually yes    | Recommended if you want the same connector enabled in Desktop, Claude.ai, and iOS |
 | **Claude Code**       | ❌ No             | Use local `mcp-automem` package |
 
-**If you only use Cursor, Claude Desktop, or Claude Code**, you don't need the MCP bridge—just install the local MCP package:
+**If you only use Cursor or Claude Code**, you usually don't need the MCP bridge. Claude Desktop can still use the local MCP package, but disabling the remote connector there may also disable it for Claude.ai/iOS because Anthropic now syncs connector state across clients.
+
+Local install:
 
 ```bash
 npx @verygoodplugins/mcp-automem cursor  # or 'claude' or 'claude-code'
