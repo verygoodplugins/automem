@@ -140,7 +140,9 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `QDRANT_URL` | Qdrant endpoint URL | `http://localhost:6333` | `https://xyz.qdrant.io` |
+| `QDRANT_URL` | Qdrant endpoint URL (takes precedence over `QDRANT_HOST`) | - | `https://xyz.qdrant.io` |
+| `QDRANT_HOST` | Qdrant hostname; auto-constructs `http://<host>:<port>` | - | `qdrant` (Railway) or `localhost` |
+| `QDRANT_PORT` | Qdrant port (used with `QDRANT_HOST`) | `6333` | `6333` |
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
 | `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
 | `VECTOR_SIZE` | Embedding dimension | `1024` | `1024` (voyage-4), `3072` (large), `768` (small) |
@@ -148,11 +150,19 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
 
+**Connection priority**: `QDRANT_URL` > `QDRANT_HOST`+`QDRANT_PORT`. Use `QDRANT_URL` for Qdrant Cloud (includes `https://`), use `QDRANT_HOST` for self-hosted/Railway internal (simpler, auto-constructs `http://host:port`).
+
 **Notes**:
 - Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
 - **Existing deployments on 3072d or 768d**: `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed after updating.
 - To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The server will exit with a clear error message and fix instructions.
 - When creating a new collection, the configured `VECTOR_SIZE` (default 1024 for voyage-4) is used.
+
+#### Self-Hosted Qdrant on Railway
+
+When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_HOST=qdrant` on memory-service. Railway's internal DNS resolves service names automatically.
+
+**Critical**: You must also set `QDRANT__SERVICE__HOST=::` on the **Qdrant service itself**. Railway's internal networking uses IPv6, but Qdrant defaults to binding `0.0.0.0` (IPv4 only). Without this, connections from other Railway services will be refused even though DNS resolves correctly. See [Railway Deployment Guide — Self-Hosted Qdrant](RAILWAY_DEPLOYMENT.md#option-b-self-hosted-qdrant-on-railway) for full setup.
 
 ### API Server
 

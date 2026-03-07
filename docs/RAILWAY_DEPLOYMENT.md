@@ -41,8 +41,13 @@ flowchart TB
             TCPProxy[TCP Proxy<br/>Public access]
         end
 
+        subgraph qdrantsvc [qdrant Service — Option B]
+            Qdrant[(Qdrant<br/>Port 6333)]
+            QdrantVolume[Persistent Volume<br/>/qdrant/storage]
+        end
+
         subgraph external [External Services]
-            QdrantCloud[(Qdrant Cloud<br/>Vector DB)]
+            QdrantCloud[(Qdrant Cloud<br/>Vector DB — Option A)]
             OpenAI[OpenAI API<br/>Embeddings]
         end
     end
@@ -57,14 +62,17 @@ flowchart TB
     MCPServer -->|Internal<br/>memory-service.railway.internal:8001| FlaskAPI
 
     FlaskAPI -->|Internal<br/>falkordb.railway.internal:6379| FalkorDB
-    FlaskAPI --> QdrantCloud
+    FlaskAPI -.->|Option A| QdrantCloud
+    FlaskAPI -.->|Option B · Internal<br/>qdrant.railway.internal:6333| Qdrant
     FlaskAPI --> OpenAI
 
     Enrichment --> FalkorDB
-    Enrichment --> QdrantCloud
+    Enrichment -.-> QdrantCloud
+    Enrichment -.-> Qdrant
     Consolidation --> FalkorDB
 
     FalkorDB --> Volume
+    Qdrant --> QdrantVolume
 
     TCPProxy -.->|Optional<br/>External access| FalkorDB
 ```
@@ -83,12 +91,14 @@ After deploying, complete these steps to fully configure AutoMem:
 | Variable         | Required    | How to Get                                                           |
 | ---------------- | ----------- | -------------------------------------------------------------------- |
 | `OPENAI_API_KEY` | Yes\*       | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `QDRANT_URL`     | Recommended | See [Qdrant Setup Guide](QDRANT_SETUP.md)                            |
-| `QDRANT_API_KEY` | With Qdrant | See [Qdrant Setup Guide](QDRANT_SETUP.md)                            |
+| `QDRANT_URL`     | Option A    | Qdrant Cloud URL — see [Qdrant Setup Guide](QDRANT_SETUP.md)         |
+| `QDRANT_API_KEY` | Option A    | Qdrant Cloud API key                                                  |
+| `QDRANT_HOST`    | Option B    | `qdrant` (self-hosted on Railway — see [Step 1b](#step-1b-qdrant-vector-database)) |
 
 \*Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
 
-👉 **First time with Qdrant?** Follow the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step collection setup.
+👉 **Qdrant Cloud?** Follow the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step collection setup.
+👉 **Self-hosted Qdrant?** See [Step 1b](#step-1b-qdrant-vector-database) — remember to set `QDRANT__SERVICE__HOST=::` on the Qdrant service.
 
 3. **Redeploy** the memory-service after adding variables.
 
@@ -181,6 +191,52 @@ Your tokens were auto-generated during deployment. Find them in:
 
 5. **Note the internal URL**: `${{FalkorDB.RAILWAY_PRIVATE_DOMAIN}}`
 
+### Step 1b: Qdrant Vector Database
+
+Choose **one** of these options:
+
+#### Option A: Qdrant Cloud (Managed)
+
+Use [Qdrant Cloud](https://cloud.qdrant.io) for a fully managed vector database. See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions. Set `QDRANT_URL` and `QDRANT_API_KEY` on memory-service.
+
+#### Option B: Self-Hosted Qdrant on Railway
+
+Run Qdrant inside your Railway project for lower latency (internal networking, no HTTPS overhead) and simpler architecture.
+
+1. **Create new service in Railway**
+
+   - Click "+ New Service"
+   - Select "Docker Image"
+   - Image: `qdrant/qdrant:v1.11.3`
+
+2. **Add persistent volume** (CRITICAL!)
+
+   - Go to service → Settings → Volumes
+   - Click "Add Volume"
+   - Mount path: `/qdrant/storage`
+   - This ensures vectors survive restarts
+
+3. **Configure environment variables**:
+
+   ```bash
+   PORT=6333
+   QDRANT__SERVICE__HOST=::
+   ```
+
+   > **⚠️ `QDRANT__SERVICE__HOST=::` is required.** Railway's internal networking uses IPv6. Qdrant defaults to binding `0.0.0.0` (IPv4 only), which silently refuses all internal connections. Setting `::` enables dual-stack (IPv6 + IPv4) binding. Without this, you'll get "Connection refused" errors that are extremely difficult to diagnose — DNS resolves fine, Qdrant logs show it's running, but no connections arrive.
+
+4. **No health check needed**: Qdrant doesn't expose an HTTP health path that Railway can use. Container monitoring handles restarts.
+
+5. **On memory-service**, set:
+
+   ```bash
+   QDRANT_HOST=qdrant   # Must match your Qdrant service name in Railway
+   ```
+
+   AutoMem constructs `http://qdrant:6333` automatically. No `QDRANT_URL` or `QDRANT_API_KEY` needed for internal networking.
+
+   > **Note:** The hostname must match your Railway service name. If you named the service something other than "qdrant", use that name instead (e.g. `QDRANT_HOST=my-vector-db`). You can also use Railway's reference variable: `QDRANT_HOST=${{Qdrant.RAILWAY_PRIVATE_DOMAIN}}`.
+
 ### Step 2: Deploy AutoMem API
 
 1. **Connect GitHub repo** or **Deploy from Docker**
@@ -206,9 +262,12 @@ Your tokens were auto-generated during deployment. Find them in:
    # OpenAI for embeddings (required for semantic search)
    OPENAI_API_KEY=<your-openai-key>
 
-   # Optional: Qdrant Cloud for vector search
+   # Vector search — pick ONE:
+   # Option A: Qdrant Cloud
    QDRANT_URL=<your-qdrant-cloud-url>
    QDRANT_API_KEY=<your-qdrant-api-key>
+   # Option B: Self-hosted Qdrant on Railway (see Step 1b)
+   # QDRANT_HOST=qdrant
    QDRANT_COLLECTION=memories
 
    # Port (REQUIRED - Flask needs explicit port)
@@ -231,9 +290,12 @@ Your tokens were auto-generated during deployment. Find them in:
    # OpenAI for embeddings
    OPENAI_API_KEY=<your-openai-key>
 
-   # Qdrant Cloud
+   # Vector search — pick ONE:
+   # Option A: Qdrant Cloud
    QDRANT_URL=<your-qdrant-cloud-url>
    QDRANT_API_KEY=<your-qdrant-api-key>
+   # Option B: Self-hosted Qdrant on Railway (see Step 1b)
+   # QDRANT_HOST=qdrant
    QDRANT_COLLECTION=memories
 
    # Port (REQUIRED - Flask needs explicit port)
@@ -429,13 +491,16 @@ This will:
 - **memory-service**: 512MB RAM, 0.5 vCPU (~$5/mo)
 - **FalkorDB**: 1GB RAM, 1 vCPU + 2GB volume (~$10/mo)
 - **mcp-sse-server**: 256MB RAM, 0.25 vCPU (~$2-3/mo)
-- **Qdrant Cloud**: Free tier (1GB) or $25/mo (10GB)
+- **Qdrant** (choose one):
+  - *Cloud*: Free tier (1GB) or $25/mo (10GB)
+  - *Self-hosted on Railway*: ~$3-5/mo (256MB RAM + 1GB volume)
 
 **Total**: ~$17-40/month depending on usage
 
 **Cost Saving Tips**:
 
-- Use Qdrant Cloud free tier initially
+- Self-host Qdrant on Railway to avoid Qdrant Cloud costs and reduce latency
+- Or use Qdrant Cloud free tier initially
 - Start with smaller FalkorDB volume (1GB)
 - Use Railway's usage-based pricing (scales down when idle)
 - **Remove mcp-sse-server** if you only use Cursor/Claude Desktop (saves ~$2-3/mo)
@@ -490,6 +555,25 @@ Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
 3. **Wrong internal hostname**:
    - Verify `AUTOMEM_API_URL` in SSE service matches memory-service's `RAILWAY_PRIVATE_DOMAIN`
    - Should be: `http://memory-service.railway.internal:8001`
+
+### Qdrant "Connection Refused" on Internal Networking
+
+**Problem**: memory-service can't connect to self-hosted Qdrant via internal networking. Health endpoint shows `qdrant: "disconnected"`, logs show `Connection refused (errno 111)`.
+
+**Root cause**: Railway's internal networking uses **IPv6**, but Qdrant's Docker image binds to `0.0.0.0` (IPv4 only) by default. The internal hostname resolves to an IPv6 address, but Qdrant isn't listening on IPv6 — the kernel refuses the connection before it ever reaches the Qdrant process. This is why Qdrant logs show zero incoming connection attempts even though DNS resolves correctly.
+
+**Fix**: Set this environment variable on the **Qdrant service** (not memory-service):
+
+```bash
+QDRANT__SERVICE__HOST=::
+```
+
+`::` is the IPv6 equivalent of `0.0.0.0` — it enables dual-stack binding (IPv6 + IPv4). Redeploy Qdrant after setting this.
+
+**Also verify** on memory-service:
+- `QDRANT_HOST=qdrant` (Railway resolves short service names internally)
+- Or `QDRANT_URL=http://qdrant:6333` (explicit URL form)
+- Do NOT use `https://` for internal connections
 
 ### Variable Reference Issues
 

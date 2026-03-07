@@ -189,7 +189,9 @@ class TestInitQdrantPropagation:
         def boom():
             raise VectorDimensionMismatchError(3072, 1024)
 
-        with patch.dict("os.environ", {"QDRANT_URL": "http://localhost:6333"}, clear=False):
+        with patch("automem.config.QDRANT_URL", "http://localhost:6333"), patch(
+            "automem.config.QDRANT_API_KEY", None
+        ):
             with pytest.raises(VectorDimensionMismatchError):
                 init_qdrant(
                     state=state,
@@ -210,7 +212,9 @@ class TestInitQdrantPropagation:
         def bad_config():
             raise ValueError("invalid URL format")
 
-        with patch.dict("os.environ", {"QDRANT_URL": "http://localhost:6333"}, clear=False):
+        with patch("automem.config.QDRANT_URL", "http://localhost:6333"), patch(
+            "automem.config.QDRANT_API_KEY", None
+        ):
             init_qdrant(
                 state=state,
                 logger=logger,
