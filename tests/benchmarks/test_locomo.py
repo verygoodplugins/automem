@@ -465,6 +465,10 @@ class LoCoMoEvaluator:
 
             if len(clean_word) < 2 or clean_word in stopwords:
                 continue
+            # Skip possessives and handle them via regex below so "Caroline's"
+            # extracts "Caroline" rather than "Carolines".
+            if "'s" in word or "\u2019s" in word:
+                continue
 
             # Check for capitalized word (potential name)
             if len(clean_word) > 1 and clean_word[0].isupper() and clean_word[1:].islower():
@@ -473,8 +477,8 @@ class LoCoMoEvaluator:
                     continue
                 return clean_word
 
-        # Check for possessives like "John's"
-        possessives = re.findall(r"\b([A-Z][a-z]+)'s\b", question)
+        # Check for possessives like "John's" or names using \u2019.
+        possessives = re.findall(r"\b([A-Z][a-z]+)['\u2019]s\b", question)
         if possessives:
             name = possessives[0]
             if name not in stopwords:

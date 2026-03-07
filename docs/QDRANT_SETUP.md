@@ -1,6 +1,6 @@
-# Qdrant Cloud Setup Guide
+# Qdrant Setup Guide
 
-Step-by-step guide to setting up Qdrant Cloud for AutoMem's vector storage and semantic search.
+Step-by-step guide to setting up Qdrant for AutoMem's vector storage and semantic search.
 
 ## Why Qdrant?
 
@@ -12,6 +12,65 @@ Qdrant stores vector embeddings of your memories, enabling:
 **Without Qdrant**: AutoMem uses placeholder embeddings (hash-based). This works for testing but provides no semantic search capability.
 
 ---
+
+## Option A: Self-Hosted on Railway (Recommended)
+
+Run Qdrant inside your Railway project for the lowest latency and simplest setup — no external accounts needed.
+
+### Setup
+
+1. In your Railway project, click **"+ New Service"** → **"Docker Image"**
+2. Image: `qdrant/qdrant:v1.11.3`
+3. **Add persistent volume**: Settings → Volumes → Mount path: `/qdrant/storage`
+4. **Set environment variables** on the Qdrant service:
+
+   ```bash
+   PORT=6333
+   QDRANT__SERVICE__HOST=::
+   ```
+
+   > **⚠️ `QDRANT__SERVICE__HOST=::` is critical.** Railway's internal networking uses IPv6. Qdrant defaults to `0.0.0.0` (IPv4 only), which silently refuses all internal connections. `::` enables dual-stack (IPv6 + IPv4).
+
+5. **Set on memory-service**:
+
+   ```bash
+   QDRANT_HOST=qdrant
+   ```
+
+   AutoMem auto-constructs `http://qdrant:6333`. No API key needed for internal networking.
+
+6. Redeploy both services.
+
+### Verify
+
+```bash
+curl https://your-automem.up.railway.app/health
+# Should show: "qdrant": "connected"
+```
+
+### Benefits over Qdrant Cloud
+
+- **Lower latency**: Internal networking (~1ms) vs external HTTPS (20-80ms)
+- **No external account**: Everything in one Railway project
+- **No API key management**: Internal networking doesn't need auth
+- **Cost**: ~$3-5/mo on Railway vs $25/mo for Qdrant Cloud paid tier
+
+### Troubleshooting
+
+If health shows `qdrant: "disconnected"` with "Connection refused" in logs:
+
+1. **Check `QDRANT__SERVICE__HOST=::`** on the Qdrant service — this is the #1 cause
+2. Verify `QDRANT_HOST=qdrant` on memory-service (not `QDRANT_URL`)
+3. Confirm both services are in the same Railway project/environment
+4. Check Qdrant service is running (Railway dashboard → service status)
+
+See [Railway Deployment Guide — Troubleshooting](RAILWAY_DEPLOYMENT.md#qdrant-connection-refused-on-internal-networking) for detailed diagnostics.
+
+---
+
+## Option B: Qdrant Cloud (Managed)
+
+Use Qdrant's hosted service for zero-ops vector storage.
 
 ## Quick Start
 
