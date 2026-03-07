@@ -75,10 +75,7 @@ def init_qdrant(
     try:
         parsed = urlparse(QDRANT_URL)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError(
-                f"QDRANT_URL must include scheme and host, e.g. http://host:6333"
-                f" (got {QDRANT_URL!r})"
-            )
+            raise ValueError("QDRANT_URL must include scheme and host, e.g. http://host:6333")
         logger.info(
             "Connecting to Qdrant (host=%s, port=%s, https=%s)",
             parsed.hostname,
