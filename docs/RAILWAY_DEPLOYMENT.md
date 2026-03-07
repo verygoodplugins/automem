@@ -230,10 +230,12 @@ Run Qdrant inside your Railway project for lower latency (internal networking, n
 5. **On memory-service**, set:
 
    ```bash
-   QDRANT_HOST=qdrant
+   QDRANT_HOST=qdrant   # Must match your Qdrant service name in Railway
    ```
 
-   That's it — AutoMem constructs `http://qdrant:6333` automatically. No `QDRANT_URL` or `QDRANT_API_KEY` needed for internal networking.
+   AutoMem constructs `http://qdrant:6333` automatically. No `QDRANT_URL` or `QDRANT_API_KEY` needed for internal networking.
+
+   > **Note:** The hostname must match your Railway service name. If you named the service something other than "qdrant", use that name instead (e.g. `QDRANT_HOST=my-vector-db`). You can also use Railway's reference variable: `QDRANT_HOST=${{Qdrant.RAILWAY_PRIVATE_DOMAIN}}`.
 
 ### Step 2: Deploy AutoMem API
 

@@ -386,7 +386,7 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `QDRANT_URL`        | Qdrant Cloud endpoint (takes precedence over `QDRANT_HOST`) | _unset_ |
 | `QDRANT_HOST`       | Qdrant hostname for self-hosted (auto-constructs `http://host:port`) | _unset_ |
 | `QDRANT_PORT`       | Qdrant port (used with `QDRANT_HOST`) | `6333`     |
-| `QDRANT_API_KEY`    | Qdrant authentication (Cloud only)    | _optional_ |
+| `QDRANT_API_KEY`    | Qdrant authentication (if API-key auth is enabled) | _optional_ |
 | `QDRANT_COLLECTION` | Qdrant collection name                | `memories` |
 | `VECTOR_SIZE`       | Embedding dimension                   | `1024`     |
 | `EMBEDDING_PROVIDER`| Embedding provider selection          | `auto`     |
