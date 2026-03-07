@@ -95,8 +95,18 @@ function formatToolError(error, requestId) {
   return `AutoMem error: ${error?.message || error}${suffix}`;
 }
 
+function sanitizeUrlForLog(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return rawUrl.split('?')[0];
+  }
+}
+
 async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs, maxRetries } = {}) {
   const retries = Math.max(0, maxRetries ?? DEFAULT_UPSTREAM_MAX_RETRIES);
+  const logUrl = sanitizeUrlForLog(url);
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const controller = new AbortController();
@@ -110,7 +120,7 @@ async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs
         if (attempt > 0) {
           log('info', 'upstream_request_recovered', {
             reqId: requestId,
-            url,
+            url: logUrl,
             method,
             attempt: attempt + 1,
             status: res.status,
@@ -123,7 +133,7 @@ async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs
       const retryable = TRANSIENT_STATUS_CODES.has(res.status);
       log(retryable && attempt < retries ? 'warn' : 'error', 'upstream_http_error', {
         reqId: requestId,
-        url,
+        url: logUrl,
         method,
         attempt: attempt + 1,
         status: res.status,
@@ -153,7 +163,7 @@ async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs
       if (retryable && attempt < retries) {
         log('warn', aborted ? 'upstream_timeout_retry' : 'upstream_fetch_retry', {
           reqId: requestId,
-          url,
+          url: logUrl,
           method,
           attempt: attempt + 1,
           timeoutMs,
@@ -165,7 +175,7 @@ async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs
 
       log('error', aborted ? 'upstream_timeout' : 'upstream_fetch_failed', {
         reqId: requestId,
-        url,
+        url: logUrl,
         method,
         attempt: attempt + 1,
         timeoutMs,
@@ -243,7 +253,7 @@ export class AutoMemClient {
     const timeoutMs = options.timeoutMs ?? readIntEnv('UPSTREAM_TIMEOUT_MS', DEFAULT_UPSTREAM_TIMEOUT_MS);
     const maxRetries = options.maxRetries ?? readIntEnv('UPSTREAM_MAX_RETRIES', DEFAULT_UPSTREAM_MAX_RETRIES);
 
-    log('info', 'upstream_request', { reqId: requestId, method, url, timeoutMs, maxRetries });
+    log('info', 'upstream_request', { reqId: requestId, method, url: sanitizeUrlForLog(url), timeoutMs, maxRetries });
     return fetchWithRetry(url, {
       method,
       headers,
@@ -328,7 +338,7 @@ export class AutoMemClient {
   async checkHealth(options = {}) {
     return this._request('GET', 'health', undefined, {
       requestId: options.requestId,
-      timeoutMs: options.timeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
+      timeoutMs: options.timeoutMs ?? readIntEnv('HEALTH_TIMEOUT_MS', DEFAULT_HEALTH_TIMEOUT_MS),
       maxRetries: options.maxRetries ?? 0,
     });
   }
@@ -727,7 +737,7 @@ export function createApp() {
         const client = new AutoMemClient({ endpoint, apiKey: token });
         const result = await client.checkHealth({
           requestId,
-          timeoutMs: DEFAULT_HEALTH_TIMEOUT_MS,
+          timeoutMs: readIntEnv('HEALTH_TIMEOUT_MS', DEFAULT_HEALTH_TIMEOUT_MS),
           maxRetries: 0,
         });
 
