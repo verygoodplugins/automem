@@ -2,6 +2,23 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.14.0](https://github.com/verygoodplugins/automem/compare/v0.13.0...v0.14.0) (2026-03-07)
+
+
+### Features
+
+* **config:** add QDRANT_HOST + QDRANT_PORT as alternative to QDRANT_URL ([#112](https://github.com/verygoodplugins/automem/issues/112)) ([0871904](https://github.com/verygoodplugins/automem/commit/0871904ff069d1235a2fb83119314911bea72520))
+* **docker:** Add Docker build workflow ([#98](https://github.com/verygoodplugins/automem/issues/98)) ([39bf6e7](https://github.com/verygoodplugins/automem/commit/39bf6e7fc052a872f51ee1168dbdab25ab17de97))
+
+
+### Bug Fixes
+
+* **benchmarks:** handle possessive speaker names in LoCoMo ([#116](https://github.com/verygoodplugins/automem/issues/116)) ([abcbcca](https://github.com/verygoodplugins/automem/commit/abcbcca2d1a71306ae489974ebfee132b1c4d789))
+* **consolidation:** reduce decay rate, add importance floor, filter archived memories ([#78](https://github.com/verygoodplugins/automem/issues/78)) ([#105](https://github.com/verygoodplugins/automem/issues/105)) ([3fce4ce](https://github.com/verygoodplugins/automem/commit/3fce4ce3bf364cf459e50ad4f1e62e703c0e07f3))
+* handle smart apostrophes in recall entity extraction ([#115](https://github.com/verygoodplugins/automem/issues/115)) ([05b4daa](https://github.com/verygoodplugins/automem/commit/05b4daacf86cfca713cbd7362e73e39d18395d7f))
+* harden MCP bridge resilience, adopt stateless transport, and update cross-client docs ([#114](https://github.com/verygoodplugins/automem/issues/114)) ([ec88da6](https://github.com/verygoodplugins/automem/commit/ec88da6ef406ad155f0480cc2a3c9a6a916383c7))
+* **qdrant:** prevent silent vector dimension mismatch, set Voyage as recommended default ([#108](https://github.com/verygoodplugins/automem/issues/108)) ([5f88105](https://github.com/verygoodplugins/automem/commit/5f881054a3d305e2fb7eee761233cc37378becd1))
+
 ## [0.13.0](https://github.com/verygoodplugins/automem/compare/v0.12.0...v0.13.0) (2026-03-02)
 
 
