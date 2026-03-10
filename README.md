@@ -558,7 +558,6 @@ Reference point:
 | AutoMem `locomo` judge on | 87.56% |
 
 > **Methodology note:** We do not present this as a strict leaderboard claim. The published CORE number is a useful reference point, but the public LoCoMo setups are not perfectly apples-to-apples, especially around category-5 handling. AutoMem is above that published reference on the `locomo-mini` categories 1-4 run and below it on the full judge-enabled run.
->
 > **History note:** Earlier versions reported 90.53%, but that included two evaluator bugs: temporal matching compared the wrong text (false negatives) and category 5 matched empty strings (false positives). See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for the corrected timeline.
 
 Run benchmarks: `make bench-eval BENCH=locomo-mini CONFIG=baseline` (quick) or `BENCH_JUDGE_MODEL=gpt-4o make bench-eval BENCH=locomo CONFIG=baseline` (full, includes category 5)

@@ -28,11 +28,14 @@ def locomo_module() -> Any:
 
 
 @pytest.fixture()
-def locomo_evaluator(locomo_module: Any) -> Any:
+def locomo_evaluator(locomo_module: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.delenv("BENCH_JUDGE_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     config = locomo_module.LoCoMoConfig()
     config.judge_model = None
     evaluator = locomo_module.LoCoMoEvaluator(config)
     evaluator.openai_client = None
+    evaluator.has_openai_api_key = False
     evaluator.use_embedding_similarity = False
     return evaluator
 
