@@ -486,6 +486,26 @@ class LoCoMoEvaluator:
 
         return None
 
+    @staticmethod
+    def _session_datetime_to_words(iso_str: str) -> str:
+        """Decompose an ISO-8601 timestamp into human-readable date words.
+
+        '2023-05-08T13:56:00+00:00' -> '2023 may 8 08 05 may'
+        This lets word-overlap matching find '2023', 'may', '8', etc.
+        """
+        if not iso_str:
+            return ""
+        try:
+            dt = date_parser.parse(iso_str)
+            month_name = dt.strftime("%B").lower()  # 'may'
+            month_abbr = dt.strftime("%b").lower()  # 'may'
+            return (
+                f"{dt.year} {month_name} {month_abbr} {dt.day} "
+                f"{dt.strftime('%d')} {dt.strftime('%m')}"
+            )
+        except (ValueError, OverflowError):
+            return ""
+
     def is_temporal_question(self, question: str) -> bool:
         """Detect if question is asking about time/dates"""
         temporal_keywords = [
@@ -1030,7 +1050,7 @@ Respond in JSON format:
 
                     # For temporal questions, try fuzzy date matching across the joined evidence
                     if self.is_temporal_question(question) and self.match_dates_fuzzy(
-                        question, joined_text
+                        str(expected_answer), joined_text
                     ):
                         return (
                             True,
@@ -1084,12 +1104,15 @@ Respond in JSON format:
 
                     # Phase 1 Improvement: For temporal questions, also check session_datetime
                     if is_temporal:
-                        session_datetime = metadata.get("session_datetime", "").lower()
-                        # Combine content and datetime for temporal matching
-                        searchable_text = f"{content_normalized} {session_datetime}"
+                        session_datetime = metadata.get("session_datetime", "")
+                        session_readable = self._session_datetime_to_words(session_datetime)
+                        searchable_text = f"{content_normalized} {session_readable}"
 
-                        # Quick Win #1: Fuzzy date matching for temporal questions
-                        if self.match_dates_fuzzy(question, content + " " + session_datetime):
+                        # Fuzzy date matching: compare ANSWER dates vs memory dates
+                        if self.match_dates_fuzzy(
+                            str(expected_answer),
+                            content + " " + session_datetime,
+                        ):
                             return (
                                 True,
                                 0.95,
@@ -1126,6 +1149,23 @@ Respond in JSON format:
         for memory in recalled_memories:
             content = memory.get("content", "").lower()
             content_normalized = self.normalize_answer(content)
+
+            # For temporal questions, enrich searchable text with session_datetime
+            if is_temporal:
+                metadata = memory.get("metadata", {})
+                session_dt = metadata.get("session_datetime", "")
+                session_words = self._session_datetime_to_words(session_dt)
+                content_normalized = f"{content_normalized} {session_words}"
+
+                # Fuzzy date matching: compare answer dates vs memory dates
+                if session_dt and self.match_dates_fuzzy(
+                    str(expected_answer), content + " " + session_dt
+                ):
+                    return (
+                        True,
+                        0.95,
+                        f"Date match in memory {memory.get('id', '?')[:8]}",
+                    )
 
             # Exact substring match
             if expected_normalized in content_normalized:
