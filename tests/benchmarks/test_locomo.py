@@ -1255,6 +1255,22 @@ Respond in JSON format:
             category = qa.get("category", 0)
             evidence = qa.get("evidence", [])
 
+            # Category 5 (Complex Reasoning) needs an LLM judge — the
+            # dataset's ground-truth is either absent or trivial (yes/no).
+            if category == 5:
+                qa_results.append(
+                    {
+                        "question": question,
+                        "expected_answer": qa.get("adversarial_answer", answer),
+                        "category": category,
+                        "is_correct": None,
+                        "confidence": 0.0,
+                        "recalled_count": 0,
+                        "explanation": "Skipped: requires LLM judge",
+                    }
+                )
+                continue
+
             if evidence and len(evidence) > 1:
                 recalled_memories = self.multi_hop_recall_with_graph(
                     question,
@@ -1289,11 +1305,16 @@ Respond in JSON format:
             if (i + 1) % 10 == 0:
                 print(f"  Processed {i+1}/{len(questions)} questions...")
 
-        correct_count = sum(1 for r in qa_results if r["is_correct"])
-        total_count = len(qa_results)
+        scored = [r for r in qa_results if r["is_correct"] is not None]
+        skipped = len(qa_results) - len(scored)
+        correct_count = sum(1 for r in scored if r["is_correct"])
+        total_count = len(scored)
         accuracy = correct_count / total_count if total_count > 0 else 0.0
 
-        print(f"\nConversation Results: {accuracy:.2%} ({correct_count}/{total_count})")
+        msg = f"\nConversation Results: {accuracy:.2%} ({correct_count}/{total_count})"
+        if skipped:
+            msg += f"  [{skipped} skipped (no ground truth)]"
+        print(msg)
 
         return {
             "sample_id": sample_id,
@@ -1337,6 +1358,24 @@ Respond in JSON format:
             category = qa.get("category", 0)
             evidence = qa.get("evidence", [])
 
+            # Category 5 (Complex Reasoning) needs an LLM judge — the
+            # dataset's ground-truth is either absent or trivial (yes/no).
+            if category == 5:
+                qa_results.append(
+                    {
+                        "question": question,
+                        "expected_answer": qa.get("adversarial_answer", answer),
+                        "category": category,
+                        "is_correct": None,
+                        "confidence": 0.0,
+                        "recalled_count": 0,
+                        "explanation": "Skipped: requires LLM judge",
+                    }
+                )
+                if (i + 1) % 10 == 0:
+                    print(f"  Processed {i+1}/{len(questions)} questions...")
+                continue
+
             # Recall memories for this question
             # Use graph expansion for multi-hop questions (evidence > 1)
             if evidence and len(evidence) > 1:
@@ -1378,13 +1417,16 @@ Respond in JSON format:
             if (i + 1) % 10 == 0:
                 print(f"  Processed {i+1}/{len(questions)} questions...")
 
-        # Calculate conversation-level statistics
-        correct_count = sum(1 for r in qa_results if r["is_correct"])
-        total_count = len(qa_results)
+        # Calculate conversation-level statistics (exclude skipped/None results)
+        scored = [r for r in qa_results if r["is_correct"] is not None]
+        skipped = len(qa_results) - len(scored)
+        correct_count = sum(1 for r in scored if r["is_correct"])
+        total_count = len(scored)
         accuracy = correct_count / total_count if total_count > 0 else 0.0
 
+        skip_note = f"  [{skipped} skipped (no ground truth)]" if skipped else ""
         print(f"\n📊 Conversation Results:")
-        print(f"  Accuracy: {accuracy:.2%} ({correct_count}/{total_count})")
+        print(f"  Accuracy: {accuracy:.2%} ({correct_count}/{total_count}){skip_note}")
 
         return {
             "sample_id": sample_id,
@@ -1525,6 +1567,14 @@ Respond in JSON format:
             5: "Complex Reasoning",
         }
 
+        # Count skipped category-5 questions for reporting
+        cat5_skipped = sum(
+            1
+            for cr in conversation_results
+            for qa in cr.get("qa_results", [])
+            if qa["category"] == 5 and qa["is_correct"] is None
+        )
+
         category_results = {}
         for category, scores in sorted(self.results.items()):
             correct = sum(scores)
@@ -1539,6 +1589,20 @@ Respond in JSON format:
             print(
                 f"  {category_names.get(category, f'Category {category}'):25s}: {accuracy:6.2%} ({correct:3d}/{total:3d})"
             )
+
+        if cat5_skipped:
+            cat5_name = category_names[5]
+            if 5 not in category_results:
+                category_results[5] = {
+                    "name": cat5_name,
+                    "accuracy": None,
+                    "correct": 0,
+                    "total": cat5_skipped,
+                    "skipped": True,
+                }
+            else:
+                category_results[5]["skipped_count"] = cat5_skipped
+            print(f"  {cat5_name:25s}:    N/A ({cat5_skipped:3d} skipped, needs LLM judge)")
 
         # Comparison with CORE
         core_sota = 0.8824
