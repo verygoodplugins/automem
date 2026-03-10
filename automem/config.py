@@ -361,7 +361,7 @@ DEFAULT_EXPAND_RELATIONS = frozenset(
     name for name, meta in RELATIONSHIP_TYPES.items() if meta.get("default_expand")
 )
 FILTERABLE_RELATIONS = frozenset(RELATIONSHIP_TYPES.keys())
-ALLOWED_RELATIONS = set(FILTERABLE_RELATIONS)
+ALLOWED_RELATIONS = frozenset(FILTERABLE_RELATIONS)
 RELATION_COLORS = {
     name: str(meta["color"])
     for name, meta in RELATIONSHIP_TYPES.items()

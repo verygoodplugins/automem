@@ -24,7 +24,7 @@ try:  # pragma: no cover - optional dependency in tests
 except ImportError:  # pragma: no cover - degraded mode when qdrant is absent
     qdrant_models = None
 
-from automem.config import normalize_relation_type
+from automem.config import FILTERABLE_RELATIONS, normalize_relation_type
 from automem.utils.time import _parse_iso_datetime
 
 logger = logging.getLogger(__name__)
@@ -732,16 +732,7 @@ class MemoryConsolidator:
                         )
                         if rel_type == "CONTRASTS_WITH":
                             rel_type = "CONTRADICTS"
-                        allowed_labels = {
-                            "DISCOVERED",
-                            "CONTRADICTS",
-                            "RELATES_TO",
-                            "SIMILAR_TO",
-                            "PRECEDED_BY",
-                            "DERIVED_FROM",
-                            "PART_OF",
-                        }
-                        if rel_type not in allowed_labels:
+                        if rel_type not in FILTERABLE_RELATIONS:
                             rel_type = "RELATES_TO"
 
                         # Build a typed MERGE with standard properties

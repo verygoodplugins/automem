@@ -4,7 +4,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
 
@@ -1625,8 +1625,8 @@ def create_recall_blueprint(
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
     recall_max_limit: int,
     logger: Any,
-    filterable_relations: List[str] | set[str] | tuple[str, ...] | Any = (),
-    default_expand_relations: List[str] | set[str] | tuple[str, ...] | Any = (),
+    filterable_relations: Iterable[str] | None = None,
+    default_expand_relations: Iterable[str] | None = None,
     relation_limit: int = 5,
     serialize_node: Callable[[Any], Dict[str, Any]] | None = None,
     summarize_relation_node: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
@@ -1924,7 +1924,7 @@ def create_recall_blueprint(
 
         rel_pattern = ":" + "|".join(query_relation_types) if query_relation_types else ""
         query = f"""
-            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f']-' if rel_pattern else '-[r]-'}(related:Memory)
+            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + ']-' if rel_pattern else '-[r]-'}(related:Memory)
             WHERE m.id <> related.id
             CALL apoc.path.expandConfig(related, {{
                 relationshipFilter: '{"|".join(query_relation_types)}',
@@ -1939,7 +1939,7 @@ def create_recall_blueprint(
             LIMIT $limit
         """
         fallback_query = f"""
-            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
+            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + '*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
             WHERE m.id <> related.id
             RETURN DISTINCT related
             ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
