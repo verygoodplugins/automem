@@ -25,7 +25,7 @@ import re
 import sys
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -65,7 +65,9 @@ class LoCoMoConfig:
     # Performance tuning
     batch_size: int = 50  # Memories to store before pausing
     pause_between_batches: float = 0.5  # Seconds to wait between batches
-    judge_model: Optional[str] = os.getenv("BENCH_JUDGE_MODEL") or None
+    judge_model: Optional[str] = field(
+        default_factory=lambda: os.getenv("BENCH_JUDGE_MODEL") or None
+    )
 
     def __post_init__(self) -> None:
         if self.judge_model is not None:
@@ -1854,7 +1856,8 @@ Respond with ONLY a JSON object:
                 "total": total_questions,
                 "elapsed_time": elapsed_time,
             },
-            "judge_enabled": bool(self.config.judge_model),
+            "judge_requested": bool(self.config.judge_model),
+            "judge_available": bool(self.config.judge_model and self.openai_client),
             "judge_model": self.config.judge_model,
             "categories": category_results,
             "conversations": conversation_results,

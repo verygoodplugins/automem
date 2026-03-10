@@ -30,7 +30,11 @@ def locomo_module() -> Any:
 @pytest.fixture()
 def locomo_evaluator(locomo_module: Any) -> Any:
     config = locomo_module.LoCoMoConfig()
-    return locomo_module.LoCoMoEvaluator(config)
+    config.judge_model = None
+    evaluator = locomo_module.LoCoMoEvaluator(config)
+    evaluator.openai_client = None
+    evaluator.use_embedding_similarity = False
+    return evaluator
 
 
 def _fake_memory(dialog_id: str, content: str) -> Dict[str, Any]:
@@ -248,6 +252,13 @@ def test_cat5_judge_failures_skip_instead_of_marking_wrong(
         locomo_evaluator,
         "fetch_evidence_memories",
         lambda evidence_dialog_ids, sample_id, use_local_cache=False: evidence_memories,
+    )
+    monkeypatch.setattr(
+        locomo_evaluator,
+        "_recall_memories_for_qa",
+        lambda question, sample_id, evidence: [
+            _fake_memory("R1", "Jolene is gathering information and watching videos.")
+        ],
     )
 
     result = locomo_evaluator._evaluate_question(_cat5_qa(), "conv-1")
