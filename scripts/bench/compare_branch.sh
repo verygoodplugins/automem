@@ -20,6 +20,13 @@ source "$(dirname "$0")/../lib/common.sh"
 CURRENT_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
 STASH_CREATED=false
 
+sanitize_filename_component() {
+    printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'
+}
+
+CURRENT_BRANCH_SAFE="$(sanitize_filename_component "$CURRENT_BRANCH")"
+BRANCH_SAFE="$(sanitize_filename_component "$BRANCH")"
+
 # Cleanup trap: restore original branch on exit
 cleanup() {
     local current
@@ -78,8 +85,8 @@ if [[ -z "$BRANCH_RESULT" ]]; then
     fi
     exit 1
 fi
-cp "$BRANCH_RESULT" "${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH//\//_}_${TIMESTAMP}.json"
-BRANCH_RESULT="${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH//\//_}_${TIMESTAMP}.json"
+cp "$BRANCH_RESULT" "${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH_SAFE}_${TIMESTAMP}.json"
+BRANCH_RESULT="${RESULTS_DIR}/${BENCH}_${CONFIG}_${BRANCH_SAFE}_${TIMESTAMP}.json"
 
 # 3. Restore original branch (trap handles cleanup on failure too)
 echo -e "${BLUE}Restoring ${CURRENT_BRANCH}...${NC}"
@@ -98,4 +105,4 @@ echo -e "${GREEN}=== Comparison Results ===${NC}"
 python3 "${REPO_ROOT}/scripts/bench/compare_results.py" \
     --baseline "$CURRENT_RESULT" \
     --test "$BRANCH_RESULT" \
-    --output "${RESULTS_DIR}/compare_${CURRENT_BRANCH}_vs_${BRANCH//\//_}_${TIMESTAMP}.json"
+    --output "${RESULTS_DIR}/compare_${CURRENT_BRANCH_SAFE}_vs_${BRANCH_SAFE}_${TIMESTAMP}.json"

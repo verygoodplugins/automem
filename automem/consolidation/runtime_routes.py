@@ -9,7 +9,7 @@ def create_association(
     request_obj: Any,
     coerce_importance_fn: Callable[[Any], float],
     get_memory_graph_fn: Callable[[], Any],
-    allowed_relations: Set[str],
+    authorable_relations: Set[str],
     relationship_types: Dict[str, Dict[str, Any]],
     utc_now_fn: Callable[[], str],
     abort_fn: Any,
@@ -34,8 +34,8 @@ def create_association(
             abort_fn(400, description=f"'{field_name}' must be a valid UUID")
     if memory1_id == memory2_id:
         abort_fn(400, description="Cannot associate a memory with itself")
-    if relation_type not in allowed_relations:
-        abort_fn(400, description=f"Relation type must be one of {sorted(allowed_relations)}")
+    if relation_type not in authorable_relations:
+        abort_fn(400, description=f"Relation type must be one of {sorted(authorable_relations)}")
 
     graph = get_memory_graph_fn()
     if graph is None:

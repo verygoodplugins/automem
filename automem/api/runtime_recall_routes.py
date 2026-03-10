@@ -22,6 +22,7 @@ def recall_memories(
     recall_max_limit: int,
     logger: Any,
     allowed_relations: Any,
+    default_expand_relations: Any,
     recall_relation_limit: int,
     recall_expansion_limit: int,
     emit_event_fn: Any,
@@ -62,6 +63,7 @@ def recall_memories(
         recall_max_limit,
         logger,
         allowed_relations=allowed_relations,
+        default_expand_relations=default_expand_relations,
         relation_limit=recall_relation_limit,
         expansion_limit_default=recall_expansion_limit,
     )

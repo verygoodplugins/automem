@@ -121,8 +121,8 @@ CORS(
 # Import canonical configuration constants
 from automem.config import (
     ADMIN_TOKEN,
-    ALLOWED_RELATIONS,
     API_TOKEN,
+    AUTHORABLE_RELATIONS,
     CLASSIFICATION_MODEL,
     COLLECTION_NAME,
     CONSOLIDATION_ARCHIVE_THRESHOLD,
@@ -143,6 +143,7 @@ from automem.config import (
     CONSOLIDATION_RUN_LABEL,
     CONSOLIDATION_TASK_FIELDS,
     CONSOLIDATION_TICK_SECONDS,
+    DEFAULT_EXPAND_RELATIONS,
     EMBEDDING_MODEL,
     ENRICHMENT_ENABLE_SUMMARIES,
     ENRICHMENT_FAILURE_BACKOFF_SECONDS,
@@ -152,6 +153,7 @@ from automem.config import (
     ENRICHMENT_SIMILARITY_THRESHOLD,
     ENRICHMENT_SPACY_MODEL,
     FALKORDB_PORT,
+    FILTERABLE_RELATIONS,
     GRAPH_NAME,
     JIT_ENRICHMENT_ENABLED,
     MEMORY_TYPES,
@@ -214,6 +216,13 @@ EMBEDDING_BATCH_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_BATCH_TIMEOUT_SECON
 """Note: default types/relations/weights are imported from automem.config"""
 
 SEARCH_STOPWORDS, ENTITY_STOPWORDS, ENTITY_BLOCKLIST, _extract_keywords = load_keyword_runtime()
+
+# Exported for runtime wiring: the blueprint factory consumes these via module attributes.
+RELATION_TAXONOMY = {
+    "authorable": AUTHORABLE_RELATIONS,
+    "filterable": FILTERABLE_RELATIONS,
+    "default_expand": DEFAULT_EXPAND_RELATIONS,
+}
 
 # Search weights are imported from automem.config
 

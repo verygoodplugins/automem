@@ -24,6 +24,7 @@ try:  # pragma: no cover - optional dependency in tests
 except ImportError:  # pragma: no cover - degraded mode when qdrant is absent
     qdrant_models = None
 
+from automem.config import normalize_relation_type
 from automem.utils.time import _parse_iso_datetime
 
 logger = logging.getLogger(__name__)
@@ -350,6 +351,7 @@ class MemoryConsolidator:
                         similarity = 0.0
 
                 connection_type: Optional[str] = None
+                connection_kind: Optional[str] = None
                 confidence = 0.0
 
                 if mem1.type == "Decision" and mem2.type == "Decision":
@@ -357,17 +359,20 @@ class MemoryConsolidator:
                         connection_type = "CONTRASTS_WITH"
                         confidence = 0.6
                 elif {mem1.type, mem2.type} == {"Insight", "Pattern"} and similarity > 0.5:
-                    connection_type = "EXPLAINS"
+                    connection_type = "DISCOVERED"
+                    connection_kind = "explains"
                     confidence = 0.7
                 elif similarity > 0.7 and (mem1.type or "") != (mem2.type or ""):
-                    connection_type = "SHARES_THEME"
+                    connection_type = "DISCOVERED"
+                    connection_kind = "shares_theme"
                     confidence = min(1.0, similarity)
                 else:
                     t1 = _parse_iso_datetime(mem1.timestamp)
                     t2 = _parse_iso_datetime(mem2.timestamp)
                     if t1 and t2:
                         if abs((t1 - t2).days) < 7 and similarity < 0.4:
-                            connection_type = "PARALLEL_CONTEXT"
+                            connection_type = "DISCOVERED"
+                            connection_kind = "parallel_context"
                             confidence = 0.5
 
                 if connection_type:
@@ -376,6 +381,7 @@ class MemoryConsolidator:
                             "memory1_id": mem1.id,
                             "memory2_id": mem2.id,
                             "type": connection_type,
+                            "kind": connection_kind,
                             "confidence": confidence,
                             "similarity": similarity,
                             "discovered_at": datetime.now(timezone.utc).isoformat(),
@@ -719,14 +725,15 @@ class MemoryConsolidator:
                 created = 0
                 for assoc in associations:
                     if not dry_run:
-                        # Map discovery types to first-class relationship labels
-                        rel_type = str(assoc.get("type") or "RELATES_TO").upper()
+                        # Map heuristic discovery types into internal relations.
+                        rel_type, rel_props = normalize_relation_type(
+                            str(assoc.get("type") or "RELATES_TO"),
+                            {"kind": assoc.get("kind")} if assoc.get("kind") else {},
+                        )
                         if rel_type == "CONTRASTS_WITH":
                             rel_type = "CONTRADICTS"
                         allowed_labels = {
-                            "EXPLAINS",
-                            "SHARES_THEME",
-                            "PARALLEL_CONTEXT",
+                            "DISCOVERED",
                             "CONTRADICTS",
                             "RELATES_TO",
                             "SIMILAR_TO",
@@ -746,6 +753,13 @@ class MemoryConsolidator:
                             "id2": assoc["memory2_id"],
                             "updated_at": assoc.get("discovered_at"),
                         }
+                        kind = rel_props.get("kind")
+                        if rel_type == "DISCOVERED":
+                            set_clauses.append("r.origin = $origin")
+                            params["origin"] = "consolidation"
+                            if kind:
+                                set_clauses.append("r.kind = $kind")
+                                params["kind"] = kind
                         # Attach confidence/similarity when applicable
                         if assoc.get("confidence") is not None:
                             set_clauses.append("r.confidence = $confidence")

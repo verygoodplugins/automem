@@ -60,7 +60,7 @@ This dual architecture lets you ask questions like "why did we choose PostgreSQL
 
 - 🧠 **Store** memories with metadata, importance scores, and temporal context
 - 🔍 **Recall** via hybrid search combining semantic, keyword, graph, and temporal signals
-- 🔗 **Connect** memories with 11 typed relationships (RELATES_TO, LEADS_TO, CONTRADICTS, etc.)
+- 🔗 **Connect** memories with 11 authorable relationship types, plus system-generated semantic and temporal edges
 - 🎯 **Learn** through automatic entity extraction, pattern detection, and consolidation
 - ⚡ **Perform** with sub-100ms recall across thousands of memories
 
@@ -329,7 +329,7 @@ Every memory gets automatically enhanced in the background (doesn't block your A
 
 - See [Memory Consolidation](#memory-consolidation) section above
 
-### 11 Relationship Types
+### 11 Authorable Relationship Types
 
 Build rich knowledge graphs:
 
@@ -346,6 +346,12 @@ Build rich knowledge graphs:
 | `EVOLVED_INTO`    | Knowledge evolution    | Initial design → Final design |
 | `DERIVED_FROM`    | Source tracking        | Implementation → Spec         |
 | `PART_OF`         | Hierarchical structure | Feature → Epic                |
+
+System-generated relationship types:
+
+- `SIMILAR_TO` - Semantic neighbors created by enrichment
+- `PRECEDED_BY` - Temporal links created by enrichment
+- `DISCOVERED` - Internal heuristic edges created by consolidation (`kind=explains|shares_theme|parallel_context`)
 
 ## Quick Start
 

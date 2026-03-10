@@ -3,6 +3,13 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Set
 
+from automem.config import (
+    FILTERABLE_RELATIONS,
+    canonicalize_relation_type,
+    expand_relation_query_types,
+    normalize_relation_type,
+)
+
 
 def _validate_memory_id(memory_id: str, abort_fn: Any) -> None:
     try:
@@ -24,7 +31,17 @@ def fetch_relations(
         records = graph.query(
             """
             MATCH (m:Memory {id: $id})-[r]->(related:Memory)
-            RETURN type(r) as relation_type, r.strength as strength, related
+            RETURN type(r) as relation_type,
+                   coalesce(
+                       r.strength,
+                       r.score,
+                       r.confidence,
+                       r.similarity,
+                       toFloat(r.count),
+                       0.0
+                   ) as strength,
+                   r.kind as relation_kind,
+                   related
             ORDER BY coalesce(r.updated_at, related.timestamp) DESC
             LIMIT $limit
             """,
@@ -35,14 +52,27 @@ def fetch_relations(
         return []
 
     connections: List[Dict[str, Any]] = []
-    for relation_type, strength, related in getattr(records, "result_set", []) or []:
-        connections.append(
-            {
-                "type": relation_type,
-                "strength": strength,
-                "memory": summarize_relation_node_fn(serialize_node_fn(related)),
-            }
+    for row in getattr(records, "result_set", []) or []:
+        if len(row) >= 4:
+            relation_type, strength, relation_kind, related = row[:4]
+        elif len(row) >= 3:
+            relation_type, strength, related = row[:3]
+            relation_kind = None
+        else:  # pragma: no cover - defensive for malformed graph rows
+            continue
+        normalized_type, normalized_props = normalize_relation_type(
+            relation_type,
+            {"kind": relation_kind} if relation_kind else {},
         )
+        connection = {
+            "type": normalized_type,
+            "strength": strength,
+            "memory": summarize_relation_node_fn(serialize_node_fn(related)),
+        }
+        kind = normalized_props.get("kind")
+        if kind:
+            connection["kind"] = kind
+        connections.append(connection)
     return connections
 
 
@@ -65,10 +95,17 @@ def get_related_memories(
     if graph is None:
         abort_fn(503, description="FalkorDB is unavailable")
 
+    allowed_relations = allowed_relations or set(FILTERABLE_RELATIONS)
     rel_types_param = (request_args.get("relationship_types") or "").strip()
     if rel_types_param:
-        requested = [part.strip().upper() for part in rel_types_param.split(",") if part.strip()]
-        rel_types = [t for t in requested if t in allowed_relations]
+        requested = [part.strip() for part in rel_types_param.split(",") if part.strip()]
+        rel_types = []
+        seen_types: Set[str] = set()
+        for relation_type in requested:
+            normalized_type = canonicalize_relation_type(relation_type)
+            if normalized_type in allowed_relations and normalized_type not in seen_types:
+                rel_types.append(normalized_type)
+                seen_types.add(normalized_type)
         if not rel_types:
             rel_types = sorted(allowed_relations)
     else:
@@ -86,8 +123,9 @@ def get_related_memories(
         limit = relation_limit
     limit = max(1, min(limit, 200))
 
-    if rel_types:
-        rel_pattern = ":" + "|".join(rel_types)
+    query_rel_types = expand_relation_query_types(rel_types)
+    if query_rel_types:
+        rel_pattern = ":" + "|".join(query_rel_types)
     else:
         rel_pattern = ""
 

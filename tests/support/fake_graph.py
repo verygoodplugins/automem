@@ -368,6 +368,11 @@ class FakeGraph:
                     "strength": float(params.get("strength") or 0.5),
                     "context": params.get("context"),
                     "reason": params.get("reason"),
+                    "kind": params.get("kind"),
+                    "origin": params.get("origin"),
+                    "confidence": params.get("confidence"),
+                    "similarity": params.get("similarity"),
+                    "updated_at": params.get("updated_at"),
                 }
             )
             return FakeResult([["created"]])
@@ -483,6 +488,55 @@ class FakeGraph:
                 )
             rows.sort(key=lambda row: float(row[3] or 0.0), reverse=True)
             return FakeResult(rows[:10])
+
+        if "MATCH (m:Memory {id: $id})" in query and (
+            "RETURN DISTINCT related" in query or "WITH DISTINCT related" in query
+        ):
+            memory_id = str(params.get("id") or "")
+            requested_types: set[str] = set()
+            filter_match = re.search(r"relationshipFilter:\s*'([^']*)'", query)
+            if filter_match:
+                requested_types = {
+                    part.strip() for part in filter_match.group(1).split("|") if part.strip()
+                }
+            elif "-[r:" in query:
+                pattern_match = re.search(r"-\[r:([A-Z_|]+)", query)
+                if pattern_match:
+                    requested_types = {
+                        part.strip() for part in pattern_match.group(1).split("|") if part.strip()
+                    }
+
+            related_nodes: List[Dict[str, Any]] = []
+            for rel in self.relationships:
+                rel_type = str(rel.get("type") or "")
+                if requested_types and rel_type not in requested_types:
+                    continue
+                if rel.get("id1") == memory_id:
+                    related = self.memories.get(str(rel.get("id2") or ""))
+                elif rel.get("id2") == memory_id:
+                    related = self.memories.get(str(rel.get("id1") or ""))
+                else:
+                    related = None
+                if related is not None:
+                    related_nodes.append(related)
+
+            related_nodes.sort(
+                key=lambda memory: (
+                    float(memory.get("importance") or 0.0),
+                    str(memory.get("timestamp") or ""),
+                ),
+                reverse=True,
+            )
+            limit = int(params.get("limit") or len(related_nodes))
+            deduped: List[Dict[str, Any]] = []
+            seen_related_ids: set[str] = set()
+            for memory in related_nodes:
+                memory_id_value = str(memory.get("id") or "")
+                if memory_id_value in seen_related_ids:
+                    continue
+                seen_related_ids.add(memory_id_value)
+                deduped.append(memory)
+            return FakeResult([[FakeNode(memory)] for memory in deduped[:limit]])
 
         if "RETURN m.timestamp, m.importance" in query:
             rows = []

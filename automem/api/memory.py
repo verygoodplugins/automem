@@ -77,7 +77,7 @@ def create_memory_blueprint_full(
     memory_classify: Callable[[str], tuple[str, float]],
     point_struct: Any,
     collection_name: str,
-    allowed_relations: Set[str] | List[str],
+    authorable_relations: Set[str] | List[str],
     relation_types: Dict[str, Any],
     state: Any,
     logger: Any,
@@ -631,10 +631,10 @@ def create_memory_blueprint_full(
         _validate_memory_id(memory2_id)
         if memory1_id == memory2_id:
             abort(400, description="Cannot associate a memory with itself")
-        if relation_type not in set(allowed_relations):
+        if relation_type not in set(authorable_relations):
             abort(
                 400,
-                description=f"Relation type must be one of {sorted(allowed_relations)}",
+                description=f"Relation type must be one of {sorted(authorable_relations)}",
             )
 
         graph = get_memory_graph()

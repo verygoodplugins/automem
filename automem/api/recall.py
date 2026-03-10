@@ -9,11 +9,15 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from flask import Blueprint, abort, jsonify, request
 
 from automem.config import (
-    ALLOWED_RELATIONS,
+    DEFAULT_EXPAND_RELATIONS,
+    FILTERABLE_RELATIONS,
     RECALL_ADAPTIVE_FLOOR,
     RECALL_EXPANSION_LIMIT,
     RECALL_MIN_SCORE,
     RECALL_RELATION_LIMIT,
+    canonicalize_relation_type,
+    expand_relation_query_types,
+    normalize_relation_type,
 )
 from automem.utils.graph import _serialize_node
 
@@ -821,7 +825,12 @@ def _expand_related_memories(
     if graph is None or not seed_results or expansion_limit <= 0:
         return []
 
-    relation_types = sorted({rel.upper() for rel in allowed_relations}) if allowed_relations else []
+    relation_types = (
+        sorted({canonicalize_relation_type(rel) for rel in allowed_relations})
+        if allowed_relations
+        else []
+    )
+    query_relation_types = expand_relation_query_types(relation_types)
     per_seed_limit = max(1, per_seed_limit)
     expansion_limit = max(1, expansion_limit)
 
@@ -840,23 +849,40 @@ def _expand_related_memories(
         seed_score = float(seed.get("final_score", seed.get("score", 0.0)) or 0.0)
 
         try:
-            rel_filter = " AND type(r) IN $types" if relation_types else ""
+            rel_filter = " AND type(r) IN $types" if query_relation_types else ""
             query = f"""
                 MATCH (m:Memory {{id: $id}})-[r]-(related:Memory)
                 WHERE m.id <> related.id{rel_filter}
-                RETURN type(r) as relation_type, r.strength as strength, related
+                RETURN type(r) as relation_type,
+                       coalesce(
+                           r.strength,
+                           r.score,
+                           r.confidence,
+                           r.similarity,
+                           toFloat(r.count),
+                           0.0
+                       ) as strength,
+                       r.kind as relation_kind,
+                       related
                 ORDER BY coalesce(r.updated_at, related.timestamp) DESC
                 LIMIT $limit
             """
             params: Dict[str, Any] = {"id": seed_id, "limit": per_seed_limit}
-            if relation_types:
-                params["types"] = relation_types
+            if query_relation_types:
+                params["types"] = query_relation_types
             records = graph.query(query, params)
         except Exception:
             logger.exception("Failed to expand relations for seed %s", seed_id)
             continue
 
-        for relation_type, relation_strength, related in getattr(records, "result_set", []) or []:
+        for row in getattr(records, "result_set", []) or []:
+            if len(row) >= 4:
+                relation_type, relation_strength, relation_kind, related = row[:4]
+            elif len(row) >= 3:
+                relation_type, relation_strength, related = row[:3]
+                relation_kind = None
+            else:  # pragma: no cover - defensive for malformed graph rows
+                continue
             if total_added >= expansion_limit:
                 break
 
@@ -893,14 +919,21 @@ def _expand_related_memories(
                 continue
 
             relation_score = relation_strength_val + max(seed_score, 0.0) * seed_score_boost
+            normalized_type, normalized_props = normalize_relation_type(
+                relation_type,
+                {"kind": relation_kind} if relation_kind else {},
+            )
 
             edge_info = {
-                "type": relation_type,
+                "type": normalized_type,
                 "strength": relation_strength_val,
                 "from": seed_id,
                 "seed_rank": seed_rank,
                 "seed_score": seed_score,
             }
+            kind = normalized_props.get("kind")
+            if kind:
+                edge_info["kind"] = kind
 
             if related_id in expansions:
                 existing = expansions[related_id]
@@ -970,6 +1003,7 @@ def handle_recall(
     recall_max_limit: int,
     logger: Any,
     allowed_relations: Optional[Set[str]] = None,
+    default_expand_relations: Optional[Set[str]] = None,
     relation_limit: Optional[int] = None,
     expansion_limit_default: Optional[int] = None,
     on_access: Optional[Callable[[List[str]], None]] = None,
@@ -1040,7 +1074,14 @@ def handle_recall(
     exclude_tags = normalize_tag_list(exclude_tags_input)
 
     allowed_rel_set: Set[str] = (
-        set(allowed_relations) if allowed_relations else set(ALLOWED_RELATIONS)
+        {canonicalize_relation_type(rel) for rel in allowed_relations}
+        if allowed_relations
+        else set(FILTERABLE_RELATIONS)
+    )
+    default_expand_rel_set: Set[str] = (
+        {canonicalize_relation_type(rel) for rel in default_expand_relations}
+        if default_expand_relations
+        else set(DEFAULT_EXPAND_RELATIONS)
     )
     relation_limit = relation_limit or RECALL_RELATION_LIMIT
     expansion_limit = expansion_limit_default or RECALL_EXPANSION_LIMIT
@@ -1393,7 +1434,7 @@ def handle_recall(
             tag_match=tag_match,
             per_seed_limit=relation_limit,
             expansion_limit=expansion_limit,
-            allowed_relations=allowed_rel_set,
+            allowed_relations=default_expand_rel_set,
             logger=logger,
             expand_min_strength=expand_min_strength,
             expand_min_importance=expand_min_importance,
@@ -1584,7 +1625,8 @@ def create_recall_blueprint(
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
     recall_max_limit: int,
     logger: Any,
-    allowed_relations: List[str] | set[str] | tuple[str, ...] | Any = (),
+    filterable_relations: List[str] | set[str] | tuple[str, ...] | Any = (),
+    default_expand_relations: List[str] | set[str] | tuple[str, ...] | Any = (),
     relation_limit: int = 5,
     serialize_node: Callable[[Any], Dict[str, Any]] | None = None,
     summarize_relation_node: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
@@ -1609,7 +1651,14 @@ def create_recall_blueprint(
             vector_filter_only_tag_search,
             recall_max_limit,
             logger,
-            allowed_relations=allowed_relations if allowed_relations else set(ALLOWED_RELATIONS),
+            allowed_relations=(
+                filterable_relations if filterable_relations else set(FILTERABLE_RELATIONS)
+            ),
+            default_expand_relations=(
+                default_expand_relations
+                if default_expand_relations
+                else set(DEFAULT_EXPAND_RELATIONS)
+            ),
             relation_limit=relation_limit,
             expansion_limit_default=RECALL_EXPANSION_LIMIT,
             on_access=on_access,
@@ -1832,18 +1881,34 @@ def create_recall_blueprint(
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
-        allowed = set(allowed_relations) if allowed_relations else set()
+        allowed = (
+            {canonicalize_relation_type(rel) for rel in filterable_relations}
+            if filterable_relations
+            else set(FILTERABLE_RELATIONS)
+        )
+        default_relations = (
+            {canonicalize_relation_type(rel) for rel in default_expand_relations}
+            if default_expand_relations
+            else set(DEFAULT_EXPAND_RELATIONS)
+        )
 
         rel_types_param = (request.args.get("relationship_types") or "").strip()
         if rel_types_param:
-            requested = [
-                part.strip().upper() for part in rel_types_param.split(",") if part.strip()
-            ]
-            rel_types = [t for t in requested if (t in allowed if allowed else True)]
-            if not rel_types and allowed:
-                rel_types = sorted(allowed)
+            requested = [part.strip() for part in rel_types_param.split(",") if part.strip()]
+            rel_types = []
+            seen_types: Set[str] = set()
+            for relation_type in requested:
+                normalized_type = canonicalize_relation_type(relation_type)
+                if normalized_type and (normalized_type in allowed if allowed else True):
+                    if normalized_type not in seen_types:
+                        rel_types.append(normalized_type)
+                        seen_types.add(normalized_type)
+            if not rel_types and default_relations:
+                rel_types = sorted(default_relations)
         else:
-            rel_types = sorted(allowed) if allowed else []
+            rel_types = sorted(default_relations) if default_relations else []
+
+        query_relation_types = expand_relation_query_types(rel_types)
 
         try:
             max_depth = int(request.args.get("max_depth", 1))
@@ -1857,12 +1922,12 @@ def create_recall_blueprint(
             limit = relation_limit
         limit = max(1, min(limit, 200))
 
-        rel_pattern = ":" + "|".join(rel_types) if rel_types else ""
+        rel_pattern = ":" + "|".join(query_relation_types) if query_relation_types else ""
         query = f"""
             MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f']-' if rel_pattern else '-[r]-'}(related:Memory)
             WHERE m.id <> related.id
             CALL apoc.path.expandConfig(related, {{
-                relationshipFilter: '{"|".join(rel_types)}',
+                relationshipFilter: '{"|".join(query_relation_types)}',
                 minLevel: 0,
                 maxLevel: $max_depth,
                 bfs: true,

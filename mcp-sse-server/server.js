@@ -404,12 +404,11 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
 export function buildMcpServer(client) {
   const server = new Server({ name: 'automem-mcp-sse', version: '0.1.0' }, { capabilities: { tools: {} } });
 
-  // Relationship types must stay in sync with automem/config.py RELATIONSHIP_TYPES
+  // Authorable relationship types must stay in sync with automem/config.py AUTHORABLE_RELATIONS
   const RELATION_TYPES = [
-    'RELATES_TO', 'LEADS_TO', 'OCCURRED_BEFORE', 'SIMILAR_TO', 'PRECEDED_BY',
+    'RELATES_TO', 'LEADS_TO', 'OCCURRED_BEFORE',
     'PREFERS_OVER', 'EXEMPLIFIES', 'CONTRADICTS', 'REINFORCES', 'INVALIDATED_BY',
-    'EVOLVED_INTO', 'DERIVED_FROM', 'PART_OF', 'EXPLAINS', 'SHARES_THEME',
-    'PARALLEL_CONTEXT',
+    'EVOLVED_INTO', 'DERIVED_FROM', 'PART_OF',
   ];
 
   const MEMORY_TYPES = ['Decision', 'Pattern', 'Preference', 'Style', 'Habit', 'Insight', 'Context'];

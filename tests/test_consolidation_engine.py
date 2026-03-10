@@ -76,6 +76,24 @@ def test_discover_creative_associations_builds_connections(dummy_graph) -> None:
     assert any(item["type"] == "CONTRASTS_WITH" for item in associations)
 
 
+def test_consolidate_creative_writes_discovered_edges(dummy_graph) -> None:
+    graph = dummy_graph
+    graph.sample_rows = [
+        ["insight-a", "Insight about A", "Insight", [1.0, 0.0, 0.0], iso_days_ago(3)],
+        ["pattern-b", "Pattern about A", "Pattern", [0.9, 0.1, 0.0], iso_days_ago(4)],
+    ]
+
+    consolidator = MemoryConsolidator(graph)
+    results = consolidator.consolidate(mode="creative", dry_run=False)
+
+    assert results["steps"]["creative"]["created"] == 1
+    assert graph.relationships
+    rel = graph.relationships[0]
+    assert rel["type"] == "DISCOVERED"
+    assert rel["kind"] == "explains"
+    assert rel["origin"] == "consolidation"
+
+
 def test_cluster_similar_memories_groups_items(dummy_graph) -> None:
     graph = dummy_graph
     graph.cluster_rows = [

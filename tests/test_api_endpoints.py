@@ -842,7 +842,7 @@ def test_enrichment_reprocess_no_ids(client, mock_state, admin_headers):
 
 
 def test_create_association_all_relationship_types(client, mock_state, auth_headers):
-    """Test creating associations with all new relationship types."""
+    """Test creating associations with all public authorable relationship types."""
     # Create two memories
     mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
         "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -853,19 +853,7 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
         "content": "Memory 2",
     }
 
-    relationship_types = [
-        "RELATES_TO",
-        "LEADS_TO",
-        "OCCURRED_BEFORE",
-        "PREFERS_OVER",
-        "EXEMPLIFIES",
-        "CONTRADICTS",
-        "REINFORCES",
-        "INVALIDATED_BY",
-        "EVOLVED_INTO",
-        "DERIVED_FROM",
-        "PART_OF",
-    ]
+    relationship_types = sorted(config.AUTHORABLE_RELATIONS)
 
     for rel_type in relationship_types:
         response = client.post(
@@ -881,6 +869,35 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
         assert response.status_code == 201, f"Failed for relationship type: {rel_type}"
         data = response.get_json()
         assert data["status"] == "success"
+
+
+def test_create_association_rejects_system_generated_relationship_types(
+    client, mock_state, auth_headers
+):
+    """Public association writes should reject system/internal relation labels."""
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "content": "Memory 1",
+    }
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "content": "Memory 2",
+    }
+
+    for rel_type in ("SIMILAR_TO", "PRECEDED_BY", "DISCOVERED", "EXPLAINS"):
+        response = client.post(
+            "/associate",
+            json={
+                "memory1_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "memory2_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "type": rel_type,
+                "strength": 0.8,
+            },
+            headers=auth_headers,
+        )
+        assert response.status_code == 400, f"Expected rejection for {rel_type}"
+        data = response.get_json()
+        assert "Relation type must be one of" in data["message"]
 
 
 def test_create_association_with_properties(client, mock_state, auth_headers):
@@ -1100,6 +1117,130 @@ def test_expand_related_memories_filters_strength_and_importance():
 
     ids = {res["id"] for res in results}
     assert ids == {keep_id}
+
+
+def test_expand_related_memories_normalizes_legacy_discovered_relations():
+    seed_id = "22222222-0000-0000-0000-000000000001"
+    related_id = "22222222-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            related = [
+                (
+                    "EXPLAINS",
+                    0.7,
+                    None,
+                    _Node(properties={"id": related_id, "importance": 0.9}),
+                ),
+            ]
+            return SimpleNamespace(result_set=related)
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=lambda *args, **kwargs: True,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="",
+        query_tokens=[],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=None,
+        tag_mode="any",
+        tag_match="prefix",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"DISCOVERED"},
+        logger=Mock(),
+    )
+
+    assert len(results) == 1
+    relation_info = results[0]["relations"][0]
+    assert relation_info["type"] == "DISCOVERED"
+    assert relation_info["kind"] == "explains"
+
+
+def test_relation_taxonomy_sets_are_consistent():
+    assert config.AUTHORABLE_RELATIONS == {
+        "RELATES_TO",
+        "LEADS_TO",
+        "OCCURRED_BEFORE",
+        "PREFERS_OVER",
+        "EXEMPLIFIES",
+        "CONTRADICTS",
+        "REINFORCES",
+        "INVALIDATED_BY",
+        "EVOLVED_INTO",
+        "DERIVED_FROM",
+        "PART_OF",
+    }
+    assert config.DEFAULT_EXPAND_RELATIONS == config.AUTHORABLE_RELATIONS
+    assert config.PUBLIC_RELATIONS == config.AUTHORABLE_RELATIONS | {"SIMILAR_TO", "PRECEDED_BY"}
+    assert config.FILTERABLE_RELATIONS == config.PUBLIC_RELATIONS | {"DISCOVERED"}
+    assert set(config.RELATION_COLORS) == config.PUBLIC_RELATIONS
+
+
+def test_related_memories_defaults_to_authorable_relations(client, mock_state, auth_headers):
+    class Graph:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self, query: str, params: dict[str, Any] | None = None) -> SimpleNamespace:
+            self.calls.append((query, params or {}))
+            return SimpleNamespace(result_set=[])
+
+    graph = Graph()
+    mock_state.memory_graph = graph
+
+    response = client.get(
+        "/memories/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/related",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert graph.calls
+    query, _params = graph.calls[0]
+    assert "RELATES_TO" in query
+    assert "PART_OF" in query
+    assert "SIMILAR_TO" not in query
+    assert "PRECEDED_BY" not in query
+    assert "DISCOVERED" not in query
+
+
+def test_related_memories_supports_explicit_system_relation_opt_ins(
+    client, mock_state, auth_headers
+):
+    class Graph:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self, query: str, params: dict[str, Any] | None = None) -> SimpleNamespace:
+            self.calls.append((query, params or {}))
+            return SimpleNamespace(result_set=[])
+
+    graph = Graph()
+    mock_state.memory_graph = graph
+
+    response = client.get(
+        "/memories/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/related"
+        "?relationship_types=SIMILAR_TO,DISCOVERED",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["relationship_types"] == ["SIMILAR_TO", "DISCOVERED"]
+    query, _params = graph.calls[0]
+    assert "SIMILAR_TO" in query
+    assert "DISCOVERED" in query
+    assert "EXPLAINS" in query
+    assert "SHARES_THEME" in query
+    assert "PARALLEL_CONTEXT" in query
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

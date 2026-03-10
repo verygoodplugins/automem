@@ -155,6 +155,8 @@ The MCP bridge exposes these MCP tools:
 
 ## Recall Ordering
 
+`associate_memories` accepts only the 11 authorable semantic relationship types. Auto-generated labels such as `SIMILAR_TO`, `PRECEDED_BY`, and `DISCOVERED` remain readable on recall surfaces but are not exposed as authoring choices in the MCP schema.
+
 `recall_memory` defaults to relevance ranking (`sort: "score"`). For chronological recaps (e.g. “what happened since X”), set:
 
 - `sort: "time_desc"` / `sort: "time_asc"` to order within a time window

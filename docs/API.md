@@ -38,6 +38,7 @@ Memory
 - POST `/associate`
   - Body: `{ "memory1_id": "...", "memory2_id": "...", "type": "RELATES_TO", "strength": 0.9 }`
   - Response: `{ "status": "success", ... }`
+  - `type` accepts only the 11 authorable semantic relationship types. System-generated labels such as `SIMILAR_TO`, `PRECEDED_BY`, and `DISCOVERED` are readable/filterable but cannot be created via this endpoint.
 
 Recall
 
@@ -84,6 +85,8 @@ GET /recall?query=project%20plan&exclude_tags=temp,draft&limit=10
 
 - GET `/memories/{id}/related`
   - Query: `relationship_types`, `max_depth` (1..3), `limit` (<=200)
+  - Default traversal uses the 11 authorable semantic relationship types.
+  - Explicit opt-ins may include `SIMILAR_TO`, `PRECEDED_BY`, and `DISCOVERED`.
   - Response: `{ "status": "success", "related_memories": [...] }`
 
 - GET `/startup-recall`

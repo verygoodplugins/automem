@@ -705,7 +705,7 @@ Create a relationship between two memories.
 }
 ```
 
-**Relationship Types:**
+**Authorable Relationship Types:**
 
 - `RELATES_TO` - General connection
 - `LEADS_TO` - Causal (bug→solution)
@@ -718,6 +718,12 @@ Create a relationship between two memories.
 - `EVOLVED_INTO` - Knowledge evolution
 - `DERIVED_FROM` - Source relationships
 - `PART_OF` - Hierarchical structure
+
+**System-generated / internal relationship types:**
+
+- `SIMILAR_TO` - Semantic neighbors created automatically
+- `PRECEDED_BY` - Temporal links created automatically
+- `DISCOVERED` - Internal consolidation edge with `kind=explains|shares_theme|parallel_context`
 
 **Response:**
 
