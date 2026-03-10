@@ -235,7 +235,7 @@ BENCH_JUDGE_MODEL=gpt-4o make bench-eval BENCH=locomo-mini CONFIG=baseline
 ```
 
 - `BENCH_JUDGE_MODEL` enables category-5 judging for `tests/benchmarks/test_locomo.py`.
-- `--judge` enables the judge and defaults to `gpt-4o` unless `BENCH_JUDGE_MODEL` or `--judge-model` overrides it.
+- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-4o` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
 - If the judge is disabled, category 5 remains `N/A`.
 - If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
 

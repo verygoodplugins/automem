@@ -1483,7 +1483,7 @@ Respond with ONLY a JSON object:
             "judge_reasoning": None,
         }
 
-        if category == 5 and not self.config.judge_model:
+        if category == 5 and not answer and not self.config.judge_model:
             base_result["explanation"] = "Skipped: requires LLM judge"
             return base_result
 
@@ -1803,7 +1803,10 @@ Respond with ONLY a JSON object:
                     "skipped": True,
                     "skipped_count": cat5_skipped,
                 }
-                print(f"  {cat5_name:25s}:    N/A ({cat5_skipped:3d} skipped, needs LLM judge)")
+                reason = (
+                    "judge unavailable/errors" if self.config.judge_model else "needs LLM judge"
+                )
+                print(f"  {cat5_name:25s}:    N/A ({cat5_skipped:3d} skipped, {reason})")
             else:
                 category_results[5]["skipped_count"] = cat5_skipped
                 category_results[5]["skipped"] = True

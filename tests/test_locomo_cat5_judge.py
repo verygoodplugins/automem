@@ -1,3 +1,4 @@
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
@@ -5,13 +6,18 @@ from typing import Any, Dict, List
 
 import pytest
 
+_MODULE_NAME = "locomo_benchmark_module_cat5"
+
 
 def _load_locomo_module() -> Any:
+    if _MODULE_NAME in sys.modules:
+        return sys.modules[_MODULE_NAME]
     module_path = Path(__file__).resolve().parent / "benchmarks" / "test_locomo.py"
-    spec = spec_from_file_location("locomo_benchmark_module_cat5", module_path)
+    spec = spec_from_file_location(_MODULE_NAME, module_path)
     assert spec is not None
     assert spec.loader is not None
     module = module_from_spec(spec)
+    sys.modules[_MODULE_NAME] = module
     spec.loader.exec_module(module)
     return module
 
