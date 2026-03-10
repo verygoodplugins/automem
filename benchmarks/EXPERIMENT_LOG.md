@@ -10,8 +10,8 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | Tier | Benchmark | Runtime | Cost | When to use |
 |------|-----------|---------|------|-------------|
 | 0 | `make test` (unit) | 30s | free | Every change |
-| 1 | `locomo-mini` (2 convos, 304 Qs) | 2-3 min | free | Rapid iteration |
-| 2 | `locomo` (10 convos, 1986 Qs) | 5-10 min | free | Before merge |
+| 1 | `locomo-mini` (2 convos, 304 Qs) | 2-3 min | free / ~$0.20 with judge | Rapid iteration |
+| 2 | `locomo` (10 convos, 1986 Qs) | 5-10 min | free / ~$1-3 with judge | Before merge |
 | 3 | `longmemeval-mini` (20 Qs) | 15 min | ~$1 | Scoring/entity changes |
 | 4 | `longmemeval` (500 Qs) | 1-2 hr | ~$10 | Milestones only |
 
@@ -26,16 +26,18 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 2026-03-02 | #78 | exp/78-decay-fix | 76.97% (+0.0) | 79.51% (-0.55) | -- | Decay rate 0.1→0.01, importance floor, archive filter. Within variance. Impact is on production (rehabilitated via rescore) |
 | 2026-03-10 | pre-refactor | main (@ 795368a) | 76.97% (+0.0) | -- | -- | Baseline re-confirmed after #73, #78, #115, #116 merged. Stable. Pre-relation-tier-refactor checkpoint. |
 | 2026-03-10 | eval-fix | docs/benchmark-agent-guidelines | **89.27% (208/233)** | -- | -- | Fix temporal matching (answer vs memory dates) + skip cat5 (no ground truth). Honest score, beats CORE by 1.03pp. |
+| 2026-03-10 | cat5-judge | feat/bench-cat5-judge | **89.80% (273/304)** | **87.56% (1739/1986)** | -- | Opt-in GPT-4o judge for cat5. Full run scored cat5 at 95.74% (427/446) with 0 judge skips/errors; added 90s OpenAI request timeout to prevent stuck full runs. |
 
 ### Category Breakdown (LoCoMo-mini)
 
-Categories 1-4 scored by word-overlap/date matching. Category 5 requires LLM judge (not yet implemented).
+Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-in LLM judge when `BENCH_JUDGE_MODEL` or `--judge` is enabled; otherwise it remains `N/A`.
 
 | Date | Issue/PR | Single-hop | Temporal | Multi-hop | Open Domain | Complex |
 |------|----------|------------|----------|-----------|-------------|---------|
 | 2026-03-02 | baseline | 76.7% (33/43) | 22.2%\* (14/63) | 46.2% (6/13) | 96.5% (110/114) | 100%\*\* (71/71) |
 | 2026-03-10 | pre-refactor | 76.7% (33/43) | 22.2%\* (14/63) | 46.2% (6/13) | 96.5% (110/114) | 100%\*\* (71/71) |
 | 2026-03-10 | eval-fix | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | N/A (71 skipped) |
+| 2026-03-10 | cat5-judge | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | **91.5% (65/71)** |
 
 \* Temporal was artificially low: evaluator compared question dates (empty) vs memory dates instead of answer dates.
 \*\* Complex was artificially 100%: dataset has no `answer` field for cat5 → empty string → `"" in content` always True.

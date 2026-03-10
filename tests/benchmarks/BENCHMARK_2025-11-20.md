@@ -1,5 +1,7 @@
 # AutoMem Benchmark Results
 
+> Historical note: This report predates the March 10, 2026 LoCoMo evaluator fixes. Temporal and category-5 scoring were corrected later, so the scores and any "SOTA" language here are not current. See `benchmarks/EXPERIMENT_LOG.md` for current baselines and methodology.
+
 ## LoCoMo Benchmark (Long-term Conversational Memory)
 
 **Benchmark Version**: LoCoMo-10 (1,986 questions across 10 conversations)

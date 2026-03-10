@@ -6,6 +6,10 @@ set -euo pipefail
 BENCH_NAME="${1:-locomo}"
 CONFIG="${2:-baseline}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PYTHON_BIN="${REPO_ROOT}/venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    PYTHON_BIN="python3"
+fi
 
 # Shared utilities (colors + wait_for_api)
 source "$(dirname "$0")/../lib/common.sh"
@@ -90,7 +94,7 @@ if [[ "$BENCH_NAME" == locomo* ]]; then
     if [[ "$BENCH_NAME" == "locomo-mini" ]]; then
         EVAL_ARGS="--conversations 0,1 ${EVAL_ARGS}"
     fi
-    python3 tests/benchmarks/test_locomo.py \
+    "$PYTHON_BIN" tests/benchmarks/test_locomo.py \
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
         ${EVAL_ARGS}
@@ -99,7 +103,7 @@ elif [[ "$BENCH_NAME" == longmemeval* ]]; then
     if [[ "$BENCH_NAME" == "longmemeval-mini" ]]; then
         LONGMEM_ARGS+=(--max-questions 20)
     fi
-    python3 tests/benchmarks/longmemeval/test_longmemeval.py \
+    "$PYTHON_BIN" tests/benchmarks/longmemeval/test_longmemeval.py \
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
         "${LONGMEM_ARGS[@]}"

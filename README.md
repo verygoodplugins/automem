@@ -14,7 +14,7 @@
 
 # **AI Memory That Actually Learns**
 
-AutoMem is a **production-grade long-term memory system** for AI assistants, achieving **89.27% accuracy** on the [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) (ACL 2024)—outperforming CORE (88.24%). See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for current baselines.
+AutoMem is a **production-grade long-term memory system** for AI assistants with transparent [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) baselines (ACL 2024): **89.27%** on `locomo-mini` categories 1-4 with category 5 skipped, and **87.56%** on full `locomo` with the opt-in category-5 judge enabled. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology and current baselines.
 
 **Deploy in 60 seconds:**
 
@@ -522,7 +522,7 @@ Vector databases match embeddings. AutoMem builds knowledge graphs:
 
 AutoMem saves you months of iteration:
 
-- ✅ **Benchmark-proven** - 89.27% on LoCoMo (ACL 2024), beats CORE SOTA
+- ✅ **Benchmark-proven** - Transparent LoCoMo baselines for both judge-off and judge-on evaluation
 - ✅ **Research-validated** - Implements HippoRAG 2, A-MEM, MELODI, ReadAgent principles
 - ✅ **Production-ready** - Auth, admin tools, health monitoring, automated backups
 - ✅ **Battle-tested** - Enrichment pipeline, consolidation engine, retry logic, dual storage
@@ -532,7 +532,14 @@ AutoMem saves you months of iteration:
 
 ### LoCoMo Benchmark (ACL 2024)
 
-**89.27% accuracy** on categories 1–4 (233 scored questions, Voyage 4 embeddings):
+AutoMem publishes two reference baselines with Voyage 4 embeddings:
+
+| Setup | Scope | Score | Notes |
+|-------|-------|-------|-------|
+| Fast iteration | `locomo-mini`, judge off | **89.27% (208/233)** | Categories 1-4 only; 71 category-5 questions skipped |
+| Full benchmark | `locomo`, judge on (`gpt-4o`) | **87.56% (1739/1986)** | Includes category 5 at 95.74% (427/446) |
+
+`locomo-mini` category breakdown with the judge disabled:
 
 | Category                   | AutoMem    | Notes                                   |
 | -------------------------- | ---------- | --------------------------------------- |
@@ -540,16 +547,19 @@ AutoMem saves you months of iteration:
 | **Temporal Understanding** | **92.06%** | Time-aware queries                      |
 | **Single-hop Recall**      | **79.07%** | Basic fact retrieval                    |
 | **Multi-hop Reasoning**    | **46.15%** | Connecting disparate memories           |
-| **Complex Reasoning**      | N/A        | Requires LLM judge (not yet scored)     |
+| **Complex Reasoning**      | N/A        | Skipped in this setup; use judge-on run |
 
-**Comparison with other systems:**
+Reference point:
 
 | System | Score |
 |--------|-------|
-| AutoMem | 89.27% |
-| CORE | 88.24% |
+| Published CORE result | 88.24% |
+| AutoMem `locomo-mini` judge off | 89.27% |
+| AutoMem `locomo` judge on | 87.56% |
 
-> **Note:** Earlier versions reported 90.53% which included two evaluator bugs: temporal matching compared the wrong text (false negatives → 22%) and category 5 matched empty strings (false positives → 100%). See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for full history.
+> **Methodology note:** We do not present this as a strict leaderboard claim. The published CORE number is a useful reference point, but the public LoCoMo setups are not perfectly apples-to-apples, especially around category-5 handling. AutoMem is above that published reference on the `locomo-mini` categories 1-4 run and below it on the full judge-enabled run.
+
+> **History note:** Earlier versions reported 90.53%, but that included two evaluator bugs: temporal matching compared the wrong text (false negatives) and category 5 matched empty strings (false positives). See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for the corrected timeline.
 
 Run benchmarks: `make bench-eval BENCH=locomo-mini` (quick) or `make bench-eval BENCH=locomo` (full)
 

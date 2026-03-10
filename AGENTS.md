@@ -47,8 +47,8 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 | Tier | Benchmark | Command | Runtime | Cost | When to use |
 |------|-----------|---------|---------|------|-------------|
 | 0 | Unit tests | `make test` | 30s | free | Every change |
-| 1 | LoCoMo-mini (2 convos, 304 Qs) | `make bench-eval BENCH=locomo-mini` | 2-3 min | free | Rapid iteration |
-| 2 | LoCoMo-full (10 convos, 1986 Qs) | `make bench-eval BENCH=locomo` | 5-10 min | free | Before merge |
+| 1 | LoCoMo-mini (2 convos, 304 Qs) | `make bench-eval BENCH=locomo-mini` | 2-3 min | free / ~$0.20 with judge | Rapid iteration |
+| 2 | LoCoMo-full (10 convos, 1986 Qs) | `make bench-eval BENCH=locomo` | 5-10 min | free / ~$1-3 with judge | Before merge |
 | 3 | LongMemEval-mini (20 Qs) | `make bench-mini-longmemeval` | 15 min | ~$1 | Scoring/entity changes |
 | 4 | LongMemEval-full (500 Qs) | `make test-longmemeval` | 1-2 hr | ~$10 | Milestones only |
 
