@@ -1036,7 +1036,6 @@ Respond in JSON format:
 
                 # Quick Win: Multi-hop joining — evaluate on concatenated evidence
                 if len(evidence_dialog_ids) > 1:
-                    # Build a single searchable text by concatenating evidence contents and session times
                     joined_text_parts = []
                     for mem in evidence_memories:
                         content = mem.get("content", "")
@@ -1045,6 +1044,7 @@ Respond in JSON format:
                         joined_text_parts.append(str(content))
                         if session_dt:
                             joined_text_parts.append(str(session_dt))
+                            joined_text_parts.append(self._session_datetime_to_words(session_dt))
                     joined_text = " \n ".join(joined_text_parts).lower()
                     joined_norm = self.normalize_answer(joined_text)
 
@@ -1425,7 +1425,7 @@ Respond in JSON format:
         accuracy = correct_count / total_count if total_count > 0 else 0.0
 
         skip_note = f"  [{skipped} skipped (no ground truth)]" if skipped else ""
-        print(f"\n📊 Conversation Results:")
+        print("\n📊 Conversation Results:")
         print(f"  Accuracy: {accuracy:.2%} ({correct_count}/{total_count}){skip_note}")
 
         return {
@@ -1604,18 +1604,22 @@ Respond in JSON format:
                 category_results[5]["skipped_count"] = cat5_skipped
             print(f"  {cat5_name:25s}:    N/A ({cat5_skipped:3d} skipped, needs LLM judge)")
 
-        # Comparison with CORE
+        # Comparison with CORE (their 88.24% includes cat5 via GPT-4 judge)
         core_sota = 0.8824
         improvement = overall_accuracy - core_sota
-        print(f"\n🏆 Comparison with CORE (SOTA):")
+        print("\n🏆 Comparison with CORE (SOTA):")
         print(f"  CORE: {core_sota:.2%}")
         print(f"  AutoMem: {overall_accuracy:.2%}")
+        if cat5_skipped:
+            print(
+                f"  ⚠️  AutoMem excludes {cat5_skipped} cat-5 Qs (needs LLM judge); CORE includes them"
+            )
         if improvement > 0:
-            print(f"  🎉 AutoMem BEATS CORE by {improvement:.2%}!")
+            print(f"  🎉 AutoMem leads by {improvement:.2%}")
         elif improvement < 0:
             print(f"  📉 AutoMem is {abs(improvement):.2%} behind CORE")
         else:
-            print(f"  🤝 AutoMem matches CORE")
+            print("  🤝 AutoMem matches CORE")
 
         # Cleanup
         if cleanup_after:
@@ -1636,6 +1640,8 @@ Respond in JSON format:
                 "core_sota": core_sota,
                 "automem": overall_accuracy,
                 "improvement": improvement,
+                "cat5_excluded": cat5_skipped,
+                "note": "CORE 88.24% includes cat-5 via GPT-4 judge" if cat5_skipped else None,
             },
         }
 
