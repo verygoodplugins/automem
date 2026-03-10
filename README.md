@@ -14,7 +14,7 @@
 
 # **AI Memory That Actually Learns**
 
-AutoMem is a **production-grade long-term memory system** for AI assistants, achieving **90.53% accuracy** on the [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) (ACL 2024)—outperforming CORE (88.24%).
+AutoMem is a **production-grade long-term memory system** for AI assistants, achieving **89.27% accuracy** on the [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) (ACL 2024)—outperforming CORE (88.24%). See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for current baselines.
 
 **Deploy in 60 seconds:**
 
@@ -522,7 +522,7 @@ Vector databases match embeddings. AutoMem builds knowledge graphs:
 
 AutoMem saves you months of iteration:
 
-- ✅ **Benchmark-proven** - 90.53% on LoCoMo (ACL 2024)
+- ✅ **Benchmark-proven** - 89.27% on LoCoMo (ACL 2024), beats CORE SOTA
 - ✅ **Research-validated** - Implements HippoRAG 2, A-MEM, MELODI, ReadAgent principles
 - ✅ **Production-ready** - Auth, admin tools, health monitoring, automated backups
 - ✅ **Battle-tested** - Enrichment pipeline, consolidation engine, retry logic, dual storage
@@ -532,24 +532,26 @@ AutoMem saves you months of iteration:
 
 ### LoCoMo Benchmark (ACL 2024)
 
-**90.53% overall accuracy** across 1,986 questions:
+**89.27% accuracy** on categories 1–4 (233 scored questions, Voyage 4 embeddings):
 
 | Category                   | AutoMem    | Notes                                   |
 | -------------------------- | ---------- | --------------------------------------- |
-| **Complex Reasoning**      | **100%**   | Perfect score on multi-step reasoning   |
-| **Open Domain**            | **95.84%** | General knowledge recall                |
-| **Temporal Understanding** | **85.05%** | Time-aware queries                      |
-| **Single-hop Recall**      | **79.79%** | Basic fact retrieval                    |
-| **Multi-hop Reasoning**    | **50.00%** | Connecting disparate memories (+12.5pp) |
+| **Open Domain**            | **96.49%** | General knowledge recall                |
+| **Temporal Understanding** | **92.06%** | Time-aware queries                      |
+| **Single-hop Recall**      | **79.07%** | Basic fact retrieval                    |
+| **Multi-hop Reasoning**    | **46.15%** | Connecting disparate memories           |
+| **Complex Reasoning**      | N/A        | Requires LLM judge (not yet scored)     |
 
 **Comparison with other systems:**
 
 | System | Score |
 |--------|-------|
-| AutoMem | 90.53% |
+| AutoMem | 89.27% |
 | CORE | 88.24% |
 
-Run the benchmark yourself: `make test-locomo`
+> **Note:** Earlier versions reported 90.53% which included two evaluator bugs: temporal matching compared the wrong text (false negatives → 22%) and category 5 matched empty strings (false positives → 100%). See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for full history.
+
+Run benchmarks: `make bench-eval BENCH=locomo-mini` (quick) or `make bench-eval BENCH=locomo` (full)
 
 ### Production Characteristics
 
