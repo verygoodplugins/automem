@@ -41,6 +41,9 @@ def run_consolidation_tick(
             if "forget" in steps:
                 affected_count += steps["forget"].get("archived", 0)
                 affected_count += steps["forget"].get("deleted", 0)
+            if "identity" in steps:
+                affected_count += steps["identity"].get("identities_synthesized", 0)
+                affected_count += len(steps["identity"].get("merges_performed", []))
 
             elapsed_ms = int((perf_counter_fn() - task_start) * 1000)
             next_runs = scheduler.get_next_runs()

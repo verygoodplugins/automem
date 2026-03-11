@@ -12,6 +12,7 @@ Implements biological memory consolidation patterns:
 import json
 import logging
 import math
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -166,6 +167,21 @@ class MemoryConsolidator:
         self.protected_types = (
             frozenset(protected_types) if protected_types is not None else self.PROTECTED_TYPES
         )
+
+    def _get_openai_client(self) -> Optional[Any]:
+        """Obtain an OpenAI-compatible client for LLM calls."""
+        try:
+            import openai
+
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                logger.warning("OPENAI_API_KEY not set; identity synthesis unavailable")
+                return None
+            base_url = os.environ.get("OPENAI_BASE_URL")
+            return openai.OpenAI(api_key=api_key, **({"base_url": base_url} if base_url else {}))
+        except Exception:
+            logger.exception("Failed to create OpenAI client")
+            return None
 
     def _query_graph(
         self, query: str, params: Optional[Dict[str, Any]] = None
@@ -935,7 +951,33 @@ class MemoryConsolidator:
                     "sample_clusters": clusters[:2] if clusters else [],
                 }
 
-            # Step 4: Controlled forgetting
+            # Step 4: Identity consolidation (entity dedup + identity synthesis)
+            if mode in ["full", "identity"]:
+                logger.info("Running identity consolidation...")
+                try:
+                    from automem.consolidation.identity_synthesis import (
+                        run_identity_consolidation,
+                    )
+
+                    # Get OpenAI client from environment
+                    openai_client = self._get_openai_client()
+                    if openai_client is not None:
+                        identity_result = run_identity_consolidation(
+                            self.graph,
+                            openai_client,
+                            dry_run=dry_run,
+                        )
+                        results["steps"]["identity"] = identity_result
+                    else:
+                        results["steps"]["identity"] = {
+                            "skipped": True,
+                            "reason": "No OpenAI client available",
+                        }
+                except Exception as exc:
+                    logger.exception("Identity consolidation failed: %s", exc)
+                    results["steps"]["identity"] = {"error": str(exc)}
+
+            # Step 5: Controlled forgetting
             if mode in ["full", "forget"]:
                 logger.info("Applying controlled forgetting...")
                 forget_stats = self.apply_controlled_forgetting(dry_run=dry_run)
@@ -1064,6 +1106,7 @@ class ConsolidationScheduler:
             "creative": {"interval": timedelta(days=7), "last_run": None},
             "cluster": {"interval": timedelta(days=30), "last_run": None},
             "forget": {"interval": timedelta(days=90), "last_run": None},
+            "identity": {"interval": timedelta(days=7), "last_run": None},
         }
         self.history = []
 
