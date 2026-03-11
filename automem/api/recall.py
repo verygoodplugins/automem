@@ -1464,8 +1464,7 @@ def handle_recall(
         elif sort_param in {"updated_desc", "updated_asc"}:
             # Same key, but favor updated_at (already primary) and keep the name explicit for callers
             local_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
-        if len(local_results) > per_query_limit:
-            local_results = local_results[:per_query_limit]
+        local_results = _guarantee_priority_results(local_results, context_profile, per_query_limit)
 
         # Track originating query for debugging/clients
         for res in local_results:
@@ -1552,8 +1551,7 @@ def handle_recall(
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
     elif sort_param in {"updated_desc", "updated_asc"}:
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
-    if len(deduped_results) > limit:
-        deduped_results = deduped_results[:limit]
+    deduped_results = _guarantee_priority_results(deduped_results, any_context_profile, limit)
 
     # Graph expansion feature (from upstream branch)
     seed_results = list(deduped_results)
