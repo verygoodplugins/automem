@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 from flask import Blueprint, abort, jsonify, request
 
 from automem.config import (
+    COLLECTION_NAME,
     DEFAULT_EXPAND_RELATIONS,
     FILTERABLE_RELATIONS,
     RECALL_ADAPTIVE_FLOOR,
@@ -463,7 +464,14 @@ def _build_context_profile(
 ) -> Optional[Dict[str, Any]]:
     priority_tags: Set[str] = {tag.strip().lower() for tag in manual_tags if tag and tag.strip()}
     priority_types: Set[str] = {typ.strip().title() for typ in manual_types if typ and typ.strip()}
-    priority_ids: Set[str] = {value.strip() for value in manual_ids if value and value.strip()}
+    priority_id_order: List[str] = []
+    priority_ids: Set[str] = set()
+    for value in manual_ids:
+        normalized = value.strip()
+        if not normalized or normalized in priority_ids:
+            continue
+        priority_ids.add(normalized)
+        priority_id_order.append(normalized)
     priority_keywords: Set[str] = set()
 
     style_focus = False
@@ -499,6 +507,7 @@ def _build_context_profile(
         "priority_tags": priority_tags,
         "priority_types": priority_types,
         "priority_ids": priority_ids,
+        "priority_id_order": priority_id_order,
         "priority_keywords": priority_keywords,
         "weights": {
             "tag": 0.45,
@@ -566,11 +575,94 @@ def _inject_priority_memories(
     tag_mode: str,
     tag_match: str,
     limit: int,
+    logger: Any,
     exclude_tags: Optional[List[str]] = None,
 ) -> bool:
+    injected = False
+    priority_id_order: List[str] = context_profile.get("priority_id_order") or []
     priority_tags: Set[str] = context_profile.get("priority_tags") or set()
+
+    if priority_id_order:
+        fetched_ids: Set[str] = set()
+        if graph is not None:
+            for memory_id in priority_id_order:
+                if memory_id in seen_ids or memory_id in fetched_ids:
+                    continue
+                try:
+                    record = graph.query(
+                        "MATCH (m:Memory {id: $id}) RETURN m",
+                        {"id": memory_id},
+                    )
+                except Exception:
+                    logger.exception("Failed to fetch priority memory %s from graph", memory_id)
+                    continue
+                if not getattr(record, "result_set", None):
+                    continue
+                data = _serialize_node(record.result_set[0][0])
+                priority_result = {
+                    "id": memory_id,
+                    "memory": data,
+                    "source": "graph",
+                    "match_type": "priority_id",
+                    "match_score": 0.0,
+                }
+                results.append(priority_result)
+                seen_ids.add(memory_id)
+                fetched_ids.add(memory_id)
+                injected = True
+
+        if qdrant_client is not None:
+            remaining_ids = [
+                memory_id
+                for memory_id in priority_id_order
+                if memory_id not in seen_ids and memory_id not in fetched_ids
+            ]
+            if remaining_ids:
+                try:
+                    points = qdrant_client.retrieve(
+                        collection_name=COLLECTION_NAME,
+                        ids=remaining_ids,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                except Exception:
+                    logger.exception("Failed to fetch priority memories from qdrant")
+                    points = []
+
+                points_by_id = {
+                    str(getattr(point, "id", "") or "").strip(): point for point in points if point
+                }
+                for memory_id in remaining_ids:
+                    point = points_by_id.get(memory_id)
+                    if point is None:
+                        continue
+                    payload = getattr(point, "payload", None) or {}
+                    priority_result = {
+                        "id": memory_id,
+                        "memory": {
+                            "id": memory_id,
+                            "content": payload.get("content", ""),
+                            "tags": payload.get("tags", []),
+                            "tag_prefixes": payload.get("tag_prefixes", []),
+                            "importance": payload.get("importance", 0.5),
+                            "timestamp": payload.get("timestamp"),
+                            "type": payload.get("type", "Context"),
+                            "confidence": payload.get("confidence", 0.0),
+                            "updated_at": payload.get("updated_at"),
+                            "last_accessed": payload.get("last_accessed"),
+                            "metadata": payload.get("metadata", {}),
+                        },
+                        "source": "qdrant",
+                        "match_type": "priority_id",
+                        "match_score": 0.0,
+                    }
+                    results.append(priority_result)
+                    seen_ids.add(memory_id)
+                    fetched_ids.add(memory_id)
+                    injected = True
+
     if not priority_tags:
-        return False
+        return injected
 
     effective_tag_mode = tag_mode if tag_mode in {"any", "all"} else "any"
     effective_tag_match = tag_match if tag_match in {"exact", "prefix"} else "prefix"
@@ -605,7 +697,7 @@ def _inject_priority_memories(
             ]
             if filtered_priority:
                 results.extend(filtered_priority)
-                return True
+                injected = True
 
     if qdrant_client is not None:
         tag_results = vector_filter_only_tag_search(
@@ -632,9 +724,51 @@ def _inject_priority_memories(
             ]
             if filtered_results:
                 results.extend(filtered_results)
-                return True
+                injected = True
 
-    return False
+    return injected
+
+
+def _guarantee_priority_results(
+    results: List[Dict[str, Any]],
+    context_profile: Optional[Dict[str, Any]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    if not context_profile:
+        return results[:limit]
+
+    priority_id_order: List[str] = context_profile.get("priority_id_order") or []
+    if not priority_id_order:
+        return results[:limit]
+
+    by_id: Dict[str, Dict[str, Any]] = {}
+    ordered_results: List[Dict[str, Any]] = []
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id not in by_id:
+            by_id[memory_id] = result
+        ordered_results.append(result)
+
+    guaranteed = [by_id[memory_id] for memory_id in priority_id_order if memory_id in by_id]
+    if len(guaranteed) >= limit:
+        return guaranteed[:limit]
+
+    selected_ids = {
+        str(item.get("id") or (item.get("memory") or {}).get("id") or "").strip()
+        for item in guaranteed
+    }
+    combined = list(guaranteed)
+    for result in ordered_results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id in selected_ids:
+            continue
+        combined.append(result)
+        if len(combined) >= limit:
+            break
+
+    return combined[:limit]
 
 
 def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
@@ -642,6 +776,21 @@ def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any
         if _result_matches_context_priority(result, profile):
             return True
     return False
+
+
+def _results_have_priority_ids(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
+    priority_ids: Set[str] = profile.get("priority_ids") or set()
+    if not priority_ids:
+        return True
+
+    seen_priority_ids: Set[str] = set()
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id in priority_ids:
+            seen_priority_ids.add(memory_id)
+
+    return priority_ids.issubset(seen_priority_ids)
 
 
 def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
@@ -1253,7 +1402,9 @@ def handle_recall(
 
         context_injected = False
         if context_profile:
-            if not _results_have_priority(local_results, context_profile):
+            priority_ids_missing = not _results_have_priority_ids(local_results, context_profile)
+            needs_context_injection = not _results_have_priority(local_results, context_profile)
+            if priority_ids_missing or needs_context_injection:
                 context_injected = _inject_priority_memories(
                     local_results,
                     graph,
@@ -1268,6 +1419,7 @@ def handle_recall(
                     tag_mode,
                     tag_match,
                     per_query_limit,
+                    logger,
                     exclude_tags,
                 )
 

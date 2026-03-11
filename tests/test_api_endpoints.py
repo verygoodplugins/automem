@@ -456,6 +456,75 @@ def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers)
     assert context_info.get("injected") is True
 
 
+def test_recall_priority_ids_fetches_specific_memory(client, mock_state, auth_headers):
+    """priority_ids should fetch a memory directly even when the query does not match it."""
+    mock_state.memory_graph.memories.clear()
+    target_id = "aa000000-0000-0000-0000-000000000010"
+    query_match_id = "aa000000-0000-0000-0000-000000000011"
+
+    _store_memory(
+        mock_state,
+        target_id,
+        "Completely unrelated anchored memory",
+        ["anchor"],
+        0.2,
+        timestamp="2026-03-01T00:00:00+00:00",
+    )
+    _store_memory(
+        mock_state,
+        query_match_id,
+        "Python query match memory",
+        ["python"],
+        0.9,
+        timestamp="2026-03-02T00:00:00+00:00",
+    )
+
+    response = client.get(
+        f"/recall?query=python&priority_ids={target_id}&limit=2",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    ids = [result["id"] for result in data["results"]]
+    assert target_id in ids
+    assert query_match_id in ids
+
+
+def test_recall_priority_ids_are_guaranteed_with_small_limit(client, mock_state, auth_headers):
+    """priority_ids should survive score sorting and limit truncation."""
+    mock_state.memory_graph.memories.clear()
+    target_id = "aa000000-0000-0000-0000-000000000012"
+    query_match_id = "aa000000-0000-0000-0000-000000000013"
+
+    _store_memory(
+        mock_state,
+        target_id,
+        "Anchored memory with unrelated content",
+        ["anchor"],
+        0.1,
+        timestamp="2026-03-01T00:00:00+00:00",
+    )
+    _store_memory(
+        mock_state,
+        query_match_id,
+        "Python query match that would normally rank first",
+        ["python"],
+        1.0,
+        timestamp="2026-03-02T00:00:00+00:00",
+    )
+
+    response = client.get(
+        f"/recall?query=python&priority_ids={target_id}&limit=1",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["count"] == 1
+    assert data["results"][0]["id"] == target_id
+
+
 # ==================== Test Memory Update ====================
 
 
