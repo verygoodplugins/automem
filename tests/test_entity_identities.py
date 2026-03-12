@@ -313,8 +313,7 @@ class TestEntityMigration:
 
     def test_collect_entity_tags(self) -> None:
         """Entity tags are correctly grouped by tag."""
-        from scripts.migrate_entity_nodes import (ENTITY_TAG_RE,
-                                                  collect_entity_tags)
+        from scripts.migrate_entity_nodes import ENTITY_TAG_RE, collect_entity_tags
 
         graph = EntityFakeGraph()
         graph.memories["m1"] = {
@@ -480,7 +479,7 @@ class TestEntityDedup:
         }
         auto_merge, _review = find_merge_candidates(graph)
         assert len(auto_merge) == 0
-        assert len(review) == 0
+        assert len(_review) == 0
 
     def test_merge_entities(self) -> None:
         """Merge moves edges and updates aliases."""
@@ -530,8 +529,7 @@ class TestIdentitySynthesis:
 
     def test_synthesize_identity(self) -> None:
         """Identity synthesis calls LLM and stores result."""
-        from automem.consolidation.identity_synthesis import \
-            synthesize_identity
+        from automem.consolidation.identity_synthesis import synthesize_identity
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {
@@ -581,8 +579,7 @@ class TestIdentitySynthesis:
 
     def test_synthesize_no_memories(self) -> None:
         """Returns None when entity has no linked memories."""
-        from automem.consolidation.identity_synthesis import \
-            synthesize_identity
+        from automem.consolidation.identity_synthesis import synthesize_identity
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:unknown"] = {
@@ -606,8 +603,7 @@ class TestIdentitySynthesis:
 
     def test_run_identity_consolidation(self) -> None:
         """Full identity consolidation run with dedup + synthesis."""
-        from automem.consolidation.identity_synthesis import \
-            run_identity_consolidation
+        from automem.consolidation.identity_synthesis import run_identity_consolidation
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {
@@ -650,8 +646,7 @@ class TestIdentitySynthesis:
 
     def test_dry_run_no_llm_calls(self) -> None:
         """Dry run counts but doesn't call LLM."""
-        from automem.consolidation.identity_synthesis import \
-            run_identity_consolidation
+        from automem.consolidation.identity_synthesis import run_identity_consolidation
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {
@@ -685,8 +680,7 @@ class TestIdentitySynthesis:
 
     def test_skip_unchanged_entities(self) -> None:
         """Entities with existing identity and matching source count are skipped."""
-        from automem.consolidation.identity_synthesis import \
-            run_identity_consolidation
+        from automem.consolidation.identity_synthesis import run_identity_consolidation
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {

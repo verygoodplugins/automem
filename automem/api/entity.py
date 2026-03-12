@@ -158,8 +158,7 @@ def create_entity_blueprint(
             abort(503, description="FalkorDB is unavailable")
 
         try:
-            from automem.consolidation.entity_dedup import \
-                find_merge_candidates
+            from automem.consolidation.entity_dedup import find_merge_candidates
 
             auto_merge, review = find_merge_candidates(graph)
             auto_merge_ids = {(c.entity_a_id, c.entity_b_id) for c in auto_merge}
@@ -227,6 +226,9 @@ def create_entity_blueprint(
 
         alias_id = alias_rows[0][0]
         canonical_id = canonical_rows[0][0]
+
+        if alias_id == canonical_id:
+            abort(400, description="Source and target entity must be different")
 
         try:
             from automem.consolidation.entity_dedup import merge_entities
