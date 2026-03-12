@@ -118,9 +118,7 @@ def create_entity_blueprint(
         for row in getattr(result, "result_set", []) or []:
             entities.append(_serialize_entity_row(row))
 
-        return jsonify(
-            {"status": "success", "entities": entities, "count": len(entities)}
-        )
+        return jsonify({"status": "success", "entities": entities, "count": len(entities)})
 
     @bp.route("/entity/<slug>", methods=["GET"])
     def get_entity(slug: str) -> Any:
@@ -185,9 +183,7 @@ def create_entity_blueprint(
         except Exception as exc:
             logger.exception("Failed to find merge candidates")
             return (
-                jsonify(
-                    {"error": "Failed to find merge candidates", "details": str(exc)}
-                ),
+                jsonify({"error": "Failed to find merge candidates", "details": str(exc)}),
                 500,
             )
 

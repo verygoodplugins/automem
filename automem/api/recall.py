@@ -1986,15 +1986,17 @@ def handle_recall(
                             aliases = json.loads(aliases)
                         except Exception:
                             aliases = []
-                    entity_identities.append({
-                        "id": row[0],
-                        "name": row[3],
-                        "category": row[2],
-                        "aliases": aliases,
-                        "identity": row[5],
-                        "identity_source_count": int(row[6] or 0),
-                        "identity_updated_at": row[7],
-                    })
+                    entity_identities.append(
+                        {
+                            "id": row[0],
+                            "name": row[3],
+                            "category": row[2],
+                            "aliases": aliases,
+                            "identity": row[5],
+                            "identity_source_count": int(row[6] or 0),
+                            "identity_updated_at": row[7],
+                        }
+                    )
             except Exception:
                 logger.debug("Entity identity batch lookup failed for slugs %s", slug_list)
         except Exception:

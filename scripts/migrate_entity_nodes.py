@@ -69,9 +69,7 @@ def collect_entity_tags(graph) -> dict[str, list[str]]:
     Returns:
         dict mapping entity tag (e.g. "entity:people:alice-smith") to list of memory IDs
     """
-    result = graph.query(
-        "MATCH (m:Memory) WHERE m.tags IS NOT NULL RETURN m.id, m.tags"
-    )
+    result = graph.query("MATCH (m:Memory) WHERE m.tags IS NOT NULL RETURN m.id, m.tags")
     entity_to_memories: dict[str, list[str]] = defaultdict(list)
     for row in getattr(result, "result_set", []) or []:
         mem_id = row[0]
@@ -84,9 +82,7 @@ def collect_entity_tags(graph) -> dict[str, list[str]]:
     return dict(entity_to_memories)
 
 
-def run_migration(
-    graph, entity_to_memories: dict[str, list[str]], *, dry_run: bool
-) -> None:
+def run_migration(graph, entity_to_memories: dict[str, list[str]], *, dry_run: bool) -> None:
     """Create Entity nodes and REFERENCED_IN edges."""
     now = datetime.now(timezone.utc).isoformat()
     created_entities = 0
@@ -165,16 +161,12 @@ def run_migration(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Migrate entity tags to Entity nodes")
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Show what would be created"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be created")
     args = parser.parse_args()
 
     graph = connect_falkordb()
     entity_to_memories = collect_entity_tags(graph)
-    logger.info(
-        "Found %d distinct entity tags across memories", len(entity_to_memories)
-    )
+    logger.info("Found %d distinct entity tags across memories", len(entity_to_memories))
 
     if not entity_to_memories:
         logger.info("Nothing to migrate.")

@@ -32,13 +32,9 @@ class EntityFakeGraph(FakeGraph):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.entities: Dict[str, Dict[str, Any]] = {}
-        self.entity_edges: List[Dict[str, str]] = (
-            []
-        )  # {"entity_id": ..., "memory_id": ...}
+        self.entity_edges: List[Dict[str, str]] = []  # {"entity_id": ..., "memory_id": ...}
 
-    def query(
-        self, query: str, params: Dict[str, Any] | None = None, **kwargs: Any
-    ) -> FakeResult:
+    def query(self, query: str, params: Dict[str, Any] | None = None, **kwargs: Any) -> FakeResult:
         params = params or {}
         self.queries.append((query, params))
 
@@ -113,10 +109,7 @@ class EntityFakeGraph(FakeGraph):
                 for ent in self.entities.values():
                     if ent.get("merged_into"):
                         continue
-                    if (
-                        ent.get("identity") is None
-                        and "e.identity IS NOT NULL" in query
-                    ):
+                    if ent.get("identity") is None and "e.identity IS NOT NULL" in query:
                         continue
                     matched = ent["slug"] in slugs or any(
                         a in slugs for a in (ent.get("aliases") or [])
@@ -144,9 +137,7 @@ class EntityFakeGraph(FakeGraph):
                         continue
                     if ent["slug"] == slug or slug in (ent.get("aliases") or []):
                         # Compute ref_count for this entity
-                        ref_count = sum(
-                            1 for e in self.entity_edges if e["entity_id"] == ent["id"]
-                        )
+                        ref_count = sum(1 for e in self.entity_edges if e["entity_id"] == ent["id"])
                         return FakeResult(
                             [
                                 [
@@ -187,9 +178,7 @@ class EntityFakeGraph(FakeGraph):
                 for ent in self.entities.values():
                     if ent.get("merged_into"):
                         continue
-                    ref_count = sum(
-                        1 for e in self.entity_edges if e["entity_id"] == ent["id"]
-                    )
+                    ref_count = sum(1 for e in self.entity_edges if e["entity_id"] == ent["id"])
                     rows.append(
                         [
                             ent["id"],
@@ -205,9 +194,7 @@ class EntityFakeGraph(FakeGraph):
             for ent in self.entities.values():
                 if ent.get("merged_into"):
                     continue
-                ref_count = sum(
-                    1 for e in self.entity_edges if e["entity_id"] == ent["id"]
-                )
+                ref_count = sum(1 for e in self.entity_edges if e["entity_id"] == ent["id"])
                 rows.append(
                     [
                         ent["id"],
@@ -235,9 +222,7 @@ class EntityFakeGraph(FakeGraph):
 
             if "REFERENCED_IN" in query:
                 # Get linked memories
-                mem_ids = [
-                    e["memory_id"] for e in self.entity_edges if e["entity_id"] == eid
-                ]
+                mem_ids = [e["memory_id"] for e in self.entity_edges if e["entity_id"] == eid]
                 rows = []
                 for mid in mem_ids:
                     mem = self.memories.get(mid)
@@ -435,16 +420,12 @@ class TestEntityDedup:
 
         # alice references m1, m2, m3
         for mid in ["m1", "m2", "m3"]:
-            graph.entity_edges.append(
-                {"entity_id": "entity:people:alice", "memory_id": mid}
-            )
+            graph.entity_edges.append({"entity_id": "entity:people:alice", "memory_id": mid})
             graph.memories[mid] = {"id": mid, "content": f"Memory {mid}", "tags": []}
 
         # alice-smith references m1, m2, m3, m4, m5
         for mid in ["m1", "m2", "m3", "m4", "m5"]:
-            graph.entity_edges.append(
-                {"entity_id": "entity:people:alice-smith", "memory_id": mid}
-            )
+            graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": mid})
             if mid not in graph.memories:
                 graph.memories[mid] = {
                     "id": mid,
@@ -501,21 +482,14 @@ class TestEntityDedup:
             "merged_into": None,
         }
         graph.memories["m1"] = {"id": "m1", "content": "test", "tags": []}
-        graph.entity_edges.append(
-            {"entity_id": "entity:people:alice", "memory_id": "m1"}
-        )
+        graph.entity_edges.append({"entity_id": "entity:people:alice", "memory_id": "m1"})
 
-        result = merge_entities(
-            graph, "entity:people:alice-smith", "entity:people:alice"
-        )
+        result = merge_entities(graph, "entity:people:alice-smith", "entity:people:alice")
 
         assert result.canonical_id == "entity:people:alice-smith"
         assert result.alias_slug == "alice"
         assert result.edges_moved == 1
-        assert (
-            graph.entities["entity:people:alice"]["merged_into"]
-            == "entity:people:alice-smith"
-        )
+        assert graph.entities["entity:people:alice"]["merged_into"] == "entity:people:alice-smith"
         assert "alice" in graph.entities["entity:people:alice-smith"]["aliases"]
 
 
@@ -552,18 +526,14 @@ class TestIdentitySynthesis:
             "type": "Context",
             "tags": ["entity:people:alice-smith"],
         }
-        graph.entity_edges.append(
-            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
-        )
+        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
 
         # Mock OpenAI client
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    message=SimpleNamespace(
-                        content="Alice Smith is a manager at Acme Corp."
-                    )
+                    message=SimpleNamespace(content="Alice Smith is a manager at Acme Corp.")
                 )
             ]
         )
@@ -626,16 +596,12 @@ class TestIdentitySynthesis:
             "type": "Context",
             "tags": ["entity:people:alice-smith"],
         }
-        graph.entity_edges.append(
-            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
-        )
+        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = SimpleNamespace(
             choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(content="Alice is a manager at Acme Corp.")
-                )
+                SimpleNamespace(message=SimpleNamespace(content="Alice is a manager at Acme Corp."))
             ]
         )
 
@@ -668,9 +634,7 @@ class TestIdentitySynthesis:
             "tags": [],
             "importance": 0.5,
         }
-        graph.entity_edges.append(
-            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
-        )
+        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
 
         mock_client = MagicMock()
         result = run_identity_consolidation(graph, mock_client, dry_run=True)
@@ -703,9 +667,7 @@ class TestIdentitySynthesis:
             "type": "Context",
             "tags": ["entity:people:alice-smith"],
         }
-        graph.entity_edges.append(
-            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
-        )
+        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
 
         mock_client = MagicMock()
         result = run_identity_consolidation(graph, mock_client, min_references=1)
@@ -727,9 +689,7 @@ class TestRecallEntityInjection:
         """Query entity extraction picks up capitalized names."""
         from automem.api.recall import _extract_query_entities
 
-        entities = _extract_query_entities(
-            "Tell me about Alice and her work at Acme Corp"
-        )
+        entities = _extract_query_entities("Tell me about Alice and her work at Acme Corp")
         # "Alice" is first word (skipped), but "Acme" or "Corp" should be extracted
         assert "Acme" in entities or "Corp" in entities
 
@@ -746,6 +706,4 @@ class TestRecallEntityInjection:
             }
         ]
         entities = _extract_entities_from_results(results)
-        assert "alice smith" in entities or "alice-smith" in {
-            e.replace(" ", "-") for e in entities
-        }
+        assert "alice smith" in entities or "alice-smith" in {e.replace(" ", "-") for e in entities}

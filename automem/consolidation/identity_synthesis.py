@@ -230,8 +230,7 @@ def run_identity_consolidation(
     Returns:
         Summary dict with counts and details.
     """
-    from automem.consolidation.entity_dedup import (find_merge_candidates,
-                                                    merge_entities)
+    from automem.consolidation.entity_dedup import find_merge_candidates, merge_entities
 
     result: Dict[str, Any] = {
         "merges_performed": [],
@@ -257,9 +256,7 @@ def run_identity_consolidation(
         if not dry_run:
             for candidate in auto_merge:
                 try:
-                    merge_result = merge_entities(
-                        graph, candidate.canonical_id, candidate.alias_id
-                    )
+                    merge_result = merge_entities(graph, candidate.canonical_id, candidate.alias_id)
                     result["merges_performed"].append(
                         {
                             "canonical": merge_result.canonical_id,
@@ -300,9 +297,7 @@ def run_identity_consolidation(
             continue
 
         # Only re-synthesize if entity has no identity or reference count changed
-        needs_synthesis = (
-            existing_identity is None or actual_ref_count != stored_source_count
-        )
+        needs_synthesis = existing_identity is None or actual_ref_count != stored_source_count
         if not needs_synthesis:
             continue
 

@@ -78,7 +78,9 @@ def _memory_overlap(memories_a: Set[str], memories_b: Set[str]) -> float:
     """Fraction of memories in the *smaller* set that also appear in the larger set."""
     if not memories_a or not memories_b:
         return 0.0
-    smaller, larger = (memories_a, memories_b) if len(memories_a) <= len(memories_b) else (memories_b, memories_a)
+    smaller, larger = (
+        (memories_a, memories_b) if len(memories_a) <= len(memories_b) else (memories_b, memories_a)
+    )
     overlap = len(smaller & larger)
     return overlap / len(smaller)
 
@@ -108,12 +110,14 @@ def find_merge_candidates(
                 aliases = json.loads(aliases)
             except Exception:
                 aliases = []
-        entities.append({
-            "id": row[0],
-            "slug": row[1],
-            "category": row[2],
-            "aliases": aliases,
-        })
+        entities.append(
+            {
+                "id": row[0],
+                "slug": row[1],
+                "category": row[2],
+                "aliases": aliases,
+            }
+        )
 
     if len(entities) < 2:
         return [], []
@@ -234,7 +238,9 @@ def merge_entities(graph: Any, canonical_id: str, alias_id: str) -> MergeResult:
         current_aliases = raw
 
     incoming_aliases = [alias_slug] + alias_aliases if alias_slug else alias_aliases
-    merged_aliases = list(dict.fromkeys(current_aliases + incoming_aliases))  # dedup, preserve order
+    merged_aliases = list(
+        dict.fromkeys(current_aliases + incoming_aliases)
+    )  # dedup, preserve order
     graph.query(
         """
         MATCH (e:Entity {id: $id})
@@ -251,7 +257,10 @@ def merge_entities(graph: Any, canonical_id: str, alias_id: str) -> MergeResult:
 
     logger.info(
         "Merged entity %s into %s (slug=%s, edges=%d)",
-        alias_id, canonical_id, alias_slug, edges_moved,
+        alias_id,
+        canonical_id,
+        alias_slug,
+        edges_moved,
     )
 
     return MergeResult(
