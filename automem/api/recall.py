@@ -1949,9 +1949,9 @@ def handle_recall(
 
     # Entity identity injection: look up Entity nodes for entities in query/results
     entity_identities: List[Dict[str, Any]] = []
-    if query_text and graph is not None:
+    if graph is not None and (query_text or results):
         try:
-            query_entities = _extract_query_entities(query_text)
+            query_entities = _extract_query_entities(query_text) if query_text else []
             result_entity_slugs: Set[str] = set()
             for res in results[:10]:
                 mem = res.get("memory") or res

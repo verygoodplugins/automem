@@ -167,7 +167,7 @@ def find_merge_candidates(
                 reason=f"slug_sim={slug_sim:.2f}, overlap={overlap:.2f}, substring={is_substring}",
             )
 
-            if is_substring and overlap >= min_overlap_for_auto:
+            if is_substring and overlap > min_overlap_for_auto:
                 auto_merge.append(candidate)
             elif confidence >= 0.5:
                 review.append(candidate)
@@ -211,6 +211,7 @@ def merge_entities(graph: Any, canonical_id: str, alias_id: str) -> MergeResult:
 
     edges_moved = len(mem_ids)
     if mem_ids:
+        # Copy edges to canonical
         graph.query(
             """
             MATCH (e:Entity {id: $canonical_id})
@@ -219,6 +220,11 @@ def merge_entities(graph: Any, canonical_id: str, alias_id: str) -> MergeResult:
             MERGE (e)-[:REFERENCED_IN]->(m)
             """,
             {"canonical_id": canonical_id, "mem_ids": mem_ids},
+        )
+        # Remove old edges from alias
+        graph.query(
+            "MATCH (e:Entity {id: $alias_id})-[r:REFERENCED_IN]->() DELETE r",
+            {"alias_id": alias_id},
         )
 
     # Update canonical aliases (deduplicated)

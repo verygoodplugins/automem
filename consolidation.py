@@ -1177,8 +1177,14 @@ class ConsolidationScheduler:
             else:
                 result = self.consolidator.consolidate(mode=task_type, dry_run=False)
 
-            # Update schedule
-            self.schedules[task_type]["last_run"] = datetime.now(timezone.utc)
+            # Don't advance schedule if the task was skipped (e.g. missing API key)
+            identity_skipped = (
+                task_type == "identity"
+                and isinstance(result, dict)
+                and result.get("steps", {}).get("identity", {}).get("skipped")
+            )
+            if not identity_skipped:
+                self.schedules[task_type]["last_run"] = datetime.now(timezone.utc)
 
             # Record in history
             self.history.append(

@@ -184,6 +184,13 @@ def synthesize_identity(
         logger.exception("LLM call failed for entity %s", entity_id)
         return None
 
+    # Get the true total reference count (not truncated by memory_limit)
+    ref_count_result = graph.query(
+        "MATCH (e:Entity {id: $id})-[:REFERENCED_IN]->(m:Memory) RETURN count(m)",
+        {"id": entity_id},
+    )
+    total_ref_count = (getattr(ref_count_result, "result_set", []) or [[0]])[0][0]
+
     # Store on entity node
     now = datetime.now(timezone.utc).isoformat()
     graph.query(
@@ -199,7 +206,7 @@ def synthesize_identity(
             "identity": identity_text,
             "version": current_version + 1,
             "now": now,
-            "source_count": len(memories),
+            "source_count": int(total_ref_count),
         },
     )
 
