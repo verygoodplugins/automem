@@ -21,10 +21,10 @@ import pytest
 
 from tests.support.fake_graph import FakeGraph, FakeNode, FakeResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers: Entity-aware FakeGraph extension
 # ---------------------------------------------------------------------------
+
 
 class EntityFakeGraph(FakeGraph):
     """FakeGraph with Entity node support for testing."""
@@ -32,9 +32,13 @@ class EntityFakeGraph(FakeGraph):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.entities: Dict[str, Dict[str, Any]] = {}
-        self.entity_edges: List[Dict[str, str]] = []  # {"entity_id": ..., "memory_id": ...}
+        self.entity_edges: List[Dict[str, str]] = (
+            []
+        )  # {"entity_id": ..., "memory_id": ...}
 
-    def query(self, query: str, params: Dict[str, Any] | None = None, **kwargs: Any) -> FakeResult:
+    def query(
+        self, query: str, params: Dict[str, Any] | None = None, **kwargs: Any
+    ) -> FakeResult:
         params = params or {}
         self.queries.append((query, params))
 
@@ -89,7 +93,10 @@ class EntityFakeGraph(FakeGraph):
             return FakeResult([])
 
         # Batch entity-memory edge query for dedup
-        if "MATCH (e:Entity)-[:REFERENCED_IN]->(m:Memory)" in query and "RETURN e.id, m.id" in query:
+        if (
+            "MATCH (e:Entity)-[:REFERENCED_IN]->(m:Memory)" in query
+            and "RETURN e.id, m.id" in query
+        ):
             rows = []
             for edge in self.entity_edges:
                 ent = self.entities.get(edge["entity_id"])
@@ -106,16 +113,27 @@ class EntityFakeGraph(FakeGraph):
                 for ent in self.entities.values():
                     if ent.get("merged_into"):
                         continue
-                    if ent.get("identity") is None and "e.identity IS NOT NULL" in query:
+                    if (
+                        ent.get("identity") is None
+                        and "e.identity IS NOT NULL" in query
+                    ):
                         continue
-                    matched = ent["slug"] in slugs or any(a in slugs for a in (ent.get("aliases") or []))
+                    matched = ent["slug"] in slugs or any(
+                        a in slugs for a in (ent.get("aliases") or [])
+                    )
                     if matched:
-                        rows.append([
-                            ent["id"], ent["slug"], ent["category"], ent["name"],
-                            ent.get("aliases", []), ent.get("identity"),
-                            ent.get("identity_source_count", 0),
-                            ent.get("identity_updated_at"),
-                        ])
+                        rows.append(
+                            [
+                                ent["id"],
+                                ent["slug"],
+                                ent["category"],
+                                ent["name"],
+                                ent.get("aliases", []),
+                                ent.get("identity"),
+                                ent.get("identity_source_count", 0),
+                                ent.get("identity_updated_at"),
+                            ]
+                        )
                 return FakeResult(rows)
 
             # Single slug lookup
@@ -126,14 +144,27 @@ class EntityFakeGraph(FakeGraph):
                         continue
                     if ent["slug"] == slug or slug in (ent.get("aliases") or []):
                         # Compute ref_count for this entity
-                        ref_count = sum(1 for e in self.entity_edges if e["entity_id"] == ent["id"])
-                        return FakeResult([[
-                            ent["id"], ent["slug"], ent["category"], ent["name"],
-                            ent.get("aliases", []), ent.get("identity"),
-                            ent.get("identity_version", 0), ent.get("identity_updated_at"),
-                            ent.get("identity_source_count", 0), ref_count,
-                            ent.get("created_at"), ent.get("last_referenced_at"),
-                        ]])
+                        ref_count = sum(
+                            1 for e in self.entity_edges if e["entity_id"] == ent["id"]
+                        )
+                        return FakeResult(
+                            [
+                                [
+                                    ent["id"],
+                                    ent["slug"],
+                                    ent["category"],
+                                    ent["name"],
+                                    ent.get("aliases", []),
+                                    ent.get("identity"),
+                                    ent.get("identity_version", 0),
+                                    ent.get("identity_updated_at"),
+                                    ent.get("identity_source_count", 0),
+                                    ref_count,
+                                    ent.get("created_at"),
+                                    ent.get("last_referenced_at"),
+                                ]
+                            ]
+                        )
                 return FakeResult([])
 
             if "RETURN e.id, e.slug, e.category, e.aliases" in query:
@@ -141,7 +172,14 @@ class EntityFakeGraph(FakeGraph):
                 for ent in self.entities.values():
                     if ent.get("merged_into"):
                         continue
-                    rows.append([ent["id"], ent["slug"], ent["category"], ent.get("aliases", [])])
+                    rows.append(
+                        [
+                            ent["id"],
+                            ent["slug"],
+                            ent["category"],
+                            ent.get("aliases", []),
+                        ]
+                    )
                 return FakeResult(rows)
 
             if "RETURN e.id, e.identity_source_count, e.identity" in query:
@@ -149,8 +187,17 @@ class EntityFakeGraph(FakeGraph):
                 for ent in self.entities.values():
                     if ent.get("merged_into"):
                         continue
-                    ref_count = sum(1 for e in self.entity_edges if e["entity_id"] == ent["id"])
-                    rows.append([ent["id"], ent.get("identity_source_count", 0), ent.get("identity"), ref_count])
+                    ref_count = sum(
+                        1 for e in self.entity_edges if e["entity_id"] == ent["id"]
+                    )
+                    rows.append(
+                        [
+                            ent["id"],
+                            ent.get("identity_source_count", 0),
+                            ent.get("identity"),
+                            ref_count,
+                        ]
+                    )
                 return FakeResult(rows)
 
             # Generic list (with ref_count)
@@ -158,14 +205,25 @@ class EntityFakeGraph(FakeGraph):
             for ent in self.entities.values():
                 if ent.get("merged_into"):
                     continue
-                ref_count = sum(1 for e in self.entity_edges if e["entity_id"] == ent["id"])
-                rows.append([
-                    ent["id"], ent["slug"], ent["category"], ent["name"],
-                    ent.get("aliases", []), ent.get("identity"),
-                    ent.get("identity_version", 0), ent.get("identity_updated_at"),
-                    ent.get("identity_source_count", 0), ref_count,
-                    ent.get("created_at"), ent.get("last_referenced_at"),
-                ])
+                ref_count = sum(
+                    1 for e in self.entity_edges if e["entity_id"] == ent["id"]
+                )
+                rows.append(
+                    [
+                        ent["id"],
+                        ent["slug"],
+                        ent["category"],
+                        ent["name"],
+                        ent.get("aliases", []),
+                        ent.get("identity"),
+                        ent.get("identity_version", 0),
+                        ent.get("identity_updated_at"),
+                        ent.get("identity_source_count", 0),
+                        ref_count,
+                        ent.get("created_at"),
+                        ent.get("last_referenced_at"),
+                    ]
+                )
             return FakeResult(rows)
 
         # Entity by ID
@@ -177,23 +235,35 @@ class EntityFakeGraph(FakeGraph):
 
             if "REFERENCED_IN" in query:
                 # Get linked memories
-                mem_ids = [e["memory_id"] for e in self.entity_edges if e["entity_id"] == eid]
+                mem_ids = [
+                    e["memory_id"] for e in self.entity_edges if e["entity_id"] == eid
+                ]
                 rows = []
                 for mid in mem_ids:
                     mem = self.memories.get(mid)
                     if mem:
-                        rows.append([
-                            mem.get("id"), mem.get("content", ""),
-                            mem.get("importance", 0.5), mem.get("timestamp"),
-                            mem.get("type"),
-                        ])
+                        rows.append(
+                            [
+                                mem.get("id"),
+                                mem.get("content", ""),
+                                mem.get("importance", 0.5),
+                                mem.get("timestamp"),
+                                mem.get("type"),
+                            ]
+                        )
                 return FakeResult(rows)
 
             if "RETURN e.name, e.category, e.identity, e.identity_version" in query:
-                return FakeResult([[
-                    ent["name"], ent["category"], ent.get("identity"),
-                    ent.get("identity_version", 0),
-                ]])
+                return FakeResult(
+                    [
+                        [
+                            ent["name"],
+                            ent["category"],
+                            ent.get("identity"),
+                            ent.get("identity_version", 0),
+                        ]
+                    ]
+                )
 
             if "RETURN e.slug, e.aliases" in query:
                 return FakeResult([[ent["slug"], ent.get("aliases", [])]])
@@ -237,12 +307,14 @@ class EntityFakeGraph(FakeGraph):
 # Test: Entity node creation from tags (migration logic)
 # ---------------------------------------------------------------------------
 
+
 class TestEntityMigration:
     """Test the migration script logic."""
 
     def test_collect_entity_tags(self) -> None:
         """Entity tags are correctly grouped by tag."""
-        from scripts.migrate_entity_nodes import collect_entity_tags, ENTITY_TAG_RE
+        from scripts.migrate_entity_nodes import (ENTITY_TAG_RE,
+                                                  collect_entity_tags)
 
         graph = EntityFakeGraph()
         graph.memories["m1"] = {
@@ -309,6 +381,7 @@ class TestEntityMigration:
 # Test: Entity dedup
 # ---------------------------------------------------------------------------
 
+
 class TestEntityDedup:
     """Test entity deduplication logic."""
 
@@ -363,16 +436,24 @@ class TestEntityDedup:
 
         # alice references m1, m2, m3
         for mid in ["m1", "m2", "m3"]:
-            graph.entity_edges.append({"entity_id": "entity:people:alice", "memory_id": mid})
+            graph.entity_edges.append(
+                {"entity_id": "entity:people:alice", "memory_id": mid}
+            )
             graph.memories[mid] = {"id": mid, "content": f"Memory {mid}", "tags": []}
 
         # alice-smith references m1, m2, m3, m4, m5
         for mid in ["m1", "m2", "m3", "m4", "m5"]:
-            graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": mid})
+            graph.entity_edges.append(
+                {"entity_id": "entity:people:alice-smith", "memory_id": mid}
+            )
             if mid not in graph.memories:
-                graph.memories[mid] = {"id": mid, "content": f"Memory {mid}", "tags": []}
+                graph.memories[mid] = {
+                    "id": mid,
+                    "content": f"Memory {mid}",
+                    "tags": [],
+                }
 
-        auto_merge, review = find_merge_candidates(graph)
+        auto_merge, _review = find_merge_candidates(graph)
         assert len(auto_merge) >= 1
         # The canonical should be the longer slug
         assert auto_merge[0].canonical_id == "entity:people:alice-smith"
@@ -384,14 +465,20 @@ class TestEntityDedup:
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:python"] = {
-            "id": "entity:people:python", "slug": "python",
-            "category": "people", "aliases": [], "merged_into": None,
+            "id": "entity:people:python",
+            "slug": "python",
+            "category": "people",
+            "aliases": [],
+            "merged_into": None,
         }
         graph.entities["entity:tools:python"] = {
-            "id": "entity:tools:python", "slug": "python",
-            "category": "tools", "aliases": [], "merged_into": None,
+            "id": "entity:tools:python",
+            "slug": "python",
+            "category": "tools",
+            "aliases": [],
+            "merged_into": None,
         }
-        auto_merge, review = find_merge_candidates(graph)
+        auto_merge, _review = find_merge_candidates(graph)
         assert len(auto_merge) == 0
         assert len(review) == 0
 
@@ -415,14 +502,21 @@ class TestEntityDedup:
             "merged_into": None,
         }
         graph.memories["m1"] = {"id": "m1", "content": "test", "tags": []}
-        graph.entity_edges.append({"entity_id": "entity:people:alice", "memory_id": "m1"})
+        graph.entity_edges.append(
+            {"entity_id": "entity:people:alice", "memory_id": "m1"}
+        )
 
-        result = merge_entities(graph, "entity:people:alice-smith", "entity:people:alice")
+        result = merge_entities(
+            graph, "entity:people:alice-smith", "entity:people:alice"
+        )
 
         assert result.canonical_id == "entity:people:alice-smith"
         assert result.alias_slug == "alice"
         assert result.edges_moved == 1
-        assert graph.entities["entity:people:alice"]["merged_into"] == "entity:people:alice-smith"
+        assert (
+            graph.entities["entity:people:alice"]["merged_into"]
+            == "entity:people:alice-smith"
+        )
         assert "alice" in graph.entities["entity:people:alice-smith"]["aliases"]
 
 
@@ -430,12 +524,14 @@ class TestEntityDedup:
 # Test: Identity synthesis
 # ---------------------------------------------------------------------------
 
+
 class TestIdentitySynthesis:
     """Test identity synthesis with mocked LLM."""
 
     def test_synthesize_identity(self) -> None:
         """Identity synthesis calls LLM and stores result."""
-        from automem.consolidation.identity_synthesis import synthesize_identity
+        from automem.consolidation.identity_synthesis import \
+            synthesize_identity
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {
@@ -451,18 +547,27 @@ class TestIdentitySynthesis:
             "merged_into": None,
         }
         graph.memories["m1"] = {
-            "id": "m1", "content": "Alice works at Acme Corp as a manager.",
-            "importance": 0.9, "timestamp": "2026-01-15T12:00:00Z", "type": "Context",
+            "id": "m1",
+            "content": "Alice works at Acme Corp as a manager.",
+            "importance": 0.9,
+            "timestamp": "2026-01-15T12:00:00Z",
+            "type": "Context",
             "tags": ["entity:people:alice-smith"],
         }
-        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
+        graph.entity_edges.append(
+            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
+        )
 
         # Mock OpenAI client
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(
-                message=SimpleNamespace(content="Alice Smith is a manager at Acme Corp.")
-            )]
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Alice Smith is a manager at Acme Corp."
+                    )
+                )
+            ]
         )
 
         result = synthesize_identity(
@@ -476,7 +581,8 @@ class TestIdentitySynthesis:
 
     def test_synthesize_no_memories(self) -> None:
         """Returns None when entity has no linked memories."""
-        from automem.consolidation.identity_synthesis import synthesize_identity
+        from automem.consolidation.identity_synthesis import \
+            synthesize_identity
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:unknown"] = {
@@ -500,7 +606,8 @@ class TestIdentitySynthesis:
 
     def test_run_identity_consolidation(self) -> None:
         """Full identity consolidation run with dedup + synthesis."""
-        from automem.consolidation.identity_synthesis import run_identity_consolidation
+        from automem.consolidation.identity_synthesis import \
+            run_identity_consolidation
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {
@@ -516,17 +623,24 @@ class TestIdentitySynthesis:
             "merged_into": None,
         }
         graph.memories["m1"] = {
-            "id": "m1", "content": "Alice works at Acme Corp.",
-            "importance": 0.9, "timestamp": "2026-01-15T12:00:00Z", "type": "Context",
+            "id": "m1",
+            "content": "Alice works at Acme Corp.",
+            "importance": 0.9,
+            "timestamp": "2026-01-15T12:00:00Z",
+            "type": "Context",
             "tags": ["entity:people:alice-smith"],
         }
-        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
+        graph.entity_edges.append(
+            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
+        )
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(
-                message=SimpleNamespace(content="Alice is a manager at Acme Corp.")
-            )]
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Alice is a manager at Acme Corp.")
+                )
+            ]
         )
 
         result = run_identity_consolidation(graph, mock_client, min_references=1)
@@ -536,20 +650,32 @@ class TestIdentitySynthesis:
 
     def test_dry_run_no_llm_calls(self) -> None:
         """Dry run counts but doesn't call LLM."""
-        from automem.consolidation.identity_synthesis import run_identity_consolidation
+        from automem.consolidation.identity_synthesis import \
+            run_identity_consolidation
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {
             "id": "entity:people:alice-smith",
-            "slug": "alice-smith", "category": "people",
-            "name": "Alice Smith", "aliases": [],
-            "identity": None, "identity_version": 0,
-            "identity_updated_at": None, "identity_source_count": 3,
+            "slug": "alice-smith",
+            "category": "people",
+            "name": "Alice Smith",
+            "aliases": [],
+            "identity": None,
+            "identity_version": 0,
+            "identity_updated_at": None,
+            "identity_source_count": 3,
             "merged_into": None,
         }
         # Add an edge so ref_count > 0
-        graph.memories["m1"] = {"id": "m1", "content": "test", "tags": [], "importance": 0.5}
-        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
+        graph.memories["m1"] = {
+            "id": "m1",
+            "content": "test",
+            "tags": [],
+            "importance": 0.5,
+        }
+        graph.entity_edges.append(
+            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
+        )
 
         mock_client = MagicMock()
         result = run_identity_consolidation(graph, mock_client, dry_run=True)
@@ -559,13 +685,16 @@ class TestIdentitySynthesis:
 
     def test_skip_unchanged_entities(self) -> None:
         """Entities with existing identity and matching source count are skipped."""
-        from automem.consolidation.identity_synthesis import run_identity_consolidation
+        from automem.consolidation.identity_synthesis import \
+            run_identity_consolidation
 
         graph = EntityFakeGraph()
         graph.entities["entity:people:alice-smith"] = {
             "id": "entity:people:alice-smith",
-            "slug": "alice-smith", "category": "people",
-            "name": "Alice Smith", "aliases": [],
+            "slug": "alice-smith",
+            "category": "people",
+            "name": "Alice Smith",
+            "aliases": [],
             "identity": "Alice is a manager at Acme Corp.",
             "identity_version": 1,
             "identity_updated_at": "2026-01-15T12:00:00Z",
@@ -573,11 +702,16 @@ class TestIdentitySynthesis:
             "merged_into": None,
         }
         graph.memories["m1"] = {
-            "id": "m1", "content": "Alice works at Acme Corp.",
-            "importance": 0.9, "timestamp": "2026-01-15T12:00:00Z", "type": "Context",
+            "id": "m1",
+            "content": "Alice works at Acme Corp.",
+            "importance": 0.9,
+            "timestamp": "2026-01-15T12:00:00Z",
+            "type": "Context",
             "tags": ["entity:people:alice-smith"],
         }
-        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "m1"})
+        graph.entity_edges.append(
+            {"entity_id": "entity:people:alice-smith", "memory_id": "m1"}
+        )
 
         mock_client = MagicMock()
         result = run_identity_consolidation(graph, mock_client, min_references=1)
@@ -591,6 +725,7 @@ class TestIdentitySynthesis:
 # Test: Recall with entity injection
 # ---------------------------------------------------------------------------
 
+
 class TestRecallEntityInjection:
     """Test entity identity injection in recall response."""
 
@@ -598,7 +733,9 @@ class TestRecallEntityInjection:
         """Query entity extraction picks up capitalized names."""
         from automem.api.recall import _extract_query_entities
 
-        entities = _extract_query_entities("Tell me about Alice and her work at Acme Corp")
+        entities = _extract_query_entities(
+            "Tell me about Alice and her work at Acme Corp"
+        )
         # "Alice" is first word (skipped), but "Acme" or "Corp" should be extracted
         assert "Acme" in entities or "Corp" in entities
 

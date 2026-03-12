@@ -41,7 +41,7 @@ def slug_to_name(slug: str) -> str:
     return slug.replace("-", " ").title()
 
 
-def connect_falkordb():
+def connect_falkordb() -> Any:
     """Connect to FalkorDB and return the graph."""
     from automem.config import FALKORDB_PORT, GRAPH_NAME
 
@@ -83,7 +83,9 @@ def collect_entity_tags(graph) -> dict[str, list[str]]:
     return dict(entity_to_memories)
 
 
-def run_migration(graph, entity_to_memories: dict[str, list[str]], *, dry_run: bool) -> None:
+def run_migration(
+    graph, entity_to_memories: dict[str, list[str]], *, dry_run: bool
+) -> None:
     """Create Entity nodes and REFERENCED_IN edges."""
     now = datetime.now(timezone.utc).isoformat()
     created_entities = 0
@@ -162,12 +164,16 @@ def run_migration(graph, entity_to_memories: dict[str, list[str]], *, dry_run: b
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Migrate entity tags to Entity nodes")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be created")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be created"
+    )
     args = parser.parse_args()
 
     graph = connect_falkordb()
     entity_to_memories = collect_entity_tags(graph)
-    logger.info("Found %d distinct entity tags across memories", len(entity_to_memories))
+    logger.info(
+        "Found %d distinct entity tags across memories", len(entity_to_memories)
+    )
 
     if not entity_to_memories:
         logger.info("Nothing to migrate.")

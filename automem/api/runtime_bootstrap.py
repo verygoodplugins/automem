@@ -51,7 +51,9 @@ def register_blueprints(
     coerce_embedding_fn: Callable[[Any], Optional[list[float]]],
     parse_metadata_field_fn: Callable[[Any], Any],
     generate_real_embedding_fn: Callable[[str], list[float]],
-    generate_real_embeddings_batch_fn: Optional[Callable[[list[str]], list[list[float]]]] = None,
+    generate_real_embeddings_batch_fn: Optional[
+        Callable[[list[str]], list[list[float]]]
+    ] = None,
     enqueue_embedding_fn: Callable[[str, str], None],
     classify_memory_fn: Callable[[str], tuple[str, float]],
     point_struct_cls: Any,
@@ -186,6 +188,7 @@ def register_blueprints(
     entity_bp = create_entity_blueprint(
         get_memory_graph_fn,
         logger,
+        require_admin_token_fn=require_admin_token_fn,
     )
 
     app.register_blueprint(health_bp)

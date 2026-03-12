@@ -158,14 +158,20 @@ class MemoryConsolidator:
         self.similarity_threshold = 0.75
 
         # Forgetting thresholds
-        self.archive_threshold = float(archive_threshold)  # Archive below this relevance
-        self.delete_threshold = float(delete_threshold)  # Delete below this (very old, unused)
+        self.archive_threshold = float(
+            archive_threshold
+        )  # Archive below this relevance
+        self.delete_threshold = float(
+            delete_threshold
+        )  # Delete below this (very old, unused)
 
         # Memory protection parameters (prevent accidental data loss)
         self.grace_period_days = int(grace_period_days)
         self.importance_protection_threshold = float(importance_protection_threshold)
         self.protected_types = (
-            frozenset(protected_types) if protected_types is not None else self.PROTECTED_TYPES
+            frozenset(protected_types)
+            if protected_types is not None
+            else self.PROTECTED_TYPES
         )
 
     def _get_openai_client(self) -> Optional[Any]:
@@ -178,7 +184,9 @@ class MemoryConsolidator:
                 logger.warning("OPENAI_API_KEY not set; identity synthesis unavailable")
                 return None
             base_url = os.environ.get("OPENAI_BASE_URL")
-            return openai.OpenAI(api_key=api_key, **({"base_url": base_url} if base_url else {}))
+            return openai.OpenAI(
+                api_key=api_key, **({"base_url": base_url} if base_url else {})
+            )
         except Exception:
             logger.exception("Failed to create OpenAI client")
             return None
@@ -252,12 +260,18 @@ class MemoryConsolidator:
         decay_factor = math.exp(-self.base_decay_rate * age_days)
 
         # Calculate access-based reinforcement using the same finer-grained clock
-        access_recency_days = max(0.0, (current_time - last_accessed).total_seconds() / 86400)
-        access_factor = 1.0 if access_recency_days < 1 else math.exp(-0.05 * access_recency_days)
+        access_recency_days = max(
+            0.0, (current_time - last_accessed).total_seconds() / 86400
+        )
+        access_factor = (
+            1.0 if access_recency_days < 1 else math.exp(-0.05 * access_recency_days)
+        )
 
         # Get relationship count for this memory (with caching for performance)
         rel_count = float(self._get_relationship_count(memory["id"]))
-        relationship_factor = 1.0 + (self.relationship_preservation * math.log1p(max(rel_count, 0)))
+        relationship_factor = 1.0 + (
+            self.relationship_preservation * math.log1p(max(rel_count, 0))
+        )
 
         # Importance factor (user-defined priority)
         importance = float(memory.get("importance", 0.5) or 0.0)
@@ -289,7 +303,12 @@ class MemoryConsolidator:
         """Return whether a memory should be protected from archiving/deletion."""
         protected_flag = memory.get("protected")
         if isinstance(protected_flag, str):
-            protected_flag = protected_flag.strip().lower() not in {"", "0", "false", "no"}
+            protected_flag = protected_flag.strip().lower() not in {
+                "",
+                "0",
+                "false",
+                "no",
+            }
         if protected_flag:
             reason = memory.get("protected_reason") or "explicitly protected"
             return True, str(reason)
@@ -315,7 +334,10 @@ class MemoryConsolidator:
             if created_at:
                 age_days = (current_time - created_at).days
                 if age_days < self.grace_period_days:
-                    return True, f"within grace period ({age_days} < {self.grace_period_days} days)"
+                    return (
+                        True,
+                        f"within grace period ({age_days} < {self.grace_period_days} days)",
+                    )
 
         memory_type = memory.get("type")
         if memory_type and str(memory_type) in self.protected_types:
@@ -323,7 +345,9 @@ class MemoryConsolidator:
 
         return False, ""
 
-    def discover_creative_associations(self, sample_size: int = 20) -> List[Dict[str, Any]]:
+    def discover_creative_associations(
+        self, sample_size: int = 20
+    ) -> List[Dict[str, Any]]:
         """
         Discover non-obvious connections between memories.
 
@@ -392,7 +416,9 @@ class MemoryConsolidator:
                 similarity = 0.0
                 if mem1.embeddings and mem2.embeddings:
                     try:
-                        similarity = _cosine_similarity(mem1.embeddings, mem2.embeddings)
+                        similarity = _cosine_similarity(
+                            mem1.embeddings, mem2.embeddings
+                        )
                         if math.isnan(similarity):
                             similarity = 0.0
                     except Exception:
@@ -411,7 +437,10 @@ class MemoryConsolidator:
                     if similarity < 0.3:
                         connection_type = "CONTRASTS_WITH"
                         confidence = 0.6
-                elif {mem1.type, mem2.type} == {"Insight", "Pattern"} and similarity > 0.5:
+                elif {mem1.type, mem2.type} == {
+                    "Insight",
+                    "Pattern",
+                } and similarity > 0.5:
                     connection_type = "DISCOVERED"
                     connection_kind = "explains"
                     confidence = 0.7
@@ -611,7 +640,13 @@ class MemoryConsolidator:
 
         Returns statistics about what was archived/deleted.
         """
-        stats = {"examined": 0, "archived": [], "deleted": [], "preserved": 0, "protected": []}
+        stats = {
+            "examined": 0,
+            "archived": [],
+            "deleted": [],
+            "preserved": 0,
+            "protected": [],
+        }
 
         # Get all memories with scores
         all_memories_query = """
@@ -645,7 +680,9 @@ class MemoryConsolidator:
 
             # Calculate current relevance
             relevance = self.calculate_relevance_score(memory, current_time)
-            should_protect, protection_reason = self._should_protect_memory(memory, current_time)
+            should_protect, protection_reason = self._should_protect_memory(
+                memory, current_time
+            )
 
             # Determine fate
             if relevance < self.delete_threshold:
@@ -666,7 +703,9 @@ class MemoryConsolidator:
                             MATCH (m:Memory {id: $id})
                             SET m.relevance_score = $score
                         """
-                        self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                        self._query_graph(
+                            update_query, {"id": memory["id"], "score": relevance}
+                        )
                     continue
 
                 stats["deleted"].append(
@@ -690,7 +729,9 @@ class MemoryConsolidator:
                     if self.vector_store:
                         try:
                             if qdrant_models is not None:
-                                selector = qdrant_models.PointIdsList(points=[memory["id"]])
+                                selector = qdrant_models.PointIdsList(
+                                    points=[memory["id"]]
+                                )
                             else:  # Fallback for dummy clients during tests
                                 selector = {"points": [memory["id"]]}
 
@@ -699,7 +740,9 @@ class MemoryConsolidator:
                                 points_selector=selector,
                             )
                         except Exception:
-                            logger.exception("Vector store deletion failed for %s", memory["id"])
+                            logger.exception(
+                                "Vector store deletion failed for %s", memory["id"]
+                            )
 
             elif relevance < self.archive_threshold:
                 if should_protect:
@@ -719,7 +762,9 @@ class MemoryConsolidator:
                             MATCH (m:Memory {id: $id})
                             SET m.relevance_score = $score
                         """
-                        self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                        self._query_graph(
+                            update_query, {"id": memory["id"], "score": relevance}
+                        )
                         if self.vector_store:
                             try:
                                 self.vector_store.set_payload(
@@ -777,7 +822,9 @@ class MemoryConsolidator:
                         MATCH (m:Memory {id: $id})
                         SET m.relevance_score = $score
                     """
-                    self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                    self._query_graph(
+                        update_query, {"id": memory["id"], "score": relevance}
+                    )
                     if self.vector_store:
                         try:
                             self.vector_store.set_payload(
@@ -801,7 +848,10 @@ class MemoryConsolidator:
         return stats
 
     def consolidate(
-        self, mode: str = "full", dry_run: bool = True, decay_threshold: Optional[float] = None
+        self,
+        mode: str = "full",
+        dry_run: bool = True,
+        decay_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Run full consolidation cycle.
@@ -938,7 +988,11 @@ class MemoryConsolidator:
                             """
                             try:
                                 self.graph.query(
-                                    link_query, {"meta_id": cluster["cluster_id"], "mem_id": mem_id}
+                                    link_query,
+                                    {
+                                        "meta_id": cluster["cluster_id"],
+                                        "mem_id": mem_id,
+                                    },
                                 )
                             except:
                                 pass
@@ -955,9 +1009,8 @@ class MemoryConsolidator:
             if mode in ["full", "identity"]:
                 logger.info("Running identity consolidation...")
                 try:
-                    from automem.consolidation.identity_synthesis import (
-                        run_identity_consolidation,
-                    )
+                    from automem.consolidation.identity_synthesis import \
+                        run_identity_consolidation
 
                     # Get OpenAI client from environment
                     openai_client = self._get_openai_client()
@@ -974,7 +1027,7 @@ class MemoryConsolidator:
                             "reason": "No OpenAI client available",
                         }
                 except Exception as exc:
-                    logger.exception("Identity consolidation failed: %s", exc)
+                    logger.exception("Identity consolidation failed")
                     results["steps"]["identity"] = {"error": str(exc)}
 
             # Step 5: Controlled forgetting
@@ -993,7 +1046,9 @@ class MemoryConsolidator:
 
         return results
 
-    def _apply_decay(self, importance_threshold: Optional[float] = None) -> Dict[str, Any]:
+    def _apply_decay(
+        self, importance_threshold: Optional[float] = None
+    ) -> Dict[str, Any]:
         """Apply decay to all memories and return statistics."""
         stats = {
             "processed": 0,
@@ -1011,7 +1066,9 @@ class MemoryConsolidator:
         params: Dict[str, Any] = {}
 
         if importance_threshold is not None:
-            filters.append("m.importance IS NOT NULL AND m.importance >= $importance_threshold")
+            filters.append(
+                "m.importance IS NOT NULL AND m.importance >= $importance_threshold"
+            )
             params["importance_threshold"] = float(importance_threshold)
 
         where_clause = " AND ".join(filters)
@@ -1046,7 +1103,9 @@ class MemoryConsolidator:
             }
 
             # Previous score
-            old_score = float(memory.get("old_score", 0.5)) if memory.get("old_score") else 0.5
+            old_score = (
+                float(memory.get("old_score", 0.5)) if memory.get("old_score") else 0.5
+            )
             total_before += old_score
 
             # Calculate new score
@@ -1079,7 +1138,9 @@ class MemoryConsolidator:
                         payload={"relevance_score": new_score},
                     )
                 except Exception:
-                    logger.debug("Qdrant relevance sync skipped for %s", memory["id"][:8])
+                    logger.debug(
+                        "Qdrant relevance sync skipped for %s", memory["id"][:8]
+                    )
 
         if stats["processed"] > 0:
             stats["avg_relevance_before"] = total_before / stats["processed"]

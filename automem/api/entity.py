@@ -57,9 +57,16 @@ def _serialize_entity_row(row: list) -> Dict[str, Any]:
 def create_entity_blueprint(
     get_memory_graph: Callable[[], Any],
     logger: Any,
+    require_admin_token_fn: Optional[Callable[[], None]] = None,
 ) -> Blueprint:
-    """Create the entity API blueprint."""
+    """Create the entity API blueprint.
 
+    Args:
+        get_memory_graph: Factory that returns the FalkorDB graph instance.
+        logger: Logger instance.
+        require_admin_token_fn: Optional callable that aborts if the request
+            lacks a valid admin token.  Used to gate write operations (merge).
+    """
     bp = Blueprint("entity", __name__)
 
     @bp.route("/entities", methods=["GET"])
@@ -69,7 +76,10 @@ def create_entity_blueprint(
             abort(503, description="FalkorDB is unavailable")
 
         category = request.args.get("category")
-        limit = min(int(request.args.get("limit", 100)), 500)
+        try:
+            limit = min(int(request.args.get("limit", 100)), 500)
+        except (ValueError, TypeError):
+            abort(400, description="Invalid limit parameter — must be an integer")
 
         if category:
             result = graph.query(
@@ -108,7 +118,9 @@ def create_entity_blueprint(
         for row in getattr(result, "result_set", []) or []:
             entities.append(_serialize_entity_row(row))
 
-        return jsonify({"status": "success", "entities": entities, "count": len(entities)})
+        return jsonify(
+            {"status": "success", "entities": entities, "count": len(entities)}
+        )
 
     @bp.route("/entity/<slug>", methods=["GET"])
     def get_entity(slug: str) -> Any:
@@ -146,28 +158,46 @@ def create_entity_blueprint(
             abort(503, description="FalkorDB is unavailable")
 
         try:
-            from automem.consolidation.entity_dedup import find_merge_candidates
+            from automem.consolidation.entity_dedup import \
+                find_merge_candidates
 
             auto_merge, review = find_merge_candidates(graph)
             auto_merge_ids = {(c.entity_a_id, c.entity_b_id) for c in auto_merge}
             candidates = []
             for c in auto_merge + review:
-                candidates.append({
-                    "entity_a": c.entity_a_id,
-                    "entity_b": c.entity_b_id,
-                    "canonical": c.canonical_id,
-                    "alias": c.alias_id,
-                    "confidence": c.confidence,
-                    "reason": c.reason,
-                    "auto_merge": (c.entity_a_id, c.entity_b_id) in auto_merge_ids,
-                })
-            return jsonify({"status": "success", "candidates": candidates, "count": len(candidates)})
+                candidates.append(
+                    {
+                        "entity_a": c.entity_a_id,
+                        "entity_b": c.entity_b_id,
+                        "canonical": c.canonical_id,
+                        "alias": c.alias_id,
+                        "confidence": c.confidence,
+                        "reason": c.reason,
+                        "auto_merge": (c.entity_a_id, c.entity_b_id) in auto_merge_ids,
+                    }
+                )
+            return jsonify(
+                {
+                    "status": "success",
+                    "candidates": candidates,
+                    "count": len(candidates),
+                }
+            )
         except Exception as exc:
             logger.exception("Failed to find merge candidates")
-            return jsonify({"error": "Failed to find merge candidates", "details": str(exc)}), 500
+            return (
+                jsonify(
+                    {"error": "Failed to find merge candidates", "details": str(exc)}
+                ),
+                500,
+            )
 
     @bp.route("/entity/<slug>/merge", methods=["POST"])
     def merge_entity(slug: str) -> Any:
+        """Merge one entity into another (admin-only)."""
+        if require_admin_token_fn is not None:
+            require_admin_token_fn()
+
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
@@ -202,15 +232,17 @@ def create_entity_blueprint(
             from automem.consolidation.entity_dedup import merge_entities
 
             merge_result = merge_entities(graph, canonical_id, alias_id)
-            return jsonify({
-                "status": "success",
-                "merge": {
-                    "canonical": merge_result.canonical_id,
-                    "alias": merge_result.alias_id,
-                    "alias_slug": merge_result.alias_slug,
-                    "edges_moved": merge_result.edges_moved,
-                },
-            })
+            return jsonify(
+                {
+                    "status": "success",
+                    "merge": {
+                        "canonical": merge_result.canonical_id,
+                        "alias": merge_result.alias_id,
+                        "alias_slug": merge_result.alias_slug,
+                        "edges_moved": merge_result.edges_moved,
+                    },
+                }
+            )
         except Exception as exc:
             logger.exception("Merge failed")
             return jsonify({"error": "Merge failed", "details": str(exc)}), 500

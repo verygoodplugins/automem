@@ -66,13 +66,15 @@ def _gather_entity_memories(
     )
     memories: List[Dict[str, Any]] = []
     for row in getattr(result, "result_set", []) or []:
-        memories.append({
-            "id": row[0],
-            "content": row[1] or "",
-            "importance": row[2],
-            "timestamp": row[3],
-            "type": row[4],
-        })
+        memories.append(
+            {
+                "id": row[0],
+                "content": row[1] or "",
+                "importance": row[2],
+                "timestamp": row[3],
+                "type": row[4],
+            }
+        )
     return memories
 
 
@@ -150,7 +152,10 @@ def synthesize_identity(
             response = openai_client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You synthesize concise identity definitions from episodic memories."},
+                    {
+                        "role": "system",
+                        "content": "You synthesize concise identity definitions from episodic memories.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
@@ -161,13 +166,20 @@ def synthesize_identity(
             response = openai_client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You synthesize concise identity definitions from episodic memories."},
+                    {
+                        "role": "system",
+                        "content": "You synthesize concise identity definitions from episodic memories.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
                 max_tokens=500,
             )
-        identity_text = response.choices[0].message.content.strip()
+        raw_content = response.choices[0].message.content or ""
+        identity_text = raw_content.strip()
+        if not identity_text:
+            logger.warning("LLM returned empty content for entity %s", entity_id)
+            return None
     except Exception:
         logger.exception("LLM call failed for entity %s", entity_id)
         return None
@@ -193,7 +205,10 @@ def synthesize_identity(
 
     logger.info(
         "Synthesized identity for %s (v%d, %d sources, %d chars)",
-        entity_id, current_version + 1, len(memories), len(identity_text),
+        entity_id,
+        current_version + 1,
+        len(memories),
+        len(identity_text),
     )
     return identity_text
 
@@ -215,7 +230,8 @@ def run_identity_consolidation(
     Returns:
         Summary dict with counts and details.
     """
-    from automem.consolidation.entity_dedup import find_merge_candidates, merge_entities
+    from automem.consolidation.entity_dedup import (find_merge_candidates,
+                                                    merge_entities)
 
     result: Dict[str, Any] = {
         "merges_performed": [],
@@ -229,22 +245,35 @@ def run_identity_consolidation(
     try:
         auto_merge, review = find_merge_candidates(graph)
         result["merge_candidates_for_review"] = [
-            {"canonical": c.canonical_id, "alias": c.alias_id, "confidence": c.confidence, "reason": c.reason}
+            {
+                "canonical": c.canonical_id,
+                "alias": c.alias_id,
+                "confidence": c.confidence,
+                "reason": c.reason,
+            }
             for c in review
         ]
 
         if not dry_run:
             for candidate in auto_merge:
                 try:
-                    merge_result = merge_entities(graph, candidate.canonical_id, candidate.alias_id)
-                    result["merges_performed"].append({
-                        "canonical": merge_result.canonical_id,
-                        "alias": merge_result.alias_id,
-                        "alias_slug": merge_result.alias_slug,
-                        "edges_moved": merge_result.edges_moved,
-                    })
+                    merge_result = merge_entities(
+                        graph, candidate.canonical_id, candidate.alias_id
+                    )
+                    result["merges_performed"].append(
+                        {
+                            "canonical": merge_result.canonical_id,
+                            "alias": merge_result.alias_id,
+                            "alias_slug": merge_result.alias_slug,
+                            "edges_moved": merge_result.edges_moved,
+                        }
+                    )
                 except Exception as exc:
-                    logger.exception("Failed to merge %s into %s", candidate.alias_id, candidate.canonical_id)
+                    logger.exception(
+                        "Failed to merge %s into %s",
+                        candidate.alias_id,
+                        candidate.canonical_id,
+                    )
                     result["errors"].append(f"merge {candidate.alias_id}: {exc}")
     except Exception as exc:
         logger.exception("Entity dedup failed")
@@ -272,8 +301,7 @@ def run_identity_consolidation(
 
         # Only re-synthesize if entity has no identity or reference count changed
         needs_synthesis = (
-            existing_identity is None
-            or actual_ref_count != stored_source_count
+            existing_identity is None or actual_ref_count != stored_source_count
         )
         if not needs_synthesis:
             continue
@@ -284,7 +312,10 @@ def run_identity_consolidation(
 
         try:
             identity = synthesize_identity(
-                graph, entity_id, openai_client, model=model,
+                graph,
+                entity_id,
+                openai_client,
+                model=model,
             )
             if identity:
                 result["identities_synthesized"] += 1
