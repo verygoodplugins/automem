@@ -2,7 +2,7 @@
 
 Identifies and merges duplicate entities by analysing:
 - String similarity of slugs (substring, Levenshtein distance)
-- Memory overlap: if 80%+ of memories for entity A are also tagged with entity B
+- Memory overlap: if >60% of memories for entity A are also tagged with entity B
 """
 
 from __future__ import annotations

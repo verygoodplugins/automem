@@ -1177,13 +1177,16 @@ class ConsolidationScheduler:
             else:
                 result = self.consolidator.consolidate(mode=task_type, dry_run=False)
 
-            # Don't advance schedule if the task was skipped (e.g. missing API key)
-            identity_skipped = (
+            # Don't advance schedule if the identity task was skipped or failed
+            identity_not_completed = (
                 task_type == "identity"
                 and isinstance(result, dict)
-                and result.get("steps", {}).get("identity", {}).get("skipped")
+                and (
+                    result.get("steps", {}).get("identity", {}).get("skipped")
+                    or result.get("steps", {}).get("identity", {}).get("error")
+                )
             )
-            if not identity_skipped:
+            if not identity_not_completed:
                 self.schedules[task_type]["last_run"] = datetime.now(timezone.utc)
 
             # Record in history

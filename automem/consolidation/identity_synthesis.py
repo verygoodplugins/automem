@@ -189,7 +189,11 @@ def synthesize_identity(
         "MATCH (e:Entity {id: $id})-[:REFERENCED_IN]->(m:Memory) RETURN count(m)",
         {"id": entity_id},
     )
-    total_ref_count = (getattr(ref_count_result, "result_set", []) or [[0]])[0][0]
+    ref_rows = getattr(ref_count_result, "result_set", []) or []
+    try:
+        total_ref_count = int(ref_rows[0][0]) if ref_rows else len(memories)
+    except (ValueError, TypeError, IndexError):
+        total_ref_count = len(memories)
 
     # Store on entity node
     now = datetime.now(timezone.utc).isoformat()
