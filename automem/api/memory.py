@@ -529,6 +529,16 @@ def create_memory_blueprint_full(
             except Exception:
                 logger.exception("Failed to delete vector for memory %s", memory_id)
 
+        # Remove from BM25 index
+        try:
+            from automem.search.bm25 import remove_memory as bm25_remove
+
+            bm25_remove(memory_id)
+        except Exception:
+            logger.exception(
+                "Failed to remove memory %s from BM25 index", memory_id
+            )
+
         return jsonify({"status": "success", "memory_id": memory_id})
 
     @bp.route("/memory/by-tag", methods=["GET"])
