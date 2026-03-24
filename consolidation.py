@@ -44,6 +44,25 @@ class VectorStoreProtocol(Protocol):
     ) -> Any:  # pragma: no cover - protocol definition
         ...
 
+    def scroll(
+        self,
+        collection_name: str,
+        limit: int = 10,
+        offset: Any = None,
+        with_vectors: bool = False,
+        with_payload: bool = True,
+    ) -> Any:  # pragma: no cover - protocol definition
+        ...
+
+    def retrieve(
+        self,
+        collection_name: str,
+        ids: Any,
+        with_vectors: bool = False,
+        with_payload: bool = True,
+    ) -> Any:  # pragma: no cover - protocol definition
+        ...
+
 
 @dataclass
 class MemoryRow:
@@ -323,6 +342,24 @@ class MemoryConsolidator:
                 )
             )
 
+        # Prefer Qdrant embeddings over graph-stored ones (standard pipeline
+        # stores vectors exclusively in Qdrant, not on graph nodes)
+        if self.vector_store is not None:
+            mem_ids = [m.id for m in memories]
+            try:
+                points = self.vector_store.retrieve(
+                    collection_name="memories",
+                    ids=mem_ids,
+                    with_vectors=True,
+                    with_payload=False,
+                )
+                vec_by_id = {str(p.id): p.vector for p in points if p.vector}
+                for m in memories:
+                    if m.id in vec_by_id:
+                        m.embeddings = vec_by_id[m.id]
+            except Exception:
+                logger.debug("Failed to fetch embeddings from Qdrant for creative associations")
+
         for idx, mem1 in enumerate(memories):
             for mem2 in memories[idx + 1 :]:
                 existing_check = """
@@ -394,41 +431,100 @@ class MemoryConsolidator:
         """
         Cluster highly similar memories for potential compression.
 
-        Uses DBSCAN clustering on embeddings to find groups of
+        Uses connected-component clustering on embeddings to find groups of
         semantically similar memories that could be consolidated.
+
+        Embeddings are fetched from Qdrant (the vector store) rather than
+        from graph node properties, since the standard AutoMem pipeline
+        stores vectors exclusively in Qdrant.
         """
         clusters = []
 
-        # Get memories with embeddings
-        embedding_query = """
-            MATCH (m:Memory)
-            WHERE m.embeddings IS NOT NULL
-                AND m.relevance_score > 0.3
-            RETURN m.id as id, m.content as content,
-                   m.embeddings as embeddings, m.type as type
-        """
-
-        result = self._query_graph(embedding_query, {})
-        if len(result) < self.min_cluster_size:
-            return clusters
-
-        # Extract embeddings
         memories: List[MemoryRow] = []
         embeddings: List[List[float]] = []
-        for row in result:
-            embedding = _load_embedding(row[2] if len(row) > 2 else None)
-            if embedding is None:
-                continue
 
-            memories.append(
-                MemoryRow(
-                    id=str(row[0]),
-                    content=row[1] or "",
-                    embeddings=embedding,
-                    type=row[3] if len(row) > 3 else "Memory",
+        if self.vector_store is not None:
+            # Primary path: fetch metadata from graph, embeddings from Qdrant
+            metadata_query = """
+                MATCH (m:Memory)
+                WHERE m.relevance_score > 0.3
+                RETURN m.id as id, m.content as content, m.type as type
+            """
+
+            result = self._query_graph(metadata_query, {})
+            if len(result) < self.min_cluster_size:
+                return clusters
+
+            meta_by_id: Dict[str, Dict[str, Any]] = {}
+            for row in result:
+                mid = str(row[0]) if row[0] else None
+                if mid:
+                    meta_by_id[mid] = {
+                        "content": row[1] or "",
+                        "type": row[2] if len(row) > 2 else "Memory",
+                    }
+
+            try:
+                offset = None
+                while True:
+                    scroll_kwargs: Dict[str, Any] = {
+                        "collection_name": "memories",
+                        "limit": 500,
+                        "with_vectors": True,
+                        "with_payload": False,
+                    }
+                    if offset is not None:
+                        scroll_kwargs["offset"] = offset
+
+                    points, next_offset = self.vector_store.scroll(**scroll_kwargs)
+                    for point in points:
+                        pid = str(point.id)
+                        vec = point.vector
+                        if pid in meta_by_id and vec:
+                            meta = meta_by_id[pid]
+                            memories.append(
+                                MemoryRow(
+                                    id=pid,
+                                    content=meta["content"],
+                                    embeddings=vec,
+                                    type=meta["type"],
+                                )
+                            )
+                            embeddings.append(vec)
+
+                    if next_offset is None:
+                        break
+                    offset = next_offset
+            except Exception:
+                logger.exception("Failed to fetch embeddings from vector store for clustering")
+                return clusters
+        else:
+            # Fallback: graph-stored embeddings (legacy/test path)
+            embedding_query = """
+                MATCH (m:Memory)
+                WHERE m.embeddings IS NOT NULL
+                    AND m.relevance_score > 0.3
+                RETURN m.id as id, m.content as content,
+                       m.embeddings as embeddings, m.type as type
+            """
+
+            result = self._query_graph(embedding_query, {})
+            if len(result) < self.min_cluster_size:
+                return clusters
+
+            for row in result:
+                embedding = _load_embedding(row[2] if len(row) > 2 else None)
+                if embedding is None:
+                    continue
+                memories.append(
+                    MemoryRow(
+                        id=str(row[0]),
+                        content=row[1] or "",
+                        embeddings=embedding,
+                        type=row[3] if len(row) > 3 else "Memory",
+                    )
                 )
-            )
-            embeddings.append(embedding)
+                embeddings.append(embedding)
 
         if len(embeddings) < self.min_cluster_size:
             return clusters
