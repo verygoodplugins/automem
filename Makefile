@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy bench-health
+.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-health
 
 # Default target
 help:
@@ -33,8 +33,9 @@ help:
 	@echo "  make test-longmemeval-watch - Full LongMemEval with notifications"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  make deploy     - Deploy to Railway"
-	@echo "  make status     - Check deployment status"
+	@echo "  make deploy       - Deploy to Railway"
+	@echo "  make status       - Check deployment status"
+	@echo "  make deploy-check - Compare deployed vs main (maintainers only, needs Railway CLI and gh)"
 
 # Set up development environment
 install:
@@ -102,6 +103,13 @@ deploy:
 status:
 	@echo "📊 Checking deployment status..."
 	railway status || railway logs
+
+# Compare deployed commit vs origin/main HEAD (detect stale deploys)
+deploy-check:
+	@rc=0; \
+	./scripts/deploy_check.sh memory-service   || rc=1; \
+	./scripts/deploy_check.sh automem-mcp-sse  || rc=1; \
+	exit $$rc
 
 # Run LoCoMo benchmark (local)
 test-locomo:

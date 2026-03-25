@@ -9,6 +9,37 @@ from typing import Any
 _SMALL_MODEL_MAX_DIM = 1536
 
 
+_PROVIDER_DIMENSION_CONSTRAINTS: dict[str, set[int]] = {
+    "voyage": {256, 512, 1024, 2048},
+}
+
+
+def _validate_provider_dimension(provider_name: str, vector_size: int, logger: Any) -> None:
+    """Raise early if autodetected dimension is incompatible with the provider."""
+    constraints = _PROVIDER_DIMENSION_CONSTRAINTS.get(provider_name)
+    if constraints is None or vector_size in constraints:
+        return
+    sorted_dims = sorted(constraints)
+    raise RuntimeError(
+        f"\n{'=' * 72}\n"
+        f"FATAL: Dimension mismatch between existing Qdrant collection and "
+        f"{provider_name} provider!\n"
+        f"  Autodetected collection dimension: {vector_size}d\n"
+        f"  {provider_name} supported dimensions: {sorted_dims}\n"
+        f"\n"
+        f"This happens when VECTOR_SIZE_AUTODETECT adopts a dimension from a\n"
+        f"previous provider that the new provider cannot produce.\n"
+        f"\n"
+        f"Fix options:\n"
+        f"  1. Keep your current provider (remove EMBEDDING_PROVIDER={provider_name})\n"
+        f"  2. Set VECTOR_SIZE={sorted_dims[-1]} and re-embed:\n"
+        f"     python scripts/reembed_embeddings.py\n"
+        f"  3. Delete the Qdrant collection and let AutoMem recreate it at the\n"
+        f"     correct dimension (loses existing embeddings, triggers re-embed)\n"
+        f"{'=' * 72}"
+    )
+
+
 def _resolve_openai_model(embedding_model: str, vector_size: int, logger: Any) -> str:
     """Auto-upgrade to text-embedding-3-large when the dimension exceeds small model capacity."""
     small_name = "text-embedding-3-small"
@@ -64,6 +95,7 @@ def init_embedding_provider(
         api_key = os.getenv("VOYAGE_API_KEY")
         if not api_key:
             raise RuntimeError("EMBEDDING_PROVIDER=voyage but VOYAGE_API_KEY not set")
+        _validate_provider_dimension("voyage", vector_size, logger)
         try:
             from automem.embedding.voyage import VoyageEmbeddingProvider
 
@@ -142,6 +174,7 @@ def init_embedding_provider(
         voyage_key = os.getenv("VOYAGE_API_KEY")
         if voyage_key:
             try:
+                _validate_provider_dimension("voyage", vector_size, logger)
                 from automem.embedding.voyage import VoyageEmbeddingProvider
 
                 voyage_model = os.getenv("VOYAGE_MODEL", "voyage-4")
