@@ -35,7 +35,7 @@ help:
 	@echo "Deployment:"
 	@echo "  make deploy       - Deploy to Railway"
 	@echo "  make status       - Check deployment status"
-	@echo "  make deploy-check - Compare deployed vs main (maintainers only, needs Railway CLI)"
+	@echo "  make deploy-check - Compare deployed vs main (maintainers only, needs Railway CLI and gh)"
 
 # Set up development environment
 install:
@@ -106,8 +106,10 @@ status:
 
 # Compare deployed commit vs origin/main HEAD (detect stale deploys)
 deploy-check:
-	@./scripts/deploy_check.sh memory-service
-	@./scripts/deploy_check.sh automem-mcp-sse
+	@rc=0; \
+	./scripts/deploy_check.sh memory-service   || rc=1; \
+	./scripts/deploy_check.sh automem-mcp-sse  || rc=1; \
+	exit $$rc
 
 # Run LoCoMo benchmark (local)
 test-locomo:

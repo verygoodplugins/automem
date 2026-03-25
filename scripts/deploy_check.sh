@@ -11,7 +11,6 @@ set -euo pipefail
 
 SERVICE="${1:-memory-service}"
 QUIET="${DEPLOY_CHECK_QUIET:-0}"
-WORKSPACE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MAX_AGE_HOURS="${DEPLOY_CHECK_MAX_AGE:-24}"
 
 log() { [[ "$QUIET" == "1" ]] || echo "$@"; }
@@ -29,7 +28,7 @@ fi
 
 log "🔍 Checking deploy freshness for service: $SERVICE"
 
-deploy_json=$(railway deployment list --json --service "$SERVICE" --limit 5 2>/dev/null) || {
+deploy_json=$(railway deployment list --json --service "$SERVICE" 2>/dev/null) || {
     err "Failed to list deployments for $SERVICE. Is the Railway CLI linked?"
     exit 2
 }
@@ -101,19 +100,19 @@ print(int(datetime.fromisoformat(ts).timestamp()))
     fi
 fi
 
-echo ""
-echo "⚠️  $SERVICE is BEHIND origin/main"
-echo "   Deployed commit:  $deploy_short ($deploy_ts)"
-echo "   main HEAD:        $main_short"
-[[ -n "$behind_count" ]] && echo "   Commits behind:   $behind_count"
-[[ -n "$age_hours" ]]    && echo "   Deploy age:       ${age_hours}h"
-echo ""
+log ""
+log "⚠️  $SERVICE is BEHIND origin/main"
+log "   Deployed commit:  $deploy_short ($deploy_ts)"
+log "   main HEAD:        $main_short"
+[[ -n "$behind_count" ]] && log "   Commits behind:   $behind_count"
+[[ -n "$age_hours" ]]    && log "   Deploy age:       ${age_hours}h"
+log ""
 
 if [[ -n "$age_hours" ]] && (( age_hours > MAX_AGE_HOURS )); then
-    echo "🚨 Deploy is ${age_hours}h old (threshold: ${MAX_AGE_HOURS}h)"
-    echo "   Railway's GitHub integration may have disconnected."
-    echo "   Fix: Railway dashboard → $SERVICE → Settings → Source → Reconnect repo"
-    echo ""
+    log "🚨 Deploy is ${age_hours}h old (threshold: ${MAX_AGE_HOURS}h)"
+    log "   Railway's GitHub integration may have disconnected."
+    log "   Fix: Railway dashboard → $SERVICE → Settings → Source → Reconnect repo"
+    log ""
 fi
 
 exit 1
