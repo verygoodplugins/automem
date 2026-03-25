@@ -24,7 +24,11 @@ def init_openai(
         return
 
     try:
-        state.openai_client = openai_cls(api_key=api_key)
+        openai_base_url = (get_env_fn("OPENAI_BASE_URL") or "").strip() or None
+        client_kwargs = {"api_key": api_key}
+        if openai_base_url:
+            client_kwargs["base_url"] = openai_base_url
+        state.openai_client = openai_cls(**client_kwargs)
         logger.info("OpenAI client initialized for memory type classification")
     except Exception:
         logger.exception("Failed to initialize OpenAI client")

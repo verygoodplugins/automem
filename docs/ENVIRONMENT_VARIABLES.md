@@ -57,7 +57,7 @@ AutoMem supports five embedding backends with automatic fallback.
 | `VOYAGE_API_KEY` | Voyage API key (for Voyage provider) | - | `pa-...` |
 | `VOYAGE_MODEL` | Voyage embedding model | `voyage-4` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
 | `OPENAI_API_KEY` | API key (OpenAI or compatible provider) | - | `sk-proj-...` |
-| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs | - | `https://openrouter.ai/api/v1` |
+| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs (embeddings and classification/enrichment LLM calls) | - | `https://openrouter.ai/api/v1` |
 | `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama embedding model | `nomic-embed-text` | `nomic-embed-text` |
 | `OLLAMA_TIMEOUT` | Ollama request timeout (seconds) | `30` | `10`, `30`, `60` |

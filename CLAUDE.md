@@ -148,7 +148,7 @@ AutoMem uses a provider pattern with multiple embedding backends:
 2. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-small`) - If `OPENAI_API_KEY` is set
    - Semantic embeddings via API, truncated to `VECTOR_SIZE` via Matryoshka (OpenAI native only)
    - If `VECTOR_SIZE` > 1536, auto-upgrades to `text-embedding-3-large` (set `EMBEDDING_MODEL=text-embedding-3-large` to silence)
-   - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.)
+   - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.) for both embeddings and classification/enrichment LLM calls
    - The `dimensions` parameter is only sent to OpenAI's own API; omitted for third-party providers
 
 3. **Ollama** (`ollama:nomic-embed-text`) - If `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is configured
@@ -236,7 +236,7 @@ ADMIN_API_TOKEN=             # For admin endpoints
 # Embedding configuration
 EMBEDDING_PROVIDER=auto      # auto|voyage|openai|ollama|local|placeholder
 OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
-OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs (optional)
+OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs used by embeddings and classification/enrichment (optional)
 
 # Consolidation intervals (seconds)
 CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)
