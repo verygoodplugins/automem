@@ -2,6 +2,15 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.15.1](https://github.com/verygoodplugins/automem/compare/v0.15.0...v0.15.1) (2026-03-25)
+
+
+### Bug Fixes
+
+* **consolidation:** fetch cluster/creative embeddings from Qdrant ([#131](https://github.com/verygoodplugins/automem/issues/131)) ([96d0660](https://github.com/verygoodplugins/automem/commit/96d06607b2274323b3c8dee69866aa37d817de88))
+* **embedding:** validate provider dimension compatibility before init ([#134](https://github.com/verygoodplugins/automem/issues/134)) ([9ac2fb2](https://github.com/verygoodplugins/automem/commit/9ac2fb29ea081c617b748c0cf0d733627770b689))
+* **runtime:** support OPENAI_BASE_URL for classification client ([#135](https://github.com/verygoodplugins/automem/issues/135)) ([95a58c9](https://github.com/verygoodplugins/automem/commit/95a58c99d1cb53e14fbf086ba65b66d67ad1ffbe))
+
 ## [0.15.0](https://github.com/verygoodplugins/automem/compare/v0.14.0...v0.15.0) (2026-03-12)
 
 
