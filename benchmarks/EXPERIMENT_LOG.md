@@ -27,6 +27,16 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 2026-03-10 | pre-refactor | main (@ 795368a) | 76.97% (+0.0) | -- | -- | Baseline re-confirmed after #73, #78, #115, #116 merged. Stable. Pre-relation-tier-refactor checkpoint. |
 | 2026-03-10 | eval-fix | docs/benchmark-agent-guidelines | **89.27% (208/233)** | -- | -- | Fix temporal matching (answer vs memory dates) + skip cat5 (no ground truth). Honest score, beats CORE by 1.03pp. |
 | 2026-03-10 | cat5-judge | feat/bench-cat5-judge | **89.80% (273/304)** | **87.56% (1739/1986)** | -- | Opt-in GPT-4o judge for cat5. Full run scored cat5 at 95.74% (427/446) with 0 judge skips/errors; added 90s OpenAI request timeout to prevent stuck full runs. |
+| 2026-03-10 | main-refresh (no judge) | main | **89.36% (210/235)** | -- | -- | Fresh current-main rerun before PR #80 experiment. Comparison anchor for judge-off. |
+| 2026-03-10 | main-refresh (judge) | main | **90.13% (274/304)** | -- | -- | Fresh current-main rerun with `BENCH_JUDGE_MODEL=gpt-4o`. Comparison anchor for judge-on. |
+| 2026-03-11 | PR #80 port (no judge) | exp/pr80-enhanced-recall-v2 | 85.53% (201/235) | -- | -- | BM25 + query expansion + rerank port. Regressed **-3.83pp** vs fresh main. Open-domain -11.4pp. Runtime 7.4x. → [postmortem](postmortems/2026-03-11_pr80_enhanced_recall.md) |
+| 2026-03-11 | PR #80 port (judge) | exp/pr80-enhanced-recall-v2 | 88.16% (268/304) | -- | -- | Same branch with GPT-4o cat5 judge. Regressed **-1.97pp** vs fresh main. Runtime 10.2x. → [postmortem](postmortems/2026-03-11_pr80_enhanced_recall.md) |
+| 2026-03-11 | PR #80 BM25-only f10 | exp/pr80-bm25-only-f10 | 88.09% (-1.28) | -- | -- | Best config variant, still regressed. → [postmortem](postmortems/2026-03-11_pr80_enhanced_recall.md) |
+| 2026-03-11 | PR #80 BM25-only f20 | exp/pr80-bm25-only-f20 | 87.66% (-1.70) | -- | -- | More BM25 results = more dilution. → [postmortem](postmortems/2026-03-11_pr80_enhanced_recall.md) |
+| 2026-03-11 | PR #80 BM25+rerank top5 | exp/pr80-bm25-rerank-top5 | 87.23% (-2.13) | -- | -- | Reranking didn't recover regression. → [postmortem](postmortems/2026-03-11_pr80_enhanced_recall.md) |
+| 2026-03-11 | PR #80 BM25+rerank top10 | exp/pr80-bm25-rerank-top10 | 86.81% (-2.55) | -- | -- | Wider rerank window = worse. → [postmortem](postmortems/2026-03-11_pr80_enhanced_recall.md) |
+| 2026-03-11 | #74 entity expansion | exp/74-entity-expansion-precision-v1 | 89.36% (+0.0) | -- | -- | Hub-node detection. Zero delta — benchmark doesn't exercise graph expansion. → [postmortem](postmortems/2026-03-11_issue74_entity_expansion_precision.md) |
+| 2026-03-12 | #79 (PR #125) | exp/79-priority-ids-fetch-v1 | 89.36% (+0.0) | -- | -- | Bug fix: priority_ids now fetches by ID. Merged. → [postmortem](postmortems/2026-03-12_issue79_priority_ids_fetch.md) |
 
 ### Category Breakdown (LoCoMo-mini)
 
@@ -38,6 +48,13 @@ Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-
 | 2026-03-10 | pre-refactor | 76.7% (33/43) | 22.2%\* (14/63) | 46.2% (6/13) | 96.5% (110/114) | 100%\*\* (71/71) |
 | 2026-03-10 | eval-fix | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | N/A (71 skipped) |
 | 2026-03-10 | cat5-judge | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | **91.5% (65/71)** |
+| 2026-03-10 | main-refresh (no judge) | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | **96.5% (110/114)** | 100.0% (2/2, 69 skipped) |
+| 2026-03-10 | main-refresh (judge) | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | **96.5% (110/114)** | **93.0% (66/71)** |
+| 2026-03-11 | PR #80 port (no judge) | **86.0% (37/43)** | **93.7% (59/63)** | 46.2% (6/13) | 85.1% (97/114) | 100.0% (2/2, 69 skipped) |
+| 2026-03-11 | PR #80 port (judge) | **88.4% (38/43)** | **92.1% (58/63)** | 46.2% (6/13) | 86.0% (98/114) | **95.8% (68/71)** |
+| 2026-03-11 | PR #80 BM25-only f10 | 81.4% (35/43) | 92.1% (58/63) | 46.2% (6/13) | 93.0% (106/114) | N/A |
+| 2026-03-11 | #74 entity expansion | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A |
+| 2026-03-12 | #79 (PR #125) | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A |
 
 \* Temporal was artificially low: evaluator compared question dates (empty) vs memory dates instead of answer dates.
 \*\* Complex was artificially 100%: dataset has no `answer` field for cat5 → empty string → `"" in content` always True.

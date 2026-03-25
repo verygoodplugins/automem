@@ -2,6 +2,20 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.15.0](https://github.com/verygoodplugins/automem/compare/v0.14.0...v0.15.0) (2026-03-12)
+
+
+### Features
+
+* **bench:** add opt-in LoCoMo cat5 judge ([#119](https://github.com/verygoodplugins/automem/issues/119)) ([8b7915c](https://github.com/verygoodplugins/automem/commit/8b7915cb954bcd38773f1f5fe71fc4201fae99bb))
+* **memory:** optimize relationship taxonomy ([#121](https://github.com/verygoodplugins/automem/issues/121)) ([605633e](https://github.com/verygoodplugins/automem/commit/605633ea6ff27784a11775660f01d0ad4a4c04ca))
+
+
+### Bug Fixes
+
+* **benchmarks:** correct evaluator bugs, add agent guidelines, establish honest baseline ([#117](https://github.com/verygoodplugins/automem/issues/117)) ([d9cbecb](https://github.com/verygoodplugins/automem/commit/d9cbecbb0289660e746475884067d76bdc949b5d))
+* **recall:** priority_ids parameter only boosts relevance ([#79](https://github.com/verygoodplugins/automem/issues/79)) ([#125](https://github.com/verygoodplugins/automem/issues/125)) ([5d3708c](https://github.com/verygoodplugins/automem/commit/5d3708c665fa96f2d23e1740f122f20f974bde73))
+
 ## [0.14.0](https://github.com/verygoodplugins/automem/compare/v0.13.0...v0.14.0) (2026-03-07)
 
 

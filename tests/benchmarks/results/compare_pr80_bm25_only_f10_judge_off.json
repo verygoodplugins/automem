@@ -1,0 +1,14 @@
+{
+  "baseline_accuracy": 0.8936170212765957,
+  "test_accuracy": 0.8808510638297873,
+  "delta": -0.012765957446808418,
+  "category_deltas": {
+    "Single-hop Recall": 0.023255813953488413,
+    "Temporal Understanding": 0.0,
+    "Multi-hop Reasoning": 0.0,
+    "Open Domain": -0.03508771929824561,
+    "Complex Reasoning": 0.0
+  },
+  "baseline_file": "/Users/jgarturo/Projects/OpenAI/automem/benchmarks/results/locomo-mini_baseline_20260310_233631.json",
+  "test_file": "/Users/jgarturo/Projects/OpenAI/automem/benchmarks/results/locomo-mini_pr80_bm25_only_f10_20260311_025443.json"
+}

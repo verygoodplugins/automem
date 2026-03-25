@@ -1,0 +1,14 @@
+{
+  "baseline_accuracy": 0.8936170212765957,
+  "test_accuracy": 0.8936170212765957,
+  "delta": 0.0,
+  "category_deltas": {
+    "Single-hop Recall": 0.0,
+    "Temporal Understanding": 0.0,
+    "Multi-hop Reasoning": 0.0,
+    "Open Domain": 0.0,
+    "Complex Reasoning": 0.0
+  },
+  "baseline_file": "benchmarks/results/locomo-mini_baseline_20260311_041134.json",
+  "test_file": "benchmarks/results/locomo-mini_baseline_20260311_055154.json"
+}
