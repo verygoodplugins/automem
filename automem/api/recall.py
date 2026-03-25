@@ -1657,6 +1657,61 @@ def handle_recall(
                     result["jit_enriched"] = True
                     jit_enriched_count += 1
 
+    # Entity identity injection: look up Entity nodes for entities in query/results
+    entity_identities: List[Dict[str, Any]] = []
+    if graph is not None and (query_text or results):
+        try:
+            query_entities = _extract_query_entities(query_text) if query_text else []
+            result_entity_slugs: Set[str] = set()
+            for res in results[:10]:
+                mem = res.get("memory") or res
+                for tag in mem.get("tags") or []:
+                    if isinstance(tag, str) and tag.startswith("entity:"):
+                        parts = tag.split(":")
+                        if len(parts) >= 3:
+                            result_entity_slugs.add(parts[2])
+            all_entity_slugs: Set[str] = set()
+            for ent_name in query_entities:
+                all_entity_slugs.add(ent_name.lower().replace(" ", "-"))
+            all_entity_slugs.update(result_entity_slugs)
+
+            slug_list = list(all_entity_slugs)[:10]
+            try:
+                ent_result = graph.query(
+                    """
+                    MATCH (e:Entity)
+                    WHERE e.merged_into IS NULL
+                      AND e.identity IS NOT NULL
+                      AND (e.slug IN $slugs OR any(a IN e.aliases WHERE a IN $slugs))
+                    RETURN e.id, e.slug, e.category, e.name, e.aliases,
+                           e.identity, e.identity_source_count,
+                           e.identity_updated_at
+                    """,
+                    {"slugs": slug_list},
+                )
+                for row in getattr(ent_result, "result_set", []) or []:
+                    aliases = row[4] or []
+                    if isinstance(aliases, str):
+                        try:
+                            aliases = json.loads(aliases)
+                        except Exception:
+                            aliases = []
+                    entity_identities.append(
+                        {
+                            "id": row[0],
+                            "name": row[3],
+                            "category": row[2],
+                            "aliases": aliases,
+                            "identity": row[5],
+                            "identity_source_count": int(row[6] or 0),
+                            "identity_updated_at": row[7],
+                        }
+                    )
+            except Exception:
+                logger.debug("Entity identity batch lookup failed for slugs %s", slug_list)
+        except Exception:
+            logger.debug("Entity identity injection failed")
+
     response = {
         "status": "success",
         "query": query_text,
@@ -1706,6 +1761,8 @@ def handle_recall(
             "filtered_count": pre_filter_count - len(results),
         }
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
+    if entity_identities:
+        response["entities"] = entity_identities
     if any_context_profile:
         response["context_priority"] = {
             "language": any_context_profile.get("language"),

@@ -41,3 +41,4 @@ node_modules/
 /benchmarks/snapshots/
 /benchmarks/results/
 benchmarks/baselines/locomo_baseline.json
+data/

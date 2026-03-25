@@ -68,11 +68,17 @@ CONSOLIDATION_PROTECTED_TYPES = (
 CONSOLIDATION_CONTROL_LABEL = "ConsolidationControl"
 CONSOLIDATION_RUN_LABEL = "ConsolidationRun"
 CONSOLIDATION_CONTROL_NODE_ID = os.getenv("CONSOLIDATION_CONTROL_NODE_ID", "global")
+CONSOLIDATION_IDENTITY_INTERVAL_SECONDS = int(
+    os.getenv("CONSOLIDATION_IDENTITY_INTERVAL_SECONDS", str(604800))  # 7 days
+)
+IDENTITY_SYNTHESIS_MODEL = os.getenv("IDENTITY_SYNTHESIS_MODEL", "gpt-5.4")
+
 CONSOLIDATION_TASK_FIELDS = {
     "decay": "decay_last_run",
     "creative": "creative_last_run",
     "cluster": "cluster_last_run",
     "forget": "forget_last_run",
+    "identity": "identity_last_run",
     "full": "full_last_run",
 }
 

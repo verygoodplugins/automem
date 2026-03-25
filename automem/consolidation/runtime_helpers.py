@@ -82,6 +82,7 @@ def apply_scheduler_overrides(
     creative_interval_seconds: int,
     cluster_interval_seconds: int,
     forget_interval_seconds: int,
+    identity_interval_seconds: int = 604800,
 ) -> None:
     """Override default scheduler intervals using configuration."""
     overrides = {
@@ -89,6 +90,7 @@ def apply_scheduler_overrides(
         "creative": timedelta(seconds=creative_interval_seconds),
         "cluster": timedelta(seconds=cluster_interval_seconds),
         "forget": timedelta(seconds=forget_interval_seconds),
+        "identity": timedelta(seconds=identity_interval_seconds),
     }
 
     for task, interval in overrides.items():
@@ -99,7 +101,7 @@ def apply_scheduler_overrides(
 def tasks_for_mode(mode: str, task_fields: Dict[str, str]) -> List[str]:
     """Map a consolidation mode to its task identifiers."""
     if mode == "full":
-        return ["decay", "creative", "cluster", "forget", "full"]
+        return ["decay", "creative", "cluster", "forget", "identity", "full"]
     if mode in task_fields:
         return [mode]
     return [mode]
