@@ -239,7 +239,9 @@ Controls embedding provider and classification model settings.
 | `EMBEDDING_MODEL` | OpenAI embedding model (used when provider is `openai`) | `text-embedding-3-small` | `text-embedding-3-small`, `text-embedding-3-large` |
 | `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4, 1536=text-embedding-3-small native; choose ≤1536 when truncating, 3072=text-embedding-3-large native) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
-| `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
+| `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1`, `MiniMax-M2.7` |
+| `LLM_PROVIDER` | LLM provider for classification/summarization | `auto` | `auto`, `openai`, `minimax` |
+| `MINIMAX_API_KEY` | MiniMax API key (for MiniMax LLM provider) | _unset_ | Get one at [platform.minimaxi.com](https://platform.minimaxi.com) |
 
 **Embedding Provider Comparison:**
 
@@ -272,6 +274,24 @@ VECTOR_SIZE=768
 | `gpt-4o-mini` | $0.15/1M | $0.60/1M | **Default** - Good enough for classification |
 | `gpt-4.1` | ~$2/1M | ~$8/1M | Better reasoning |
 | `gpt-5.1` | $1.25/1M | $10/1M | Best reasoning, use for benchmarks |
+| `MiniMax-M2.7` | ~$0.14/1M | ~$0.56/1M | MiniMax default, 204K context, OpenAI-compatible |
+| `MiniMax-M2.7-highspeed` | ~$0.07/1M | ~$0.28/1M | Faster variant, 204K context |
+
+**LLM Provider for Classification/Summarization:**
+
+The `LLM_PROVIDER` env var controls which API backend is used for memory type
+classification and auto-summarization (separate from the embedding provider):
+
+- `auto` (default): Use `OPENAI_API_KEY` if set, otherwise fall back to `MINIMAX_API_KEY`
+- `openai`: Use OpenAI explicitly (requires `OPENAI_API_KEY`)
+- `minimax`: Use [MiniMax](https://platform.minimaxi.com) explicitly (requires `MINIMAX_API_KEY`)
+
+MiniMax example:
+```bash
+LLM_PROVIDER=minimax
+MINIMAX_API_KEY=eyJ...
+CLASSIFICATION_MODEL=MiniMax-M2.7
+```
 
 **⚠️ Changing embedding models requires re-embedding all memories.** See [Re-embedding Guide](#re-embedding-memories) below.
 

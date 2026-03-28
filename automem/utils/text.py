@@ -6,6 +6,12 @@ from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# MiniMax model prefixes that require temperature clamping to (0, 1]
+_MINIMAX_PREFIXES = ("MiniMax-", "minimax-", "abab")
+
+# Regex to strip <think>…</think> blocks from model responses (used by MiniMax M2.5+)
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
 # Common stopwords to exclude from search tokens
 SEARCH_STOPWORDS = {
     "the",
@@ -149,11 +155,16 @@ def summarize_content(
 
         # Build model-specific params (o-series and gpt-5 don't support temperature)
         extra_params: dict = {}
+        is_minimax = model.startswith(_MINIMAX_PREFIXES)
         if model.startswith(("o", "gpt-5")):
             extra_params["max_completion_tokens"] = token_limit
         else:
             extra_params["max_tokens"] = token_limit
-            extra_params["temperature"] = 0.3
+            temperature = 0.3
+            # MiniMax requires temperature in (0, 1]
+            if is_minimax:
+                temperature = max(0.01, min(temperature, 1.0))
+            extra_params["temperature"] = temperature
 
         response = openai_client.chat.completions.create(
             model=model,
@@ -165,6 +176,10 @@ def summarize_content(
         )
 
         summary = response.choices[0].message.content.strip()
+
+        # Strip <think>…</think> blocks (MiniMax M2.5+ reasoning traces)
+        if is_minimax and summary:
+            summary = _THINK_TAG_RE.sub("", summary).strip()
 
         # Validate we actually got a shorter result
         if summary and len(summary) < len(content):

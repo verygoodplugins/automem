@@ -4,6 +4,12 @@ import json
 import re
 from typing import Any, Callable, Optional
 
+# MiniMax model prefixes that require temperature clamping to (0, 1]
+_MINIMAX_PREFIXES = ("MiniMax-", "minimax-", "abab")
+
+# Regex to strip <think>…</think> blocks from model responses (used by MiniMax M2.5+)
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
 
 class MemoryClassifier:
     """Classifies memories into specific types based on content patterns."""
@@ -139,11 +145,17 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             uses_max_completion_tokens = self._classification_model.startswith(
                 self.MAX_COMPLETION_PREFIXES
             )
+            is_minimax = self._classification_model.startswith(_MINIMAX_PREFIXES)
+
             if uses_max_completion_tokens:
                 extra_params["max_completion_tokens"] = 50
             else:
                 extra_params["max_tokens"] = 50
-                extra_params["temperature"] = 0.3
+                temperature = 0.3
+                # MiniMax requires temperature in (0, 1]
+                if is_minimax:
+                    temperature = max(0.01, min(temperature, 1.0))
+                extra_params["temperature"] = temperature
 
             response = client.chat.completions.create(
                 model=self._classification_model,
@@ -159,6 +171,13 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             if not raw_content:
                 self._logger.warning("LLM returned empty classification response")
                 return None
+
+            # Strip <think>…</think> blocks (MiniMax M2.5+ reasoning traces)
+            if is_minimax:
+                raw_content = _THINK_TAG_RE.sub("", raw_content).strip()
+                if not raw_content:
+                    self._logger.warning("LLM response was only thinking tags")
+                    return None
 
             try:
                 result = json.loads(raw_content)
