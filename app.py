@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
@@ -167,9 +168,13 @@ from automem.config import (
     SEARCH_WEIGHT_RECENCY,
     SEARCH_WEIGHT_TAG,
     SEARCH_WEIGHT_VECTOR,
+    SERVICE_MODE,
+    SERVICE_PROFILE,
+    SERVICE_TIER,
     SYNC_AUTO_REPAIR,
     SYNC_CHECK_INTERVAL_SECONDS,
     TYPE_ALIASES,
+    UPGRADE_URL,
     VECTOR_SIZE,
     normalize_memory_type,
 )
@@ -242,6 +247,72 @@ configure_entity_extraction(
 
 state = ServiceState()
 
+_LOCKED_WRITE_PREFIXES = ("/admin/exports",)
+
+
+def get_service_profile() -> Dict[str, Any]:
+    profile = getattr(state, "service_profile", None)
+    if isinstance(profile, dict):
+        return profile
+    return deepcopy(SERVICE_PROFILE)
+
+
+def get_service_mode() -> str:
+    return str(getattr(state, "service_mode", SERVICE_MODE) or SERVICE_MODE)
+
+
+def get_service_tier() -> str:
+    return str(getattr(state, "service_tier", SERVICE_TIER) or SERVICE_TIER)
+
+
+def _service_capabilities() -> Dict[str, Any]:
+    capabilities = get_service_profile().get("capabilities", {})
+    return capabilities if isinstance(capabilities, dict) else {}
+
+
+def _service_writes_enabled() -> bool:
+    return bool(_service_capabilities().get("writes_enabled", True))
+
+
+def _build_service_locked_response() -> tuple[Any, int]:
+    tier = get_service_tier()
+    mode = get_service_mode()
+    is_trial_expired = tier == "trial" and mode == "archived"
+
+    if is_trial_expired:
+        error = "trial_expired"
+        message = (
+            "Your 30-day trial has ended. Your memories are safe. "
+            f"Subscribe at {UPGRADE_URL} to unlock them."
+        )
+    elif mode == "archived":
+        error = "service_locked"
+        message = "Service is archived and does not accept write operations"
+    elif mode == "read_only":
+        error = "service_locked"
+        message = "Service is in read-only mode and does not accept write operations"
+    else:
+        error = "service_locked"
+        message = "Service is locked and does not accept write operations"
+
+    body = {
+        "status": "error",
+        "code": 423,
+        "error": error,
+        "message": message,
+        "service_mode": mode,
+        "service_tier": tier,
+        "capabilities": _service_capabilities(),
+    }
+    if is_trial_expired:
+        body["reason"] = "trial_expired"
+        body["upgrade_url"] = UPGRADE_URL
+
+    return (
+        jsonify(body),
+        423,
+    )
+
 
 def _extract_api_token() -> Optional[str]:
     return _extract_api_token_helper(request, API_TOKEN)
@@ -249,6 +320,16 @@ def _extract_api_token() -> Optional[str]:
 
 def get_openai_client() -> Optional[OpenAI]:
     return state.openai_client
+
+
+def get_embedding_provider_name() -> Optional[str]:
+    provider = getattr(state, "embedding_provider", None)
+    if provider is None:
+        return None
+    try:
+        return provider.provider_name()
+    except Exception:
+        return None
 
 
 def _require_admin_token() -> None:
@@ -273,6 +354,27 @@ def require_api_token() -> None:
         extract_api_token_fn=_extract_api_token,
         abort_fn=abort,
     )
+
+
+@app.before_request
+def enforce_service_mode() -> Any:
+    if request.method == "OPTIONS":
+        return None
+
+    if request.path.startswith("/viewer"):
+        return None
+
+    if _service_writes_enabled():
+        return None
+
+    if request.method in {"GET", "HEAD"}:
+        return None
+
+    if any(request.path.startswith(prefix) for prefix in _LOCKED_WRITE_PREFIXES):
+        if _service_capabilities().get("archive_export_enabled", False):
+            return None
+
+    return _build_service_locked_response()
 
 
 _service_runtime = create_service_runtime(

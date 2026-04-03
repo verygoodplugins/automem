@@ -47,6 +47,29 @@ curl -X POST \
   https://automem.up.railway.app/enrichment/reprocess
 ```
 
+### Managed Service Profiles
+
+These settings are intended for hosted or reseller deployments where a separate control plane needs to understand pod capabilities and lifecycle state.
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `AUTOMEM_SERVICE_TIER` | Hosted tier profile | `pro` | `trial`, `pro`, `ultimate`, `archived` |
+| `AUTOMEM_SERVICE_MODE` | Mutability mode | tier-dependent | `active`, `read_only`, `archived` |
+| `AUTOMEM_EMBEDDING_TIER` | Capability label exposed via `/service/profile` | profile default | `managed`, `premium`, `disabled` |
+| `AUTOMEM_CONSOLIDATION_TIER` | Consolidation capability label exposed via `/service/profile` | profile default | `standard`, `full`, `disabled` |
+| `AUTOMEM_QDRANT_EXPECTED` | Whether the hosted profile expects vector search | profile default | `true`, `false` |
+| `AUTOMEM_WRITES_ENABLED` | Override write access independent of profile default | profile default | `false` |
+| `AUTOMEM_ADMIN_MUTATIONS_ENABLED` | Override mutating admin capability flag | profile default | `false` |
+| `AUTOMEM_ARCHIVE_EXPORT_ENABLED` | Allow `/admin/exports` while locked | `true` | `false` |
+| `AUTOMEM_SELF_SERVICE_EXPORT_ENABLED` | Advertise user-facing export support in `/service/profile` | profile default | `true` |
+| `AUTOMEM_UPGRADE_URL` | Upgrade URL returned for archived trial pods | `https://automem.ai/subscribe` | `https://automem.ai/subscribe` |
+
+Defaults:
+
+- `trial` and `pro`: managed embeddings, standard consolidation, writes enabled
+- `ultimate`: premium embeddings, full consolidation, self-service export enabled
+- `archived`: writes disabled by default, archive export still enabled for control-plane workflows
+
 ### Embedding Providers
 
 AutoMem supports five embedding backends with automatic fallback.

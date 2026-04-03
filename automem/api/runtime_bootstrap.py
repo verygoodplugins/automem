@@ -9,6 +9,7 @@ from automem.api.graph import create_graph_blueprint
 from automem.api.health import create_health_blueprint
 from automem.api.memory import create_memory_blueprint_full
 from automem.api.recall import create_recall_blueprint
+from automem.api.service_profile import create_service_blueprint
 from automem.api.stream import create_stream_blueprint
 from automem.api.viewer import create_viewer_blueprint, is_viewer_enabled
 
@@ -59,6 +60,10 @@ def register_blueprints(
     init_openai_fn: Callable[[], None],
     effective_vector_size_fn: Callable[[], int],
     embedding_model: str,
+    service_profile_fn: Callable[[], dict[str, Any]],
+    service_mode_fn: Callable[[], str],
+    service_tier_fn: Callable[[], str],
+    embedding_provider_name_fn: Callable[[], str | None],
     build_consolidator_from_config_fn: Callable[[Any, Any], Any],
     persist_consolidation_run_fn: Callable[[Any, dict[str, Any]], None],
     build_scheduler_from_graph_fn: Callable[[Any], Any],
@@ -74,6 +79,19 @@ def register_blueprints(
         graph_name,
         collection_name,
         utc_now_fn,
+    )
+
+    service_bp = create_service_blueprint(
+        get_memory_graph=get_memory_graph_fn,
+        get_qdrant_client=get_qdrant_client_fn,
+        graph_name=graph_name,
+        collection_name=collection_name,
+        embedding_model=embedding_model,
+        utc_now=utc_now_fn,
+        get_service_profile=service_profile_fn,
+        get_service_mode=service_mode_fn,
+        get_service_tier=service_tier_fn,
+        get_embedding_provider_name=embedding_provider_name_fn,
     )
 
     enrichment_bp = create_enrichment_blueprint(
@@ -145,6 +163,10 @@ def register_blueprints(
         embedding_model,
         utc_now_fn,
         logger,
+        graph_name,
+        service_profile_fn,
+        service_mode_fn,
+        service_tier_fn,
     )
 
     consolidation_bp = create_consolidation_blueprint_full(
@@ -173,6 +195,7 @@ def register_blueprints(
     )
 
     app.register_blueprint(health_bp)
+    app.register_blueprint(service_bp)
     app.register_blueprint(enrichment_bp)
     app.register_blueprint(memory_bp)
     app.register_blueprint(admin_bp)

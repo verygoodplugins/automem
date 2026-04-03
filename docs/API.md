@@ -21,6 +21,12 @@ Memory
   - Body: `{ "content": "...", "tags": ["tag"], "importance": 0.7, "metadata": {} }`
   - Response: `{ "status": "success", "memory_id": "...", ... }`
 
+- POST `/api/v1/preseed`
+  - Headers: standard API token plus `X-AutoMem-Internal: preseed`.
+  - Body: `{ "memories": [...], "associations": [{ "from_index": 0, "to_index": 1, "relationship": "RELATES_TO", "strength": 0.7 }] }`
+  - Response: `{ "status": "success", "memories_created": N, "associations_created": M, "memory_ids": [...] }`
+  - All memories created through this endpoint are automatically tagged with `onboarding`.
+
 - GET `/memory/{id}`
   - Response: `{ "status": "success", "memory": { ... } }`
   - Errors: `404` if memory is missing, `500` on query failure, `503` if graph database is unavailable.
@@ -111,6 +117,32 @@ Admin
   - Body: `{ "batch_size": 32, "limit": 100, "force": false }`
   - Response: `{ "status": "complete", "processed": N, "failed": K }`
 
+- POST `/admin/exports`
+  - Headers: requires both API and Admin tokens.
+  - Body (optional): `{ "export_id": "trial-expiry-export", "reason": "trial_expired", "include_vectors": true }`
+  - Response: export manifest with `export_id`, `status_url`, and `download_url`.
+  - This endpoint remains available in `read_only` and `archived` service modes when archive export support is enabled.
+
+- GET `/admin/exports/{export_id}`
+  - Headers: requires both API and Admin tokens.
+  - Response: persisted export manifest/status for polling.
+
+- GET `/admin/exports/{export_id}/download`
+  - Headers: requires both API and Admin tokens.
+  - Response: gzip-compressed JSON export bundle containing service metadata plus FalkorDB and optional Qdrant snapshots.
+
+Service
+
+- GET `/service/profile`
+  - Auth: standard API token required.
+  - Response: `{ "status": "success", "service": { "tier": "...", "mode": "...", "profile": {...}, "vector_store": {...}, "embedding": {...} } }`
+  - Intended for control-plane provisioning checks, dashboard status, and hosted tier introspection.
+
+- GET `/api/v1/stats`
+  - Auth: standard API token required.
+  - Response: `{ "status": "success", "memories_stored": N, "associations": M, "memory_types": {...}, "top_tags": [...], "last_activity": "...", "graph_density": 0.5 }`
+  - Intended for lightweight dashboard and CLI summaries without the full `/analyze` payload.
+
 Consolidation
 
 - POST `/consolidate`
@@ -126,3 +158,5 @@ Notes
 - Exclusion filtering (`exclude_tags`) removes any memory containing ANY of the excluded tags, supporting both exact and prefix matching.
 - Time filtering accepts ISO timestamps (`start`, `end`) or a natural expression via `time_query`.
 - Context hints boost matching preferences (e.g., Python coding style) and guarantee at least one anchor memory when applicable; responses echo what was applied via `context_priority`.
+- When the hosted service mode is `read_only` or `archived`, mutating endpoints return HTTP `423` and include `service_mode` / `service_tier` in the JSON error payload.
+- Archived trial pods return `error: "trial_expired"` and include `reason` plus `upgrade_url` for upgrade prompts while still allowing read access.
