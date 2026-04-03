@@ -1,6 +1,8 @@
 # Makefile - Development commands
 .PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-health
 
+VENV_BIN := $(shell if [ -x "./venv/bin/python" ] && ./venv/bin/python -c "print(0)" >/dev/null 2>&1; then echo ./venv/bin; elif [ -x "./.venv/bin/python" ] && ./.venv/bin/python -c "print(0)" >/dev/null 2>&1; then echo ./.venv/bin; else echo ./venv/bin; fi)
+
 # Default target
 help:
 	@echo "🧠 FalkorDB Memory System - Development Commands"
@@ -54,22 +56,22 @@ dev:
 # Run tests
 test:
 	@echo "🧪 Running unit tests..."
-	@if [ ! -x "./venv/bin/pytest" ]; then \
+	@if [ ! -x "$(VENV_BIN)/pytest" ]; then \
 		echo "🔧 ./venv/bin/pytest not found; bootstrapping with 'make install'..."; \
 		$(MAKE) install; \
 	fi
-	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m unit
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest -rs -m unit
 
 # Format code
 fmt:
 	@echo "✨ Formatting code (black + isort) ..."
-	./venv/bin/black .
-	./venv/bin/isort .
+	$(VENV_BIN)/black .
+	$(VENV_BIN)/isort .
 
 # Lint code
 lint:
 	@echo "🔍 Linting (flake8) ..."
-	./venv/bin/flake8 .
+	$(VENV_BIN)/flake8 .
 
 # Run integration tests (requires Docker services)
 test-integration:
@@ -79,7 +81,7 @@ test-integration:
 	@echo "⏳ Waiting for services to be ready..."
 	@sleep 5
 	@echo "🧪 Running tests..."
-	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m integration
+	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest -rs -m integration
 
 # Run integration tests against live Railway server
 test-live:
