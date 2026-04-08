@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "AutoMem - AI memory plugins by Very Good Plugins",
-    "version": "1.0.0"
+    "version": "0.15.1"
   },
   "plugins": [
     {
       "name": "automem",
       "source": "./",
       "description": "Production-grade long-term memory system for AI assistants using FalkorDB (graph database) and Qdrant (vector database) for semantic search and relationship tracking.",
-      "version": "1.0.0",
+      "version": "0.15.1",
       "author": {
         "name": "Very Good Plugins"
       },
