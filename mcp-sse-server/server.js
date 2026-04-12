@@ -1057,8 +1057,19 @@ const port = process.env.PORT || 8080;
 
 // Avoid side effects on import (tests/tools may import this module).
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const endpoint = process.env.AUTOMEM_API_URL || process.env.AUTOMEM_ENDPOINT || 'http://127.0.0.1:8001';
+  const hasToken = !!process.env.AUTOMEM_API_TOKEN;
+  if (!hasToken) {
+    log('warn', 'startup_missing_token', { msg: 'AUTOMEM_API_TOKEN is not set — upstream health probes will report degraded' });
+  }
+  if (endpoint === 'http://127.0.0.1:8001' && !process.env.AUTOMEM_API_URL && !process.env.AUTOMEM_ENDPOINT) {
+    log('warn', 'startup_default_endpoint', {
+      msg: 'No AUTOMEM_API_URL or AUTOMEM_ENDPOINT set — defaulting to http://127.0.0.1:8001 which will not work on Railway',
+      hint: 'Set AUTOMEM_API_URL to your AutoMem API service URL (e.g. http://automem.railway.internal:8001)',
+    });
+  }
   const app = createApp();
   app.listen(port, () => {
-    log('info', 'mcp_bridge_listening', { port });
+    log('info', 'mcp_bridge_listening', { port, upstream: sanitizeUrlForLog(endpoint), hasToken });
   });
 }
