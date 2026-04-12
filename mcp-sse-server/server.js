@@ -792,7 +792,11 @@ export function createApp() {
       request_id: req.requestId,
     };
 
-    res.status(healthState.status === 'healthy' ? 200 : 503).json(body);
+    // Always return 200 so Railway (and other orchestrators) consider this
+    // service healthy as long as the process is running.  Upstream reachability
+    // is reported in the response body for observability but must not block the
+    // platform health-check — the upstream may start after this service.
+    res.status(200).json(body);
   });
 
 // Helper: validate and extract token from multiple sources
