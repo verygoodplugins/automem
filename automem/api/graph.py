@@ -14,7 +14,13 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
 
-from automem.config import MEMORY_TYPES, PUBLIC_RELATIONS, RELATION_COLORS, normalize_relation_type
+from automem.config import (
+    CONSOLIDATION_ARCHIVE_THRESHOLD,
+    MEMORY_TYPES,
+    PUBLIC_RELATIONS,
+    RELATION_COLORS,
+    normalize_relation_type,
+)
 from automem.utils.graph import _serialize_node
 
 logger = logging.getLogger("automem.api.graph")
@@ -55,7 +61,8 @@ def create_graph_blueprint(
         """
         query_start = time.perf_counter()
 
-        limit = min(int(request.args.get("limit", 500)), 2000)
+        limit_raw = int(request.args.get("limit", 500))
+        limit = 0 if limit_raw == 0 else min(limit_raw, 50000)
         min_importance = float(request.args.get("min_importance", 0.0))
         types_filter = (
             request.args.get("types", "").split(",") if request.args.get("types") else None
@@ -68,7 +75,7 @@ def create_graph_blueprint(
 
         # Build Cypher query for nodes
         where_clauses = ["m.importance >= $min_importance"]
-        params: Dict[str, Any] = {"min_importance": min_importance, "limit": limit}
+        params: Dict[str, Any] = {"min_importance": min_importance}
 
         if types_filter and types_filter[0]:
             where_clauses.append("m.type IN $types")
@@ -80,13 +87,18 @@ def create_graph_blueprint(
 
         where_clause = " AND ".join(where_clauses)
 
-        # Fetch nodes
+        # Fetch nodes (limit=0 means return all)
+        limit_clause = ""
+        if limit > 0:
+            limit_clause = "LIMIT $limit"
+            params["limit"] = limit
+
         node_query = f"""
             MATCH (m:Memory)
             WHERE {where_clause}
             RETURN m
             ORDER BY m.importance DESC, m.timestamp DESC
-            LIMIT $limit
+            {limit_clause}
         """
 
         try:
@@ -181,6 +193,7 @@ def create_graph_blueprint(
                         "type_colors": TYPE_COLORS,
                         "relation_colors": RELATION_COLORS,
                         "query_time_ms": round(elapsed * 1000, 2),
+                        "archive_threshold": CONSOLIDATION_ARCHIVE_THRESHOLD,
                     },
                 }
             )
@@ -430,6 +443,7 @@ def create_graph_blueprint(
                         "type_colors": TYPE_COLORS,
                         "relation_colors": RELATION_COLORS,
                         "query_time_ms": round(elapsed * 1000, 2),
+                        "archive_threshold": CONSOLIDATION_ARCHIVE_THRESHOLD,
                     },
                 }
             )
