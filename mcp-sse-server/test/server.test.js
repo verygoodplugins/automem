@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AutoMemClient, createApp, formatRecallAsItems } from "../server.js";
+import {
+  AutoMemClient,
+  coerceJsonFields,
+  createApp,
+  formatRecallAsItems,
+} from "../server.js";
 
 async function withServer(app, fn) {
   const server = await new Promise((resolve) => {
@@ -496,4 +501,82 @@ test("GET /mcp/sse returns an SSE stream and endpoint event", async () => {
     process.env.AUTOMEM_API_TOKEN = prevToken;
     process.env.AUTOMEM_API_URL = prevEndpoint;
   }
+});
+
+// -----------------------------------------------------------------------------
+// coerceJsonFields — the MCP transport sometimes JSON-encodes nested args as
+// strings. Ensure the client parses them back to native shape before sending
+// to AutoMem, which otherwise returns "'metadata' must be an object".
+// -----------------------------------------------------------------------------
+
+test("coerceJsonFields parses stringified metadata objects", () => {
+  const input = {
+    content: "hello",
+    metadata: '{"project":"automem","k":1}',
+    tags: ["a", "b"],
+  };
+  const out = coerceJsonFields(input, ["metadata", "embedding", "tags"]);
+  assert.deepEqual(out.metadata, { project: "automem", k: 1 });
+  assert.equal(out.content, "hello");
+  assert.deepEqual(out.tags, ["a", "b"]);
+});
+
+test("coerceJsonFields parses stringified tags arrays", () => {
+  const out = coerceJsonFields(
+    { tags: '["finance","q2"]' },
+    ["metadata", "embedding", "tags"]
+  );
+  assert.deepEqual(out.tags, ["finance", "q2"]);
+});
+
+test("coerceJsonFields leaves already-native values alone", () => {
+  const meta = { nested: { deep: true } };
+  const out = coerceJsonFields(
+    { metadata: meta, tags: ["x"] },
+    ["metadata", "embedding", "tags"]
+  );
+  assert.strictEqual(out.metadata, meta);
+  assert.deepEqual(out.tags, ["x"]);
+});
+
+test("coerceJsonFields leaves malformed JSON strings as-is", () => {
+  const out = coerceJsonFields(
+    { metadata: "not json" },
+    ["metadata", "embedding", "tags"]
+  );
+  assert.equal(out.metadata, "not json");
+});
+
+test("coerceJsonFields rejects shape mismatches (object expected, array given)", () => {
+  const out = coerceJsonFields(
+    { metadata: '["not","an","object"]' },
+    ["metadata", "embedding", "tags"]
+  );
+  assert.equal(out.metadata, '["not","an","object"]');
+});
+
+test("AutoMemClient.storeMemory coerces stringified metadata before POST", async () => {
+  const client = new AutoMemClient({
+    endpoint: "http://example.test",
+    apiKey: "k",
+  });
+
+  let capturedBody = null;
+  client._request = async (_method, _path, body) => {
+    capturedBody = body;
+    return { memory_id: "abc" };
+  };
+
+  await client.storeMemory({
+    content: "hi",
+    metadata: '{"project":"automem","priority":"high"}',
+    tags: '["a","b"]',
+  });
+
+  assert.deepEqual(capturedBody.metadata, {
+    project: "automem",
+    priority: "high",
+  });
+  assert.deepEqual(capturedBody.tags, ["a", "b"]);
+  assert.equal(capturedBody.content, "hi");
 });

@@ -240,6 +240,36 @@ class InMemoryEventStore {
   }
 }
 
+// Some MCP client transports JSON-encode nested object/array arguments as
+// strings before calling tools, even when the input schema declares them as
+// `object` or `array`. The upstream AutoMem service rejects those with
+// `'metadata' must be an object` (etc.) because its strict JSON body parse
+// expects native types. Coerce known offenders back to their native form
+// before forwarding. Exported for unit tests.
+export function coerceJsonFields(obj, fields) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const out = { ...obj };
+  for (const field of fields) {
+    const value = out[field];
+    if (typeof value === 'string' && value.length > 0) {
+      try {
+        const parsed = JSON.parse(value);
+        // Only accept parses that match the expected native shape (object
+        // for metadata, array for embedding/tags). This avoids accidentally
+        // turning a plain string value into a number or other primitive.
+        if (field === 'metadata' && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          out[field] = parsed;
+        } else if ((field === 'embedding' || field === 'tags') && Array.isArray(parsed)) {
+          out[field] = parsed;
+        }
+      } catch (_) {
+        // Leave as-is — the upstream service will return a clear 400.
+      }
+    }
+  }
+  return out;
+}
+
 // Simple AutoMem HTTP client (mirrors the npm package behavior but inline to avoid version conflicts)
 export class AutoMemClient {
   constructor(config) {
@@ -264,20 +294,21 @@ export class AutoMemClient {
     });
   }
   async storeMemory(args, options) {
+    const coerced = coerceJsonFields(args || {}, ['metadata', 'embedding', 'tags']);
     const body = {
-      content: args.content,
-      tags: args.tags || [],
-      importance: args.importance,
-      embedding: args.embedding,
-      metadata: args.metadata,
-      timestamp: args.timestamp,
-      type: args.type,
-      confidence: args.confidence,
-      id: args.id,
-      t_valid: args.t_valid,
-      t_invalid: args.t_invalid,
-      updated_at: args.updated_at,
-      last_accessed: args.last_accessed
+      content: coerced.content,
+      tags: coerced.tags || [],
+      importance: coerced.importance,
+      embedding: coerced.embedding,
+      metadata: coerced.metadata,
+      timestamp: coerced.timestamp,
+      type: coerced.type,
+      confidence: coerced.confidence,
+      id: coerced.id,
+      t_valid: coerced.t_valid,
+      t_invalid: coerced.t_invalid,
+      updated_at: coerced.updated_at,
+      last_accessed: coerced.last_accessed
     };
     const r = await this._request('POST', 'memory', body, options);
     return { memory_id: r.memory_id || r.id, message: r.message || 'Memory stored successfully' };
@@ -327,7 +358,8 @@ export class AutoMemClient {
     return { success: true, message: r.message || 'Association created successfully' };
   }
   async updateMemory(args, options) {
-    const { memory_id, ...updates } = args;
+    const coerced = coerceJsonFields(args || {}, ['metadata', 'embedding', 'tags']);
+    const { memory_id, ...updates } = coerced;
     const r = await this._request('PATCH', `memory/${memory_id}`, updates, options);
     return { memory_id: r.memory_id || memory_id, message: r.message || 'Memory updated successfully' };
   }
