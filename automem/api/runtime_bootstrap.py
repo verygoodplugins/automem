@@ -4,6 +4,7 @@ from typing import Any, Callable, Optional
 
 from automem.api.admin import create_admin_blueprint_full
 from automem.api.consolidation import create_consolidation_blueprint_full
+from automem.api.documents import create_documents_blueprint
 from automem.api.enrichment import create_enrichment_blueprint
 from automem.api.graph import create_graph_blueprint
 from automem.api.health import create_health_blueprint
@@ -49,7 +50,9 @@ def register_blueprints(
     coerce_embedding_fn: Callable[[Any], Optional[list[float]]],
     parse_metadata_field_fn: Callable[[Any], Any],
     generate_real_embedding_fn: Callable[[str], list[float]],
-    generate_real_embeddings_batch_fn: Optional[Callable[[list[str]], list[list[float]]]] = None,
+    generate_real_embeddings_batch_fn: Optional[
+        Callable[[list[str]], list[list[float]]]
+    ] = None,
     enqueue_embedding_fn: Callable[[str, str], None],
     classify_memory_fn: Callable[[str], tuple[str, float]],
     point_struct_cls: Any,
@@ -66,6 +69,10 @@ def register_blueprints(
     consolidation_tick_seconds: int,
     consolidation_history_limit: int,
     require_api_token_fn: Callable[[], None],
+    bucket_store: Any = None,
+    qdrant_models_obj: Any = None,
+    document_max_bytes: int = 100 * 1024 * 1024,
+    document_presigned_expires: int = 300,
 ) -> None:
     health_bp = create_health_blueprint(
         get_memory_graph_fn,
@@ -172,6 +179,23 @@ def register_blueprints(
         require_api_token=require_api_token_fn,
     )
 
+    documents_bp = create_documents_blueprint(
+        bucket_store=bucket_store,
+        get_memory_graph_fn=get_memory_graph_fn,
+        get_qdrant_client_fn=get_qdrant_client_fn,
+        normalize_tags_fn=normalize_tags_fn,
+        compute_tag_prefixes_fn=compute_tag_prefixes_fn,
+        coerce_importance_fn=coerce_importance_fn,
+        enqueue_enrichment_fn=enqueue_enrichment_fn,
+        enqueue_embedding_fn=enqueue_embedding_fn,
+        collection_name=collection_name,
+        utc_now_fn=utc_now_fn,
+        state=state,
+        qdrant_models_obj=qdrant_models_obj,
+        max_bytes=document_max_bytes,
+        presigned_expires=document_presigned_expires,
+    )
+
     app.register_blueprint(health_bp)
     app.register_blueprint(enrichment_bp)
     app.register_blueprint(memory_bp)
@@ -180,6 +204,11 @@ def register_blueprints(
     app.register_blueprint(consolidation_bp)
     app.register_blueprint(graph_bp)
     app.register_blueprint(stream_bp)
+    app.register_blueprint(documents_bp)
+    logger.info(
+        "Documents blueprint registered (bucket=%s)",
+        "configured" if bucket_store is not None else "UNCONFIGURED",
+    )
 
     if is_viewer_enabled():
         viewer_bp = create_viewer_blueprint()
