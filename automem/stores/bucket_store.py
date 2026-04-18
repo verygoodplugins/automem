@@ -50,9 +50,7 @@ class BucketStore:
 
         self._config = config
         addressing = (
-            "path"
-            if (config.force_path_style or config.url_style == "path")
-            else "virtual"
+            "path" if (config.force_path_style or config.url_style == "path") else "virtual"
         )
         self._client = boto3.client(
             "s3",
@@ -106,9 +104,7 @@ class BucketStore:
         if metadata:
             # S3 metadata keys must be ASCII, and values must be str. Let
             # boto3 URL-encode non-ASCII values via its ``Metadata`` handling.
-            extra_args["Metadata"] = {
-                str(k): str(v) for k, v in metadata.items() if v is not None
-            }
+            extra_args["Metadata"] = {str(k): str(v) for k, v in metadata.items() if v is not None}
 
         reader = _HashingReader(fileobj)
         self._client.upload_fileobj(
@@ -156,14 +152,8 @@ class BucketStore:
         try:
             response = self._client.head_object(Bucket=self._config.bucket, Key=key)
         except Exception as exc:  # pragma: no cover - boto3 error classes are dynamic
-            code = getattr(getattr(exc, "response", {}), "get", lambda *_: None)(
-                "Error", {}
-            )
-            status = (
-                getattr(exc, "response", {})
-                .get("ResponseMetadata", {})
-                .get("HTTPStatusCode")
-            )
+            code = getattr(getattr(exc, "response", {}), "get", lambda *_: None)("Error", {})
+            status = getattr(exc, "response", {}).get("ResponseMetadata", {}).get("HTTPStatusCode")
             if code and code.get("Code") in {"404", "NoSuchKey", "NotFound"}:
                 return None
             if status == 404:

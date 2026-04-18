@@ -42,3 +42,4 @@ node_modules/
 /benchmarks/results/
 benchmarks/baselines/locomo_baseline.json
 data/bm25_index.db
+.venv-test/

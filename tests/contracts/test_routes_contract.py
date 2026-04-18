@@ -56,7 +56,5 @@ def test_public_route_contract_is_frozen() -> None:
     unexpected = actual - EXPECTED_ROUTE_METHODS
 
     assert not missing and not unexpected, (
-        "Route contract mismatch. "
-        f"Missing={sorted(missing)} "
-        f"Unexpected={sorted(unexpected)}"
+        "Route contract mismatch. " f"Missing={sorted(missing)} " f"Unexpected={sorted(unexpected)}"
     )
