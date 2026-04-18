@@ -50,9 +50,7 @@ def register_blueprints(
     coerce_embedding_fn: Callable[[Any], Optional[list[float]]],
     parse_metadata_field_fn: Callable[[Any], Any],
     generate_real_embedding_fn: Callable[[str], list[float]],
-    generate_real_embeddings_batch_fn: Optional[
-        Callable[[list[str]], list[list[float]]]
-    ] = None,
+    generate_real_embeddings_batch_fn: Optional[Callable[[list[str]], list[list[float]]]] = None,
     enqueue_embedding_fn: Callable[[str, str], None],
     classify_memory_fn: Callable[[str], tuple[str, float]],
     point_struct_cls: Any,

@@ -196,9 +196,7 @@ def create_documents_blueprint(
         # Always add the "document" tag so list/filter queries are trivial.
         if "document" not in {t.lower() for t in tags}:
             tags.append("document")
-        tags_lower = [
-            t.strip().lower() for t in tags if isinstance(t, str) and t.strip()
-        ]
+        tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
         tag_prefixes = compute_tag_prefixes_fn(tags_lower)
 
         importance = coerce_importance_fn(request.form.get("importance"))
@@ -249,9 +247,7 @@ def create_documents_blueprint(
             try:
                 store.delete(bucket_key)
             except Exception:
-                logger.exception(
-                    "Failed to clean up oversized upload at %s", bucket_key
-                )
+                logger.exception("Failed to clean up oversized upload at %s", bucket_key)
             abort(
                 413,
                 description=(
@@ -553,9 +549,7 @@ def create_documents_blueprint(
                     selector = qdrant_models_obj.PointIdsList(points=[memory_id])
                 else:
                     selector = {"points": [memory_id]}
-                qdrant_client.delete(
-                    collection_name=collection_name, points_selector=selector
-                )
+                qdrant_client.delete(collection_name=collection_name, points_selector=selector)
             except Exception:
                 logger.exception("Qdrant vector delete failed for %s", memory_id)
 

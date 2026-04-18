@@ -321,7 +321,5 @@ def test_upload_returns_503_when_bucket_unconfigured(noop_bucket_app):
 
 
 def test_download_returns_503_when_bucket_unconfigured(noop_bucket_app):
-    response = noop_bucket_app.get(
-        "/documents/11111111-1111-1111-1111-111111111111/download"
-    )
+    response = noop_bucket_app.get("/documents/11111111-1111-1111-1111-111111111111/download")
     assert response.status_code == 503

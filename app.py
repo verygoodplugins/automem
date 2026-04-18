@@ -32,12 +32,7 @@ except ImportError:  # Allow tests to import without full qdrant client installe
     UnexpectedResponse = Exception  # type: ignore[misc,assignment]
 
 try:  # Allow tests to import without full qdrant client installed
-    from qdrant_client.models import (
-        Distance,
-        PayloadSchemaType,
-        PointStruct,
-        VectorParams,
-    )
+    from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
 except Exception:  # pragma: no cover - degraded import path
     try:
         from qdrant_client.http import models as _qmodels
@@ -72,20 +67,14 @@ except ImportError:
 from automem.api.auth_helpers import extract_api_token as _extract_api_token_helper
 from automem.api.auth_helpers import require_admin_token as _require_admin_token_helper
 from automem.api.auth_helpers import require_api_token as _require_api_token_helper
-from automem.api.runtime_bootstrap import (
-    register_blueprints as _register_blueprints_runtime,
-)
+from automem.api.runtime_bootstrap import register_blueprints as _register_blueprints_runtime
 from automem.api.stream import emit_event
 from automem.app_helper_bindings import create_app_helper_runtime
 from automem.classification.memory_classifier import MemoryClassifier
 from automem.consolidation.runtime_bindings import create_consolidation_runtime
 from automem.embedding.runtime_bindings import create_embedding_runtime
-from automem.embedding.runtime_helpers import (
-    coerce_embedding as _coerce_embedding_value,
-)
-from automem.embedding.runtime_helpers import (
-    coerce_importance as _coerce_importance_value,
-)
+from automem.embedding.runtime_helpers import coerce_embedding as _coerce_embedding_value
+from automem.embedding.runtime_helpers import coerce_importance as _coerce_importance_value
 from automem.embedding.runtime_helpers import (
     generate_placeholder_embedding as _generate_placeholder_embedding_value,
 )
@@ -98,10 +87,7 @@ from automem.embedding.runtime_helpers import (
 from automem.embedding.runtime_helpers import normalize_tags as _normalize_tags_value
 from automem.enrichment.runtime_bindings import create_enrichment_runtime
 from automem.enrichment.runtime_queue_bindings import create_enrichment_queue_runtime
-from automem.runtime_environment import (
-    configure_logging,
-    ensure_local_package_importable,
-)
+from automem.runtime_environment import configure_logging, ensure_local_package_importable
 from automem.runtime_wiring import run_default_server, wire_recall_and_blueprints
 from automem.service_runtime_bindings import create_service_runtime
 from automem.service_state import EnrichmentJob, EnrichmentStats, ServiceState
@@ -224,22 +210,15 @@ from automem.utils.time import (
     _parse_time_expression,
     utc_now,
 )
-from automem.utils.validation import (
-    get_effective_vector_size,
-    validate_vector_dimensions,
-)
+from automem.utils.validation import get_effective_vector_size, validate_vector_dimensions
 
 # Embedding batching configuration
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "20"))
-EMBEDDING_BATCH_TIMEOUT_SECONDS = float(
-    os.getenv("EMBEDDING_BATCH_TIMEOUT_SECONDS", "2.0")
-)
+EMBEDDING_BATCH_TIMEOUT_SECONDS = float(os.getenv("EMBEDDING_BATCH_TIMEOUT_SECONDS", "2.0"))
 
 """Note: default types/relations/weights are imported from automem.config"""
 
-SEARCH_STOPWORDS, ENTITY_STOPWORDS, ENTITY_BLOCKLIST, _extract_keywords = (
-    load_keyword_runtime()
-)
+SEARCH_STOPWORDS, ENTITY_STOPWORDS, ENTITY_BLOCKLIST, _extract_keywords = load_keyword_runtime()
 
 # Exported for runtime wiring: the blueprint factory consumes these via module attributes.
 RELATION_TAXONOMY = {
@@ -360,9 +339,7 @@ _enrichment_queue_runtime = create_enrichment_queue_runtime(
     enrichment_max_attempts=ENRICHMENT_MAX_ATTEMPTS,
     enrichment_failure_backoff_seconds=ENRICHMENT_FAILURE_BACKOFF_SECONDS,
     empty_exc=Empty,
-    enrich_memory_fn=lambda memory_id, forced=False: enrich_memory(
-        memory_id, forced=forced
-    ),
+    enrich_memory_fn=lambda memory_id, forced=False: enrich_memory(memory_id, forced=forced),
     emit_event_fn=emit_event,
     perf_counter_fn=time.perf_counter,
     sleep_fn=time.sleep,
@@ -430,9 +407,7 @@ _embedding_runtime = create_embedding_runtime(
     point_struct_cls=PointStruct,
     utc_now_fn=utc_now,
     generate_real_embedding_fn=lambda content: _generate_real_embedding(content),
-    generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(
-        contents
-    ),
+    generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(contents),
 )
 
 init_embedding_pipeline = _embedding_runtime.init_embedding_pipeline
