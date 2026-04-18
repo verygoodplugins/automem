@@ -30,6 +30,10 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/viewer/<path:path>"),
     ("GET", "/stream"),
     ("GET", "/stream/status"),
+    ("POST", "/documents"),
+    ("GET", "/documents"),
+    ("DELETE", "/documents/<memory_id>"),
+    ("GET", "/documents/<memory_id>/download"),
 }
 
 
@@ -52,5 +56,7 @@ def test_public_route_contract_is_frozen() -> None:
     unexpected = actual - EXPECTED_ROUTE_METHODS
 
     assert not missing and not unexpected, (
-        "Route contract mismatch. " f"Missing={sorted(missing)} " f"Unexpected={sorted(unexpected)}"
+        "Route contract mismatch. "
+        f"Missing={sorted(missing)} "
+        f"Unexpected={sorted(unexpected)}"
     )
