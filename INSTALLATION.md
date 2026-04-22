@@ -678,15 +678,35 @@ Filter memories by tags.
 **Query Parameters:**
 
 - `tags` - One or more tags (multiple `tags` params or comma-separated)
-- `limit` - Max results (default 50)
+- `limit` - Max results per page (default 20, max 200)
+- `offset` - Zero-based page offset (default 0)
 
 **Example:**
 
 ```bash
-GET /memory/by-tag?tags=deployment&tags=success&limit=20
+GET /memory/by-tag?tags=deployment&tags=success&limit=20&offset=0
 ```
 
-Returns most recent/important memories matching any requested tag.
+Returns the current page of most important/recent memories matching any requested tag, plus
+pagination metadata (`limit`, `offset`, `has_more`).
+
+---
+
+#### `DELETE /memory/by-tag`
+
+Delete all memories matching any requested tag.
+
+**Query Parameters:**
+
+- `tags` - One or more tags (multiple `tags` params or comma-separated)
+
+**Example:**
+
+```bash
+DELETE /memory/by-tag?tags=deployment&tags=success
+```
+
+Returns a success payload with `deleted_count`.
 
 ---
 

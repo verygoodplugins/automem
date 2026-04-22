@@ -397,6 +397,74 @@ def test_tag_filtering_real(api_client):
         api_client.delete(f"{api_client.base_url}/memory/{memory_id}")
 
 
+def test_tag_pagination_and_bulk_delete_real(api_client):
+    """Test paging through a tag set and bulk-deleting it."""
+    unique_tag = f"tagpage_{uuid.uuid4().hex[:8]}"
+    memory_ids = []
+
+    for i in range(5):
+        response = api_client.post(
+            f"{api_client.base_url}/memory",
+            json={
+                "content": f"Paged delete memory {i} {unique_tag}",
+                "tags": [unique_tag, f"page_{i}"],
+                "importance": 0.5,
+            },
+        )
+        assert response.status_code == 201
+        memory_ids.append(response.json()["memory_id"])
+
+    seen_ids = []
+    offset = 0
+    limit = 2
+    while True:
+        response = api_client.get(
+            f"{api_client.base_url}/memory/by-tag",
+            params={"tags": unique_tag, "limit": limit, "offset": offset},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["limit"] == limit
+        assert data["offset"] == offset
+        seen_ids.extend(memory["id"] for memory in data["memories"])
+        if not data["has_more"]:
+            break
+        offset += limit
+
+    assert set(seen_ids) == set(memory_ids)
+    assert len(seen_ids) == len(memory_ids)
+
+    delete_response = api_client.delete(
+        f"{api_client.base_url}/memory/by-tag", params={"tags": unique_tag}
+    )
+    assert delete_response.status_code == 200
+    delete_data = delete_response.json()
+    assert delete_data["status"] == "success"
+    assert delete_data["deleted_count"] == len(memory_ids)
+
+    post_delete = api_client.get(
+        f"{api_client.base_url}/memory/by-tag", params={"tags": unique_tag, "limit": 10}
+    )
+    assert post_delete.status_code == 200
+    post_delete_data = post_delete.json()
+    assert post_delete_data["count"] == 0
+    assert post_delete_data["has_more"] is False
+
+    for _ in range(5):
+        recall_response = api_client.get(
+            f"{api_client.base_url}/recall",
+            params={"query": unique_tag, "tags": unique_tag, "limit": 20},
+        )
+        assert recall_response.status_code == 200
+        results = recall_response.json().get("results", [])
+        if not any(result.get("id") in memory_ids for result in results):
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail("Deleted memories still surfaced in recall after bulk delete")
+
+
 def test_time_range_recall_real(api_client):
     """Test recalling memories within time ranges."""
     # Store a memory with current timestamp
