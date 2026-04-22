@@ -117,6 +117,23 @@ def _delete_qdrant_points(
         logger.exception("Failed to delete vectors for %d memories", len(memory_ids))
 
 
+def _delete_graph_memories(
+    *,
+    graph: Any,
+    memory_ids: List[str],
+    logger: Any,
+    abort_fn: Any,
+) -> None:
+    if not memory_ids:
+        return
+
+    try:
+        graph.query("MATCH (m:Memory) WHERE m.id IN $ids DETACH DELETE m", {"ids": memory_ids})
+    except Exception:
+        logger.exception("Bulk delete by tag failed for %d memories", len(memory_ids))
+        abort_fn(500, description="Failed to delete memories by tag")
+
+
 def create_memory_blueprint(
     store_memory: Callable[[], Any],
     update_memory: Callable[[str], Any],
@@ -144,7 +161,7 @@ def create_memory_blueprint(
     def _by_tag() -> Any:
         if request.method == "DELETE":
             if delete_by_tag is None:
-                abort(405)
+                return by_tag()
             return delete_by_tag()
         return by_tag()
 
@@ -675,8 +692,12 @@ def create_memory_blueprint_full(
                 if not memory_ids:
                     break
 
-                for memory_id in memory_ids:
-                    graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": memory_id})
+                _delete_graph_memories(
+                    graph=graph,
+                    memory_ids=memory_ids,
+                    logger=logger,
+                    abort_fn=abort,
+                )
 
                 _delete_qdrant_points(
                     qdrant_client=get_qdrant_client(),

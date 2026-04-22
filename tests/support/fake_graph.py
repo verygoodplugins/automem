@@ -239,6 +239,17 @@ class FakeGraph:
                 return FakeResult([["deleted"]])
             return FakeResult([])
 
+        if "MATCH (m:Memory) WHERE m.id IN $ids DETACH DELETE m" in query:
+            deleted = []
+            for memory_id in params.get("ids") or []:
+                memory_id = str(memory_id)
+                if memory_id:
+                    self.deleted.append(memory_id)
+                if memory_id in self.memories:
+                    del self.memories[memory_id]
+                    deleted.append(memory_id)
+            return FakeResult([[memory_id] for memory_id in deleted])
+
         # Search by exact tag pattern
         if "MATCH (m:Memory)" in query and "$tag IN m.tags" in query:
             tag = str(params.get("tag") or "").strip().lower()

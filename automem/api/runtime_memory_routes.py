@@ -100,6 +100,23 @@ def _delete_qdrant_points(
         logger.exception("Failed to delete vectors for %d memories", len(memory_ids))
 
 
+def _delete_graph_memories(
+    *,
+    graph: Any,
+    memory_ids: List[str],
+    logger: Any,
+    abort_fn: Any,
+) -> None:
+    if not memory_ids:
+        return
+
+    try:
+        graph.query("MATCH (m:Memory) WHERE m.id IN $ids DETACH DELETE m", {"ids": memory_ids})
+    except Exception:
+        logger.exception("Bulk delete by tag failed for %d memories", len(memory_ids))
+        abort_fn(500, description="Failed to delete memories by tag")
+
+
 def store_memory(
     *,
     request_obj: Any,
@@ -556,7 +573,6 @@ def delete_memory(
     memory_id: str,
     get_memory_graph_fn: Any,
     get_qdrant_client_fn: Any,
-    qdrant_models_obj: Any,
     collection_name: str,
     abort_fn: Any,
     jsonify_fn: Any,
@@ -577,7 +593,6 @@ def delete_memory(
 
     graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": memory_id})
 
-    _ = qdrant_models_obj
     _delete_qdrant_points(
         qdrant_client=get_qdrant_client_fn(),
         collection_name=collection_name,
@@ -629,8 +644,12 @@ def memories_by_tag(
             if not memory_ids:
                 break
 
-            for memory_id in memory_ids:
-                graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": memory_id})
+            _delete_graph_memories(
+                graph=graph,
+                memory_ids=memory_ids,
+                logger=logger,
+                abort_fn=abort_fn,
+            )
 
             if get_qdrant_client_fn and collection_name:
                 _delete_qdrant_points(
