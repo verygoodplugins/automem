@@ -37,14 +37,18 @@ from openai import OpenAI
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from tests.benchmarks.backends import MemoryRecord, SearchRequest, create_backend
+
 
 @dataclass
 class LoCoMoConfig:
     """Configuration for LoCoMo benchmark evaluation"""
 
-    # AutoMem API settings
+    # Backend settings
+    backend: str = "automem"
     base_url: str = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
     api_token: str = os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token")
+    work_dir: Optional[str] = None
 
     # LoCoMo dataset paths
     data_file: str = str(Path(__file__).parent / "locomo" / "data" / "locomo10.json")
@@ -81,10 +85,14 @@ class LoCoMoEvaluator:
 
     def __init__(self, config: LoCoMoConfig):
         self.config = config
-        self.headers = {
-            "Authorization": f"Bearer {config.api_token}",
-            "Content-Type": "application/json",
-        }
+        scope_prefix = f"locomo-{config.backend}-{int(time.time())}"
+        self.backend = create_backend(
+            config.backend,
+            base_url=config.base_url,
+            api_token=config.api_token,
+            scope_prefix=scope_prefix,
+            work_dir=config.work_dir,
+        )
         # memory_map is returned per-conversation by _load_batch/_load_individual
         self.results = defaultdict(list)  # Category -> [True/False scores]
         self.local_conversation_memories = {}  # sample_id -> dialog_id -> prepared memory
@@ -104,13 +112,19 @@ class LoCoMoEvaluator:
         self.embedding_cache = {}  # text -> embedding vector
 
     def health_check(self) -> bool:
-        """Verify AutoMem API is accessible"""
-        try:
-            response = requests.get(f"{self.config.base_url}/health", timeout=5)
-            return response.status_code == 200
-        except Exception as e:
-            print(f"Health check failed: {e}")
-            return False
+        """Verify the configured backend is accessible."""
+        return self.backend.health_check()
+
+    @staticmethod
+    def _record_to_memory(record: MemoryRecord) -> Dict[str, Any]:
+        return {
+            "id": record.id,
+            "content": record.content,
+            "metadata": dict(record.metadata),
+            "tags": list(record.tags),
+            "score": record.score,
+            "match_type": record.match_type,
+        }
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
         """Get embedding for text, with caching."""
@@ -165,63 +179,11 @@ class LoCoMoEvaluator:
 
     def cleanup_test_data(self, tag_prefix: str = "locomo-test", max_iterations: int = 200) -> bool:
         """Remove all test memories from AutoMem"""
+        if self.config.backend != "automem":
+            return True
         print(f"\nCleaning up test memories with tag: {tag_prefix}")
         try:
-            total_deleted = 0
-            iteration = 0
-            while iteration < max_iterations:
-                iteration += 1
-                response = requests.get(
-                    f"{self.config.base_url}/recall",
-                    headers=self.headers,
-                    params={"tags": tag_prefix, "tag_match": "prefix", "limit": 100},
-                    timeout=10,
-                )
-
-                if response.status_code != 200:
-                    print(f"WARNING: Could not fetch test memories: {response.status_code}")
-                    break
-
-                results = response.json().get("results", [])
-                if not results:
-                    break
-
-                # Delete each memory
-                deleted_this_batch = 0
-                for r in results:
-                    memory_id = r.get("id")
-                    if memory_id:
-                        try:
-                            resp = requests.delete(
-                                f"{self.config.base_url}/memory/{memory_id}",
-                                headers=self.headers,
-                                timeout=5,
-                            )
-                            if resp.status_code in [200, 204]:
-                                deleted_this_batch += 1
-                        except Exception as e:
-                            print(f"WARNING: Failed to delete {memory_id}: {e}")
-
-                total_deleted += deleted_this_batch
-
-                if iteration % 10 == 0:
-                    print(f"  Cleanup progress: {total_deleted} deleted ({iteration} batches)...")
-
-                # No progress — break to avoid infinite loop
-                if deleted_this_batch == 0:
-                    print(f"WARNING: No deletions in batch {iteration}, stopping cleanup")
-                    break
-
-                # If fewer than 100 returned, we're done
-                if len(results) < 100:
-                    break
-
-            if iteration >= max_iterations:
-                print(
-                    f"WARNING: Hit max cleanup iterations ({max_iterations}), {total_deleted} deleted so far"
-                )
-                return False
-
+            total_deleted = self.backend.cleanup_scope(tag_prefix)
             print(f"Cleaned up {total_deleted} test memories")
             return True
 
@@ -316,6 +278,7 @@ class LoCoMoEvaluator:
                         "importance": self.config.importance_threshold,
                         "metadata": metadata,
                         "type": "Context",
+                        "_benchmark_id": dia_id,
                         "_dia_id": dia_id,  # Internal tracking, stripped before send
                     }
                 )
@@ -335,11 +298,11 @@ class LoCoMoEvaluator:
 
         all_memories = self._prepare_conversation_memories(conversation, sample_id)
         self._cache_prepared_memories(sample_id, all_memories)
-
-        if self._has_batch_api():
-            return self._load_batch(all_memories, sample_id)
-        else:
-            return self._load_individual(all_memories, sample_id)
+        return self.backend.ingest_memories(
+            all_memories,
+            scope_id=sample_id,
+            batch_size=100,
+        )
 
     def _cache_prepared_memories(self, sample_id: str, memories: List[Dict[str, Any]]) -> None:
         """Cache prepared conversation memories locally by dialog ID for evidence lookup."""
@@ -348,7 +311,7 @@ class LoCoMoEvaluator:
             dialog_id = memory.get("_dia_id")
             if not dialog_id:
                 continue
-            memory_index[dialog_id] = {k: v for k, v in memory.items() if k != "_dia_id"}
+            memory_index[dialog_id] = {k: v for k, v in memory.items() if not k.startswith("_")}
         self.local_conversation_memories[sample_id] = memory_index
 
     def _load_batch(self, memories: List[Dict[str, Any]], sample_id: str) -> Dict[str, str]:
@@ -708,17 +671,18 @@ class LoCoMoEvaluator:
                 params["auto_decompose"] = "true"
                 params["expand_entities"] = "true"  # Enable entity-to-entity expansion
 
-            response = requests.get(
-                f"{self.config.base_url}/recall", headers=self.headers, params=params
+            records = self.backend.search(
+                SearchRequest(
+                    query=query,
+                    scope_id=sample_id,
+                    limit=limit,
+                    tags=[f"conversation:{sample_id}"],
+                    tag_match="exact",
+                    auto_decompose=is_multihop,
+                    expand_entities=is_multihop,
+                )
             )
-
-            memories = []
-            if response.status_code == 200:
-                result = response.json()
-                # AutoMem returns "results" with nested "memory" objects
-                results = result.get("results", [])
-                # Extract the memory objects from each result
-                memories = [r.get("memory", {}) for r in results if "memory" in r]
+            memories = [self._record_to_memory(record) for record in records]
 
             # Multi-hop enhancement: Also fetch memories by speaker tag
             # This catches memories that semantic search misses
@@ -726,27 +690,28 @@ class LoCoMoEvaluator:
                 # Extract person names from question
                 speaker_name = self._extract_speaker_from_question(question)
                 if speaker_name:
-                    speaker_response = requests.get(
-                        f"{self.config.base_url}/recall",
-                        headers=self.headers,
-                        params=[
-                            ("tags", f"speaker:{speaker_name.lower()}"),
-                            ("tags", f"conversation:{sample_id}"),
-                            ("tag_mode", "all"),
-                            ("tag_match", "exact"),
-                            ("limit", "50"),
-                        ],
+                    speaker_records = self.backend.search(
+                        SearchRequest(
+                            query="",
+                            scope_id=sample_id,
+                            limit=50,
+                            tags=[
+                                f"speaker:{speaker_name.lower().replace(' ', '-')}",
+                                f"conversation:{sample_id}",
+                            ],
+                            tag_mode="all",
+                            tag_match="exact",
+                            speaker=speaker_name,
+                        )
                     )
-                    if speaker_response.status_code == 200:
-                        speaker_results = speaker_response.json().get("results", [])
-                        speaker_memories = [
-                            r.get("memory", {}) for r in speaker_results if "memory" in r
-                        ]
-                        # Add unique speaker memories not already in results
-                        existing_ids = {m.get("id") for m in memories if m.get("id")}
-                        for sm in speaker_memories:
-                            if sm.get("id") not in existing_ids:
-                                memories.append(sm)
+                    speaker_memories = [
+                        self._record_to_memory(record) for record in speaker_records
+                    ]
+                    # Add unique speaker memories not already in results
+                    existing_ids = {m.get("id") for m in memories if m.get("id")}
+                    for sm in speaker_memories:
+                        if sm.get("id") not in existing_ids:
+                            memories.append(sm)
 
             return memories
 
@@ -812,27 +777,21 @@ class LoCoMoEvaluator:
             return evidence_memories
 
         try:
-            response = requests.get(
-                f"{self.config.base_url}/recall",
-                headers=self.headers,
-                params={
-                    "query": "",
-                    "limit": 1000,
-                    "tags": f"conversation:{sample_id}",
-                    "tag_match": "exact",
-                },
-                timeout=10,
+            records = self.backend.search(
+                SearchRequest(
+                    query="",
+                    scope_id=sample_id,
+                    limit=1000,
+                    tags=[f"conversation:{sample_id}"],
+                    tag_match="exact",
+                )
             )
-
-            if response.status_code == 200:
-                result = response.json()
-                results = result.get("results", [])
-                all_memories = [r.get("memory", {}) for r in results if "memory" in r]
-                for memory in all_memories:
-                    metadata = memory.get("metadata", {})
-                    dialog_id = metadata.get("dialog_id", "")
-                    if dialog_id in evidence_dialog_ids:
-                        evidence_memories.append(memory)
+            for record in records:
+                memory = self._record_to_memory(record)
+                metadata = memory.get("metadata", {})
+                dialog_id = metadata.get("dialog_id", "")
+                if dialog_id in evidence_dialog_ids:
+                    evidence_memories.append(memory)
         except Exception as e:
             print(f"⚠️  Evidence fetch error: {e}")
 
@@ -878,23 +837,15 @@ class LoCoMoEvaluator:
 
             for mem_id in memory_ids:
                 try:
-                    # Query AutoMem's graph traversal endpoint
-                    response = requests.get(
-                        f"{self.config.base_url}/memories/{mem_id}/related",
-                        headers=self.headers,
-                        params={
-                            # Include enrichment + temporal + creative relations
-                            "relationship_types": "RELATES_TO,LEADS_TO,PART_OF,DERIVED_FROM,SIMILAR_TO,PRECEDED_BY,EXPLAINS,SHARES_THEME,PARALLEL_CONTEXT",
-                            "max_depth": 2,  # Two hops tends to be enough for LoCoMo
-                            "limit": 8,  # Slightly higher cap per seed
-                        },
-                        timeout=5,
+                    related_records = self.backend.related_memories(
+                        mem_id,
+                        relationship_types="RELATES_TO,LEADS_TO,PART_OF,DERIVED_FROM,SIMILAR_TO,PRECEDED_BY,EXPLAINS,SHARES_THEME,PARALLEL_CONTEXT",
+                        max_depth=2,
+                        limit=8,
                     )
-
-                    if response.status_code == 200:
-                        result = response.json()
-                        related = result.get("related_memories", [])
-                        connected_memories.extend(related)
+                    connected_memories.extend(
+                        self._record_to_memory(record) for record in related_records
+                    )
 
                 except Exception as e:
                     print(f"WARNING: Graph traversal failed for {mem_id}: {e}")
@@ -1659,14 +1610,14 @@ Respond with ONLY a JSON object:
         Returns comprehensive results including per-category accuracy.
         """
         print("\n" + "=" * 60)
-        print("AutoMem LoCoMo Benchmark Evaluation")
+        print(f"{self.backend.name} LoCoMo Benchmark Evaluation")
         print("=" * 60)
 
         # Health check
-        print("\nChecking AutoMem health...")
+        print(f"\nChecking {self.backend.name} health...")
         if not self.health_check():
-            raise ConnectionError("AutoMem API is not accessible")
-        print("AutoMem is healthy")
+            raise ConnectionError(f"{self.backend.name} backend is not accessible")
+        print(f"{self.backend.name} is healthy")
 
         if ingest_only and eval_only:
             raise ValueError("ingest_only and eval_only are mutually exclusive")
@@ -1856,6 +1807,7 @@ Respond with ONLY a JSON object:
                 "total": total_questions,
                 "elapsed_time": elapsed_time,
             },
+            "backend": self.backend.name,
             "judge_requested": bool(self.config.judge_model),
             "judge_available": bool(self.config.judge_model and self.openai_client),
             "judge_model": self.config.judge_model,
@@ -1883,12 +1835,23 @@ def main():
     parser.add_argument(
         "--base-url",
         default=os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001"),
-        help="AutoMem API base URL",
+        help="Backend API base URL",
     )
     parser.add_argument(
         "--api-token",
         default=os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token"),
-        help="AutoMem API token",
+        help="Backend API token",
+    )
+    parser.add_argument(
+        "--backend",
+        default="automem",
+        choices=["automem"],
+        help="Memory backend to benchmark (cross-backend runs live in automem-evals)",
+    )
+    parser.add_argument(
+        "--work-dir",
+        default=None,
+        help="Optional working directory for local backends like mempalace",
     )
     parser.add_argument("--data-file", default=None, help="Path to locomo10.json")
     parser.add_argument(
@@ -1938,7 +1901,11 @@ def main():
 
     # Build config
     config = LoCoMoConfig(
-        base_url=args.base_url, api_token=args.api_token, recall_limit=args.recall_limit
+        backend=args.backend,
+        base_url=args.base_url,
+        api_token=args.api_token,
+        recall_limit=args.recall_limit,
+        work_dir=args.work_dir,
     )
 
     if args.data_file:

@@ -15,9 +15,11 @@ from typing import Dict, List, Optional
 class LongMemEvalConfig:
     """Configuration for LongMemEval benchmark evaluation."""
 
-    # AutoMem API settings
+    # Backend settings
+    backend: str = "automem"
     base_url: str = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
     api_token: str = os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token")
+    work_dir: Optional[str] = None
 
     # Dataset paths
     data_file: str = str(Path(__file__).parent / "data" / "longmemeval_s_cleaned.json")

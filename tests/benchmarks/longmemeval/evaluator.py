@@ -271,7 +271,9 @@ class LongMemEvalScorer:
         if not self.results:
             return {
                 "overall": {"accuracy": 0.0, "correct": 0, "total": 0},
+                "retrieval": {"recall_any_at_5": 0.0, "hits": 0, "total": 0},
                 "by_type": {},
+                "retrieval_by_type": {},
                 "abstention": {"total": 0, "correct": 0, "accuracy": 0.0},
             }
 
@@ -281,22 +283,33 @@ class LongMemEvalScorer:
 
         # By question type
         by_type = {}
+        retrieval_by_type = {}
         for r in self.results:
             qtype = r.get("question_type", "unknown")
             if qtype not in by_type:
                 by_type[qtype] = {"correct": 0, "total": 0}
+            if qtype not in retrieval_by_type:
+                retrieval_by_type[qtype] = {"hits": 0, "total": 0}
             by_type[qtype]["total"] += 1
+            retrieval_by_type[qtype]["total"] += 1
             if r.get("is_correct", False):
                 by_type[qtype]["correct"] += 1
+            if r.get("recall_hit_at_5", False):
+                retrieval_by_type[qtype]["hits"] += 1
 
         for qtype in by_type:
             t = by_type[qtype]
             t["accuracy"] = t["correct"] / t["total"] if t["total"] > 0 else 0.0
             t["name"] = self.TYPE_NAMES.get(qtype, qtype)
+        for qtype in retrieval_by_type:
+            t = retrieval_by_type[qtype]
+            t["recall_any_at_5"] = t["hits"] / t["total"] if t["total"] > 0 else 0.0
+            t["name"] = self.TYPE_NAMES.get(qtype, qtype)
 
         # Abstention stats
         abs_results = [r for r in self.results if r.get("is_abstention", False)]
         abs_correct = sum(1 for r in abs_results if r.get("is_correct", False))
+        retrieval_hits = sum(1 for r in self.results if r.get("recall_hit_at_5", False))
 
         return {
             "overall": {
@@ -304,7 +317,13 @@ class LongMemEvalScorer:
                 "correct": correct,
                 "total": total,
             },
+            "retrieval": {
+                "recall_any_at_5": retrieval_hits / total if total > 0 else 0.0,
+                "hits": retrieval_hits,
+                "total": total,
+            },
             "by_type": by_type,
+            "retrieval_by_type": retrieval_by_type,
             "abstention": {
                 "total": len(abs_results),
                 "correct": abs_correct,
@@ -318,6 +337,7 @@ class LongMemEvalScorer:
         """Print a formatted benchmark report."""
         scores = self.compute_scores()
         overall = scores["overall"]
+        retrieval = scores["retrieval"]
 
         print(f"\n{'='*60}")
         print("LongMemEval Benchmark Results")
@@ -329,6 +349,9 @@ class LongMemEvalScorer:
         print(
             f"\nOverall Accuracy: {overall['accuracy']:.2%} ({overall['correct']}/{overall['total']})"
         )
+        print(
+            f"Retrieval Recall@5: {retrieval['recall_any_at_5']:.2%} ({retrieval['hits']}/{retrieval['total']})"
+        )
 
         print("\nAccuracy by Question Type:")
         print(f"  {'Type':<35s} {'Accuracy':>8s} {'Count':>8s}")
@@ -338,6 +361,15 @@ class LongMemEvalScorer:
             name = data.get("name", qtype)
             acc = data["accuracy"]
             count = f"{data['correct']}/{data['total']}"
+            print(f"  {name:<35s} {acc:>7.1%} {count:>8s}")
+
+        print("\nRetrieval Recall@5 by Question Type:")
+        print(f"  {'Type':<35s} {'Recall@5':>8s} {'Count':>8s}")
+        print(f"  {'-'*35} {'-'*8} {'-'*8}")
+        for qtype, data in sorted(scores["retrieval_by_type"].items()):
+            name = data.get("name", qtype)
+            acc = data["recall_any_at_5"]
+            count = f"{data['hits']}/{data['total']}"
             print(f"  {name:<35s} {acc:>7.1%} {count:>8s}")
 
         # Abstention
