@@ -42,6 +42,8 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 
 **Source of truth**: `benchmarks/EXPERIMENT_LOG.md` — contains current baselines, all experiment results, and the tiered benchmark table.
 
+`automem` is the canonical home for official benchmark harnesses and published benchmark numbers. Use the separate `automem-evals` repo for exploratory ruleset work, seeded corpora, scenario authoring, cross-agent or cross-backend comparisons, and bulky timestamped result artifacts. External eval repos should treat AutoMem as a black-box service and follow `docs/EVALS_CONTRACT.md`.
+
 ### Tiered System
 
 | Tier | Benchmark | Command | Runtime | Cost | When to use |

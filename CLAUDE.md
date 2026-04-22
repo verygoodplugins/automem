@@ -327,6 +327,60 @@ The `scripts/` directory contains maintenance and recovery tools:
 
 ### Local Development Bootstrap
 - **scripts/bootstrap_dev.sh** - Creates `.venv` with Python 3.12, refreshes `venv -> .venv`, installs dev dependencies, and installs pre-commit hooks
+
+### Benchmark Ownership
+- Official benchmark claims, baselines, and release-gating benchmark flows stay in `automem`.
+- Exploratory eval work such as ruleset sweeps, seeded corpora, scenario authoring, and cross-agent/back-end comparisons belongs in `automem-evals`.
+- External eval repos should use the local service contract documented in `docs/EVALS_CONTRACT.md`.
+
+### Database Browser (`scripts/browse_memories.py`)
+
+Interactive CLI for browsing production FalkorDB + Qdrant databases. Connects using `.env` credentials. Read-only — never modifies data.
+
+#### Subcommands
+
+**`search`** — Find memories by text, date, type, tag, or importance:
+```bash
+# All October 2025 memories
+python scripts/browse_memories.py search --from 2025-10 --to 2025-10
+
+# Text search with date filter
+python scripts/browse_memories.py search --text "Eva" --from 2025-10
+
+# Filter by type and importance
+python scripts/browse_memories.py search --type Decision --min-importance 0.8
+
+# Sort by relevance, cap at 50 results
+python scripts/browse_memories.py search --sort relevance -n 50
+
+# Include archived memories (excluded by default)
+python scripts/browse_memories.py search --text "old project" --include-archived
+```
+
+Output shows: ID, datetime, type, importance, relevance, confidence, relationship count, content preview, tags, and entity tags. Ends with a summary of type distribution, importance stats, top tags, and relationship totals.
+
+**`inspect <id>`** — Deep-dive into a single memory:
+```bash
+python scripts/browse_memories.py inspect 2751e70e   # 4+ char prefix works
+python scripts/browse_memories.py inspect 2751e70e-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+Shows: full content, all FalkorDB properties, Qdrant presence/payload, and all graph relationships (outgoing + incoming with type, strength, and related content).
+
+**`stats`** — Database overview:
+```bash
+python scripts/browse_memories.py stats          # Quick stats
+python scripts/browse_memories.py stats --full   # + FalkorDB/Qdrant consistency check
+```
+
+Shows: total count, date range, archived count, memories by month (bar chart), type distribution, importance buckets. With `--full`, compares all IDs between FalkorDB and Qdrant and reports mismatches.
+
+**`diagnose <id>`** — Why a memory isn't surfacing in recall:
+```bash
+python scripts/browse_memories.py diagnose 2751e70e
+```
+
+Checks: FalkorDB existence, archived status, Qdrant presence + embedding quality, recency score (180-day decay), simulated relevance score breakdown (decay factor, access factor, relationship factor, importance floor), and current search weight config. Reports issues at `[CRITICAL]`, `[WARNING]`, and `[INFO]` severity levels.
 ### Recall Quality Lab (`scripts/lab/`)
 - **clone_production.sh** - Clone production FalkorDB + Qdrant data to local Docker for safe testing
 - **create_test_queries.py** - Generate test queries with expected results from local data

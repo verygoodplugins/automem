@@ -41,5 +41,7 @@ node_modules/
 .env.bench
 /benchmarks/snapshots/
 /benchmarks/results/
+/benchmarks/public_comparison/
+/scripts/bench/sweep_*.json
 benchmarks/baselines/locomo_baseline.json
 data/bm25_index.db

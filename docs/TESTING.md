@@ -314,6 +314,18 @@ If you run without the judge, category 5 will show as `N/A` and the comparison s
 
 Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
 
+## Benchmark Ownership
+
+`automem` is the canonical home for official benchmark harnesses, published baselines, and any benchmark numbers referenced in docs, CI, or release notes.
+
+Use the separate `automem-evals` repo for:
+- ruleset experimentation
+- scenario authoring and seeded corpora
+- cross-agent or cross-backend comparisons
+- bulky timestamped result artifacts and exploratory writeups
+
+If you are building an external eval harness against local AutoMem, use the contract in [`EVALS_CONTRACT.md`](EVALS_CONTRACT.md) and treat this repo as the system under test.
+
 ### AutoMem's Advantages
 
 AutoMem is expected to perform well due to:

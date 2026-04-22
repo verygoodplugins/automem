@@ -16,6 +16,8 @@
 
 AutoMem is a **production-grade long-term memory system** for AI assistants with transparent [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) baselines (ACL 2024): **89.27%** on `locomo-mini` categories 1-4 with category 5 skipped, and **87.56%** on full `locomo` with the opt-in category-5 judge enabled. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology and current baselines.
 
+This repository is the canonical home for official AutoMem benchmark harnesses, published baselines, and any benchmark numbers referenced in docs, releases, or CI. Exploratory eval work such as ruleset sweeps, scenario authoring, cross-agent comparisons, and bulky timestamped artifacts belongs in the separate `automem-evals` repo.
+
 **Deploy in 60 seconds:**
 
 ```bash
