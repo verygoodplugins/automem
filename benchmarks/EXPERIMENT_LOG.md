@@ -38,6 +38,14 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 2026-03-11 | #74 entity expansion | exp/74-entity-expansion-precision-v1 | 89.36% (+0.0) | -- | -- | Hub-node detection. Zero delta — benchmark doesn't exercise graph expansion. → [postmortem](postmortems/2026-03-11_issue74_entity_expansion_precision.md) |
 | 2026-03-12 | #79 (PR #125) | exp/79-priority-ids-fetch-v1 | 89.36% (+0.0) | -- | -- | Bug fix: priority_ids now fetches by ID. Merged. → [postmortem](postmortems/2026-03-12_issue79_priority_ids_fetch.md) |
 
+### 2026-04-23 - #142 scoped relation expansion
+
+- Branch: `fix/142-expansion-tag-filter`
+- Live repro after restart: scoped `GET /recall?query=rate limiter redis scan&tags=issue-142-scope&tag_match=exact&expand_relations=true` now returns `expanded_count: 1`; the same request with `expand_respect_tags=true` returns `expanded_count: 0`.
+- Full LoCoMo regression on this branch stayed effectively flat in the current no-judge environment: `77.30%` vs `77.37%` before the fix.
+- Full LongMemEval on this machine is not comparable to published numbers because `OPENAI_API_KEY` is unset and the harness falls back to returning the top memory content verbatim; this branch run scored `35.60%` accuracy with `97.00%` retrieval `Recall@5`.
+- Conclusion: the fix is validated by targeted scoped-expansion repros and helper/API tests; current canonical baseline configs do not meaningfully exercise `expand_relations`, so no benchmark promotion yet.
+
 ### Category Breakdown (LoCoMo-mini)
 
 Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-in LLM judge when `BENCH_JUDGE_MODEL` or `--judge` is enabled; otherwise it remains `N/A`.

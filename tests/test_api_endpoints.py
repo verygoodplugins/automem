@@ -1336,6 +1336,209 @@ def test_expand_related_memories_normalizes_legacy_discovered_relations():
     assert relation_info["kind"] == "explains"
 
 
+def test_expand_related_memories_bypasses_tag_filter_by_default():
+    seed_id = "33333333-0000-0000-0000-000000000001"
+    related_id = "33333333-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["rate", "limiter"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="exact",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][3] is None
+
+
+def test_expand_related_memories_respects_tags_when_opted_in():
+    seed_id = "44444444-0000-0000-0000-000000000001"
+    related_id = "44444444-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "DERIVED_FROM",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="auth generic pattern",
+        query_tokens=["auth", "pattern"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="exact",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"DERIVED_FROM"},
+        logger=Mock(),
+        expand_respect_tags=True,
+    )
+
+    assert results == []
+
+
+def test_expand_related_memories_still_honors_exclude_tags():
+    seed_id = "55555555-0000-0000-0000-000000000001"
+    related_id = "55555555-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "REINFORCES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[6] == ["archived"] and args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="cross project logging",
+        query_tokens=["logging"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="exact",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"REINFORCES"},
+        logger=Mock(),
+        exclude_tags=["archived"],
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][6] == ["archived"]
+
+
+def test_expand_related_memories_still_honors_time_window():
+    seed_id = "66666666-0000-0000-0000-000000000001"
+    related_id = "66666666-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return (
+            args[1] == "2026-01-01T00:00:00Z"
+            and args[2] == "2026-12-31T23:59:59Z"
+            and args[3] is None
+        )
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["redis"],
+        context_profile=None,
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-12-31T23:59:59Z",
+        tag_filters=["tensor-pipeline"],
+        tag_mode="exact",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][1] == "2026-01-01T00:00:00Z"
+    assert seen_filter_args[0][2] == "2026-12-31T23:59:59Z"
+
+
 def test_relation_taxonomy_sets_are_consistent():
     assert config.AUTHORABLE_RELATIONS == {
         "RELATES_TO",

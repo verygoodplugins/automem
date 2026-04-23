@@ -970,6 +970,7 @@ def _expand_related_memories(
     expand_min_strength: Optional[float] = None,
     expand_min_importance: Optional[float] = None,
     exclude_tags: Optional[List[str]] = None,
+    expand_respect_tags: bool = False,
 ) -> List[Dict[str, Any]]:
     if graph is None or not seed_results or expansion_limit <= 0:
         return []
@@ -1062,8 +1063,17 @@ def _expand_related_memories(
                         continue
                 except (TypeError, ValueError):
                     continue
+            candidate_tag_filters = tag_filters if expand_respect_tags else None
+            candidate_tag_mode = tag_mode if expand_respect_tags else "any"
+            candidate_tag_match = tag_match if expand_respect_tags else "exact"
             if not result_passes_filters(
-                candidate, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                candidate,
+                start_time,
+                end_time,
+                candidate_tag_filters,
+                candidate_tag_mode,
+                candidate_tag_match,
+                exclude_tags,
             ):
                 continue
 
@@ -1253,6 +1263,10 @@ def handle_recall(
         request.args.get("expand_relations")
         or request.args.get("expand_associations")
         or request.args.get("expand"),
+        False,
+    )
+    expand_respect_tags = _parse_bool_param(
+        request.args.get("expand_respect_tags"),
         False,
     )
 
@@ -1589,6 +1603,7 @@ def handle_recall(
             expand_min_strength=expand_min_strength,
             expand_min_importance=expand_min_importance,
             exclude_tags=exclude_tags,
+            expand_respect_tags=expand_respect_tags,
         )
         results = seed_results + expansion_results
 
@@ -1606,14 +1621,23 @@ def handle_recall(
             limit_per_entity=5,
             total_limit=expansion_limit,
             logger=logger,
-            additional_tag_filters=tag_filters,  # Pass conversation tag filter
+            additional_tag_filters=tag_filters if expand_respect_tags else None,
         )
-        if start_time or end_time or tag_filters or exclude_tags:
+        entity_tag_filters = tag_filters if expand_respect_tags else None
+        entity_tag_mode = tag_mode if expand_respect_tags else "any"
+        entity_tag_match = tag_match if expand_respect_tags else "exact"
+        if start_time or end_time or entity_tag_filters or exclude_tags:
             entity_expansion_results = [
                 r
                 for r in entity_expansion_results
                 if result_passes_filters(
-                    r, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                    r,
+                    start_time,
+                    end_time,
+                    entity_tag_filters,
+                    entity_tag_mode,
+                    entity_tag_match,
+                    exclude_tags,
                 )
             ]
         results = seed_results + expansion_results + entity_expansion_results
@@ -1676,6 +1700,7 @@ def handle_recall(
             "expanded_count": len(expansion_results),
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
+            "respect_tags": expand_respect_tags,
         }
     if expand_entities:
         response["entity_expansion"] = {
