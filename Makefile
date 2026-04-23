@@ -1,12 +1,15 @@
 # Makefile - Development commands
 .PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-health
 
+VENV_DIR := $(if $(wildcard .venv/bin/python),.venv,venv)
+VENV_BIN := $(VENV_DIR)/bin
+
 # Default target
 help:
 	@echo "🧠 FalkorDB Memory System - Development Commands"
 	@echo ""
 	@echo "Setup:"
-	@echo "  make install    - Set up virtual environment and dependencies"
+	@echo "  make install    - Set up .venv and install dependencies"
 	@echo "  make dev        - Start local development environment"
 	@echo ""
 	@echo "Development:"
@@ -40,11 +43,9 @@ help:
 # Set up development environment
 install:
 	@echo "🔧 Setting up development environment..."
-	python3 -m venv venv
-	./venv/bin/pip install --upgrade pip
-	./venv/bin/pip install -r requirements-dev.txt
+	@bash scripts/bootstrap_dev.sh
 	@echo "✅ Virtual environment ready!"
-	@echo "💡 Run 'source venv/bin/activate' to activate"
+	@echo "💡 Run 'source .venv/bin/activate' to activate"
 
 # Start local development
 dev:
@@ -54,22 +55,22 @@ dev:
 # Run tests
 test:
 	@echo "🧪 Running unit tests..."
-	@if [ ! -x "./venv/bin/pytest" ]; then \
-		echo "🔧 ./venv/bin/pytest not found; bootstrapping with 'make install'..."; \
+	@if [ ! -x "$(VENV_BIN)/pytest" ]; then \
+		echo "🔧 $(VENV_BIN)/pytest not found; bootstrapping with 'make install'..."; \
 		$(MAKE) install; \
 	fi
-	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m unit
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest -rs -m unit
 
 # Format code
 fmt:
 	@echo "✨ Formatting code (black + isort) ..."
-	./venv/bin/black .
-	./venv/bin/isort .
+	$(VENV_BIN)/black .
+	$(VENV_BIN)/isort .
 
 # Lint code
 lint:
 	@echo "🔍 Linting (flake8) ..."
-	./venv/bin/flake8 .
+	$(VENV_BIN)/flake8 .
 
 # Run integration tests (requires Docker services)
 test-integration:
@@ -79,7 +80,7 @@ test-integration:
 	@echo "⏳ Waiting for services to be ready..."
 	@sleep 5
 	@echo "🧪 Running tests..."
-	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m integration
+	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest -rs -m integration
 
 # Run integration tests against live Railway server
 test-live:

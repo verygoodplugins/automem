@@ -10,8 +10,8 @@ AutoMem is a Flask-based memory service that provides durable memory storage for
 
 ```bash
 # Setup environment
-make install          # Create venv and install dependencies
-source venv/bin/activate
+make install          # Create .venv, install deps, and keep venv -> .venv
+source .venv/bin/activate
 
 # Development
 make dev             # Start full stack (FalkorDB + Qdrant + API) via Docker
@@ -325,6 +325,8 @@ The `scripts/` directory contains maintenance and recovery tools:
 ### Monitoring
 - **health_monitor.py** - Health monitoring service for production deployments
 
+### Local Development Bootstrap
+- **scripts/bootstrap_dev.sh** - Creates `.venv` with Python 3.12, refreshes `venv -> .venv`, installs dev dependencies, and installs pre-commit hooks
 ### Recall Quality Lab (`scripts/lab/`)
 - **clone_production.sh** - Clone production FalkorDB + Qdrant data to local Docker for safe testing
 - **create_test_queries.py** - Generate test queries with expected results from local data

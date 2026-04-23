@@ -32,8 +32,11 @@ Memory
 - DELETE `/memory/{id}`
   - Response: `{ "status": "success", "memory_id": "..." }`
 
-- GET `/memory/by-tag?tags=foo&tags=bar&limit=20`
-  - Response: `{ "status": "success", "tags": ["foo","bar"], "count": N, "memories": [...] }`
+- GET `/memory/by-tag?tags=foo&tags=bar&limit=20&offset=0`
+  - Response: `{ "status": "success", "tags": ["foo","bar"], "count": N, "limit": 20, "offset": 0, "has_more": false, "memories": [...] }`
+
+- DELETE `/memory/by-tag?tags=foo&tags=bar`
+  - Response: `{ "status": "success", "tags": ["foo","bar"], "deleted_count": N }`
 
 - POST `/associate`
   - Body: `{ "memory1_id": "...", "memory2_id": "...", "type": "RELATES_TO", "strength": 0.9 }`

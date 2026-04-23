@@ -69,6 +69,10 @@ class MockQdrantClient:
             for point_id in points_selector.points:
                 if point_id in self.points:
                     del self.points[point_id]
+        elif isinstance(points_selector, dict):
+            for point_id in points_selector.get("points", []):
+                if point_id in self.points:
+                    del self.points[point_id]
 
     def scroll(self, collection_name, scroll_filter=None, limit=10, with_payload=True):
         """Mock scroll to support tag-only queries."""
@@ -720,6 +724,9 @@ def test_memory_by_tag_single(client, mock_state, auth_headers):
     data = response.get_json()
     assert data["status"] == "success"
     assert "memories" in data  # API returns 'memories' not 'results'
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert data["has_more"] is False
 
 
 def test_memory_by_tag_multiple(client, mock_state, auth_headers):
@@ -734,6 +741,101 @@ def test_memory_by_tag_no_tags(client, mock_state, auth_headers):
     """Test error when no tags provided."""
     response = client.get("/memory/by-tag", headers=auth_headers)
     assert response.status_code == 400
+
+
+def test_memory_by_tag_pagination(client, mock_state, auth_headers):
+    """Test offset pagination for /memory/by-tag."""
+    tag = "paged-tag"
+    timestamp = utc_now()
+    for i in range(205):
+        memory_id = f"00000000-0000-0000-0000-{i:012d}"
+        memory = {
+            "id": memory_id,
+            "content": f"Paged memory {i}",
+            "tags": [tag],
+            "importance": 0.5,
+            "timestamp": timestamp,
+        }
+        mock_state.memory_graph.memories[memory_id] = memory
+
+    first = client.get("/memory/by-tag?tags=paged-tag&limit=200", headers=auth_headers)
+    assert first.status_code == 200
+    first_data = first.get_json()
+    assert first_data["count"] == 200
+    assert first_data["limit"] == 200
+    assert first_data["offset"] == 0
+    assert first_data["has_more"] is True
+
+    second = client.get("/memory/by-tag?tags=paged-tag&limit=200&offset=200", headers=auth_headers)
+    assert second.status_code == 200
+    second_data = second.get_json()
+    assert second_data["count"] == 5
+    assert second_data["limit"] == 200
+    assert second_data["offset"] == 200
+    assert second_data["has_more"] is False
+
+    first_ids = {memory["id"] for memory in first_data["memories"]}
+    second_ids = {memory["id"] for memory in second_data["memories"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_memory_by_tag_invalid_offset_normalized(client, mock_state, auth_headers):
+    """Test invalid or negative offset normalizes to zero."""
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab",
+        "content": "Offset memory",
+        "tags": ["offset-tag"],
+        "importance": 0.8,
+        "timestamp": utc_now(),
+    }
+
+    invalid = client.get("/memory/by-tag?tags=offset-tag&offset=nope", headers=auth_headers)
+    assert invalid.status_code == 200
+    invalid_data = invalid.get_json()
+    assert invalid_data["offset"] == 0
+    assert invalid_data["count"] == 1
+
+    negative = client.get("/memory/by-tag?tags=offset-tag&offset=-10", headers=auth_headers)
+    assert negative.status_code == 200
+    negative_data = negative.get_json()
+    assert negative_data["offset"] == 0
+    assert negative_data["count"] == 1
+
+
+def test_delete_memory_by_tag_bulk(client, mock_state, auth_headers):
+    """Test bulk delete by tag removes graph and vector entries."""
+    tag = "bulk-delete-tag"
+    for i in range(3):
+        memory_id = f"00000000-0000-0000-0000-0000000001{i:02d}"
+        payload = {
+            "content": f"Bulk delete memory {i}",
+            "tags": [tag],
+            "importance": 0.7,
+            "timestamp": utc_now(),
+        }
+        mock_state.memory_graph.memories[memory_id] = {"id": memory_id, **payload}
+        mock_state.qdrant.points[memory_id] = {"vector": [0.1] * 3, "payload": payload}
+
+    response = client.delete("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": [tag], "deleted_count": 3}
+
+    follow_up = client.get("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert follow_up.status_code == 200
+    follow_up_data = follow_up.get_json()
+    assert follow_up_data["count"] == 0
+    assert follow_up_data["has_more"] is False
+    deleted_ids = [f"00000000-0000-0000-0000-0000000001{i:02d}" for i in range(3)]
+    assert all(point_id not in mock_state.qdrant.points for point_id in deleted_ids)
+
+
+def test_delete_memory_by_tag_no_matches(client, mock_state, auth_headers):
+    """Test bulk delete by tag succeeds with zero matches."""
+    response = client.delete("/memory/by-tag?tags=missing-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": ["missing-tag"], "deleted_count": 0}
 
 
 # ==================== Test Admin Reembed ====================
