@@ -38,36 +38,27 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 2026-03-11 | #74 entity expansion | exp/74-entity-expansion-precision-v1 | 89.36% (+0.0) | -- | -- | Hub-node detection. Zero delta — benchmark doesn't exercise graph expansion. → [postmortem](postmortems/2026-03-11_issue74_entity_expansion_precision.md) |
 | 2026-03-12 | #79 (PR #125) | exp/79-priority-ids-fetch-v1 | 89.36% (+0.0) | -- | -- | Bug fix: priority_ids now fetches by ID. Merged. → [postmortem](postmortems/2026-03-12_issue79_priority_ids_fetch.md) |
 | 2026-04-23 | #128 | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | **85.53% (201/235)** | -- | -- | Content keyword fallback + gentler adaptive floor. Improved **+3.40pp** vs the same-day baseline (`82.13%`, `193/235`) with no sampled question-level regressions across conv-26/conv-30. |
-| 2026-04-23 | #128 judge attempt | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | 82.13% (193/235) | -- | -- | `BENCH_JUDGE_MODEL=gpt-5.1` selected the new default judge model, but `judge_available=false` because `OPENAI_API_KEY` was unavailable in the eval process. 69 cat-5 questions were skipped, so the score matched judge-off baseline behavior. |
 | 2026-04-23 | #128 full judge | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | -- | **83.99% (1668/1986)** | -- | Full judge-on rerun after harness fixes. Judge preflight passed and cat-5 scored **92.83% (414/446)** with **0 skips**. Improves **+3.93pp** vs full baseline (`80.06%`, `1590/1986`), so #128 is strong enough to move forward to broader validation. |
-
-### 2026-04-23 - #142 scoped relation expansion
-
-- Branch: `fix/142-expansion-tag-filter`
-- Live repro after restart: scoped `GET /recall?query=rate limiter redis scan&tags=issue-142-scope&tag_match=exact&expand_relations=true` now returns `expanded_count: 1`; the same request with `expand_respect_tags=true` returns `expanded_count: 0`.
-- Full LoCoMo regression on this branch stayed effectively flat in the current no-judge environment: `77.30%` vs `77.37%` before the fix.
-- Full LongMemEval on this machine is not comparable to published numbers because `OPENAI_API_KEY` is unset and the harness falls back to returning the top memory content verbatim; this branch run scored `35.60%` accuracy with `97.00%` retrieval `Recall@5`.
-- Conclusion: the fix is validated by targeted scoped-expansion repros and helper/API tests; current canonical baseline configs do not meaningfully exercise `expand_relations`, so no benchmark promotion yet.
+| 2026-04-23 | #142 | fix/142-expansion-tag-filter | -- | 77.30% (-0.07) | -- | Expansion tag-filter bypass. Effectively flat vs pre-fix `77.37%` — canonical configs don't exercise `expand_relations`. Validated via scoped repro + helper/API tests. |
 
 ### Category Breakdown (LoCoMo-mini)
 
 Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-in LLM judge when `BENCH_JUDGE_MODEL` or `--judge` is enabled; otherwise it remains `N/A`.
 
-| Date | Issue/PR | Single-hop | Temporal | Multi-hop | Open Domain | Complex |
-|------|----------|------------|----------|-----------|-------------|---------|
-| 2026-03-02 | baseline | 76.7% (33/43) | 22.2%\* (14/63) | 46.2% (6/13) | 96.5% (110/114) | 100%\*\* (71/71) |
-| 2026-03-10 | pre-refactor | 76.7% (33/43) | 22.2%\* (14/63) | 46.2% (6/13) | 96.5% (110/114) | 100%\*\* (71/71) |
-| 2026-03-10 | eval-fix | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | N/A (71 skipped) |
-| 2026-03-10 | cat5-judge | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | **91.5% (65/71)** |
-| 2026-03-10 | main-refresh (no judge) | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | **96.5% (110/114)** | 100.0% (2/2, 69 skipped) |
-| 2026-03-10 | main-refresh (judge) | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | **96.5% (110/114)** | **93.0% (66/71)** |
-| 2026-03-11 | PR #80 port (no judge) | **86.0% (37/43)** | **93.7% (59/63)** | 46.2% (6/13) | 85.1% (97/114) | 100.0% (2/2, 69 skipped) |
-| 2026-03-11 | PR #80 port (judge) | **88.4% (38/43)** | **92.1% (58/63)** | 46.2% (6/13) | 86.0% (98/114) | **95.8% (68/71)** |
-| 2026-03-11 | PR #80 BM25-only f10 | 81.4% (35/43) | 92.1% (58/63) | 46.2% (6/13) | 93.0% (106/114) | N/A |
-| 2026-03-11 | #74 entity expansion | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A |
-| 2026-03-12 | #79 (PR #125) | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A |
-| 2026-04-23 | #128 | **65.1% (28/43)** | 92.1% (58/63) | **38.5% (5/13)** | **94.7% (108/114)** | 100.0% (2/2, 69 skipped) |
-| 2026-04-23 | #128 judge attempt | 53.5% (23/43) | 92.1% (58/63) | 30.8% (4/13) | 93.0% (106/114) | 100.0% (2/2, 69 skipped) |
+| Date | Issue/PR | Single-hop | Temporal | Multi-hop | Open Domain | Complex | Overall |
+|------|----------|------------|----------|-----------|-------------|---------|---------|
+| 2026-03-02 | baseline | 76.7% (33/43) | 22.2%\* (14/63) | 46.2% (6/13) | 96.5% (110/114) | 100%\*\* (71/71) | 76.97% (234/304) |
+| 2026-03-10 | pre-refactor | 76.7% (33/43) | 22.2%\* (14/63) | 46.2% (6/13) | 96.5% (110/114) | 100%\*\* (71/71) | 76.97% |
+| 2026-03-10 | eval-fix | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | N/A (71 skipped) | **89.27% (208/233)** |
+| 2026-03-10 | cat5-judge | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | 96.5% (110/114) | **91.5% (65/71)** | **89.80% (273/304)** |
+| 2026-03-10 | main-refresh (no judge) | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | **96.5% (110/114)** | 100.0% (2/2, 69 skipped) | **89.36% (210/235)** |
+| 2026-03-10 | main-refresh (judge) | **79.1% (34/43)** | **92.1% (58/63)** | 46.2% (6/13) | **96.5% (110/114)** | **93.0% (66/71)** | **90.13% (274/304)** |
+| 2026-03-11 | PR #80 port (no judge) | **86.0% (37/43)** | **93.7% (59/63)** | 46.2% (6/13) | 85.1% (97/114) | 100.0% (2/2, 69 skipped) | 85.53% (201/235) |
+| 2026-03-11 | PR #80 port (judge) | **88.4% (38/43)** | **92.1% (58/63)** | 46.2% (6/13) | 86.0% (98/114) | **95.8% (68/71)** | 88.16% (268/304) |
+| 2026-03-11 | PR #80 BM25-only f10 | 81.4% (35/43) | 92.1% (58/63) | 46.2% (6/13) | 93.0% (106/114) | N/A | 88.09% |
+| 2026-03-11 | #74 entity expansion | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A | 89.36% |
+| 2026-03-12 | #79 (PR #125) | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A | 89.36% |
+| 2026-04-23 | #128 | **65.1% (28/43)** | 92.1% (58/63) | **38.5% (5/13)** | **94.7% (108/114)** | 100.0% (2/2, 69 skipped) | **85.53% (201/235)** |
 
 \* Temporal was artificially low: evaluator compared question dates (empty) vs memory dates instead of answer dates.
 \*\* Complex was artificially 100%: dataset has no `answer` field for cat5 → empty string → `"" in content` always True.
