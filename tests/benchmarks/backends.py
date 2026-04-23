@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,6 +96,7 @@ class BenchmarkBackend(ABC):
         *,
         scope_id: str,
         batch_size: int = 100,
+        pause_between_batches: float = 0.0,
     ) -> Dict[str, str]:
         """Store benchmark memories and return benchmark-id -> backend-id mapping."""
 
@@ -159,6 +161,70 @@ class AutoMemBackend(BenchmarkBackend):
         )
         return response.status_code in {200, 204}
 
+    def _build_search_params(
+        self,
+        request: SearchRequest,
+        tags: List[str],
+        *,
+        tag_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "query": request.query,
+            "limit": request.limit,
+            "tags": tags,
+            "tag_match": request.tag_match,
+        }
+        if tag_mode is not None:
+            params["tag_mode"] = tag_mode
+        if request.start:
+            params["start"] = request.start
+        if request.end:
+            params["end"] = request.end
+        if request.expand_entities:
+            params["expand_entities"] = "true"
+        if request.expand_relations:
+            params["expand_relations"] = "true"
+        if request.auto_decompose:
+            params["auto_decompose"] = "true"
+        return params
+
+    @staticmethod
+    def _flatten_results(results: List[Dict[str, Any]]) -> List[MemoryRecord]:
+        flattened: List[MemoryRecord] = []
+        for item in results:
+            memory = item.get("memory") or item
+            memory_id = memory.get("id") or item.get("id")
+            if not memory_id:
+                continue
+            flattened.append(
+                MemoryRecord(
+                    id=str(memory_id),
+                    content=memory.get("content", ""),
+                    metadata=dict(memory.get("metadata") or {}),
+                    tags=list(memory.get("tags") or []),
+                    score=float(item.get("score") or 0.0),
+                    match_type=str(item.get("match_type") or ""),
+                )
+            )
+        return flattened
+
+    def _run_search(
+        self,
+        request: SearchRequest,
+        tags: List[str],
+        *,
+        tag_mode: Optional[str] = None,
+    ) -> List[MemoryRecord]:
+        response = requests.get(
+            urljoin(f"{self.base_url}/", "recall"),
+            headers=self.headers,
+            params=self._build_search_params(request, tags, tag_mode=tag_mode),
+            timeout=30,
+        )
+        if response.status_code != 200:
+            return []
+        return self._flatten_results(response.json().get("results", []))
+
     def cleanup_scope(self, scope_id: str) -> int:
         deleted = 0
         remembered_ids = list(self.created_ids_by_scope.get(scope_id, set()))
@@ -199,11 +265,13 @@ class AutoMemBackend(BenchmarkBackend):
         *,
         scope_id: str,
         batch_size: int = 100,
+        pause_between_batches: float = 0.0,
     ) -> Dict[str, str]:
         memory_map: Dict[str, str] = {}
         scope_tag = self.physical_scope(scope_id)
         for start in range(0, len(memories), batch_size):
             batch = memories[start : start + batch_size]
+            has_more_batches = start + batch_size < len(memories)
             stripped = []
             for memory in batch:
                 payload = _strip_internal_fields(memory)
@@ -229,6 +297,8 @@ class AutoMemBackend(BenchmarkBackend):
                             if benchmark_id:
                                 memory_map[benchmark_id] = str(memory_id)
                                 self.remember_created_id(scope_id, str(memory_id))
+                        if has_more_batches and pause_between_batches > 0:
+                            time.sleep(pause_between_batches)
                         continue
                 except requests.RequestException:
                     pass
@@ -244,55 +314,29 @@ class AutoMemBackend(BenchmarkBackend):
                     if memory_id:
                         memory_map[benchmark_id] = str(memory_id)
                         self.remember_created_id(scope_id, str(memory_id))
+            if has_more_batches and pause_between_batches > 0:
+                time.sleep(pause_between_batches)
         return memory_map
 
     def search(self, request: SearchRequest) -> List[MemoryRecord]:
         scope_tag = self.physical_scope(request.scope_id)
-        params: Dict[str, Any] = {
-            "query": request.query,
-            "limit": request.limit,
-            "tags": [scope_tag],
-            "tag_match": request.tag_match,
-        }
-        if request.tags:
-            params["tags"] = [scope_tag, *request.tags]
-            # The synthetic scope tag must always be enforced, so combine with AND.
-            params["tag_mode"] = "all"
-        if request.start:
-            params["start"] = request.start
-        if request.end:
-            params["end"] = request.end
-        if request.expand_entities:
-            params["expand_entities"] = "true"
-        if request.expand_relations:
-            params["expand_relations"] = "true"
-        if request.auto_decompose:
-            params["auto_decompose"] = "true"
-        response = requests.get(
-            urljoin(f"{self.base_url}/", "recall"),
-            headers=self.headers,
-            params=params,
-            timeout=30,
-        )
-        if response.status_code != 200:
-            return []
-        flattened: List[MemoryRecord] = []
-        for item in response.json().get("results", []):
-            memory = item.get("memory") or item
-            memory_id = memory.get("id") or item.get("id")
-            if not memory_id:
-                continue
-            flattened.append(
-                MemoryRecord(
-                    id=str(memory_id),
-                    content=memory.get("content", ""),
-                    metadata=dict(memory.get("metadata") or {}),
-                    tags=list(memory.get("tags") or []),
-                    score=float(item.get("score") or 0.0),
-                    match_type=str(item.get("match_type") or ""),
-                )
-            )
-        return flattened
+        requested_tags = list(dict.fromkeys(request.tags or []))
+        if not requested_tags:
+            return self._run_search(request, [scope_tag])
+
+        if request.tag_mode == "all":
+            return self._run_search(request, [scope_tag, *requested_tags], tag_mode="all")
+
+        merged_results: Dict[str, MemoryRecord] = {}
+        for tag in requested_tags:
+            scoped_results = self._run_search(request, [scope_tag, tag], tag_mode="all")
+            for record in scoped_results:
+                existing = merged_results.get(record.id)
+                if existing is None or record.score > existing.score:
+                    merged_results[record.id] = record
+
+        results = sorted(merged_results.values(), key=lambda record: record.score, reverse=True)
+        return results[: request.limit]
 
     def related_memories(
         self,

@@ -49,6 +49,7 @@ class LoCoMoConfig:
     base_url: str = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
     api_token: str = os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token")
     work_dir: Optional[str] = None
+    scope_prefix: Optional[str] = None
 
     # LoCoMo dataset paths
     data_file: str = str(Path(__file__).parent / "locomo" / "data" / "locomo10.json")
@@ -76,6 +77,14 @@ class LoCoMoConfig:
     def __post_init__(self) -> None:
         if self.judge_model is not None:
             self.judge_model = self.judge_model.strip() or None
+        if self.scope_prefix is not None:
+            self.scope_prefix = self.scope_prefix.strip() or None
+
+
+def _default_scope_prefix(backend: str, data_file: str) -> str:
+    seed = f"locomo:{backend}:{Path(data_file).resolve()}"
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
+    return f"locomo-{backend}-{digest}"
 
 
 class LoCoMoEvaluator:
@@ -85,7 +94,9 @@ class LoCoMoEvaluator:
 
     def __init__(self, config: LoCoMoConfig):
         self.config = config
-        scope_prefix = f"locomo-{config.backend}-{int(time.time())}"
+        scope_prefix = config.scope_prefix or _default_scope_prefix(
+            config.backend, config.data_file
+        )
         self.backend = create_backend(
             config.backend,
             base_url=config.base_url,
@@ -177,13 +188,56 @@ class LoCoMoEvaluator:
         """Build a stable, operation-scoped cache key for LLM calls."""
         return tuple([operation] + [self._cache_value(part) for part in parts])
 
-    def cleanup_test_data(self, tag_prefix: str = "locomo-test", max_iterations: int = 200) -> bool:
-        """Remove all test memories from AutoMem"""
-        if self.config.backend != "automem":
+    def _manifest_path(self) -> Path:
+        return Path(self.config.data_file).parent / "manifest.json"
+
+    def _load_manifest(self) -> Tuple[Optional[str], Dict[str, Dict[str, str]]]:
+        manifest_path = self._manifest_path()
+        if not manifest_path.exists():
+            return None, {}
+
+        with open(manifest_path) as f:
+            raw_manifest = json.load(f)
+
+        if not isinstance(raw_manifest, dict):
+            return None, {}
+
+        if "conversations" in raw_manifest and isinstance(raw_manifest["conversations"], dict):
+            scope_prefix = raw_manifest.get("scope_prefix")
+            normalized_scope_prefix = None
+            if isinstance(scope_prefix, str) and scope_prefix.strip():
+                normalized_scope_prefix = scope_prefix.strip()
+            return normalized_scope_prefix, raw_manifest["conversations"]
+
+        legacy_manifest = {
+            str(sample_id): memory_map
+            for sample_id, memory_map in raw_manifest.items()
+            if isinstance(memory_map, dict)
+        }
+        return None, legacy_manifest
+
+    def _save_manifest(self, manifest: Dict[str, Dict[str, str]]) -> Path:
+        manifest_path = self._manifest_path()
+        with open(manifest_path, "w") as f:
+            json.dump(
+                {
+                    "scope_prefix": self.backend.scope_prefix,
+                    "conversations": manifest,
+                },
+                f,
+                indent=2,
+            )
+        return manifest_path
+
+    def cleanup_test_data(self, sample_ids: Optional[List[str]] = None) -> bool:
+        """Remove benchmark memories using the same logical scopes used for ingest/search."""
+        if self.config.backend != "automem" or not sample_ids:
             return True
-        print(f"\nCleaning up test memories with tag: {tag_prefix}")
+        print(f"\nCleaning up test memories for {len(sample_ids)} conversations")
         try:
-            total_deleted = self.backend.cleanup_scope(tag_prefix)
+            total_deleted = 0
+            for sample_id in sample_ids:
+                total_deleted += self.backend.cleanup_scope(sample_id)
             print(f"Cleaned up {total_deleted} test memories")
             return True
 
@@ -302,6 +356,7 @@ class LoCoMoEvaluator:
             all_memories,
             scope_id=sample_id,
             batch_size=100,
+            pause_between_batches=self.config.pause_between_batches,
         )
 
     def _cache_prepared_memories(self, sample_id: str, memories: List[Dict[str, Any]]) -> None:
@@ -1622,11 +1677,6 @@ Respond with ONLY a JSON object:
         if ingest_only and eval_only:
             raise ValueError("ingest_only and eval_only are mutually exclusive")
 
-        # Cleanup existing test data (skip if eval-only)
-        if not eval_only:
-            if not self.cleanup_test_data():
-                print("WARNING: Cleanup was incomplete; results may include stale data")
-
         # Load dataset
         print(f"\nLoading LoCoMo dataset from: {self.config.data_file}")
         with open(self.config.data_file, "r") as f:
@@ -1654,6 +1704,18 @@ Respond with ONLY a JSON object:
         else:
             print(f"Loaded {len(conversations)} conversations")
 
+        selected_sample_ids = [
+            conversation.get("sample_id", f"sample_{i}")
+            for i, conversation in enumerate(conversations)
+        ]
+
+        if eval_only:
+            manifest_scope_prefix, _manifest = self._load_manifest()
+            if manifest_scope_prefix:
+                self.backend.scope_prefix = manifest_scope_prefix
+        elif not self.cleanup_test_data(selected_sample_ids):
+            print("WARNING: Cleanup was incomplete; results may include stale data")
+
         # Ingest-only mode: load data and exit
         if ingest_only:
             print("\nINGEST-ONLY MODE: Loading data without evaluation")
@@ -1663,9 +1725,7 @@ Respond with ONLY a JSON object:
                 memory_map = self.load_conversation_into_automem(conversation, sample_id)
                 manifest[sample_id] = memory_map
             # Save manifest for eval-only mode
-            manifest_path = Path(self.config.data_file).parent / "manifest.json"
-            with open(manifest_path, "w") as f:
-                json.dump(manifest, f, indent=2)
+            manifest_path = self._save_manifest(manifest)
             print(f"\nManifest saved to: {manifest_path}")
             print(f"Total memories ingested: {sum(len(m) for m in manifest.values())}")
             return {
@@ -1796,7 +1856,7 @@ Respond with ONLY a JSON object:
 
         # Cleanup
         if cleanup_after:
-            if not self.cleanup_test_data():
+            if not self.cleanup_test_data(selected_sample_ids):
                 print("WARNING: Post-evaluation cleanup was incomplete")
 
         # Return comprehensive results
@@ -1896,6 +1956,11 @@ def main():
         default=None,
         help="LLM model for category-5 judging (also enables judge mode).",
     )
+    parser.add_argument(
+        "--scope-prefix",
+        default=None,
+        help="Override the synthetic scope prefix used for benchmark ingest/search/cleanup.",
+    )
 
     args = parser.parse_args()
 
@@ -1904,6 +1969,7 @@ def main():
         backend=args.backend,
         base_url=args.base_url,
         api_token=args.api_token,
+        scope_prefix=args.scope_prefix,
         recall_limit=args.recall_limit,
         work_dir=args.work_dir,
     )

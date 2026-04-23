@@ -130,10 +130,8 @@ class LongMemEvalBenchmark:
 
     def cleanup_test_data(self, question_id: Optional[str] = None) -> None:
         """Remove test memories from AutoMem."""
-        if self.config.backend == "automem":
-            scope_id = (
-                f"{self.config.tag_prefix}:{question_id}" if question_id else self.config.tag_prefix
-            )
+        if self.config.backend == "automem" and question_id:
+            scope_id = question_id
         elif question_id:
             scope_id = question_id
         else:
@@ -185,9 +183,7 @@ class LongMemEvalBenchmark:
         session_dates = item["haystack_dates"]
         payloads: List[Dict[str, Any]] = []
 
-        for i, (session_turns, sid, date_str) in enumerate(
-            zip(sessions, session_ids, session_dates, strict=True)
-        ):
+        for session_turns, sid, date_str in zip(sessions, session_ids, session_dates, strict=True):
             if not session_turns:
                 continue
 
@@ -257,15 +253,12 @@ class LongMemEvalBenchmark:
                         payload["timestamp"] = timestamp
                     payloads.append(payload)
 
-            # Pause between batches
-            if (i + 1) % self.config.batch_size == 0:
-                time.sleep(self.config.pause_between_batches)
-
         try:
             memory_map = self.backend.ingest_memories(
                 payloads,
                 scope_id=question_id,
                 batch_size=self.config.batch_size,
+                pause_between_batches=self.config.pause_between_batches,
             )
         except Exception:
             self.memory_ingest_failures += len(payloads)
