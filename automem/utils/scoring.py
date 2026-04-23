@@ -160,8 +160,10 @@ def _compute_metadata_score(
     elif tokens:
         content_lower = str(memory.get("content") or "").lower()
         if content_lower:
-            content_hits = sum(1 for token in tokens if token in content_lower)
-            keyword_component = content_hits / len(tokens)
+            content_tokens = set(re.findall(r"\b[a-z0-9]+\b", content_lower))
+            if content_tokens:
+                content_hits = sum(1 for token in tokens if token in content_tokens)
+                keyword_component = content_hits / len(tokens)
 
     relation_component = 0.0
     if result.get("match_type") == "relation":
