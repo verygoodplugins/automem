@@ -8,6 +8,7 @@ reports/
 venv/
 /venv
 /.cursor
+/.worktrees/
 
 # Local backups (use S3 for persistent backups)
 backups/
