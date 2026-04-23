@@ -1,6 +1,6 @@
-# Qdrant Cloud Setup Guide
+# Qdrant Setup Guide
 
-Step-by-step guide to setting up Qdrant Cloud for AutoMem's vector storage and semantic search.
+Step-by-step guide to setting up Qdrant for AutoMem's vector storage and semantic search.
 
 ## Why Qdrant?
 
@@ -12,6 +12,65 @@ Qdrant stores vector embeddings of your memories, enabling:
 **Without Qdrant**: AutoMem uses placeholder embeddings (hash-based). This works for testing but provides no semantic search capability.
 
 ---
+
+## Option A: Self-Hosted on Railway (Recommended)
+
+Run Qdrant inside your Railway project for the lowest latency and simplest setup — no external accounts needed.
+
+### Setup
+
+1. In your Railway project, click **"+ New Service"** → **"Docker Image"**
+2. Image: `qdrant/qdrant:v1.11.3`
+3. **Add persistent volume**: Settings → Volumes → Mount path: `/qdrant/storage`
+4. **Set environment variables** on the Qdrant service:
+
+   ```bash
+   PORT=6333
+   QDRANT__SERVICE__HOST=::
+   ```
+
+   > **⚠️ `QDRANT__SERVICE__HOST=::` is critical.** Railway's internal networking uses IPv6. Qdrant defaults to `0.0.0.0` (IPv4 only), which silently refuses all internal connections. `::` enables dual-stack (IPv6 + IPv4).
+
+5. **Set on memory-service**:
+
+   ```bash
+   QDRANT_HOST=qdrant
+   ```
+
+   AutoMem auto-constructs `http://qdrant:6333`. No API key needed for internal networking.
+
+6. Redeploy both services.
+
+### Verify
+
+```bash
+curl https://your-automem.up.railway.app/health
+# Should show: "qdrant": "connected"
+```
+
+### Benefits over Qdrant Cloud
+
+- **Lower latency**: Internal networking (~1ms) vs external HTTPS (20-80ms)
+- **No external account**: Everything in one Railway project
+- **No API key management**: Internal networking doesn't need auth
+- **Cost**: ~$3-5/mo on Railway vs $25/mo for Qdrant Cloud paid tier
+
+### Troubleshooting
+
+If health shows `qdrant: "disconnected"` with "Connection refused" in logs:
+
+1. **Check `QDRANT__SERVICE__HOST=::`** on the Qdrant service — this is the #1 cause
+2. Verify `QDRANT_HOST=qdrant` on memory-service (not `QDRANT_URL`)
+3. Confirm both services are in the same Railway project/environment
+4. Check Qdrant service is running (Railway dashboard → service status)
+
+See [Railway Deployment Guide — Troubleshooting](RAILWAY_DEPLOYMENT.md#qdrant-connection-refused-on-internal-networking) for detailed diagnostics.
+
+---
+
+## Option B: Qdrant Cloud (Managed)
+
+Use Qdrant's hosted service for zero-ops vector storage.
 
 ## Quick Start
 
@@ -50,14 +109,14 @@ AutoMem searches across all memories with optional tag filters. It's not multi-t
 #### Search Configuration
 Select: **Simple Single embedding**
 
-AutoMem uses dense vectors (OpenAI embeddings) for semantic search. Keyword matching is handled separately by FalkorDB, so sparse vectors are not needed.
+AutoMem uses dense text embeddings (Voyage/OpenAI/etc.) for semantic search. Keyword matching is handled separately by FalkorDB, so sparse vectors are not needed.
 
 #### Vector Configuration
 
 | Setting | Value | Notes |
 |---------|-------|-------|
 | **Dense vector name** | Leave as default or use `memories` | Field name for embeddings |
-| **Dimensions** | `3072` | For `text-embedding-3-large` (default) |
+| **Dimensions** | `1024` | For `voyage-4` (default) |
 | **Metric** | `Cosine` | Best for text embeddings |
 
 <a href="img/qdrant-configuration.jpg" target="_blank"><img src="img/qdrant-configuration.jpg" alt="Qdrant collection configuration" width="400"></a>
@@ -137,15 +196,16 @@ If `qdrant` shows `"disconnected"` or `"not configured"`:
 
 ### Embedding Models & Dimensions
 
-| Model | Dimensions | Cost | Quality |
-|-------|------------|------|---------|
-| `text-embedding-3-large` | 3072 | Higher | Best semantic precision |
-| `text-embedding-3-small` | 768 | Lower | Good for most use cases |
+| Provider / Model | Dimensions | Cost | Quality |
+|------------------|------------|------|---------|
+| `voyage-4` (recommended) | 1024 | ~$0.05/1M tokens | Excellent for short text |
+| `text-embedding-3-small` | 1536 native (truncatable) | $0.02/1M tokens | Good OpenAI fallback |
+| `text-embedding-3-large` | 3072 native (truncatable) | $0.13/1M tokens | Maximum precision |
 
-**To switch models**:
-1. Set `EMBEDDING_MODEL` to your choice
-2. Set `VECTOR_SIZE` to match (3072 or 768)
-3. Create a new Qdrant collection with matching dimensions
+**To switch providers**:
+1. Set `EMBEDDING_PROVIDER` and any required API key
+2. Set `VECTOR_SIZE` to match the provider's output dimension
+3. Create a new Qdrant collection with matching dimensions (or use `VECTOR_SIZE_AUTODETECT=true`)
 4. Redeploy AutoMem
 
 > ⚠️ **Warning**: Changing embedding models requires re-embedding all existing memories. See [MIGRATIONS.md](MIGRATIONS.md) for the reembed script.
@@ -202,8 +262,9 @@ If you exceed 1GB:
 ### "Vector dimension mismatch"
 
 AutoMem expects dimensions to match `VECTOR_SIZE`:
-- `text-embedding-3-large` → `VECTOR_SIZE=3072`
-- `text-embedding-3-small` → `VECTOR_SIZE=768`
+- `voyage-4` → `VECTOR_SIZE=1024` (default)
+- `text-embedding-3-small` → `VECTOR_SIZE` ≤ 1536 (default: 768; auto-upgrades to `text-embedding-3-large` if exceeded)
+- `text-embedding-3-large` → `VECTOR_SIZE` ≤ 3072 (truncatable via Matryoshka)
 
 If you created the collection with wrong dimensions:
 1. Delete the collection in Qdrant dashboard

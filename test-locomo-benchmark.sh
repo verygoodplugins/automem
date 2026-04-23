@@ -11,23 +11,28 @@
 #   ./test-locomo-benchmark.sh --help             # Show help
 #
 
-set -e
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+set -euo pipefail
 
 # Script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Shared utilities (colors + wait_for_api)
+source "${SCRIPT_DIR}/scripts/lib/common.sh"
+
+if [ -x "${SCRIPT_DIR}/venv/bin/python" ]; then
+    PYTHON_BIN="${SCRIPT_DIR}/venv/bin/python"
+else
+    PYTHON_BIN="python3"
+fi
+
 # Default configuration
 RUN_LIVE=false
+CONVERSATIONS=""
 RECALL_LIMIT=10
 NO_CLEANUP=false
 OUTPUT_FILE=""
+JUDGE=false
+JUDGE_MODEL=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -48,12 +53,28 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_FILE="$2"
             shift 2
             ;;
+        --judge)
+            JUDGE=true
+            shift
+            ;;
+        --judge-model)
+            JUDGE=true
+            JUDGE_MODEL="$2"
+            shift 2
+            ;;
+        --conversations)
+            CONVERSATIONS="$2"
+            shift 2
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --live              Run against Railway deployment (default: local Docker)"
             echo "  --recall-limit N    Number of memories to recall per question (default: 10)"
+            echo "  --conversations I,J Comma-separated conversation indices (e.g. 0,1 for mini mode)"
+            echo "  --judge             Enable category-5 LLM judge (defaults to gpt-5.1)"
+            echo "  --judge-model MODEL Set the category-5 judge model (also enables judge)"
             echo "  --no-cleanup        Don't cleanup test data after evaluation"
             echo "  --output FILE       Save results to JSON file"
             echo "  --help, -h          Show this help message"
@@ -61,6 +82,8 @@ while [[ $# -gt 0 ]]; do
             echo "Examples:"
             echo "  $0                                    # Run locally"
             echo "  $0 --live                             # Run against Railway"
+            echo "  $0 --conversations 0,1                # Mini mode (2 conversations)"
+            echo "  $0 --conversations 0,1 --judge        # Mini mode with cat-5 judge"
             echo "  $0 --recall-limit 20 --output results.json"
             exit 0
             ;;
@@ -141,23 +164,22 @@ else
         exit 1
     fi
 
-    # Check if services are running
-    if ! docker compose ps | grep -q "flask-api.*running"; then
-        echo -e "${YELLOW}⚠️  AutoMem services not running${NC}"
+    # Check if services are running and healthy
+    if ! curl -fsS "http://localhost:8001/health" > /dev/null 2>&1; then
+        echo -e "${YELLOW}AutoMem services not running or unhealthy${NC}"
         echo -e "${BLUE}Starting services...${NC}"
         docker compose up -d
-        echo -e "${BLUE}Waiting for services to be ready...${NC}"
-        sleep 10
+        wait_for_api "http://localhost:8001" 60 || exit 1
     fi
 
     export AUTOMEM_TEST_BASE_URL="http://localhost:8001"
     export AUTOMEM_TEST_API_TOKEN="test-token"
 
-    echo -e "${GREEN}✅ Docker services ready${NC}"
+    echo -e "${GREEN}Docker services ready${NC}"
 fi
 
 # Build python command
-PYTHON_CMD="python3 $SCRIPT_DIR/tests/benchmarks/test_locomo.py"
+PYTHON_CMD="$PYTHON_BIN $SCRIPT_DIR/tests/benchmarks/test_locomo.py"
 PYTHON_CMD="$PYTHON_CMD --base-url $AUTOMEM_TEST_BASE_URL"
 PYTHON_CMD="$PYTHON_CMD --api-token $AUTOMEM_TEST_API_TOKEN"
 PYTHON_CMD="$PYTHON_CMD --recall-limit $RECALL_LIMIT"
@@ -166,8 +188,20 @@ if [ "$NO_CLEANUP" = true ]; then
     PYTHON_CMD="$PYTHON_CMD --no-cleanup"
 fi
 
+if [ -n "$CONVERSATIONS" ]; then
+    PYTHON_CMD="$PYTHON_CMD --conversations $CONVERSATIONS"
+fi
+
 if [ -n "$OUTPUT_FILE" ]; then
     PYTHON_CMD="$PYTHON_CMD --output $OUTPUT_FILE"
+fi
+
+if [ "$JUDGE" = true ]; then
+    PYTHON_CMD="$PYTHON_CMD --judge"
+fi
+
+if [ -n "$JUDGE_MODEL" ]; then
+    PYTHON_CMD="$PYTHON_CMD --judge-model $JUDGE_MODEL"
 fi
 
 echo ""

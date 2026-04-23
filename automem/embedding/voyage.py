@@ -26,6 +26,8 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
     - voyage-4-lite: Optimized for latency/cost
     """
 
+    SUPPORTED_DIMENSIONS = {256, 512, 1024, 2048}
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -34,7 +36,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         timeout: float = 30.0,
         max_retries: int = 2,
         input_type: Optional[str] = None,
-    ):
+    ) -> None:
         """Initialize Voyage embedding provider.
 
         Args:
@@ -52,9 +54,10 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         if not api_key_value:
             raise ValueError("Voyage API key required (pass api_key or set VOYAGE_API_KEY)")
 
-        valid_dimensions = {256, 512, 1024, 2048}
-        if dimension not in valid_dimensions:
-            raise ValueError(f"Invalid dimension {dimension}. Must be one of: {valid_dimensions}")
+        if dimension not in self.SUPPORTED_DIMENSIONS:
+            raise ValueError(
+                f"Invalid dimension {dimension}. Must be one of: {self.SUPPORTED_DIMENSIONS}"
+            )
 
         self.model = model
         self._dimension = dimension
@@ -263,12 +266,12 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         if hasattr(self, "client"):
             self.client.close()
 
-    def __enter__(self):
+    def __enter__(self) -> "VoyageEmbeddingProvider":
         return self
 
-    def __exit__(self, *_exc):
+    def __exit__(self, *_exc: object) -> None:
         self.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Clean up HTTP client."""
         self.close()

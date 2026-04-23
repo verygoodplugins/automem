@@ -4,11 +4,22 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
 
-from automem.config import ALLOWED_RELATIONS, RECALL_EXPANSION_LIMIT, RECALL_RELATION_LIMIT
+from automem.config import (
+    COLLECTION_NAME,
+    DEFAULT_EXPAND_RELATIONS,
+    FILTERABLE_RELATIONS,
+    RECALL_ADAPTIVE_FLOOR,
+    RECALL_EXPANSION_LIMIT,
+    RECALL_MIN_SCORE,
+    RECALL_RELATION_LIMIT,
+    canonicalize_relation_type,
+    expand_relation_query_types,
+    normalize_relation_type,
+)
 from automem.utils.graph import _serialize_node
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
@@ -146,7 +157,7 @@ def _extract_query_entities(query: str) -> List[str]:
         if clean_word in ENTITY_STOPWORDS:
             continue
         # Skip possessives (handle separately)
-        if "'s" in word or "'s" in word:
+        if "'s" in word or "’s" in word:
             continue
 
         # Check for capitalized word (potential name)
@@ -159,8 +170,8 @@ def _extract_query_entities(query: str) -> List[str]:
                 continue
             entities.append(clean_word)
 
-    # Handle possessives like "John's" or "Caroline's"
-    possessives = re.findall(r"\b([A-Z][a-z]+)'s\b", query)
+    # Handle possessives like "John's" or "Caroline’s"
+    possessives = re.findall(r"\b([A-Z][a-z]+)['’]s\b", query)
     for p in possessives:
         if p not in ENTITY_STOPWORDS and p not in entities:
             entities.append(p)
@@ -453,7 +464,14 @@ def _build_context_profile(
 ) -> Optional[Dict[str, Any]]:
     priority_tags: Set[str] = {tag.strip().lower() for tag in manual_tags if tag and tag.strip()}
     priority_types: Set[str] = {typ.strip().title() for typ in manual_types if typ and typ.strip()}
-    priority_ids: Set[str] = {value.strip() for value in manual_ids if value and value.strip()}
+    priority_id_order: List[str] = []
+    priority_ids: Set[str] = set()
+    for value in manual_ids:
+        normalized = value.strip()
+        if not normalized or normalized in priority_ids:
+            continue
+        priority_ids.add(normalized)
+        priority_id_order.append(normalized)
     priority_keywords: Set[str] = set()
 
     style_focus = False
@@ -489,6 +507,7 @@ def _build_context_profile(
         "priority_tags": priority_tags,
         "priority_types": priority_types,
         "priority_ids": priority_ids,
+        "priority_id_order": priority_id_order,
         "priority_keywords": priority_keywords,
         "weights": {
             "tag": 0.45,
@@ -556,11 +575,94 @@ def _inject_priority_memories(
     tag_mode: str,
     tag_match: str,
     limit: int,
+    logger: Any,
     exclude_tags: Optional[List[str]] = None,
 ) -> bool:
+    injected = False
+    priority_id_order: List[str] = context_profile.get("priority_id_order") or []
     priority_tags: Set[str] = context_profile.get("priority_tags") or set()
+
+    if priority_id_order:
+        fetched_ids: Set[str] = set()
+        if graph is not None:
+            for memory_id in priority_id_order:
+                if memory_id in seen_ids or memory_id in fetched_ids:
+                    continue
+                try:
+                    record = graph.query(
+                        "MATCH (m:Memory {id: $id}) RETURN m",
+                        {"id": memory_id},
+                    )
+                except Exception:
+                    logger.exception("Failed to fetch priority memory %s from graph", memory_id)
+                    continue
+                if not getattr(record, "result_set", None):
+                    continue
+                data = _serialize_node(record.result_set[0][0])
+                priority_result = {
+                    "id": memory_id,
+                    "memory": data,
+                    "source": "graph",
+                    "match_type": "priority_id",
+                    "match_score": 0.0,
+                }
+                results.append(priority_result)
+                seen_ids.add(memory_id)
+                fetched_ids.add(memory_id)
+                injected = True
+
+        if qdrant_client is not None:
+            remaining_ids = [
+                memory_id
+                for memory_id in priority_id_order
+                if memory_id not in seen_ids and memory_id not in fetched_ids
+            ]
+            if remaining_ids:
+                try:
+                    points = qdrant_client.retrieve(
+                        collection_name=COLLECTION_NAME,
+                        ids=remaining_ids,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                except Exception:
+                    logger.exception("Failed to fetch priority memories from qdrant")
+                    points = []
+
+                points_by_id = {
+                    str(getattr(point, "id", "") or "").strip(): point for point in points if point
+                }
+                for memory_id in remaining_ids:
+                    point = points_by_id.get(memory_id)
+                    if point is None:
+                        continue
+                    payload = getattr(point, "payload", None) or {}
+                    priority_result = {
+                        "id": memory_id,
+                        "memory": {
+                            "id": memory_id,
+                            "content": payload.get("content", ""),
+                            "tags": payload.get("tags", []),
+                            "tag_prefixes": payload.get("tag_prefixes", []),
+                            "importance": payload.get("importance", 0.5),
+                            "timestamp": payload.get("timestamp"),
+                            "type": payload.get("type", "Context"),
+                            "confidence": payload.get("confidence", 0.0),
+                            "updated_at": payload.get("updated_at"),
+                            "last_accessed": payload.get("last_accessed"),
+                            "metadata": payload.get("metadata", {}),
+                        },
+                        "source": "qdrant",
+                        "match_type": "priority_id",
+                        "match_score": 0.0,
+                    }
+                    results.append(priority_result)
+                    seen_ids.add(memory_id)
+                    fetched_ids.add(memory_id)
+                    injected = True
+
     if not priority_tags:
-        return False
+        return injected
 
     effective_tag_mode = tag_mode if tag_mode in {"any", "all"} else "any"
     effective_tag_match = tag_match if tag_match in {"exact", "prefix"} else "prefix"
@@ -595,7 +697,7 @@ def _inject_priority_memories(
             ]
             if filtered_priority:
                 results.extend(filtered_priority)
-                return True
+                injected = True
 
     if qdrant_client is not None:
         tag_results = vector_filter_only_tag_search(
@@ -622,9 +724,51 @@ def _inject_priority_memories(
             ]
             if filtered_results:
                 results.extend(filtered_results)
-                return True
+                injected = True
 
-    return False
+    return injected
+
+
+def _guarantee_priority_results(
+    results: List[Dict[str, Any]],
+    context_profile: Optional[Dict[str, Any]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    if not context_profile:
+        return results[:limit]
+
+    priority_id_order: List[str] = context_profile.get("priority_id_order") or []
+    if not priority_id_order:
+        return results[:limit]
+
+    by_id: Dict[str, Dict[str, Any]] = {}
+    ordered_results: List[Dict[str, Any]] = []
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id not in by_id:
+            by_id[memory_id] = result
+        ordered_results.append(result)
+
+    guaranteed = [by_id[memory_id] for memory_id in priority_id_order if memory_id in by_id]
+    if len(guaranteed) >= limit:
+        return guaranteed[:limit]
+
+    selected_ids = {
+        str(item.get("id") or (item.get("memory") or {}).get("id") or "").strip()
+        for item in guaranteed
+    }
+    combined = list(guaranteed)
+    for result in ordered_results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id in selected_ids:
+            continue
+        combined.append(result)
+        if len(combined) >= limit:
+            break
+
+    return combined[:limit]
 
 
 def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
@@ -632,6 +776,21 @@ def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any
         if _result_matches_context_priority(result, profile):
             return True
     return False
+
+
+def _results_have_priority_ids(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
+    priority_ids: Set[str] = profile.get("priority_ids") or set()
+    if not priority_ids:
+        return True
+
+    seen_priority_ids: Set[str] = set()
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id in priority_ids:
+            seen_priority_ids.add(memory_id)
+
+    return priority_ids.issubset(seen_priority_ids)
 
 
 def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
@@ -811,11 +970,17 @@ def _expand_related_memories(
     expand_min_strength: Optional[float] = None,
     expand_min_importance: Optional[float] = None,
     exclude_tags: Optional[List[str]] = None,
+    expand_respect_tags: bool = False,
 ) -> List[Dict[str, Any]]:
     if graph is None or not seed_results or expansion_limit <= 0:
         return []
 
-    relation_types = sorted({rel.upper() for rel in allowed_relations}) if allowed_relations else []
+    relation_types = (
+        sorted({canonicalize_relation_type(rel) for rel in allowed_relations})
+        if allowed_relations
+        else []
+    )
+    query_relation_types = expand_relation_query_types(relation_types)
     per_seed_limit = max(1, per_seed_limit)
     expansion_limit = max(1, expansion_limit)
 
@@ -834,23 +999,40 @@ def _expand_related_memories(
         seed_score = float(seed.get("final_score", seed.get("score", 0.0)) or 0.0)
 
         try:
-            rel_filter = " AND type(r) IN $types" if relation_types else ""
+            rel_filter = " AND type(r) IN $types" if query_relation_types else ""
             query = f"""
                 MATCH (m:Memory {{id: $id}})-[r]-(related:Memory)
                 WHERE m.id <> related.id{rel_filter}
-                RETURN type(r) as relation_type, r.strength as strength, related
+                RETURN type(r) as relation_type,
+                       coalesce(
+                           r.strength,
+                           r.score,
+                           r.confidence,
+                           r.similarity,
+                           toFloat(r.count),
+                           0.0
+                       ) as strength,
+                       r.kind as relation_kind,
+                       related
                 ORDER BY coalesce(r.updated_at, related.timestamp) DESC
                 LIMIT $limit
             """
             params: Dict[str, Any] = {"id": seed_id, "limit": per_seed_limit}
-            if relation_types:
-                params["types"] = relation_types
+            if query_relation_types:
+                params["types"] = query_relation_types
             records = graph.query(query, params)
         except Exception:
             logger.exception("Failed to expand relations for seed %s", seed_id)
             continue
 
-        for relation_type, relation_strength, related in getattr(records, "result_set", []) or []:
+        for row in getattr(records, "result_set", []) or []:
+            if len(row) >= 4:
+                relation_type, relation_strength, relation_kind, related = row[:4]
+            elif len(row) >= 3:
+                relation_type, relation_strength, related = row[:3]
+                relation_kind = None
+            else:  # pragma: no cover - defensive for malformed graph rows
+                continue
             if total_added >= expansion_limit:
                 break
 
@@ -881,20 +1063,36 @@ def _expand_related_memories(
                         continue
                 except (TypeError, ValueError):
                     continue
+            candidate_tag_filters = tag_filters if expand_respect_tags else None
+            candidate_tag_mode = tag_mode if expand_respect_tags else "any"
+            candidate_tag_match = tag_match if expand_respect_tags else "exact"
             if not result_passes_filters(
-                candidate, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                candidate,
+                start_time,
+                end_time,
+                candidate_tag_filters,
+                candidate_tag_mode,
+                candidate_tag_match,
+                exclude_tags,
             ):
                 continue
 
             relation_score = relation_strength_val + max(seed_score, 0.0) * seed_score_boost
+            normalized_type, normalized_props = normalize_relation_type(
+                relation_type,
+                {"kind": relation_kind} if relation_kind else {},
+            )
 
             edge_info = {
-                "type": relation_type,
+                "type": normalized_type,
                 "strength": relation_strength_val,
                 "from": seed_id,
                 "seed_rank": seed_rank,
                 "seed_score": seed_score,
             }
+            kind = normalized_props.get("kind")
+            if kind:
+                edge_info["kind"] = kind
 
             if related_id in expansions:
                 existing = expansions[related_id]
@@ -964,9 +1162,11 @@ def handle_recall(
     recall_max_limit: int,
     logger: Any,
     allowed_relations: Optional[Set[str]] = None,
+    default_expand_relations: Optional[Set[str]] = None,
     relation_limit: Optional[int] = None,
     expansion_limit_default: Optional[int] = None,
     on_access: Optional[Callable[[List[str]], None]] = None,
+    jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -1033,7 +1233,14 @@ def handle_recall(
     exclude_tags = normalize_tag_list(exclude_tags_input)
 
     allowed_rel_set: Set[str] = (
-        set(allowed_relations) if allowed_relations else set(ALLOWED_RELATIONS)
+        {canonicalize_relation_type(rel) for rel in allowed_relations}
+        if allowed_relations
+        else set(FILTERABLE_RELATIONS)
+    )
+    default_expand_rel_set: Set[str] = (
+        {canonicalize_relation_type(rel) for rel in default_expand_relations}
+        if default_expand_relations
+        else set(DEFAULT_EXPAND_RELATIONS)
     )
     relation_limit = relation_limit or RECALL_RELATION_LIMIT
     expansion_limit = expansion_limit_default or RECALL_EXPANSION_LIMIT
@@ -1056,6 +1263,10 @@ def handle_recall(
         request.args.get("expand_relations")
         or request.args.get("expand_associations")
         or request.args.get("expand"),
+        False,
+    )
+    expand_respect_tags = _parse_bool_param(
+        request.args.get("expand_respect_tags"),
         False,
     )
 
@@ -1082,6 +1293,10 @@ def handle_recall(
 
     expand_min_importance = _parse_threshold("expand_min_importance")
     expand_min_strength = _parse_threshold("expand_min_strength")
+
+    min_score_param = _parse_threshold("min_score")
+    min_score = min_score_param if min_score_param is not None else (RECALL_MIN_SCORE or None)
+    adaptive_floor = _parse_bool_param(request.args.get("adaptive_floor"), RECALL_ADAPTIVE_FLOOR)
 
     context_label = (request.args.get("context") or "").strip().lower()
     active_path = (
@@ -1201,7 +1416,9 @@ def handle_recall(
 
         context_injected = False
         if context_profile:
-            if not _results_have_priority(local_results, context_profile):
+            priority_ids_missing = not _results_have_priority_ids(local_results, context_profile)
+            needs_context_injection = not _results_have_priority(local_results, context_profile)
+            if priority_ids_missing or needs_context_injection:
                 context_injected = _inject_priority_memories(
                     local_results,
                     graph,
@@ -1216,6 +1433,7 @@ def handle_recall(
                     tag_mode,
                     tag_match,
                     per_query_limit,
+                    logger,
                     exclude_tags,
                 )
 
@@ -1241,6 +1459,11 @@ def handle_recall(
             )
         ]
 
+        if min_score is not None and min_score > 0:
+            local_results = [
+                res for res in local_results if float(res.get("final_score", 0.0)) >= min_score
+            ]
+
         if sort_param == "score":
             local_results.sort(
                 key=lambda r: (
@@ -1255,8 +1478,7 @@ def handle_recall(
         elif sort_param in {"updated_desc", "updated_asc"}:
             # Same key, but favor updated_at (already primary) and keep the name explicit for callers
             local_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
-        if len(local_results) > per_query_limit:
-            local_results = local_results[:per_query_limit]
+        local_results = _guarantee_priority_results(local_results, context_profile, per_query_limit)
 
         # Track originating query for debugging/clients
         for res in local_results:
@@ -1343,8 +1565,7 @@ def handle_recall(
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
     elif sort_param in {"updated_desc", "updated_asc"}:
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
-    if len(deduped_results) > limit:
-        deduped_results = deduped_results[:limit]
+    deduped_results = _guarantee_priority_results(deduped_results, any_context_profile, limit)
 
     # Graph expansion feature (from upstream branch)
     seed_results = list(deduped_results)
@@ -1377,11 +1598,12 @@ def handle_recall(
             tag_match=tag_match,
             per_seed_limit=relation_limit,
             expansion_limit=expansion_limit,
-            allowed_relations=allowed_rel_set,
+            allowed_relations=default_expand_rel_set,
             logger=logger,
             expand_min_strength=expand_min_strength,
             expand_min_importance=expand_min_importance,
             exclude_tags=exclude_tags,
+            expand_respect_tags=expand_respect_tags,
         )
         results = seed_results + expansion_results
 
@@ -1399,17 +1621,69 @@ def handle_recall(
             limit_per_entity=5,
             total_limit=expansion_limit,
             logger=logger,
-            additional_tag_filters=tag_filters,  # Pass conversation tag filter
+            additional_tag_filters=tag_filters if expand_respect_tags else None,
         )
-        if start_time or end_time or tag_filters or exclude_tags:
+        entity_tag_filters = tag_filters if expand_respect_tags else None
+        entity_tag_mode = tag_mode if expand_respect_tags else "any"
+        entity_tag_match = tag_match if expand_respect_tags else "exact"
+        if start_time or end_time or entity_tag_filters or exclude_tags:
             entity_expansion_results = [
                 r
                 for r in entity_expansion_results
                 if result_passes_filters(
-                    r, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                    r,
+                    start_time,
+                    end_time,
+                    entity_tag_filters,
+                    entity_tag_mode,
+                    entity_tag_match,
+                    exclude_tags,
                 )
             ]
         results = seed_results + expansion_results + entity_expansion_results
+
+    pre_filter_count = len(results)
+
+    # Apply adaptive score floor: detect a pronounced dropoff without discarding most results.
+    score_floor_applied = None
+    if sort_param == "score" and adaptive_floor and len(results) > 3:
+        scores = sorted([float(r.get("final_score", 0.0)) for r in results], reverse=True)
+        # Find the largest gap between consecutive scores in the top half
+        max_gap = 0.0
+        gap_idx = -1
+        halfway = max(3, len(scores) // 2)
+        for i in range(1, halfway):
+            gap = scores[i - 1] - scores[i]
+            if gap > max_gap:
+                max_gap = gap
+                gap_idx = i
+        # Only cut on a large dropoff (>25% of top score), and only if at least half survive.
+        if max_gap > 0.25 * scores[0] and gap_idx > 0:
+            candidate_floor = scores[gap_idx]
+            filtered_results = [
+                r for r in results if float(r.get("final_score", 0.0)) >= candidate_floor
+            ]
+            minimum_retained = (len(results) + 1) // 2
+            if len(filtered_results) >= minimum_retained:
+                score_floor_applied = candidate_floor
+                results = filtered_results
+
+    # Apply explicit min_score on final assembled results (catches expansions)
+    if min_score is not None and min_score > 0:
+        results = [r for r in results if float(r.get("final_score", 0.0)) >= min_score]
+
+    # JIT-enrich unenriched memories inline (cheap: entities + summary ~50ms each)
+    jit_enriched_count = 0
+    if jit_enrich_fn is not None:
+        for result in results:
+            mem = result.get("memory") or {}
+            mem_id = mem.get("id") or result.get("id") or mem.get("memory_id") or mem.get("uuid")
+            if not mem.get("enriched") and mem_id and mem.get("content"):
+                updated = jit_enrich_fn(str(mem_id), mem)
+                if updated:
+                    result["memory"] = updated
+                    result["jit_enriched"] = True
+                    jit_enriched_count += 1
 
     response = {
         "status": "success",
@@ -1430,6 +1704,7 @@ def handle_recall(
             "expanded_count": len(expansion_results),
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
+            "respect_tags": expand_respect_tags,
         }
     if expand_entities:
         response["entity_expansion"] = {
@@ -1451,6 +1726,14 @@ def handle_recall(
         response["exclude_tags"] = exclude_tags
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
+    if jit_enriched_count:
+        response["jit_enriched_count"] = jit_enriched_count
+    if min_score or score_floor_applied:
+        response["score_filter"] = {
+            "min_score": min_score,
+            "adaptive_floor": score_floor_applied,
+            "filtered_count": pre_filter_count - len(results),
+        }
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
     if any_context_profile:
         response["context_priority"] = {
@@ -1521,11 +1804,13 @@ def create_recall_blueprint(
     vector_filter_only_tag_search: Callable[..., List[Dict[str, Any]]],
     recall_max_limit: int,
     logger: Any,
-    allowed_relations: List[str] | set[str] | tuple[str, ...] | Any = (),
+    filterable_relations: Iterable[str] | None = None,
+    default_expand_relations: Iterable[str] | None = None,
     relation_limit: int = 5,
     serialize_node: Callable[[Any], Dict[str, Any]] | None = None,
     summarize_relation_node: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
     on_access: Optional[Callable[[List[str]], None]] = None,
+    jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
 ) -> Blueprint:
     bp = Blueprint("recall", __name__)
 
@@ -1545,10 +1830,18 @@ def create_recall_blueprint(
             vector_filter_only_tag_search,
             recall_max_limit,
             logger,
-            allowed_relations=allowed_relations if allowed_relations else set(ALLOWED_RELATIONS),
+            allowed_relations=(
+                filterable_relations if filterable_relations else set(FILTERABLE_RELATIONS)
+            ),
+            default_expand_relations=(
+                default_expand_relations
+                if default_expand_relations
+                else set(DEFAULT_EXPAND_RELATIONS)
+            ),
             relation_limit=relation_limit,
             expansion_limit_default=RECALL_EXPANSION_LIMIT,
             on_access=on_access,
+            jit_enrich_fn=jit_enrich_fn,
         )
 
     @bp.route("/startup-recall", methods=["GET"])
@@ -1767,18 +2060,34 @@ def create_recall_blueprint(
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
-        allowed = set(allowed_relations) if allowed_relations else set()
+        allowed = (
+            {canonicalize_relation_type(rel) for rel in filterable_relations}
+            if filterable_relations
+            else set(FILTERABLE_RELATIONS)
+        )
+        default_relations = (
+            {canonicalize_relation_type(rel) for rel in default_expand_relations}
+            if default_expand_relations
+            else set(DEFAULT_EXPAND_RELATIONS)
+        )
 
         rel_types_param = (request.args.get("relationship_types") or "").strip()
         if rel_types_param:
-            requested = [
-                part.strip().upper() for part in rel_types_param.split(",") if part.strip()
-            ]
-            rel_types = [t for t in requested if (t in allowed if allowed else True)]
-            if not rel_types and allowed:
-                rel_types = sorted(allowed)
+            requested = [part.strip() for part in rel_types_param.split(",") if part.strip()]
+            rel_types = []
+            seen_types: Set[str] = set()
+            for relation_type in requested:
+                normalized_type = canonicalize_relation_type(relation_type)
+                if normalized_type and (normalized_type in allowed if allowed else True):
+                    if normalized_type not in seen_types:
+                        rel_types.append(normalized_type)
+                        seen_types.add(normalized_type)
+            if not rel_types and default_relations:
+                rel_types = sorted(default_relations)
         else:
-            rel_types = sorted(allowed) if allowed else []
+            rel_types = sorted(default_relations) if default_relations else []
+
+        query_relation_types = expand_relation_query_types(rel_types)
 
         try:
             max_depth = int(request.args.get("max_depth", 1))
@@ -1792,12 +2101,12 @@ def create_recall_blueprint(
             limit = relation_limit
         limit = max(1, min(limit, 200))
 
-        rel_pattern = ":" + "|".join(rel_types) if rel_types else ""
+        rel_pattern = ":" + "|".join(query_relation_types) if query_relation_types else ""
         query = f"""
-            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f']-' if rel_pattern else '-[r]-'}(related:Memory)
+            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + ']-' if rel_pattern else '-[r]-'}(related:Memory)
             WHERE m.id <> related.id
             CALL apoc.path.expandConfig(related, {{
-                relationshipFilter: '{"|".join(rel_types)}',
+                relationshipFilter: '{"|".join(query_relation_types)}',
                 minLevel: 0,
                 maxLevel: $max_depth,
                 bfs: true,
@@ -1809,7 +2118,7 @@ def create_recall_blueprint(
             LIMIT $limit
         """
         fallback_query = f"""
-            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
+            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + '*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
             WHERE m.id <> related.id
             RETURN DISTINCT related
             ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC

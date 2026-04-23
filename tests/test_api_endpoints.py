@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -14,193 +15,10 @@ from qdrant_client import models as qdrant_models
 import app
 from app import _normalize_timestamp, utc_now
 from automem import config
-from automem.api.recall import _expand_related_memories
-
-
-class MockGraph:
-    """Enhanced mock for FalkorDB graph with more realistic behavior."""
-
-    def __init__(self):
-        self.queries = []
-        self.memories = {}
-        self.relationships = []
-
-    def query(self, query: str, params: dict = None):
-        """Track queries and return appropriate mock results."""
-        params = params or {}
-        self.queries.append((query, params))
-
-        # Memory CRUD operations
-        if "MERGE (m:Memory {id:" in query or "CREATE (m:Memory {id:" in query:
-            memory_id = params["id"]
-            self.memories[memory_id] = {
-                "id": memory_id,
-                "content": params.get("content", ""),
-                "tags": params.get("tags", []),
-                "importance": params.get("importance", 0.5),
-                "type": params.get("type", "Memory"),
-                "timestamp": params.get("timestamp", utc_now()),
-                "metadata": params.get("metadata", "{}"),
-                "updated_at": params.get("updated_at"),
-                "last_accessed": params.get("last_accessed"),
-                "confidence": params.get("confidence", 1.0),
-            }
-            node = SimpleNamespace(properties=self.memories[memory_id])
-            return SimpleNamespace(result_set=[[node]])
-
-        # Update memory
-        if "MATCH (m:Memory {id:" in query and "SET m.content" in query:
-            memory_id = params["id"]
-            if memory_id in self.memories:
-                self.memories[memory_id].update(
-                    {
-                        "content": params.get("content", self.memories[memory_id]["content"]),
-                        "tags": params.get("tags", self.memories[memory_id]["tags"]),
-                        "importance": params.get(
-                            "importance", self.memories[memory_id]["importance"]
-                        ),
-                        "updated_at": params.get("updated_at", utc_now()),
-                    }
-                )
-                node = SimpleNamespace(properties=self.memories[memory_id])
-                return SimpleNamespace(result_set=[[node]])
-            return SimpleNamespace(result_set=[])
-
-        # Retrieve memory by ID
-        if "MATCH (m:Memory {id:" in query and "RETURN m" in query and "WHERE" not in query:
-            memory_id = params.get("id") or params.get("id1") or params.get("id2")
-            if memory_id in self.memories:
-                node = SimpleNamespace(properties=self.memories[memory_id])
-                return SimpleNamespace(result_set=[[node]])
-            return SimpleNamespace(result_set=[])
-
-        # Delete memory
-        if "MATCH (m:Memory {id:" in query and "DELETE m" in query:
-            memory_id = params.get("id")
-            if memory_id in self.memories:
-                del self.memories[memory_id]
-                return SimpleNamespace(result_set=[["deleted"]])
-            return SimpleNamespace(result_set=[])
-
-        # Search memories by tag
-        if "MATCH (m:Memory)" in query and "$tag IN m.tags" in query:
-            results = []
-            for mem in self.memories.values():
-                if params.get("tag") in mem.get("tags", []):
-                    node = SimpleNamespace(properties=mem)
-                    results.append([node])
-            return SimpleNamespace(result_set=results)
-
-        # Get all memories for reembedding (old simple format)
-        if "MATCH (m:Memory)" in query and "RETURN m.id, m.content" in query:
-            results = []
-            for mem_id, mem in self.memories.items():
-                if mem.get("content"):
-                    results.append([mem_id, mem["content"]])
-            return SimpleNamespace(result_set=results)
-
-        # Get all memories for reembedding (new full format with all fields)
-        if (
-            "MATCH (m:Memory)" in query
-            and "RETURN m.id AS id" in query
-            and "m.content AS content" in query
-        ):
-            results = []
-            for mem_id, mem in self.memories.items():
-                if mem.get("content"):
-                    results.append(
-                        [
-                            mem_id,
-                            mem.get("content", ""),
-                            mem.get("tags", []),
-                            mem.get("importance", 0.5),
-                            mem.get("timestamp"),
-                            mem.get("type", "Context"),
-                            mem.get("confidence", 0.6),
-                            mem.get("metadata", "{}"),
-                            mem.get("updated_at"),
-                            mem.get("last_accessed"),
-                        ]
-                    )
-            return SimpleNamespace(result_set=results)
-
-        # Handle association creation - check both memories exist
-        if "MATCH (m1:Memory" in query and "MATCH (m2:Memory" in query and "MERGE (m1)" in query:
-            id1 = params.get("id1")
-            id2 = params.get("id2")
-            if id1 in self.memories and id2 in self.memories:
-                # Return successful association creation
-                return SimpleNamespace(result_set=[["created"]])
-            # Return empty if memories don't exist
-            return SimpleNamespace(result_set=[])
-
-        return_m_line = "RETURN m\n" in query or "RETURN m\r" in query
-        if "MATCH (m:Memory)" in query and return_m_line and "ORDER BY" in query:
-            results = list(self.memories.values())
-            tag_filters = [tag.lower() for tag in params.get("tag_filters", [])]
-            if tag_filters:
-                filtered = []
-                for mem in results:
-                    mem_tags = [
-                        str(tag).strip().lower()
-                        for tag in (mem.get("tags") or [])
-                        if isinstance(tag, str)
-                    ]
-                    if any(
-                        any(tag.startswith(filter_tag) for tag in mem_tags)
-                        for filter_tag in tag_filters
-                    ):
-                        filtered.append(mem)
-                results = filtered
-
-            def _timestamp_key(mem: dict) -> str:
-                if "coalesce(m.updated_at, m.timestamp)" in query:
-                    return str(mem.get("updated_at") or mem.get("timestamp") or "")
-                return str(mem.get("timestamp") or "")
-
-            def _importance(mem: dict) -> float:
-                try:
-                    return float(mem.get("importance") or 0.0)
-                except (TypeError, ValueError):
-                    return 0.0
-
-            if "ORDER BY m.timestamp ASC" in query:
-                results.sort(
-                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)),
-                    reverse=False,
-                )
-            elif "ORDER BY m.timestamp DESC" in query:
-                results.sort(
-                    key=lambda mem: (_timestamp_key(mem), _importance(mem)),
-                    reverse=True,
-                )
-            elif "ORDER BY coalesce(m.updated_at, m.timestamp) ASC" in query:
-                results.sort(
-                    key=lambda mem: (_timestamp_key(mem), -_importance(mem)),
-                    reverse=False,
-                )
-            elif "ORDER BY coalesce(m.updated_at, m.timestamp) DESC" in query:
-                results.sort(
-                    key=lambda mem: (_timestamp_key(mem), _importance(mem)),
-                    reverse=True,
-                )
-            else:
-                results.sort(
-                    key=lambda mem: (
-                        _importance(mem),
-                        _timestamp_key(mem),
-                    ),
-                    reverse=True,
-                )
-
-            limit = params.get("limit", len(results))
-            limited = results[:limit]
-            return SimpleNamespace(
-                result_set=[[SimpleNamespace(properties=mem)] for mem in limited]
-            )
-
-        # Default empty result
-        return SimpleNamespace(result_set=[])
+from automem.api.recall import _expand_related_memories, handle_recall
+from automem.utils.scoring import _compute_metadata_score
+from automem.utils.text import _extract_keywords
+from tests.support.fake_graph import FakeGraph
 
 
 class MockQdrantClient:
@@ -220,13 +38,15 @@ class MockQdrantClient:
 
     def search(
         self,
-        collection_name,
-        query_vector,
-        limit=5,
-        with_payload=True,
-        with_vectors=False,
-    ):
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+    ) -> list[Any]:
         """Mock search operation."""
+        _ = with_payload, with_vectors  # Used by real client, not needed in mock
         self.search_calls.append(
             {"collection": collection_name, "vector": query_vector, "limit": limit}
         )
@@ -249,6 +69,10 @@ class MockQdrantClient:
         self.delete_calls.append((collection_name, points_selector))
         if hasattr(points_selector, "points"):
             for point_id in points_selector.points:
+                if point_id in self.points:
+                    del self.points[point_id]
+        elif isinstance(points_selector, dict):
+            for point_id in points_selector.get("points", []):
                 if point_id in self.points:
                     del self.points[point_id]
 
@@ -295,7 +119,7 @@ class MockQdrantClient:
 def mock_state(monkeypatch):
     """Create mock service state with graph and Qdrant."""
     state = app.ServiceState()
-    state.memory_graph = MockGraph()
+    state.memory_graph = FakeGraph()
     state.qdrant = MockQdrantClient()  # Changed from qdrant_client to qdrant
     state.openai_client = Mock()  # Mock OpenAI client
 
@@ -338,6 +162,57 @@ def admin_headers():
 # ==================== Test Health Endpoint ====================
 
 
+def test_viewer_bootstrap_response(client, mock_state, monkeypatch):
+    """Test /viewer bootstrap response for standalone visualizer redirect."""
+    _ = mock_state
+    monkeypatch.setenv("GRAPH_VIEWER_URL", "https://viewer.example.com")
+
+    response = client.get("/viewer/?foo=bar")
+
+    assert response.status_code == 200
+    assert response.mimetype == "text/html"
+    body = response.get_data(as_text=True)
+    assert "viewer.example.com" in body
+    assert "server" in body
+
+
+def test_viewer_asset_redirect(client, mock_state, monkeypatch):
+    """Test static asset compatibility route redirects to standalone visualizer."""
+    _ = mock_state
+    monkeypatch.setenv("GRAPH_VIEWER_URL", "https://viewer.example.com")
+
+    response = client.get("/viewer/assets/index.js?v=1", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://viewer.example.com/assets/index.js?v=1"
+
+
+def test_viewer_unavailable_without_target_url(client, mock_state, monkeypatch):
+    """Test /viewer returns 503 when GRAPH_VIEWER_URL is not configured."""
+    _ = mock_state
+    monkeypatch.delenv("GRAPH_VIEWER_URL", raising=False)
+
+    response = client.get("/viewer/")
+
+    assert response.status_code == 503
+    assert "GRAPH_VIEWER_URL" in response.get_data(as_text=True)
+
+
+def test_cors_preflight_for_graph_endpoint(client, mock_state):
+    """Test OPTIONS preflight is not blocked by auth middleware."""
+    _ = mock_state
+    response = client.options(
+        "/graph/stats",
+        headers={
+            "Origin": "https://viewer.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code in (200, 204)
+    assert "Access-Control-Allow-Origin" in response.headers
+
+
 def test_health_endpoint_all_services_up(client, mock_state):
     """Test health endpoint when all services are available."""
     response = client.get("/health")
@@ -375,6 +250,122 @@ def test_health_endpoint_falkordb_down(client, mock_state):
 # ==================== Test Memory Recall ====================
 
 
+def _make_floor_result(idx: int, score: float, query: str = "autojack") -> dict[str, Any]:
+    return {
+        "id": f"floor-{idx}",
+        "score": score,
+        "match_score": score,
+        "match_type": "vector",
+        "source": "qdrant",
+        "memory": {
+            "id": f"floor-{idx}",
+            "content": f"{query} memory {idx}",
+            "target_score": score,
+            "importance": 0.1,
+        },
+        "relations": [],
+    }
+
+
+def _call_handle_recall_for_scores(query: str, scores: list[float]):
+    vector_results = [
+        _make_floor_result(idx, score, query=query) for idx, score in enumerate(scores)
+    ]
+
+    with app.app.test_request_context(f"/recall?query={query}&limit={len(scores)}"):
+        response = handle_recall(
+            get_memory_graph=lambda: None,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=_normalize_timestamp,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, _query, _tokens, _context: (
+                float(result["memory"]["target_score"]),
+                {"keyword": 1.0},
+            ),
+            result_passes_filters=lambda *_args, **_kwargs: True,
+            graph_keyword_search=lambda *_args, **_kwargs: [],
+            vector_search=lambda *_args, **_kwargs: list(vector_results),
+            vector_filter_only_tag_search=lambda *_args, **_kwargs: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+
+    return response.get_json()
+
+
+def test_compute_metadata_score_uses_content_keyword_fallback_for_vector_results():
+    score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 1.0
+    assert score > config.SEARCH_WEIGHT_VECTOR * 0.7
+
+
+def test_compute_metadata_score_uses_partial_content_keyword_fallback():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.5
+
+
+def test_compute_metadata_score_leaves_keyword_zero_without_content_hits():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "Unrelated debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.0
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_keyword_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "keyword",
+            "match_score": 0.42,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.42
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_trending_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "trending",
+            "match_score": 0.33,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.33
+
+
 def test_recall_with_query(client, mock_state, auth_headers):
     """Test memory recall with text query."""
     # Store a memory first
@@ -383,8 +374,8 @@ def test_recall_with_query(client, mock_state, auth_headers):
         "tags": ["python", "programming"],
         "importance": 0.8,
     }
-    mock_state.memory_graph.memories["test-id"] = {
-        "id": "test-id",
+    mock_state.memory_graph.memories["dddddddd-dddd-dddd-dddd-dddddddddddd"] = {
+        "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
         "content": memory_data["content"],
         "tags": memory_data["tags"],
         "importance": memory_data["importance"],
@@ -426,8 +417,8 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     older_ts = (now - timedelta(days=2)).isoformat()
     newer_ts = (now - timedelta(days=1)).isoformat()
 
-    mock_state.memory_graph.memories["older"] = {
-        "id": "older",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000001"] = {
+        "id": "10000000-0000-0000-0000-000000000001",
         "content": "Older memory",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -435,8 +426,8 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
         "updated_at": older_ts,
         "last_accessed": older_ts,
     }
-    mock_state.memory_graph.memories["newer"] = {
-        "id": "newer",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000002"] = {
+        "id": "10000000-0000-0000-0000-000000000002",
         "content": "Newer memory",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -454,7 +445,7 @@ def test_recall_time_sorting(client, mock_state, auth_headers):
     assert data["status"] == "success"
     assert data.get("sort") == "time_desc"
     assert data["results"], "Expected at least one result"
-    assert data["results"][0]["id"] == "newer"
+    assert data["results"][0]["id"] == "10000000-0000-0000-0000-000000000002"
 
 
 def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_headers):
@@ -465,8 +456,8 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
     older_ts = (now - timedelta(days=2)).isoformat()
     newer_ts = (now - timedelta(days=1)).isoformat()
 
-    mock_state.memory_graph.memories["older"] = {
-        "id": "older",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000001"] = {
+        "id": "10000000-0000-0000-0000-000000000001",
         "content": "Older memory default sort",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -474,8 +465,8 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
         "updated_at": older_ts,
         "last_accessed": older_ts,
     }
-    mock_state.memory_graph.memories["newer"] = {
-        "id": "newer",
+    mock_state.memory_graph.memories["10000000-0000-0000-0000-000000000002"] = {
+        "id": "10000000-0000-0000-0000-000000000002",
         "content": "Newer memory default sort",
         "tags": ["cursor"],
         "importance": 0.1,
@@ -491,7 +482,7 @@ def test_recall_time_window_defaults_to_time_desc_sort(client, mock_state, auth_
     data = response.get_json()
     assert data["status"] == "success"
     assert data.get("sort") == "time_desc"
-    assert data["results"][0]["id"] == "newer"
+    assert data["results"][0]["id"] == "10000000-0000-0000-0000-000000000002"
 
 
 def test_recall_with_explicit_timestamps(client, mock_state, auth_headers):
@@ -529,8 +520,8 @@ def _store_memory(
 def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
     """Ensure coding-style memories rise to the top when editing Python."""
     mock_state.memory_graph.memories.clear()
-    style_id = "style-mem"
-    other_id = "general-mem"
+    style_id = "aa000000-0000-0000-0000-000000000001"
+    other_id = "aa000000-0000-0000-0000-000000000002"
     _store_memory(
         mock_state,
         other_id,
@@ -560,8 +551,8 @@ def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
 def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers):
     """Ensure style memory appears even when limit would normally omit it."""
     mock_state.memory_graph.memories.clear()
-    style_id = "style-mem-limit"
-    other_id = "general-mem-limit"
+    style_id = "aa000000-0000-0000-0000-000000000003"
+    other_id = "aa000000-0000-0000-0000-000000000004"
     _store_memory(
         mock_state,
         other_id,
@@ -587,12 +578,146 @@ def test_recall_injects_style_when_limit_small(client, mock_state, auth_headers)
     assert context_info.get("injected") is True
 
 
+def test_recall_priority_ids_fetches_specific_memory(client, mock_state, auth_headers):
+    """priority_ids should fetch a memory directly even when the query does not match it."""
+    mock_state.memory_graph.memories.clear()
+    target_id = "aa000000-0000-0000-0000-000000000010"
+    query_match_id = "aa000000-0000-0000-0000-000000000011"
+
+    _store_memory(
+        mock_state,
+        target_id,
+        "Completely unrelated anchored memory",
+        ["anchor"],
+        0.2,
+        timestamp="2026-03-01T00:00:00+00:00",
+    )
+    _store_memory(
+        mock_state,
+        query_match_id,
+        "Python query match memory",
+        ["python"],
+        0.9,
+        timestamp="2026-03-02T00:00:00+00:00",
+    )
+
+    response = client.get(
+        f"/recall?query=python&priority_ids={target_id}&limit=2",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    ids = [result["id"] for result in data["results"]]
+    assert target_id in ids
+    assert query_match_id in ids
+
+
+def test_recall_priority_ids_are_guaranteed_with_small_limit(client, mock_state, auth_headers):
+    """priority_ids should survive score sorting and limit truncation."""
+    mock_state.memory_graph.memories.clear()
+    target_id = "aa000000-0000-0000-0000-000000000012"
+    query_match_id = "aa000000-0000-0000-0000-000000000013"
+
+    _store_memory(
+        mock_state,
+        target_id,
+        "Anchored memory with unrelated content",
+        ["anchor"],
+        0.1,
+        timestamp="2026-03-01T00:00:00+00:00",
+    )
+    _store_memory(
+        mock_state,
+        query_match_id,
+        "Python query match that would normally rank first",
+        ["python"],
+        1.0,
+        timestamp="2026-03-02T00:00:00+00:00",
+    )
+
+    response = client.get(
+        f"/recall?query=python&priority_ids={target_id}&limit=1",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["count"] == 1
+    assert data["results"][0]["id"] == target_id
+
+
+def test_recall_vector_results_include_keyword_score_from_content(client, mock_state, auth_headers):
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors, query_filter
+        return [
+            SimpleNamespace(
+                id="vec-1",
+                score=0.71,
+                payload={
+                    "id": "vec-1",
+                    "content": "AutoJack recall investigation memory",
+                    "tags": ["debugging"],
+                    "importance": 0.3,
+                    "timestamp": utc_now(),
+                },
+            )
+        ]
+
+    mock_state.qdrant.search = custom_search
+    response = client.get("/recall?query=AutoJack recall&limit=1", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["count"] == 1
+    assert data["results"][0]["score_components"]["keyword"] == 1.0
+
+
+def test_recall_adaptive_floor_keeps_clustered_relevant_tail():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [0.76, 0.75, 0.73, 0.55, 0.54, 0.53, 0.52, 0.51],
+    )
+
+    assert data["count"] == 8
+    assert "score_filter" not in data
+
+
+def test_recall_adaptive_floor_applies_on_large_drop_when_half_remain():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.98, 0.4, 0.39, 0.38, 0.37, 0.36],
+    )
+
+    assert data["count"] == 4
+    assert data["score_filter"]["adaptive_floor"] == 0.4
+    assert data["score_filter"]["filtered_count"] == 4
+
+
+def test_recall_adaptive_floor_skips_cut_that_would_remove_more_than_half():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.3, 0.29, 0.28, 0.27, 0.26],
+    )
+
+    assert data["count"] == 7
+    assert "score_filter" not in data
+
+
 # ==================== Test Memory Update ====================
 
 
 def test_get_memory_success_parses_metadata_and_updates_access(client, mock_state, auth_headers):
     """Test successful memory retrieval by ID with parsed metadata and access tracking."""
-    memory_id = "get-memory-123"
+    memory_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
     mock_state.memory_graph.memories[memory_id] = {
         "id": memory_id,
         "content": "Memory content",
@@ -619,16 +744,24 @@ def test_get_memory_success_parses_metadata_and_updates_access(client, mock_stat
     assert last_accessed_queries
 
 
-def test_get_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_get_memory_not_found(client, auth_headers):
     """Test retrieving a non-existent memory by ID."""
-    response = client.get("/memory/non-existent-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000000", headers=auth_headers)
     assert response.status_code == 404
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_get_memory_invalid_id(client, auth_headers):
+    """Test retrieving a memory with an invalid (non-UUID) ID returns 400."""
+    response = client.get("/memory/not-a-uuid", headers=auth_headers)
+    assert response.status_code == 400
 
 
 def test_get_memory_graph_unavailable(client, mock_state, auth_headers):
     """Test get memory endpoint returns 503 when graph is unavailable."""
     mock_state.memory_graph = None
-    response = client.get("/memory/any-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000001", headers=auth_headers)
     assert response.status_code == 503
 
 
@@ -636,13 +769,13 @@ def test_get_memory_query_failure(client, mock_state, auth_headers):
     """Test get memory endpoint returns 500 when graph query fails."""
     mock_graph = mock_state.memory_graph
     mock_graph.query = Mock(side_effect=RuntimeError("query failed"))
-    response = client.get("/memory/failing-id", headers=auth_headers)
+    response = client.get("/memory/00000000-0000-0000-0000-000000000002", headers=auth_headers)
     assert response.status_code == 500
 
 
 def test_update_memory_success(client, mock_state, auth_headers):
     """Test successful memory update."""
-    memory_id = "test-memory-123"
+    memory_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
 
     # Create initial memory
     mock_state.memory_graph.memories[memory_id] = {
@@ -667,17 +800,31 @@ def test_update_memory_success(client, mock_state, auth_headers):
     assert data["memory_id"] == memory_id
 
 
-def test_update_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_update_memory_invalid_id(client, auth_headers):
+    """Test updating with an invalid (non-UUID) memory ID returns 400."""
+    response = client.patch(
+        "/memory/not-a-uuid",
+        json={"content": "New content"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_update_memory_not_found(client, auth_headers):
     """Test updating non-existent memory."""
     response = client.patch(
-        "/memory/non-existent-id", json={"content": "New content"}, headers=auth_headers
+        "/memory/00000000-0000-0000-0000-000000000099",
+        json={"content": "New content"},
+        headers=auth_headers,
     )
     assert response.status_code == 404
 
 
 def test_update_memory_partial_fields(client, mock_state, auth_headers):
     """Test updating only some fields of a memory."""
-    memory_id = "test-memory-456"
+    memory_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
     # Create initial memory
     mock_state.memory_graph.memories[memory_id] = {
@@ -703,7 +850,7 @@ def test_update_memory_partial_fields(client, mock_state, auth_headers):
 
 def test_delete_memory_success(client, mock_state, auth_headers):
     """Test successful memory deletion."""
-    memory_id = "delete-test-123"
+    memory_id = "dd000000-0000-0000-0000-000000000001"
 
     # Create memory to delete
     mock_state.memory_graph.memories[memory_id] = {
@@ -727,9 +874,17 @@ def test_delete_memory_success(client, mock_state, auth_headers):
     assert memory_id not in mock_state.memory_graph.memories
 
 
-def test_delete_memory_not_found(client, mock_state, auth_headers):
+@pytest.mark.usefixtures("mock_state")
+def test_delete_memory_invalid_id(client, auth_headers):
+    """Test deleting with an invalid (non-UUID) memory ID returns 400."""
+    response = client.delete("/memory/not-a-uuid", headers=auth_headers)
+    assert response.status_code == 400
+
+
+@pytest.mark.usefixtures("mock_state")
+def test_delete_memory_not_found(client, auth_headers):
     """Test deleting non-existent memory."""
-    response = client.delete("/memory/non-existent", headers=auth_headers)
+    response = client.delete("/memory/00000000-0000-0000-0000-000000000098", headers=auth_headers)
     assert response.status_code == 404
 
 
@@ -739,8 +894,8 @@ def test_delete_memory_not_found(client, mock_state, auth_headers):
 def test_memory_by_tag_single(client, mock_state, auth_headers):
     """Test retrieving memories by a single tag."""
     # Add some memories with tags
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Python tutorial",
         "tags": ["python", "tutorial"],
         "importance": 0.8,
@@ -752,6 +907,9 @@ def test_memory_by_tag_single(client, mock_state, auth_headers):
     data = response.get_json()
     assert data["status"] == "success"
     assert "memories" in data  # API returns 'memories' not 'results'
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert data["has_more"] is False
 
 
 def test_memory_by_tag_multiple(client, mock_state, auth_headers):
@@ -768,20 +926,115 @@ def test_memory_by_tag_no_tags(client, mock_state, auth_headers):
     assert response.status_code == 400
 
 
+def test_memory_by_tag_pagination(client, mock_state, auth_headers):
+    """Test offset pagination for /memory/by-tag."""
+    tag = "paged-tag"
+    timestamp = utc_now()
+    for i in range(205):
+        memory_id = f"00000000-0000-0000-0000-{i:012d}"
+        memory = {
+            "id": memory_id,
+            "content": f"Paged memory {i}",
+            "tags": [tag],
+            "importance": 0.5,
+            "timestamp": timestamp,
+        }
+        mock_state.memory_graph.memories[memory_id] = memory
+
+    first = client.get("/memory/by-tag?tags=paged-tag&limit=200", headers=auth_headers)
+    assert first.status_code == 200
+    first_data = first.get_json()
+    assert first_data["count"] == 200
+    assert first_data["limit"] == 200
+    assert first_data["offset"] == 0
+    assert first_data["has_more"] is True
+
+    second = client.get("/memory/by-tag?tags=paged-tag&limit=200&offset=200", headers=auth_headers)
+    assert second.status_code == 200
+    second_data = second.get_json()
+    assert second_data["count"] == 5
+    assert second_data["limit"] == 200
+    assert second_data["offset"] == 200
+    assert second_data["has_more"] is False
+
+    first_ids = {memory["id"] for memory in first_data["memories"]}
+    second_ids = {memory["id"] for memory in second_data["memories"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_memory_by_tag_invalid_offset_normalized(client, mock_state, auth_headers):
+    """Test invalid or negative offset normalizes to zero."""
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab",
+        "content": "Offset memory",
+        "tags": ["offset-tag"],
+        "importance": 0.8,
+        "timestamp": utc_now(),
+    }
+
+    invalid = client.get("/memory/by-tag?tags=offset-tag&offset=nope", headers=auth_headers)
+    assert invalid.status_code == 200
+    invalid_data = invalid.get_json()
+    assert invalid_data["offset"] == 0
+    assert invalid_data["count"] == 1
+
+    negative = client.get("/memory/by-tag?tags=offset-tag&offset=-10", headers=auth_headers)
+    assert negative.status_code == 200
+    negative_data = negative.get_json()
+    assert negative_data["offset"] == 0
+    assert negative_data["count"] == 1
+
+
+def test_delete_memory_by_tag_bulk(client, mock_state, auth_headers):
+    """Test bulk delete by tag removes graph and vector entries."""
+    tag = "bulk-delete-tag"
+    for i in range(3):
+        memory_id = f"00000000-0000-0000-0000-0000000001{i:02d}"
+        payload = {
+            "content": f"Bulk delete memory {i}",
+            "tags": [tag],
+            "importance": 0.7,
+            "timestamp": utc_now(),
+        }
+        mock_state.memory_graph.memories[memory_id] = {"id": memory_id, **payload}
+        mock_state.qdrant.points[memory_id] = {"vector": [0.1] * 3, "payload": payload}
+
+    response = client.delete("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": [tag], "deleted_count": 3}
+
+    follow_up = client.get("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert follow_up.status_code == 200
+    follow_up_data = follow_up.get_json()
+    assert follow_up_data["count"] == 0
+    assert follow_up_data["has_more"] is False
+    deleted_ids = [f"00000000-0000-0000-0000-0000000001{i:02d}" for i in range(3)]
+    assert all(point_id not in mock_state.qdrant.points for point_id in deleted_ids)
+
+
+def test_delete_memory_by_tag_no_matches(client, mock_state, auth_headers):
+    """Test bulk delete by tag succeeds with zero matches."""
+    response = client.delete("/memory/by-tag?tags=missing-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": ["missing-tag"], "deleted_count": 0}
+
+
 # ==================== Test Admin Reembed ====================
 
 
 def test_admin_reembed_success(client, mock_state, admin_headers):
     """Test successful re-embedding of memories."""
     # Add memories to reembed
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "First memory to reembed",
         "tags": ["test"],
         "importance": 0.7,
     }
-    mock_state.memory_graph.memories["mem2"] = {
-        "id": "mem2",
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
         "content": "Second memory to reembed",
         "tags": ["test"],
         "importance": 0.8,
@@ -809,8 +1062,8 @@ def test_admin_reembed_no_openai(client, mock_state, admin_headers):
     mock_state.openai_client = None
 
     # Add memories to reembed
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Memory to reembed with fallback",
         "tags": ["test"],
     }
@@ -848,8 +1101,8 @@ def test_admin_reembed_no_admin_token(client, mock_state, auth_headers):
 def test_admin_reembed_force_flag(client, mock_state, admin_headers):
     """Test force reembedding with force flag."""
     # Add memory
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         "content": "Memory with existing embedding",
         "tags": ["test"],
     }
@@ -917,7 +1170,13 @@ def test_enrichment_reprocess(client, mock_state, admin_headers):
     """Test reprocessing memories for enrichment."""
     response = client.post(
         "/enrichment/reprocess",
-        json={"ids": ["mem1", "mem2", "mem3"]},
+        json={
+            "ids": [
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            ]
+        },
         headers=admin_headers,
     )
 
@@ -937,31 +1196,25 @@ def test_enrichment_reprocess_no_ids(client, mock_state, admin_headers):
 
 
 def test_create_association_all_relationship_types(client, mock_state, auth_headers):
-    """Test creating associations with all new relationship types."""
+    """Test creating associations with all public authorable relationship types."""
     # Create two memories
-    mock_state.memory_graph.memories["mem1"] = {"id": "mem1", "content": "Memory 1"}
-    mock_state.memory_graph.memories["mem2"] = {"id": "mem2", "content": "Memory 2"}
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "content": "Memory 1",
+    }
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "content": "Memory 2",
+    }
 
-    relationship_types = [
-        "RELATES_TO",
-        "LEADS_TO",
-        "OCCURRED_BEFORE",
-        "PREFERS_OVER",
-        "EXEMPLIFIES",
-        "CONTRADICTS",
-        "REINFORCES",
-        "INVALIDATED_BY",
-        "EVOLVED_INTO",
-        "DERIVED_FROM",
-        "PART_OF",
-    ]
+    relationship_types = sorted(config.AUTHORABLE_RELATIONS)
 
     for rel_type in relationship_types:
         response = client.post(
             "/associate",
             json={
-                "memory1_id": "mem1",
-                "memory2_id": "mem2",
+                "memory1_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "memory2_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                 "type": rel_type,
                 "strength": 0.8,
             },
@@ -972,28 +1225,57 @@ def test_create_association_all_relationship_types(client, mock_state, auth_head
         assert data["status"] == "success"
 
 
+def test_create_association_rejects_system_generated_relationship_types(
+    client, mock_state, auth_headers
+):
+    """Public association writes should reject system/internal relation labels."""
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "content": "Memory 1",
+    }
+    mock_state.memory_graph.memories["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"] = {
+        "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "content": "Memory 2",
+    }
+
+    for rel_type in ("SIMILAR_TO", "PRECEDED_BY", "DISCOVERED", "EXPLAINS"):
+        response = client.post(
+            "/associate",
+            json={
+                "memory1_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "memory2_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "type": rel_type,
+                "strength": 0.8,
+            },
+            headers=auth_headers,
+        )
+        assert response.status_code == 400, f"Expected rejection for {rel_type}"
+        data = response.get_json()
+        assert "Relation type must be one of" in data["message"]
+
+
 def test_create_association_with_properties(client, mock_state, auth_headers):
     """Test creating association with additional properties."""
-    mock_state.memory_graph.memories["mem1"] = {
-        "id": "mem1",
+    mem1_id = "11111111-1111-1111-1111-111111111111"
+    mem2_id = "22222222-2222-2222-2222-222222222222"
+    mock_state.memory_graph.memories[mem1_id] = {
+        "id": mem1_id,
         "content": "Preferred method",
     }
-    mock_state.memory_graph.memories["mem2"] = {
-        "id": "mem2",
+    mock_state.memory_graph.memories[mem2_id] = {
+        "id": mem2_id,
         "content": "Alternative method",
     }
 
     response = client.post(
         "/associate",
         json={
-            "memory1_id": "mem1",
-            "memory2_id": "mem2",
+            "memory1_id": mem1_id,
+            "memory2_id": mem2_id,
             "type": "PREFERS_OVER",
             "strength": 0.9,
-            "properties": {
-                "reason": "Better performance",
-                "context": "Production environment",
-            },
+            "reason": "Better performance",
+            "context": "Production environment",
         },
         headers=auth_headers,
     )
@@ -1001,6 +1283,8 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
     assert response.status_code == 201
     data = response.get_json()
     assert data["status"] == "success"
+    assert data["reason"] == "Better performance"
+    assert data["context"] == "Production environment"
 
 
 # ==================== Test Startup Recall ====================
@@ -1010,8 +1294,8 @@ def test_startup_recall(client, mock_state, auth_headers):
     """Test startup recall endpoint."""
     # Add some recent high-importance memories
     now = utc_now()
-    mock_state.memory_graph.memories["important"] = {
-        "id": "important",
+    mock_state.memory_graph.memories["20000000-0000-0000-0000-000000000001"] = {
+        "id": "20000000-0000-0000-0000-000000000001",
         "content": "Critical information",
         "importance": 0.95,
         "timestamp": now,
@@ -1032,15 +1316,15 @@ def test_startup_recall(client, mock_state, auth_headers):
 def test_analyze_endpoint(client, mock_state, auth_headers):
     """Test analytics endpoint."""
     # Add varied memories for analytics
-    mock_state.memory_graph.memories["decision1"] = {
-        "id": "decision1",
+    mock_state.memory_graph.memories["30000000-0000-0000-0000-000000000001"] = {
+        "id": "30000000-0000-0000-0000-000000000001",
         "content": "Architectural decision",
         "type": "Decision",
         "confidence": 0.9,
         "importance": 0.85,
     }
-    mock_state.memory_graph.memories["pattern1"] = {
-        "id": "pattern1",
+    mock_state.memory_graph.memories["30000000-0000-0000-0000-000000000002"] = {
+        "id": "30000000-0000-0000-0000-000000000002",
         "content": "Common pattern",
         "type": "Pattern",
         "confidence": 0.7,
@@ -1124,28 +1408,32 @@ def test_embedding_dimension_validation(client, mock_state, auth_headers):
 
 
 def test_expand_related_memories_filters_strength_and_importance():
-    seed_results = [{"id": "seed1", "final_score": 0.8, "memory": {"id": "seed1"}}]
+    seed_id = "11111111-0000-0000-0000-000000000001"
+    keep_id = "11111111-0000-0000-0000-000000000002"
+    weak_id = "11111111-0000-0000-0000-000000000003"
+    low_imp_id = "11111111-0000-0000-0000-000000000004"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
 
     class _Node(SimpleNamespace):
         pass
 
     class Graph:
-        def query(self, query: str, params: dict):
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
             related = [
                 (
                     "RELATES_TO",
                     0.2,
-                    _Node(properties={"id": "keep", "importance": 0.9}),
+                    _Node(properties={"id": keep_id, "importance": 0.9}),
                 ),
                 (
                     "RELATES_TO",
                     0.05,
-                    _Node(properties={"id": "weak", "importance": 0.9}),
+                    _Node(properties={"id": weak_id, "importance": 0.9}),
                 ),
                 (
                     "RELATES_TO",
                     0.8,
-                    _Node(properties={"id": "low_importance", "importance": 0.1}),
+                    _Node(properties={"id": low_imp_id, "importance": 0.1}),
                 ),
             ]
             return SimpleNamespace(result_set=related)
@@ -1182,7 +1470,334 @@ def test_expand_related_memories_filters_strength_and_importance():
     )
 
     ids = {res["id"] for res in results}
-    assert ids == {"keep"}
+    assert ids == {keep_id}
+
+
+def test_expand_related_memories_normalizes_legacy_discovered_relations():
+    seed_id = "22222222-0000-0000-0000-000000000001"
+    related_id = "22222222-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            related = [
+                (
+                    "EXPLAINS",
+                    0.7,
+                    None,
+                    _Node(properties={"id": related_id, "importance": 0.9}),
+                ),
+            ]
+            return SimpleNamespace(result_set=related)
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=lambda *args, **kwargs: True,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="",
+        query_tokens=[],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=None,
+        tag_mode="any",
+        tag_match="prefix",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"DISCOVERED"},
+        logger=Mock(),
+    )
+
+    assert len(results) == 1
+    relation_info = results[0]["relations"][0]
+    assert relation_info["type"] == "DISCOVERED"
+    assert relation_info["kind"] == "explains"
+
+
+def test_expand_related_memories_bypasses_tag_filter_by_default():
+    seed_id = "33333333-0000-0000-0000-000000000001"
+    related_id = "33333333-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["rate", "limiter"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][3] is None
+
+
+def test_expand_related_memories_respects_tags_when_opted_in():
+    seed_id = "44444444-0000-0000-0000-000000000001"
+    related_id = "44444444-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "DERIVED_FROM",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="auth generic pattern",
+        query_tokens=["auth", "pattern"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"DERIVED_FROM"},
+        logger=Mock(),
+        expand_respect_tags=True,
+    )
+
+    assert results == []
+
+
+def test_expand_related_memories_still_honors_exclude_tags():
+    seed_id = "55555555-0000-0000-0000-000000000001"
+    related_id = "55555555-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "REINFORCES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[6] == ["archived"] and args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="cross project logging",
+        query_tokens=["logging"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"REINFORCES"},
+        logger=Mock(),
+        exclude_tags=["archived"],
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][6] == ["archived"]
+
+
+def test_expand_related_memories_still_honors_time_window():
+    seed_id = "66666666-0000-0000-0000-000000000001"
+    related_id = "66666666-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return (
+            args[1] == "2026-01-01T00:00:00Z"
+            and args[2] == "2026-12-31T23:59:59Z"
+            and args[3] is None
+        )
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["redis"],
+        context_profile=None,
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-12-31T23:59:59Z",
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][1] == "2026-01-01T00:00:00Z"
+    assert seen_filter_args[0][2] == "2026-12-31T23:59:59Z"
+
+
+def test_relation_taxonomy_sets_are_consistent():
+    assert config.AUTHORABLE_RELATIONS == {
+        "RELATES_TO",
+        "LEADS_TO",
+        "OCCURRED_BEFORE",
+        "PREFERS_OVER",
+        "EXEMPLIFIES",
+        "CONTRADICTS",
+        "REINFORCES",
+        "INVALIDATED_BY",
+        "EVOLVED_INTO",
+        "DERIVED_FROM",
+        "PART_OF",
+    }
+    assert config.DEFAULT_EXPAND_RELATIONS == config.AUTHORABLE_RELATIONS
+    assert config.PUBLIC_RELATIONS == config.AUTHORABLE_RELATIONS | {"SIMILAR_TO", "PRECEDED_BY"}
+    assert config.FILTERABLE_RELATIONS == config.PUBLIC_RELATIONS | {"DISCOVERED"}
+    assert set(config.RELATION_COLORS) == config.PUBLIC_RELATIONS
+
+
+def test_related_memories_defaults_to_authorable_relations(client, mock_state, auth_headers):
+    class Graph:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self, query: str, params: dict[str, Any] | None = None) -> SimpleNamespace:
+            self.calls.append((query, params or {}))
+            return SimpleNamespace(result_set=[])
+
+    graph = Graph()
+    mock_state.memory_graph = graph
+
+    response = client.get(
+        "/memories/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/related",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert graph.calls
+    query, _params = graph.calls[0]
+    assert "RELATES_TO" in query
+    assert "PART_OF" in query
+    assert "SIMILAR_TO" not in query
+    assert "PRECEDED_BY" not in query
+    assert "DISCOVERED" not in query
+
+
+def test_related_memories_supports_explicit_system_relation_opt_ins(
+    client, mock_state, auth_headers
+):
+    class Graph:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self, query: str, params: dict[str, Any] | None = None) -> SimpleNamespace:
+            self.calls.append((query, params or {}))
+            return SimpleNamespace(result_set=[])
+
+    graph = Graph()
+    mock_state.memory_graph = graph
+
+    response = client.get(
+        "/memories/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/related"
+        "?relationship_types=SIMILAR_TO,DISCOVERED",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["relationship_types"] == ["SIMILAR_TO", "DISCOVERED"]
+    query, _params = graph.calls[0]
+    assert "SIMILAR_TO" in query
+    assert "DISCOVERED" in query
+    assert "EXPLAINS" in query
+    assert "SHARES_THEME" in query
+    assert "PARALLEL_CONTEXT" in query
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

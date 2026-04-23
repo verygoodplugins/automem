@@ -1,0 +1,60 @@
+import sys
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from typing import Any
+
+
+class _DummyBackend:
+    name = "automem"
+
+    def health_check(self) -> bool:
+        return True
+
+
+def _load_module(module_name: str, path: Path) -> Any:
+    spec = spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_global_env(tmp_path: Path) -> None:
+    env_dir = tmp_path / ".config" / "automem"
+    env_dir.mkdir(parents=True)
+    (env_dir / ".env").write_text("OPENAI_API_KEY=file-openai-key\n", encoding="utf-8")
+
+
+def test_locomo_benchmark_loads_openai_api_key_from_global_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_global_env(tmp_path)
+
+    module_path = Path(__file__).resolve().parent / "benchmarks" / "test_locomo.py"
+    module = _load_module("locomo_benchmark_env_loading", module_path)
+    monkeypatch.setattr(module, "create_backend", lambda *args, **kwargs: _DummyBackend())
+
+    evaluator = module.LoCoMoEvaluator(module.LoCoMoConfig())
+
+    assert evaluator.has_openai_api_key is True
+    assert evaluator.openai_client is not None
+
+
+def test_longmemeval_benchmark_loads_openai_api_key_from_global_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_global_env(tmp_path)
+
+    module_path = (
+        Path(__file__).resolve().parent / "benchmarks" / "longmemeval" / "test_longmemeval.py"
+    )
+    module = _load_module("longmemeval_benchmark_env_loading", module_path)
+    monkeypatch.setattr(module, "create_backend", lambda *args, **kwargs: _DummyBackend())
+
+    benchmark = module.LongMemEvalBenchmark(module.get_config("baseline"))
+
+    assert benchmark.openai_client is not None

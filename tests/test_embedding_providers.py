@@ -583,10 +583,64 @@ def test_provider_selection_auto_prefers_voyage(monkeypatch):
             mock_openai_class.assert_not_called()
 
 
-@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "EMBEDDING_PROVIDER": "auto"})
-def test_provider_selection_auto_with_openai(mock_openai_client):
-    """Test auto-selection prefers OpenAI when API key is available."""
+@patch.dict(
+    os.environ,
+    {
+        "EMBEDDING_PROVIDER": "voyage",
+        "VOYAGE_API_KEY": "voyage-key",
+        "VOYAGE_MODEL": "voyage-4",
+    },
+    clear=False,
+)
+def test_voyage_rejects_incompatible_autodetected_dimension(monkeypatch):
+    """Issue #127: Voyage startup crash when autodetect adopts 3072d from OpenAI collection."""
     import app
+
+    monkeypatch.setattr(app, "VECTOR_SIZE", 3072)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 3072, raising=False)
+    monkeypatch.setattr(app.state, "embedding_provider", None, raising=False)
+
+    with pytest.raises(RuntimeError, match="Dimension mismatch"):
+        app.init_embedding_provider()
+
+
+@patch.dict(
+    os.environ,
+    {
+        "EMBEDDING_PROVIDER": "auto",
+        "VOYAGE_API_KEY": "voyage-key",
+        "OPENAI_API_KEY": "openai-key",
+    },
+    clear=False,
+)
+def test_auto_skips_voyage_on_incompatible_dimension(monkeypatch):
+    """Auto-selection should fall through to OpenAI when dimension is incompatible with Voyage."""
+    import app
+
+    monkeypatch.setattr(app, "VECTOR_SIZE", 3072)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 3072, raising=False)
+    monkeypatch.setattr(app.state, "embedding_provider", None, raising=False)
+
+    with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
+        mock_client = Mock()
+        mock_client.embeddings.create.return_value = Mock(data=[Mock(embedding=[0.1] * 3072)])
+        mock_openai_class.return_value = mock_client
+
+        app.init_embedding_provider()
+
+        assert app.state.embedding_provider is not None
+        assert "openai" in app.state.embedding_provider.provider_name()
+
+
+def test_provider_selection_auto_with_openai(mock_openai_client, monkeypatch):
+    """Test auto-selection prefers OpenAI when API key is available (and Voyage is not)."""
+    import app
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "auto")
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
 
     with patch("automem.embedding.openai.OpenAI") as mock_openai_class:
         mock_openai_class.return_value = mock_openai_client
@@ -798,20 +852,19 @@ def test_provider_initialization_failure_recovery(monkeypatch):
     """Test recovery from provider initialization failures."""
     import app
 
-    # Mock provider that fails to initialize
     def failing_init(*args, **kwargs):
         raise Exception("Init failed")
 
-    # Mock environment to ensure no OpenAI key is available
-    with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
-        with patch("automem.embedding.fastembed.TextEmbedding", side_effect=failing_init):
-            # Should fall back to placeholder when both OpenAI and FastEmbed fail
-            app.state.embedding_provider = None
-            app.init_embedding_provider()
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "auto")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
 
-            assert app.state.embedding_provider is not None
-            # With no OpenAI key and FastEmbed failing, should use placeholder
-            assert app.state.embedding_provider.provider_name() == "placeholder"
+    with patch("automem.embedding.fastembed.TextEmbedding", side_effect=failing_init):
+        app.state.embedding_provider = None
+        app.init_embedding_provider()
+
+        assert app.state.embedding_provider is not None
+        assert app.state.embedding_provider.provider_name() == "placeholder"
 
 
 # ==================== Provider Feature Tests ====================

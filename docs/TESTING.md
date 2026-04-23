@@ -24,6 +24,20 @@ make test-integration
 make test-live
 ```
 
+## Pytest Markers
+
+The suite now uses explicit markers:
+
+- `unit`: Fast mocked tests (default classification).
+- `integration`: Docker-backed local integration tests.
+- `live`: Benchmarks/live-environment tests (opt-in).
+
+Marker behavior:
+
+- Any test not explicitly marked `integration` or `live` is auto-classified as `unit`.
+- `make test` runs `-m unit`.
+- `make test-integration` runs `-m integration` with the existing env-based gate.
+
 ## Test Types
 
 ```mermaid
@@ -71,6 +85,7 @@ flowchart TD
 - No external services required
 - Tests API logic, validation, edge cases
 - Safe to run anytime
+- Internally runs: `pytest -m unit`
 
 ### 2. Integration Tests (Local)
 **Command**: `make test-integration`
@@ -80,6 +95,7 @@ flowchart TD
 - Creates test memories tagged with `["test", "integration"]`
 - Cleans up all test data after completion
 - Requires: Docker, Docker Compose
+- Internally runs: `pytest -m integration`
 
 **What it does:**
 1. Starts Docker services with `AUTOMEM_API_TOKEN=test-token`
@@ -202,6 +218,27 @@ make test-integration
 
 AutoMem can be evaluated against the **LoCoMo benchmark** (ACL 2024), which tests long-term conversational memory across 10 conversations and 1,986 questions.
 
+### LoCoMo Cat-5 Judge
+
+Category 5 uses evidence-grounded complex reasoning and is opt-in for cost reasons.
+
+```bash
+# Default: categories 1-4 scored, category 5 skipped
+make bench-eval BENCH=locomo-mini CONFIG=baseline
+
+# Enable cat-5 judge with env var
+BENCH_JUDGE_MODEL=gpt-5.1 make bench-eval BENCH=locomo-mini CONFIG=baseline
+
+# Or use the runner CLI flags directly
+./test-locomo-benchmark.sh --conversations 0,1 --judge
+./test-locomo-benchmark.sh --conversations 0,1 --judge-model gpt-5.1
+```
+
+- `BENCH_JUDGE_MODEL` enables category-5 judging for `tests/benchmarks/test_locomo.py`.
+- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-5.1` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
+- If the judge is disabled, category 5 remains `N/A`.
+- If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
+
 ### What is LoCoMo?
 
 LoCoMo evaluates AI systems' ability to remember and reason across very long conversations (300+ turns). It measures performance across 5 categories:
@@ -212,7 +249,14 @@ LoCoMo evaluates AI systems' ability to remember and reason across very long con
 4. **Open Domain** (Category 4) - General knowledge questions
 5. **Complex Reasoning** (Category 5) - Advanced inference tasks
 
-**Comparison**: CORE achieved 88.24% (June 2025). AutoMem achieved 90.53%.
+Published reference point: CORE is widely cited at **88.24%** (June 2025), but public LoCoMo setups are not perfectly apples-to-apples, especially around category-5 handling.
+
+AutoMem currently publishes two LoCoMo baselines:
+
+| Setup | Scope | Score | Notes |
+|------|-------|-------|-------|
+| `locomo-mini`, judge off | 2 conversations, categories 1-4 only | **89.27% (208/233)** | 71 category-5 questions skipped |
+| `locomo`, judge on (`gpt-4o`) | Full 10 conversations | **87.56% (1739/1986)** | Category 5 scored at 95.74% (427/446) |
 
 ### Running the Benchmark
 
@@ -249,24 +293,38 @@ Memory usage:
 Example benchmark output:
 ```text
 📊 FINAL RESULTS
-🎯 Overall Accuracy: 90.53% (1798/1986)
-⏱️ Total Time: 1665s
+🎯 Overall Accuracy: 87.56% (1739/1986)
+⏱️ Total Time: 3497s
 💾 Total Memories Stored: 5882
 
 📈 Category Breakdown:
-  Single-hop Recall        : 79.79% (225/282)
-  Temporal Understanding   : 85.05% (273/321)
-  Multi-hop Reasoning      : 50.00% ( 48/ 96)
-  Open Domain              : 95.84% (806/841)
-  Complex Reasoning        : 100.00% (446/446)
+  Single-hop Recall        : 66.31% (187/282)
+  Temporal Understanding   : 87.23% (280/321)
+  Multi-hop Reasoning      : 45.83% ( 44/ 96)
+  Open Domain              : 95.24% (801/841)
+  Complex Reasoning        : 95.74% (427/446)
 
-📊 Comparison:
+📊 Comparison with published CORE reference:
   CORE: 88.24%
-  AutoMem: 90.53%
+  AutoMem: 87.56%
+  📉 AutoMem is 0.68% behind that reference
 ```
 
-All benchmark reports live in `tests/benchmarks/`.
-```
+If you run without the judge, category 5 will show as `N/A` and the comparison should be treated as directional rather than apples-to-apples.
+
+Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
+
+## Benchmark Ownership
+
+`automem` is the canonical home for official benchmark harnesses, published baselines, and any benchmark numbers referenced in docs, CI, or release notes.
+
+Use the separate `automem-evals` repo for:
+- ruleset experimentation
+- scenario authoring and seeded corpora
+- cross-agent or cross-backend comparisons
+- bulky timestamped result artifacts and exploratory writeups
+
+If you are building an external eval harness against local AutoMem, use the contract in [`EVALS_CONTRACT.md`](EVALS_CONTRACT.md) and treat this repo as the system under test.
 
 ### AutoMem's Advantages
 

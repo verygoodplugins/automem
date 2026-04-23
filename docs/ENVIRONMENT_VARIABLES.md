@@ -57,7 +57,7 @@ AutoMem supports five embedding backends with automatic fallback.
 | `VOYAGE_API_KEY` | Voyage API key (for Voyage provider) | - | `pa-...` |
 | `VOYAGE_MODEL` | Voyage embedding model | `voyage-4` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
 | `OPENAI_API_KEY` | API key (OpenAI or compatible provider) | - | `sk-proj-...` |
-| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs | - | `https://openrouter.ai/api/v1` |
+| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs (embeddings and classification/enrichment LLM calls) | - | `https://openrouter.ai/api/v1` |
 | `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama embedding model | `nomic-embed-text` | `nomic-embed-text` |
 | `OLLAMA_TIMEOUT` | Ollama request timeout (seconds) | `30` | `10`, `30`, `60` |
@@ -140,19 +140,29 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `QDRANT_URL` | Qdrant endpoint URL | `http://localhost:6333` | `https://xyz.qdrant.io` |
+| `QDRANT_URL` | Qdrant endpoint URL (takes precedence over `QDRANT_HOST`) | - | `https://xyz.qdrant.io` |
+| `QDRANT_HOST` | Qdrant hostname; auto-constructs `http://<host>:<port>` | - | `qdrant` (Railway) or `localhost` |
+| `QDRANT_PORT` | Qdrant port (used with `QDRANT_HOST`) | `6333` | `6333` |
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
 | `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
-| `VECTOR_SIZE` | Embedding dimension | `3072` | `3072` (large), `768` (small) |
-| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `false` | `true` |
+| `VECTOR_SIZE` | Embedding dimension | `1024` | `1024` (voyage-4), `3072` (large), `768` (small) |
+| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
 
+**Connection priority**: `QDRANT_URL` > `QDRANT_HOST`+`QDRANT_PORT`. Use `QDRANT_URL` for Qdrant Cloud (includes `https://`), use `QDRANT_HOST` for self-hosted/Railway internal (simpler, auto-constructs `http://host:port`).
+
 **Notes**:
 - Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
-- **Existing deployments on 768d**: set `VECTOR_SIZE=768` (and `EMBEDDING_MODEL=text-embedding-3-small`) until you run the migration script.
-- By default the service fails fast if the configured vector size does not match the Qdrant collection to prevent silent corruption.
-- To opt into legacy auto-detection (use the existing collection dimension), set `VECTOR_SIZE_AUTODETECT=true`.
+- **Existing deployments on 3072d or 768d**: `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed after updating.
+- To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The server will exit with a clear error message and fix instructions.
+- When creating a new collection, the configured `VECTOR_SIZE` (default 1024 for voyage-4) is used.
+
+#### Self-Hosted Qdrant on Railway
+
+When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_HOST=qdrant` on memory-service. Railway's internal DNS resolves service names automatically.
+
+**Critical**: You must also set `QDRANT__SERVICE__HOST=::` on the **Qdrant service itself**. Railway's internal networking uses IPv6, but Qdrant defaults to binding `0.0.0.0` (IPv4 only). Without this, connections from other Railway services will be refused even though DNS resolves correctly. See [Railway Deployment Guide — Self-Hosted Qdrant](RAILWAY_DEPLOYMENT.md#option-b-self-hosted-qdrant-on-railway) for full setup.
 
 ### API Server
 
@@ -161,6 +171,19 @@ VECTOR_SIZE=768                                  # must match the model's output
 | `PORT` | Flask server port | `8001` | ✅ **Yes** (Railway) |
 
 **⚠️ Railway Deployment**: `PORT` **must** be explicitly set to `8001` in Railway. Without it, Flask defaults to port 5000, causing service connection failures. This is **required** for Railway deployments, even though it has a default in local development.
+
+### Viewer Compatibility
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `ENABLE_GRAPH_VIEWER` | Enable `/viewer/*` compatibility routes | `true` | `true` |
+| `GRAPH_VIEWER_URL` | Standalone viewer URL target for redirects/bootstrap | - | `https://automem-graph-viewer.up.railway.app` |
+| `VIEWER_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for browser clients | `*` (when unset) | `https://automem-graph-viewer.up.railway.app,https://staging-viewer.example.com` |
+
+**Behavior**:
+- AutoMem no longer serves built viewer assets in-process.
+- `/viewer` now redirects/bootstraps to `GRAPH_VIEWER_URL` and forwards `server=<automem-origin>`.
+- URL hash tokens (for example `#token=...`) stay client-side and are preserved during redirect.
 
 ### Scripts Only
 
@@ -199,6 +222,8 @@ Controls memory merging, pattern detection, and decay.
 | `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Min importance to keep | `0.3` | 0-1 |
 | `CONSOLIDATION_HISTORY_LIMIT` | Max consolidation history | `20` | count |
 | `CONSOLIDATION_CONTROL_NODE_ID` | Control node identifier | `global` | string |
+| `CONSOLIDATION_BASE_DECAY_RATE` | Daily exponential decay rate | `0.01` | float |
+| `CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR` | Minimum relevance as fraction of importance | `0.3` | 0-1 |
 | `CONSOLIDATION_DELETE_THRESHOLD` | Delete threshold (`0` disables) | `0.0` | 0-1 |
 | `CONSOLIDATION_ARCHIVE_THRESHOLD` | Archive threshold (`0` disables) | `0.0` | 0-1 |
 | `CONSOLIDATION_GRACE_PERIOD_DAYS` | Protect recent memories | `90` | days |
@@ -207,28 +232,39 @@ Controls memory merging, pattern detection, and decay.
 
 ### Model Configuration
 
-Controls which OpenAI models are used for embeddings and classification.
+Controls embedding provider and classification model settings.
 
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
-| `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-large` | `text-embedding-3-large` (3072d), `text-embedding-3-small` (768d) |
-| `VECTOR_SIZE` | Embedding dimension | `3072` | Must match embedding model |
-| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `false` | `true` |
+| `EMBEDDING_MODEL` | OpenAI embedding model (used when provider is `openai`) | `text-embedding-3-small` | `text-embedding-3-small`, `text-embedding-3-large` |
+| `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4, 1536=text-embedding-3-small native; choose ≤1536 when truncating, 3072=text-embedding-3-large native) |
+| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
 | `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
 
-**Embedding Model Comparison:**
-| Model | Dimensions | Cost/1M tokens | Quality | Use Case |
-|-------|-----------|----------------|---------|----------|
-| `text-embedding-3-large` | 3072 | $0.13 | Excellent | **Default** - Better semantic precision |
-| `text-embedding-3-small` | 768 | $0.02 | Good | Cost-sensitive, high-volume deployments |
+**Embedding Provider Comparison:**
 
-To use small embeddings (saves ~$0.11/1M tokens):
+| Provider / Model | Dimensions | Cost/1M tokens | Quality | Use Case |
+|------------------|-----------|----------------|---------|----------|
+| `voyage-4` | 1024 | ~$0.05 | Excellent | **Recommended default** |
+| `text-embedding-3-small` | 1536 native (truncatable) | $0.02 | Good | OpenAI fallback (truncated to `VECTOR_SIZE` via Matryoshka) |
+| `text-embedding-3-large` | 3072 native | $0.13 | Excellent | Maximum precision (legacy default) |
+
+Recommended setup (Voyage):
 ```bash
+EMBEDDING_PROVIDER=auto  # or voyage
+VOYAGE_API_KEY=pa-...
+VECTOR_SIZE=1024
+```
+
+To use OpenAI small explicitly:
+```bash
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=sk-...
 EMBEDDING_MODEL=text-embedding-3-small
 VECTOR_SIZE=768
 ```
 
-**Upgrade safety**: Changing embedding dimensions requires a full re-embed. AutoMem refuses to start if `VECTOR_SIZE` does not match the existing Qdrant collection; set the value to your current dimension (usually `768`) before migrating, then switch to `3072` after running `scripts/reembed_embeddings.py`. To override strict mode and adopt the existing collection dimension, set `VECTOR_SIZE_AUTODETECT=true` (use only if you understand the risk of dimension drift).
+**Upgrade safety**: Changing embedding dimensions requires a full re-embed. By default, `VECTOR_SIZE_AUTODETECT=true` adopts the existing Qdrant collection dimension on startup, so updating AutoMem won't break existing data even if the default `VECTOR_SIZE` changes between releases. To enforce strict matching, set `VECTOR_SIZE_AUTODETECT=false` — the server will exit with a clear error and fix instructions if there's a mismatch.
 
 **Classification Model Pricing (Dec 2025):**
 | Model | Input | Output | Notes |
@@ -252,24 +288,51 @@ Controls entity extraction and relationship linking.
 | `ENRICHMENT_FAILURE_BACKOFF_SECONDS` | Backoff on failure | `5` |
 | `ENRICHMENT_ENABLE_SUMMARIES` | Enable summarization | `true` |
 | `ENRICHMENT_SPACY_MODEL` | spaCy model name | `en_core_web_sm` |
+| `JIT_ENRICHMENT_ENABLED` | Inline enrichment during recall | `true` |
 
 **Note**: Enrichment requires spaCy: `pip install spacy && python -m spacy download en_core_web_sm`
 
+**JIT Enrichment**: When enabled, memories that haven't been processed by the async worker yet receive lightweight inline enrichment (entity extraction + summary) during recall. This adds ~50ms per unenriched result but ensures entity tags and summaries are available immediately. The async worker still runs expensive operations (temporal links, patterns, semantic neighbors) later.
+
 ### Search Weights
 
-Controls how different factors are weighted in memory recall.
+Controls how different factors are weighted in memory recall scoring.
 
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
-| `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search |
-| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | TF-IDF |
-| `SEARCH_WEIGHT_TAG` | Tag matching | `0.15` | Exact tag match |
+| `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search via Qdrant |
+| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | Graph keyword hits plus content-token fallback for vector-sourced results |
+| `SEARCH_WEIGHT_RELATION` | Graph relationship boost | `0.25` | Memories connected via edges |
+| `SEARCH_WEIGHT_TAG` | Tag matching | `0.20` | Tag overlap scoring |
+| `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.20` | Full query in metadata |
 | `SEARCH_WEIGHT_IMPORTANCE` | Memory importance | `0.10` | User/system defined |
+| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Linear decay over 180 days |
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
-| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Time-based boost |
-| `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.15` | Full text match |
+| `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` | Decay-derived score (see below) |
 
 These act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
+
+**`SEARCH_WEIGHT_RELEVANCE` (new):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
+
+### Memory Content Limits
+
+Controls auto-summarization and content size validation on store.
+
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `MEMORY_CONTENT_SOFT_LIMIT` | Char limit before auto-summarization triggers | `500` | Content above this is summarized |
+| `MEMORY_CONTENT_HARD_LIMIT` | Char limit before rejection | `2000` | Content above this is rejected |
+| `MEMORY_AUTO_SUMMARIZE` | Enable/disable auto-summarization | `true` | `false` stores as-is |
+| `MEMORY_SUMMARY_TARGET_LENGTH` | Target length for summarized content | `300` | Characters |
+
+### Sync Configuration
+
+Background worker that checks FalkorDB ↔ Qdrant consistency.
+
+| Variable | Description | Default | Notes |
+|----------|-------------|---------|-------|
+| `SYNC_CHECK_INTERVAL_SECONDS` | How often to check for drift | `3600` | 1 hour |
+| `SYNC_AUTO_REPAIR` | Auto-fix inconsistencies | `true` | Set `false` for dry-run mode |
 
 ### Recall Settings
 
@@ -309,6 +372,23 @@ These variables are only used by test suites.
 |----------|-------------|---------|
 | `AUTOMEM_RUN_INTEGRATION_TESTS` | Enable integration tests | `0` |
 | `AUTOMEM_START_DOCKER` | Auto-start Docker in tests | `0` |
+| `AUTOMEM_TEST_BASE_URL` | Base URL for Recall Quality Lab | `http://localhost:8001` |
+
+### Recall Quality Lab
+
+The `scripts/lab/` directory provides a data-driven framework for testing and optimizing recall scoring. It uses IR metrics (Recall@K, MRR, NDCG) and statistical comparison to evaluate config changes.
+
+**Makefile targets:**
+
+| Target | Description | Example |
+|--------|-------------|---------|
+| `make lab-clone` | Clone production data to local Docker | `make lab-clone` |
+| `make lab-queries` | Generate test queries from local data | `make lab-queries` |
+| `make lab-test` | Run recall test with a config | `make lab-test CONFIG=baseline` |
+| `make lab-compare` | A/B compare two configs | `make lab-compare CONFIG=fix_v1 BASELINE=baseline` |
+| `make lab-sweep` | Sweep a parameter across values | `make lab-sweep PARAM=SEARCH_WEIGHT_VECTOR VALUES=0.20,0.30,0.40,0.50` |
+
+**Config files** live in `scripts/lab/configs/` as JSON. Each config maps env var names to values that override the server's search weights for that test run. See `baseline.json` for an example.
 
 ---
 

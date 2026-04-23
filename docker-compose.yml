@@ -11,7 +11,11 @@ services:
       - ./backups/falkordb:/backups # Local backups
     environment:
       # Aggressive persistence: save every 60s if 1 key changed, enable AOF
-      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --dir /data
+      # Note: --dir is NOT set here because FalkorDB's run.sh always appends
+      # --dir $FALKORDB_DATA_PATH after REDIS_ARGS, so any --dir in REDIS_ARGS
+      # is silently overridden. We set FALKORDB_DATA_PATH=/data instead.
+      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec
+      - FALKORDB_DATA_PATH=/data
       - REDIS_PASSWORD=${FALKORDB_PASSWORD:-}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -45,7 +49,11 @@ services:
       AUTOMEM_API_TOKEN: ${AUTOMEM_API_TOKEN:-test-token}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-test-admin-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}  # auto|openai|local|placeholder
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      VECTOR_SIZE: ${VECTOR_SIZE:-1024}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}  # auto|voyage|openai|local|placeholder
+      MEMORY_CONTENT_HARD_LIMIT: ${MEMORY_CONTENT_HARD_LIMIT:-2000}
+      MEMORY_AUTO_SUMMARIZE: ${MEMORY_AUTO_SUMMARIZE:-true}
       AUTOMEM_MODELS_DIR: /root/.config/automem/models  # Keep in sync with volume mount
     depends_on:
       falkordb:

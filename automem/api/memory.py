@@ -6,6 +6,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
+from flask.typing import ResponseReturnValue
 
 from automem.config import (
     CLASSIFICATION_MODEL,
@@ -21,12 +22,129 @@ from automem.dedup import check_dedup
 from automem.utils.text import should_summarize_content, summarize_content
 
 
+def _validate_memory_id(memory_id: str) -> None:
+    """Abort with 400 if *memory_id* is not a valid UUID."""
+    try:
+        uuid.UUID(memory_id)
+    except ValueError:
+        abort(400, description="memory_id must be a valid UUID")
+
+
+def _parse_by_tag_request(
+    *,
+    request_args: Any,
+    normalize_tag_list_fn: Callable[[Any], List[str]],
+    abort_fn: Callable[..., Any],
+) -> tuple[List[str], int, int]:
+    raw_tags = request_args.getlist("tags") or request_args.get("tags")
+    tags = normalize_tag_list_fn(raw_tags)
+    if not tags:
+        abort_fn(400, description="'tags' query parameter is required")
+
+    try:
+        limit = int(request_args.get("limit", 20))
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 200))
+
+    try:
+        offset = int(request_args.get("offset", 0))
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(0, offset)
+
+    return tags, limit, offset
+
+
+def _load_memories_by_tag_page(
+    *,
+    graph: Any,
+    tags: List[str],
+    limit: int,
+    offset: int,
+    serialize_node_fn: Callable[[Any], Dict[str, Any]],
+    parse_metadata_field_fn: Callable[[Any], Any],
+    logger: Any,
+    abort_fn: Callable[..., Any],
+) -> tuple[List[Dict[str, Any]], bool]:
+    params = {
+        "tags": [tag.lower() for tag in tags],
+        "offset": offset,
+        "limit_plus_one": limit + 1,
+    }
+    query = """
+        MATCH (m:Memory)
+        WHERE ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tags)
+        RETURN m
+        ORDER BY m.importance DESC, m.timestamp DESC, m.id ASC
+        SKIP $offset
+        LIMIT $limit_plus_one
+    """
+    try:
+        result = graph.query(query, params)
+    except Exception:
+        logger.exception("Tag search failed")
+        abort_fn(500, description="Failed to search by tag")
+
+    rows = list(getattr(result, "result_set", []) or [])
+    has_more = len(rows) > limit
+    memories: List[Dict[str, Any]] = []
+    for row in rows[:limit]:
+        data = serialize_node_fn(row[0])
+        data["metadata"] = parse_metadata_field_fn(data.get("metadata"))
+        memories.append(data)
+
+    return memories, has_more
+
+
+def _delete_qdrant_points(
+    *,
+    qdrant_client: Any,
+    collection_name: str,
+    memory_ids: List[str],
+    logger: Any,
+) -> None:
+    if qdrant_client is None or not memory_ids:
+        return
+
+    selector: Any = {"points": memory_ids}
+    try:
+        from qdrant_client.http import models as http_models  # type: ignore
+
+        selector = http_models.PointIdsList(points=memory_ids)
+    except Exception:
+        pass
+
+    try:
+        qdrant_client.delete(collection_name=collection_name, points_selector=selector)
+    except Exception:
+        logger.exception("Failed to delete vectors for %d memories", len(memory_ids))
+
+
+def _delete_graph_memories(
+    *,
+    graph: Any,
+    memory_ids: List[str],
+    logger: Any,
+    abort_fn: Any,
+) -> None:
+    if not memory_ids:
+        return
+
+    try:
+        graph.query("MATCH (m:Memory) WHERE m.id IN $ids DETACH DELETE m", {"ids": memory_ids})
+    except Exception:
+        logger.exception("Bulk delete by tag failed for %d memories", len(memory_ids))
+        abort_fn(500, description="Failed to delete memories by tag")
+
+
 def create_memory_blueprint(
     store_memory: Callable[[], Any],
     update_memory: Callable[[str], Any],
     delete_memory: Callable[[str], Any],
     by_tag: Callable[[], Any],
     associate: Callable[[], Any],
+    delete_by_tag: Optional[Callable[[], Any]] = None,
 ) -> Blueprint:
     """Compatibility wrapper around the legacy handlers in app.py."""
     bp = Blueprint("memory", __name__)
@@ -43,8 +161,12 @@ def create_memory_blueprint(
     def _delete(memory_id: str) -> Any:
         return delete_memory(memory_id)
 
-    @bp.route("/memory/by-tag", methods=["GET"])
+    @bp.route("/memory/by-tag", methods=["GET", "DELETE"])
     def _by_tag() -> Any:
+        if request.method == "DELETE":
+            if delete_by_tag is None:
+                return by_tag()
+            return delete_by_tag()
         return by_tag()
 
     @bp.route("/associate", methods=["POST"])
@@ -72,12 +194,13 @@ def create_memory_blueprint_full(
     memory_classify: Callable[[str], tuple[str, float]],
     point_struct: Any,
     collection_name: str,
-    allowed_relations: Set[str] | List[str],
+    authorable_relations: Set[str] | List[str],
     relation_types: Dict[str, Any],
     state: Any,
     logger: Any,
     on_access: Optional[Callable[[List[str]], None]] = None,
     get_openai_client: Optional[Callable[[], Any]] = None,
+    generate_real_embeddings_batch: Optional[Callable[[List[str]], List[List[float]]]] = None,
 ) -> Blueprint:
     bp = Blueprint("memory", __name__)
 
@@ -458,7 +581,11 @@ def create_memory_blueprint_full(
                     )
                     qdrant_result = "stored"
                 except Exception:
-                    logger.exception("Qdrant upsert failed")
+                    logger.exception(
+                        "Qdrant upsert failed for memory %s in collection %s",
+                        memory_id,
+                        collection_name,
+                    )
                     qdrant_result = "failed"
         elif qdrant_client is not None:
             enqueue_embedding(memory_id, content)
@@ -512,7 +639,9 @@ def create_memory_blueprint_full(
         return jsonify(response), 201
 
     @bp.route("/memory/<memory_id>", methods=["GET"])
-    def get(memory_id: str) -> Any:
+    def get(memory_id: str) -> ResponseReturnValue:
+        _validate_memory_id(memory_id)
+
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="Graph database unavailable")
@@ -535,12 +664,16 @@ def create_memory_blueprint_full(
 
         # Update last_accessed timestamp for consistency with by_tag endpoint
         if on_access:
-            on_access([memory_id])
+            try:
+                on_access([memory_id])
+            except Exception:
+                logger.exception("on_access failed for memory %s", memory_id)
 
         return jsonify({"status": "success", "memory": node})
 
     @bp.route("/memory/<memory_id>", methods=["PATCH"])
     def update(memory_id: str) -> Any:
+        _validate_memory_id(memory_id)
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
@@ -657,15 +790,23 @@ def create_memory_blueprint_full(
                     "last_accessed": last_accessed,
                     "metadata": metadata,
                 }
-                qdrant_client.upsert(
-                    collection_name=collection_name,
-                    points=[point_struct(id=memory_id, vector=vector, payload=payload)],
-                )
+                try:
+                    qdrant_client.upsert(
+                        collection_name=collection_name,
+                        points=[point_struct(id=memory_id, vector=vector, payload=payload)],
+                    )
+                except Exception:
+                    logger.exception(
+                        "Qdrant upsert failed for memory %s in collection %s",
+                        memory_id,
+                        collection_name,
+                    )
 
         return jsonify({"status": "success", "memory_id": memory_id})
 
     @bp.route("/memory/<memory_id>", methods=["DELETE"])
     def delete(memory_id: str) -> Any:
+        _validate_memory_id(memory_id)
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
@@ -676,72 +817,88 @@ def create_memory_blueprint_full(
 
         graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": memory_id})
 
-        qdrant_client = get_qdrant_client()
-        if qdrant_client is not None:
-            try:
-                selector = {"points": [memory_id]}
-                if hasattr(qdrant_client, "http"):
-                    # Try to use HTTP models selector if available
-                    try:
-                        from qdrant_client.http import models as http_models  # type: ignore
-
-                        selector = http_models.PointIdsList(points=[memory_id])
-                    except Exception as e:
-                        logger.warning(f"Failed to import qdrant_client.http.models: {e}")
-                qdrant_client.delete(collection_name=collection_name, points_selector=selector)
-            except Exception:
-                logger.exception("Failed to delete vector for memory %s", memory_id)
+        _delete_qdrant_points(
+            qdrant_client=get_qdrant_client(),
+            collection_name=collection_name,
+            memory_ids=[memory_id],
+            logger=logger,
+        )
 
         return jsonify({"status": "success", "memory_id": memory_id})
 
-    @bp.route("/memory/by-tag", methods=["GET"])
+    @bp.route("/memory/by-tag", methods=["GET", "DELETE"])
     def by_tag() -> Any:
-        raw_tags = request.args.getlist("tags") or request.args.get("tags")
-        tags = normalize_tag_list(raw_tags)
-        if not tags:
-            abort(400, description="'tags' query parameter is required")
-
-        try:
-            limit = int(request.args.get("limit", 20))
-        except (TypeError, ValueError):
-            limit = 20
-        limit = max(1, min(limit, 200))
-
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
-        params = {"tags": [tag.lower() for tag in tags], "limit": limit}
-        query = """
-            MATCH (m:Memory)
-            WHERE ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tags)
-            RETURN m
-            ORDER BY m.importance DESC, m.timestamp DESC
-            LIMIT $limit
-        """
-        try:
-            result = graph.query(query, params)
-        except Exception:
-            logger.exception("Tag search failed")
-            abort(500, description="Failed to search by tag")
+        tags, limit, offset = _parse_by_tag_request(
+            request_args=request.args,
+            normalize_tag_list_fn=normalize_tag_list,
+            abort_fn=abort,
+        )
 
-        memories: List[Dict[str, Any]] = []
-        for row in getattr(result, "result_set", []) or []:
-            data = serialize_node(row[0])
-            data["metadata"] = parse_metadata_field(data.get("metadata"))
-            memories.append(data)
+        if request.method == "DELETE":
+            deleted_count = 0
+            while True:
+                memories, _ = _load_memories_by_tag_page(
+                    graph=graph,
+                    tags=tags,
+                    limit=200,
+                    offset=0,
+                    serialize_node_fn=serialize_node,
+                    parse_metadata_field_fn=parse_metadata_field,
+                    logger=logger,
+                    abort_fn=abort,
+                )
+                memory_ids = [str(memory.get("id")) for memory in memories if memory.get("id")]
+                if not memory_ids:
+                    break
 
-        # Update last_accessed for retrieved memories
+                _delete_graph_memories(
+                    graph=graph,
+                    memory_ids=memory_ids,
+                    logger=logger,
+                    abort_fn=abort,
+                )
+
+                _delete_qdrant_points(
+                    qdrant_client=get_qdrant_client(),
+                    collection_name=collection_name,
+                    memory_ids=memory_ids,
+                    logger=logger,
+                )
+                deleted_count += len(memory_ids)
+
+            return jsonify({"status": "success", "tags": tags, "deleted_count": deleted_count})
+
+        memories, has_more = _load_memories_by_tag_page(
+            graph=graph,
+            tags=tags,
+            limit=limit,
+            offset=offset,
+            serialize_node_fn=serialize_node,
+            parse_metadata_field_fn=parse_metadata_field,
+            logger=logger,
+            abort_fn=abort,
+        )
+
         if on_access and memories:
             accessed_ids = [str(m.get("id")) for m in memories if m.get("id")]
             if accessed_ids:
-                on_access(accessed_ids)
+                try:
+                    on_access(accessed_ids)
+                except Exception:
+                    logger.exception("on_access failed for %d memories", len(accessed_ids))
 
         return jsonify(
             {
                 "status": "success",
                 "tags": tags,
                 "count": len(memories),
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
                 "memories": memories,
             }
         )
@@ -759,12 +916,14 @@ def create_memory_blueprint_full(
 
         if not memory1_id or not memory2_id:
             abort(400, description="'memory1_id' and 'memory2_id' are required")
+        _validate_memory_id(memory1_id)
+        _validate_memory_id(memory2_id)
         if memory1_id == memory2_id:
             abort(400, description="Cannot associate a memory with itself")
-        if relation_type not in set(allowed_relations):
+        if relation_type not in set(authorable_relations):
             abort(
                 400,
-                description=f"Relation type must be one of {sorted(allowed_relations)}",
+                description=f"Relation type must be one of {sorted(authorable_relations)}",
             )
 
         graph = get_memory_graph()
@@ -811,5 +970,259 @@ def create_memory_blueprint_full(
             if prop in relationship_props:
                 response[prop] = relationship_props[prop]
         return jsonify(response), 201
+
+    @bp.route("/memory/batch", methods=["POST"])
+    def store_batch() -> Any:
+        """Store multiple memories in a single request.
+
+        Optimised for benchmark ingestion: batches embedding generation,
+        graph writes (UNWIND), and Qdrant upserts into single operations.
+
+        Body: {"memories": [{"content": "...", "tags": [...], ...}, ...]}
+        Max 500 memories per request.
+        """
+        query_start = time.perf_counter()
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            abort(400, description="JSON body with 'memories' array required")
+
+        memories_input = payload.get("memories", [])
+        if not isinstance(memories_input, list) or len(memories_input) == 0:
+            abort(400, description="'memories' must be a non-empty array")
+        if len(memories_input) > 500:
+            abort(400, description="Batch size limit is 500 memories per request")
+
+        # 1. Validate and prepare all memories
+        validated = []
+        for i, mem in enumerate(memories_input):
+            if not isinstance(mem, dict):
+                abort(400, description=f"Memory at index {i} must be an object")
+
+            content = (mem.get("content") or "").strip()
+            if not content:
+                abort(400, description=f"Memory at index {i} missing 'content'")
+            if len(content) > MEMORY_CONTENT_HARD_LIMIT:
+                abort(
+                    400,
+                    description=f"Memory at index {i} exceeds content limit "
+                    f"({len(content)}/{MEMORY_CONTENT_HARD_LIMIT})",
+                )
+
+            # Apply soft-limit auto-summarization (same policy as single store)
+            content_action = should_summarize_content(
+                content, MEMORY_CONTENT_SOFT_LIMIT, MEMORY_CONTENT_HARD_LIMIT
+            )
+            if content_action == "summarize" and MEMORY_AUTO_SUMMARIZE:
+                openai_client = get_openai_client() if get_openai_client else None
+                if openai_client:
+                    summary = summarize_content(
+                        content,
+                        openai_client,
+                        CLASSIFICATION_MODEL,
+                        MEMORY_SUMMARY_TARGET_LENGTH,
+                    )
+                    if summary:
+                        logger.info(
+                            "Auto-summarized batch memory %d: %d -> %d chars",
+                            i,
+                            len(content),
+                            len(summary),
+                        )
+                        content = summary
+
+            memory_id = str(uuid.uuid4())
+            tags = normalize_tags(mem.get("tags"))
+            tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
+            tag_prefixes = compute_tag_prefixes(tags_lower)
+            importance = coerce_importance(mem.get("importance"))
+            now = utc_now()
+            created_at = now
+            if mem.get("timestamp"):
+                try:
+                    created_at = normalize_timestamp(mem["timestamp"])
+                except ValueError:
+                    logger.warning(
+                        "Invalid timestamp at index %d (%s), using current time",
+                        i,
+                        mem["timestamp"],
+                    )
+
+            metadata_raw = mem.get("metadata")
+            metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+            metadata_json = json.dumps(metadata, default=str)
+
+            memory_type = mem.get("type")
+            type_confidence = mem.get("confidence")
+            if memory_type:
+                type_confidence = (
+                    coerce_importance(type_confidence) if type_confidence is not None else 0.9
+                )
+            else:
+                memory_type, type_confidence = memory_classify(content)
+
+            validated.append(
+                {
+                    "id": memory_id,
+                    "content": content,
+                    "tags": tags,
+                    "tag_prefixes": tag_prefixes,
+                    "importance": importance,
+                    "timestamp": created_at,
+                    "type": memory_type,
+                    "confidence": type_confidence,
+                    "updated_at": created_at,
+                    "last_accessed": created_at,
+                    "metadata": metadata_json,
+                    "metadata_dict": metadata,
+                    # t_valid/t_invalid: not accepted in batch endpoint.
+                    # Optimised for benchmark ingestion; use POST /memory for full support.
+                    "t_valid": created_at,
+                    "t_invalid": None,
+                }
+            )
+
+        # 2. Batch embed all contents
+        contents = [v["content"] for v in validated]
+        embeddings: List[Optional[List[float]]] = [None] * len(validated)
+
+        if generate_real_embeddings_batch:
+            try:
+                batch_result = generate_real_embeddings_batch(contents)
+                if len(batch_result) != len(contents):
+                    logger.warning(
+                        "Batch embedding returned %d vectors for %d contents, falling back",
+                        len(batch_result),
+                        len(contents),
+                    )
+                    raise ValueError("embedding count mismatch")
+                embeddings = batch_result
+            except Exception:
+                logger.exception("Batch embedding failed, falling back to individual")
+                for j, c in enumerate(contents):
+                    try:
+                        embeddings[j] = generate_real_embedding(c)
+                    except Exception as e:
+                        logger.warning("Individual embedding failed for item %d: %s", j, e)
+        else:
+            # Fall back to individual embedding calls
+            for j, c in enumerate(contents):
+                try:
+                    embeddings[j] = generate_real_embedding(c)
+                except Exception as e:
+                    logger.warning("Individual embedding failed for item %d: %s", j, e)
+
+        # 3. Batch graph write via UNWIND
+        graph = get_memory_graph()
+        if graph is None:
+            abort(503, description="FalkorDB is unavailable")
+
+        try:
+            graph.query(
+                """
+                UNWIND $memories AS m
+                MERGE (node:Memory {id: m.id})
+                SET
+                    node.content = m.content,
+                    node.timestamp = m.timestamp,
+                    node.importance = m.importance,
+                    node.tags = m.tags,
+                    node.tag_prefixes = m.tag_prefixes,
+                    node.type = m.type,
+                    node.confidence = m.confidence,
+                    node.t_valid = m.t_valid,
+                    node.t_invalid = m.t_invalid,
+                    node.updated_at = m.updated_at,
+                    node.last_accessed = m.last_accessed,
+                    node.metadata = m.metadata,
+                    node.processed = false
+                RETURN node.id
+                """,
+                {"memories": validated},
+            )
+        except Exception:
+            logger.exception("Batch graph write failed")
+            abort(500, description="Failed to store memories in FalkorDB")
+
+        # 4. Batch Qdrant upsert
+        qdrant_client = get_qdrant_client()
+        qdrant_status = "unconfigured"
+        if qdrant_client is not None:
+            points = []
+            for v, emb in zip(validated, embeddings, strict=True):
+                if emb is not None:
+                    points.append(
+                        point_struct(
+                            id=v["id"],
+                            vector=emb,
+                            payload={
+                                "content": v["content"],
+                                "tags": v["tags"],
+                                "tag_prefixes": v["tag_prefixes"],
+                                "importance": v["importance"],
+                                "timestamp": v["timestamp"],
+                                "type": v["type"],
+                                "confidence": v["confidence"],
+                                "updated_at": v["updated_at"],
+                                "last_accessed": v["last_accessed"],
+                                "metadata": v["metadata_dict"],
+                            },
+                        )
+                    )
+            # Enqueue embedding retry for items that failed individually
+            failed_emb_ids = [
+                v["id"] for v, emb in zip(validated, embeddings, strict=True) if emb is None
+            ]
+            for fid in failed_emb_ids:
+                v_match = next(v for v in validated if v["id"] == fid)
+                enqueue_embedding(fid, v_match["content"])
+
+            if points:
+                try:
+                    qdrant_client.upsert(
+                        collection_name=collection_name,
+                        points=points,
+                    )
+                    if failed_emb_ids:
+                        qdrant_status = f"stored ({len(points)}), queued ({len(failed_emb_ids)})"
+                    else:
+                        qdrant_status = f"stored ({len(points)})"
+                except Exception:
+                    logger.exception("Batch Qdrant upsert failed")
+                    # Still queue all embeddings as fallback
+                    for v in validated:
+                        enqueue_embedding(v["id"], v["content"])
+                    qdrant_status = "queued (fallback)"
+            else:
+                # No embeddings succeeded, queue them all
+                for v in validated:
+                    enqueue_embedding(v["id"], v["content"])
+                qdrant_status = "queued"
+        # Queue enrichment for all
+        for v in validated:
+            enqueue_enrichment(v["id"])
+
+        elapsed_ms = round((time.perf_counter() - query_start) * 1000, 2)
+        logger.info(
+            "batch_stored",
+            extra={
+                "count": len(validated),
+                "latency_ms": elapsed_ms,
+                "qdrant_status": qdrant_status,
+            },
+        )
+
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "stored": len(validated),
+                    "memory_ids": [v["id"] for v in validated],
+                    "qdrant": qdrant_status,
+                    "enrichment": "queued" if state.enrichment_queue else "disabled",
+                    "query_time_ms": elapsed_ms,
+                }
+            ),
+            201,
+        )
 
     return bp

@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
 
-from automem.config import ALLOWED_RELATIONS, MEMORY_TYPES
+from automem.config import MEMORY_TYPES, PUBLIC_RELATIONS, RELATION_COLORS, normalize_relation_type
 from automem.utils.graph import _serialize_node
 
 logger = logging.getLogger("automem.api.graph")
@@ -29,21 +29,6 @@ TYPE_COLORS: Dict[str, str] = {
     "Insight": "#F97316",  # Orange
     "Context": "#6B7280",  # Gray
     "Memory": "#94A3B8",  # Slate (default)
-}
-
-# Edge colors by relationship type
-RELATION_COLORS: Dict[str, str] = {
-    "RELATES_TO": "#94A3B8",
-    "LEADS_TO": "#3B82F6",
-    "OCCURRED_BEFORE": "#6B7280",
-    "PREFERS_OVER": "#8B5CF6",
-    "EXEMPLIFIES": "#10B981",
-    "CONTRADICTS": "#EF4444",
-    "REINFORCES": "#22C55E",
-    "INVALIDATED_BY": "#F97316",
-    "EVOLVED_INTO": "#06B6D4",
-    "DERIVED_FROM": "#A855F7",
-    "PART_OF": "#64748B",
 }
 
 
@@ -151,6 +136,7 @@ def create_graph_blueprint(
                 for row in edge_result.result_set:
                     source, target, rel_type, rel = row
                     rel_props = dict(rel.properties) if hasattr(rel, "properties") else {}
+                    rel_type, rel_props = normalize_relation_type(rel_type, rel_props)
                     strength = float(rel_props.get("strength", 0.5))
 
                     edges.append(
@@ -254,6 +240,8 @@ def create_graph_blueprint(
             node, rel_type, rel, source_id, target_id = row
             node_data = serialize_node(node)
             node_id = node_data.get("id")
+            rel_props = dict(rel.properties) if hasattr(rel, "properties") else {}
+            rel_type, rel_props = normalize_relation_type(rel_type, rel_props)
 
             if node_id and node_id not in seen_nodes:
                 seen_nodes.add(node_id)
@@ -278,7 +266,6 @@ def create_graph_blueprint(
             edge_id = f"{source_id}-{rel_type}-{target_id}"
             if edge_id not in seen_edges:
                 seen_edges.add(edge_id)
-                rel_props = dict(rel.properties) if hasattr(rel, "properties") else {}
                 strength = float(rel_props.get("strength", 0.5))
 
                 edges.append(
@@ -466,7 +453,7 @@ def create_graph_blueprint(
         """Return available relationship types and their colors."""
         return jsonify(
             {
-                "relations": list(ALLOWED_RELATIONS),
+                "relations": sorted(PUBLIC_RELATIONS),
                 "colors": RELATION_COLORS,
             }
         )

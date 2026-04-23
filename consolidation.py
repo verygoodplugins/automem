@@ -24,6 +24,7 @@ try:  # pragma: no cover - optional dependency in tests
 except ImportError:  # pragma: no cover - degraded mode when qdrant is absent
     qdrant_models = None
 
+from automem.config import FILTERABLE_RELATIONS, normalize_relation_type
 from automem.utils.time import _parse_iso_datetime
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,25 @@ class VectorStoreProtocol(Protocol):
 
     def delete(
         self, collection_name: str, points_selector: Any
+    ) -> Any:  # pragma: no cover - protocol definition
+        ...
+
+    def scroll(
+        self,
+        collection_name: str,
+        limit: int = 10,
+        offset: Any = None,
+        with_vectors: bool = False,
+        with_payload: bool = True,
+    ) -> Any:  # pragma: no cover - protocol definition
+        ...
+
+    def retrieve(
+        self,
+        collection_name: str,
+        ids: Any,
+        with_vectors: bool = False,
+        with_payload: bool = True,
     ) -> Any:  # pragma: no cover - protocol definition
         ...
 
@@ -119,13 +139,16 @@ class MemoryConsolidator:
         grace_period_days: int = 90,
         importance_protection_threshold: float = 0.7,
         protected_types: Optional[Set[str]] = None,
+        base_decay_rate: float = 0.01,
+        importance_floor_factor: float = 0.3,
     ):
         self.graph = graph
         self.vector_store = vector_store
         self._graph_id = id(graph)  # Unique ID for cache invalidation
 
         # Decay parameters (tunable)
-        self.base_decay_rate = 0.1  # Daily decay rate
+        self.base_decay_rate = base_decay_rate
+        self.importance_floor_factor = importance_floor_factor
         self.reinforcement_bonus = 0.2  # Strength added when accessed
         self.relationship_preservation = 0.3  # Extra weight for connected memories
 
@@ -235,6 +258,11 @@ class MemoryConsolidator:
             * (0.7 + 0.3 * confidence)  # Confidence adds up to 30%
         )
 
+        # Importance-based floor: high-importance memories never decay below
+        # importance * floor_factor (e.g. importance 0.8 * 0.3 = floor 0.24)
+        floor = importance * self.importance_floor_factor
+        relevance = max(relevance, floor)
+
         return min(1.0, relevance)  # Cap at 1.0
 
     def _should_protect_memory(
@@ -314,6 +342,24 @@ class MemoryConsolidator:
                 )
             )
 
+        # Prefer Qdrant embeddings over graph-stored ones (standard pipeline
+        # stores vectors exclusively in Qdrant, not on graph nodes)
+        if self.vector_store is not None:
+            mem_ids = [m.id for m in memories]
+            try:
+                points = self.vector_store.retrieve(
+                    collection_name="memories",
+                    ids=mem_ids,
+                    with_vectors=True,
+                    with_payload=False,
+                )
+                vec_by_id = {str(p.id): p.vector for p in points if p.vector}
+                for m in memories:
+                    if m.id in vec_by_id:
+                        m.embeddings = vec_by_id[m.id]
+            except Exception:
+                logger.debug("Failed to fetch embeddings from Qdrant for creative associations")
+
         for idx, mem1 in enumerate(memories):
             for mem2 in memories[idx + 1 :]:
                 existing_check = """
@@ -342,6 +388,7 @@ class MemoryConsolidator:
                         similarity = 0.0
 
                 connection_type: Optional[str] = None
+                connection_kind: Optional[str] = None
                 confidence = 0.0
 
                 if mem1.type == "Decision" and mem2.type == "Decision":
@@ -349,17 +396,20 @@ class MemoryConsolidator:
                         connection_type = "CONTRASTS_WITH"
                         confidence = 0.6
                 elif {mem1.type, mem2.type} == {"Insight", "Pattern"} and similarity > 0.5:
-                    connection_type = "EXPLAINS"
+                    connection_type = "DISCOVERED"
+                    connection_kind = "explains"
                     confidence = 0.7
                 elif similarity > 0.7 and (mem1.type or "") != (mem2.type or ""):
-                    connection_type = "SHARES_THEME"
+                    connection_type = "DISCOVERED"
+                    connection_kind = "shares_theme"
                     confidence = min(1.0, similarity)
                 else:
                     t1 = _parse_iso_datetime(mem1.timestamp)
                     t2 = _parse_iso_datetime(mem2.timestamp)
                     if t1 and t2:
                         if abs((t1 - t2).days) < 7 and similarity < 0.4:
-                            connection_type = "PARALLEL_CONTEXT"
+                            connection_type = "DISCOVERED"
+                            connection_kind = "parallel_context"
                             confidence = 0.5
 
                 if connection_type:
@@ -368,6 +418,7 @@ class MemoryConsolidator:
                             "memory1_id": mem1.id,
                             "memory2_id": mem2.id,
                             "type": connection_type,
+                            "kind": connection_kind,
                             "confidence": confidence,
                             "similarity": similarity,
                             "discovered_at": datetime.now(timezone.utc).isoformat(),
@@ -380,41 +431,100 @@ class MemoryConsolidator:
         """
         Cluster highly similar memories for potential compression.
 
-        Uses DBSCAN clustering on embeddings to find groups of
+        Uses connected-component clustering on embeddings to find groups of
         semantically similar memories that could be consolidated.
+
+        Embeddings are fetched from Qdrant (the vector store) rather than
+        from graph node properties, since the standard AutoMem pipeline
+        stores vectors exclusively in Qdrant.
         """
         clusters = []
 
-        # Get memories with embeddings
-        embedding_query = """
-            MATCH (m:Memory)
-            WHERE m.embeddings IS NOT NULL
-                AND m.relevance_score > 0.3
-            RETURN m.id as id, m.content as content,
-                   m.embeddings as embeddings, m.type as type
-        """
-
-        result = self._query_graph(embedding_query, {})
-        if len(result) < self.min_cluster_size:
-            return clusters
-
-        # Extract embeddings
         memories: List[MemoryRow] = []
         embeddings: List[List[float]] = []
-        for row in result:
-            embedding = _load_embedding(row[2] if len(row) > 2 else None)
-            if embedding is None:
-                continue
 
-            memories.append(
-                MemoryRow(
-                    id=str(row[0]),
-                    content=row[1] or "",
-                    embeddings=embedding,
-                    type=row[3] if len(row) > 3 else "Memory",
+        if self.vector_store is not None:
+            # Primary path: fetch metadata from graph, embeddings from Qdrant
+            metadata_query = """
+                MATCH (m:Memory)
+                WHERE m.relevance_score > 0.3
+                RETURN m.id as id, m.content as content, m.type as type
+            """
+
+            result = self._query_graph(metadata_query, {})
+            if len(result) < self.min_cluster_size:
+                return clusters
+
+            meta_by_id: Dict[str, Dict[str, Any]] = {}
+            for row in result:
+                mid = str(row[0]) if row[0] else None
+                if mid:
+                    meta_by_id[mid] = {
+                        "content": row[1] or "",
+                        "type": row[2] if len(row) > 2 else "Memory",
+                    }
+
+            try:
+                offset = None
+                while True:
+                    scroll_kwargs: Dict[str, Any] = {
+                        "collection_name": "memories",
+                        "limit": 500,
+                        "with_vectors": True,
+                        "with_payload": False,
+                    }
+                    if offset is not None:
+                        scroll_kwargs["offset"] = offset
+
+                    points, next_offset = self.vector_store.scroll(**scroll_kwargs)
+                    for point in points:
+                        pid = str(point.id)
+                        vec = point.vector
+                        if pid in meta_by_id and vec:
+                            meta = meta_by_id[pid]
+                            memories.append(
+                                MemoryRow(
+                                    id=pid,
+                                    content=meta["content"],
+                                    embeddings=vec,
+                                    type=meta["type"],
+                                )
+                            )
+                            embeddings.append(vec)
+
+                    if next_offset is None:
+                        break
+                    offset = next_offset
+            except Exception:
+                logger.exception("Failed to fetch embeddings from vector store for clustering")
+                return clusters
+        else:
+            # Fallback: graph-stored embeddings (legacy/test path)
+            embedding_query = """
+                MATCH (m:Memory)
+                WHERE m.embeddings IS NOT NULL
+                    AND m.relevance_score > 0.3
+                RETURN m.id as id, m.content as content,
+                       m.embeddings as embeddings, m.type as type
+            """
+
+            result = self._query_graph(embedding_query, {})
+            if len(result) < self.min_cluster_size:
+                return clusters
+
+            for row in result:
+                embedding = _load_embedding(row[2] if len(row) > 2 else None)
+                if embedding is None:
+                    continue
+                memories.append(
+                    MemoryRow(
+                        id=str(row[0]),
+                        content=row[1] or "",
+                        embeddings=embedding,
+                        type=row[3] if len(row) > 3 else "Memory",
+                    )
                 )
-            )
-            embeddings.append(embedding)
+                embeddings.append(embedding)
 
         if len(embeddings) < self.min_cluster_size:
             return clusters
@@ -594,6 +704,15 @@ class MemoryConsolidator:
                             SET m.relevance_score = $score
                         """
                         self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                        if self.vector_store:
+                            try:
+                                self.vector_store.set_payload(
+                                    collection_name="memories",
+                                    points=[memory["id"]],
+                                    payload={"relevance_score": relevance},
+                                )
+                            except Exception:
+                                pass
                     continue
 
                 stats["archived"].append(
@@ -621,6 +740,18 @@ class MemoryConsolidator:
                             "score": relevance,
                         },
                     )
+                    if self.vector_store:
+                        try:
+                            self.vector_store.set_payload(
+                                collection_name="memories",
+                                points=[memory["id"]],
+                                payload={
+                                    "relevance_score": relevance,
+                                    "archived": True,
+                                },
+                            )
+                        except Exception:
+                            pass
             else:
                 stats["preserved"] += 1
 
@@ -631,6 +762,15 @@ class MemoryConsolidator:
                         SET m.relevance_score = $score
                     """
                     self._query_graph(update_query, {"id": memory["id"], "score": relevance})
+                    if self.vector_store:
+                        try:
+                            self.vector_store.set_payload(
+                                collection_name="memories",
+                                points=[memory["id"]],
+                                payload={"relevance_score": relevance},
+                            )
+                        except Exception:
+                            pass
 
         if stats["protected"]:
             logger.info(
@@ -681,22 +821,14 @@ class MemoryConsolidator:
                 created = 0
                 for assoc in associations:
                     if not dry_run:
-                        # Map discovery types to first-class relationship labels
-                        rel_type = str(assoc.get("type") or "RELATES_TO").upper()
+                        # Map heuristic discovery types into internal relations.
+                        rel_type, rel_props = normalize_relation_type(
+                            str(assoc.get("type") or "RELATES_TO"),
+                            {"kind": assoc.get("kind")} if assoc.get("kind") else {},
+                        )
                         if rel_type == "CONTRASTS_WITH":
                             rel_type = "CONTRADICTS"
-                        allowed_labels = {
-                            "EXPLAINS",
-                            "SHARES_THEME",
-                            "PARALLEL_CONTEXT",
-                            "CONTRADICTS",
-                            "RELATES_TO",
-                            "SIMILAR_TO",
-                            "PRECEDED_BY",
-                            "DERIVED_FROM",
-                            "PART_OF",
-                        }
-                        if rel_type not in allowed_labels:
+                        if rel_type not in FILTERABLE_RELATIONS:
                             rel_type = "RELATES_TO"
 
                         # Build a typed MERGE with standard properties
@@ -708,6 +840,13 @@ class MemoryConsolidator:
                             "id2": assoc["memory2_id"],
                             "updated_at": assoc.get("discovered_at"),
                         }
+                        kind = rel_props.get("kind")
+                        if rel_type == "DISCOVERED":
+                            set_clauses.append("r.origin = $origin")
+                            params["origin"] = "consolidation"
+                            if kind:
+                                set_clauses.append("r.kind = $kind")
+                                params["kind"] = kind
                         # Attach confidence/similarity when applicable
                         if assoc.get("confidence") is not None:
                             set_clauses.append("r.confidence = $confidence")
@@ -888,6 +1027,17 @@ class MemoryConsolidator:
                 SET m.relevance_score = $score
             """
             self._query_graph(update_query, {"id": memory["id"], "score": new_score})
+
+            # Sync relevance_score to Qdrant so vector search results include it
+            if self.vector_store:
+                try:
+                    self.vector_store.set_payload(
+                        collection_name="memories",
+                        points=[memory["id"]],
+                        payload={"relevance_score": new_score},
+                    )
+                except Exception:
+                    logger.debug("Qdrant relevance sync skipped for %s", memory["id"][:8])
 
         if stats["processed"] > 0:
             stats["avg_relevance_before"] = total_before / stats["processed"]

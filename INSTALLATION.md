@@ -20,7 +20,7 @@ Complete setup instructions for AutoMem across all environments.
 
 ## Prerequisites
 
-- **Python 3.10+**
+- **Python 3.10+** (the codebase supports 3.10 and newer; local bootstrap is standardized on 3.12)
 - **Docker & Docker Compose** (for bundled stack)
 - **Railway CLI** (for Railway deployment): `npm i -g @railway/cli`
 
@@ -35,16 +35,15 @@ Complete setup instructions for AutoMem across all environments.
 git clone https://github.com/verygoodplugins/automem.git
 cd automem
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements-dev.txt
+# Create virtual environment (standardized on Python 3.12 for local dev)
+make install
+source .venv/bin/activate  # On Windows (WSL or Git Bash): same command; native cmd: .venv\Scripts\activate.bat; PowerShell: .venv\Scripts\Activate.ps1
 
 # Start all services (FalkorDB + Qdrant + API)
 make dev
 ```
+
+`make install` looks for `python3.12` first (and a few common install locations), then falls back to `python3` if it is already 3.12. It exits with an error only when no Python 3.12 interpreter can be found. Override the interpreter with the `AUTOMEM_PYTHON` environment variable (accepts a bare command name or an absolute path).
 
 **Services:**
 
@@ -324,16 +323,17 @@ Run API without Docker (requires external FalkorDB):
 
 ```bash
 # Activate virtual environment
-source venv/bin/activate
+source .venv/bin/activate
 
 # Set connection details
 export FALKORDB_HOST=localhost
 export FALKORDB_PORT=6379
 export PORT=8001
 
-# Optional: Qdrant configuration
-export QDRANT_URL=http://localhost:6333
-# export QDRANT_API_KEY=your_key
+# Optional: Qdrant configuration (pick one)
+export QDRANT_URL=http://localhost:6333    # Full URL (Qdrant Cloud or explicit)
+# export QDRANT_HOST=localhost             # OR just hostname (auto-constructs URL)
+# export QDRANT_API_KEY=your_key           # Only needed for Qdrant Cloud
 
 # Run API
 python app.py
@@ -382,22 +382,24 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 
 | Variable            | Description                           | Default    |
 | ------------------- | ------------------------------------- | ---------- |
-| `QDRANT_URL`        | Qdrant API endpoint                   | _unset_    |
-| `QDRANT_API_KEY`    | Qdrant authentication                 | _optional_ |
+| `QDRANT_URL`        | Qdrant Cloud endpoint (takes precedence over `QDRANT_HOST`) | _unset_ |
+| `QDRANT_HOST`       | Qdrant hostname for self-hosted (auto-constructs `http://host:port`) | _unset_ |
+| `QDRANT_PORT`       | Qdrant port (used with `QDRANT_HOST`) | `6333`     |
+| `QDRANT_API_KEY`    | Qdrant authentication (if API-key auth is enabled) | _optional_ |
 | `QDRANT_COLLECTION` | Qdrant collection name                | `memories` |
-| `VECTOR_SIZE`       | Embedding dimension                   | `3072`     |
+| `VECTOR_SIZE`       | Embedding dimension                   | `1024`     |
 | `EMBEDDING_PROVIDER`| Embedding provider selection          | `auto`     |
-| `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-large` |
+| `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-small` |
 | `VOYAGE_API_KEY`    | Voyage API key (Voyage provider)      | _unset_    |
 | `VOYAGE_MODEL`      | Voyage model (Voyage provider)        | `voyage-4` |
 | `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
 | `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
 
-👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
+👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for setup options (self-hosted on Railway or Qdrant Cloud).
 
-> Existing deployments on 768d should set `VECTOR_SIZE=768` (and keep `EMBEDDING_MODEL=text-embedding-3-small`) until after running `scripts/reembed_embeddings.py`. The server now fails fast if your configured dimension does not match the Qdrant collection.
+> **Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed when updating — existing 3072d or 768d collections continue to work.
 >
-> Voyage models support specific dimensions (256, 512, 1024, 2048). If you use `EMBEDDING_PROVIDER=voyage`, set `VECTOR_SIZE` to one of those values and keep it consistent with your Qdrant collection.
+> The recommended setup is Voyage (`voyage-4`) at 1024d. If you only have an OpenAI key, `text-embedding-3-small` is used as fallback and truncated to `VECTOR_SIZE` via Matryoshka.
 
 #### Enrichment Pipeline
 
@@ -479,7 +481,7 @@ Store a new memory.
 | `confidence`    | float  | No       | Confidence in type 0.0-1.0 (default: `0.9` if type provided, auto-computed otherwise) |
 | `metadata`      | object | No       | Custom metadata (any JSON object)                                                     |
 | `timestamp`     | string | No       | ISO 8601 timestamp (default: current time)                                            |
-| `embedding`     | array  | No       | Vector embedding (auto-generated if omitted; default 3072d or 768d with small model)  |
+| `embedding`     | array  | No       | Vector embedding (auto-generated if omitted; default 1024d with voyage-4)  |
 | `t_valid`       | string | No       | ISO timestamp when memory becomes valid                                               |
 | `t_invalid`     | string | No       | ISO timestamp when memory expires                                                     |
 | `updated_at`    | string | No       | ISO timestamp of last update (default: `timestamp`)                                   |
@@ -550,23 +552,23 @@ Retrieve memories using hybrid search.
 
 **Query Parameters:**
 
-| Parameter      | Description                                       | Example                             |
-| -------------- | ------------------------------------------------- | ----------------------------------- |
-| `query`        | Full-text search string                           | `database migration`                |
-| `embedding`    | 768-d vector (comma-separated)                    | `0.12,0.56,...`                     |
-| `limit`        | Max results (1-50)                                | `10`                                |
-| `time_query`   | Natural time phrases                              | `today`, `last week`, `last 7 days` |
-| `start`        | ISO timestamp (lower bound)                       | `2025-09-01T00:00:00Z`              |
-| `end`          | ISO timestamp (upper bound)                       | `2025-09-30T23:59:59Z`              |
-| `tags`         | Tag filters (multiple allowed)                    | `slack`, `decision`                 |
-| `tag_mode`     | `any` or `all`                                    | `any` (default)                     |
-| `tag_match`    | `prefix` or `exact`                               | `prefix` (default)                  |
-| `context`      | High-level context label                          | `coding-style`, `preference`        |
-| `language`     | Explicit language hint                            | `python`, `typescript`              |
-| `active_path`  | Active file path (used to infer language/context) | `/Users/jack/project/app.py`        |
-| `context_tags` | Comma or list of tags to prioritize               | `coding-style,python`               |
-| `context_types`| Memory types to prioritize                        | `Style,Preference`                  |
-| `priority_ids` | Specific memory IDs to treat as anchors           | `uuid-1,uuid-2`                     |
+| Parameter      | Description                                                | Example                             |
+| -------------- | ---------------------------------------------------------- | ----------------------------------- |
+| `query`        | Full-text search string                                    | `database migration`                |
+| `embedding`    | Vector (comma-separated, dimension matches `VECTOR_SIZE`)  | `0.12,0.56,...`                     |
+| `limit`        | Max results (1-50)                                         | `10`                                |
+| `time_query`   | Natural time phrases                                       | `today`, `last week`, `last 7 days` |
+| `start`        | ISO timestamp (lower bound)                                | `2025-09-01T00:00:00Z`              |
+| `end`          | ISO timestamp (upper bound)                                | `2025-09-30T23:59:59Z`              |
+| `tags`         | Tag filters (multiple allowed)                             | `slack`, `decision`                 |
+| `tag_mode`     | `any` or `all`                                             | `any` (default)                     |
+| `tag_match`    | `prefix` or `exact`                                        | `prefix` (default)                  |
+| `context`      | High-level context label                                   | `coding-style`, `preference`        |
+| `language`     | Explicit language hint                                     | `python`, `typescript`              |
+| `active_path`  | Active file path (used to infer language/context)          | `/Users/jack/project/app.py`        |
+| `context_tags` | Comma or list of tags to prioritize                        | `coding-style,python`               |
+| `context_types`| Memory types to prioritize                                 | `Style,Preference`                  |
+| `priority_ids` | Specific memory IDs to treat as anchors                    | `uuid-1,uuid-2`                     |
 
 **Examples:**
 
@@ -675,15 +677,35 @@ Filter memories by tags.
 **Query Parameters:**
 
 - `tags` - One or more tags (multiple `tags` params or comma-separated)
-- `limit` - Max results (default 50)
+- `limit` - Max results per page (default 20, max 200)
+- `offset` - Zero-based page offset (default 0)
 
 **Example:**
 
 ```bash
-GET /memory/by-tag?tags=deployment&tags=success&limit=20
+GET /memory/by-tag?tags=deployment&tags=success&limit=20&offset=0
 ```
 
-Returns most recent/important memories matching any requested tag.
+Returns the current page of most important/recent memories matching any requested tag, plus
+pagination metadata (`limit`, `offset`, `has_more`).
+
+---
+
+#### `DELETE /memory/by-tag`
+
+Delete all memories matching any requested tag.
+
+**Query Parameters:**
+
+- `tags` - One or more tags (multiple `tags` params or comma-separated)
+
+**Example:**
+
+```bash
+DELETE /memory/by-tag?tags=deployment&tags=success
+```
+
+Returns a success payload with `deleted_count`.
 
 ---
 
@@ -702,7 +724,7 @@ Create a relationship between two memories.
 }
 ```
 
-**Relationship Types:**
+**Authorable Relationship Types:**
 
 - `RELATES_TO` - General connection
 - `LEADS_TO` - Causal (bug→solution)
@@ -715,6 +737,12 @@ Create a relationship between two memories.
 - `EVOLVED_INTO` - Knowledge evolution
 - `DERIVED_FROM` - Source relationships
 - `PART_OF` - Hierarchical structure
+
+**System-generated / internal relationship types:**
+
+- `SIMILAR_TO` - Semantic neighbors created automatically
+- `PRECEDED_BY` - Temporal links created automatically
+- `DISCOVERED` - Internal consolidation edge with `kind=explains|shares_theme|parallel_context`
 
 **Response:**
 
@@ -915,10 +943,10 @@ See **[TESTING.md](TESTING.md)** for complete testing documentation.
 - **Check:** Test connection: `redis-cli -h $FALKORDB_HOST -p $FALKORDB_PORT ping`
 - **Railway:** Ensure FalkorDB service is running and internal hostname is correct
 
-#### `Embedding must contain exactly 768 values`
+#### `Embedding dimension mismatch`
 
 - **Cause:** Incorrect embedding dimension
-- **Fix:** Supply full 768-d vector or omit field entirely
+- **Fix:** Supply a vector matching `VECTOR_SIZE` or omit field entirely
 - **Note:** Service generates placeholder if embedding omitted
 
 #### Qdrant Errors (Logged but Non-Blocking)

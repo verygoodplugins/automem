@@ -5,70 +5,7 @@ import json
 import pytest
 
 import app
-
-
-class FakeResult:
-    def __init__(self, rows):
-        self.result_set = rows
-
-
-class FakeNode:
-    def __init__(self, properties):
-        self.properties = properties
-
-
-class FakeGraph:
-    def __init__(self):
-        self.temporal_calls = []
-        self.pattern_calls = []
-        self.exemplifies_calls = []
-        self.update_calls = []
-
-    def query(self, query: str, params: dict | None = None, **kwargs) -> FakeResult:
-        params = params or {}
-
-        if "MATCH (m:Memory {id: $id}) RETURN m" in query and "RETURN m2.id" not in query:
-            node = FakeNode(
-                {
-                    "id": "mem-1",
-                    "content": 'Met with Alice about SuperWhisper deployment on project "Launchpad".',
-                    "tags": ["meeting"],
-                    "metadata": {},
-                    "processed": False,
-                    "summary": None,
-                }
-            )
-            return FakeResult([[node]])
-
-        if "RETURN m2.id" in query and "PRECEDED_BY" not in query:
-            return FakeResult([["mem-older"]])
-
-        if "MERGE (m1)-[r:PRECEDED_BY]" in query:
-            self.temporal_calls.append(params)
-            return FakeResult([])
-
-        if "MATCH (m:Memory)" in query and "m.type = $type" in query:
-            return FakeResult(
-                [
-                    ["mem-a", "Pattern insight about automation"],
-                    ["mem-b", "Another automation pattern emerges"],
-                    ["mem-c", "Automation habit noted"],
-                ]
-            )
-
-        if "MERGE (p:Pattern" in query:
-            self.pattern_calls.append(params)
-            return FakeResult([])
-
-        if "MERGE (m)-[r:EXEMPLIFIES]" in query:
-            self.exemplifies_calls.append(params)
-            return FakeResult([])
-
-        if "SET m.metadata" in query:
-            self.update_calls.append(params)
-            return FakeResult([])
-
-        return FakeResult([])
+from tests.support.fake_graph import FakeGraph  # noqa: F401 - used via fixtures
 
 
 @pytest.fixture(autouse=True)
@@ -104,8 +41,8 @@ def test_extract_entities_basic():
     assert "Launchpad" in entities["projects"]
 
 
-def test_enrich_memory_updates_metadata(monkeypatch):
-    fake_graph = FakeGraph()
+def test_enrich_memory_updates_metadata(monkeypatch, seeded_enrichment_graph):
+    fake_graph = seeded_enrichment_graph
     app.state.memory_graph = fake_graph
 
     processed = app.enrich_memory("mem-1", forced=True)

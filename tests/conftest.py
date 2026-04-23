@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -143,6 +145,43 @@ if "qdrant_client" not in sys.modules:
 
 if "openai" not in sys.modules:
     _install_openai_stub()
+
+
+from tests.support.fake_graph import FakeGraph  # noqa: E402 - after stubs installed
+
+
+@pytest.fixture()
+def dummy_graph() -> FakeGraph:
+    """Provide a fresh FakeGraph for tests that need a simple graph mock."""
+    return FakeGraph()
+
+
+@pytest.fixture()
+def seeded_enrichment_graph() -> FakeGraph:
+    """Provide a FakeGraph pre-seeded with enrichment fixture data."""
+    return FakeGraph(seed_enrichment_fixture=True)
+
+
+def pytest_collection_modifyitems(  # pragma: no cover - collection-time behavior
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    del config
+    for item in items:
+        marker_names = {marker.name for marker in item.iter_markers()}
+        nodeid = item.nodeid.replace("\\\\", "/")
+
+        # Benchmark and long-running suites are opt-in live tests.
+        if "tests/benchmarks/" in nodeid and "live" not in marker_names:
+            item.add_marker(pytest.mark.live)
+            marker_names.add("live")
+
+        # Any unclassified test defaults to unit.
+        if (
+            "unit" not in marker_names
+            and "integration" not in marker_names
+            and "live" not in marker_names
+        ):
+            item.add_marker(pytest.mark.unit)
 
 
 def pytest_report_header(config):  # pragma: no cover - cosmetic output
