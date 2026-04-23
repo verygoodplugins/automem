@@ -394,7 +394,7 @@ source .venv/bin/activate
 PORT=8001 python app.py
 ```
 
-AutoMem local dev now expects Python 3.12. `make install` prefers `python3.12`, creates `.venv`, and refreshes `venv -> .venv` so older scripts keep working.
+AutoMem supports Python 3.10 and newer. The local bootstrap workflow is standardized on Python 3.12 (via `.python-version` / `make install`). `make install` prefers `python3.12`, creates `.venv`, and refreshes `venv -> .venv` so older scripts keep working.
 
 If you keep secrets in `~/.config/automem/.env`, `direnv` is the easiest way to auto-load them:
 

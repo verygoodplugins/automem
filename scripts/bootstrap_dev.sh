@@ -11,7 +11,7 @@ resolve_python() {
             echo "$AUTOMEM_PYTHON"
             return 0
         fi
-        echo "❌ AUTOMEM_PYTHON is set to '$AUTOMEM_PYTHON' but was not found on PATH." >&2
+        echo "❌ AUTOMEM_PYTHON is set to '$AUTOMEM_PYTHON' but was not found or is not executable." >&2
         return 1
     fi
 
