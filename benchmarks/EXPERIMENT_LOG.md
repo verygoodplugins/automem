@@ -37,6 +37,9 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 2026-03-11 | PR #80 BM25+rerank top10 | exp/pr80-bm25-rerank-top10 | 86.81% (-2.55) | -- | -- | Wider rerank window = worse. → [postmortem](postmortems/2026-03-11_pr80_enhanced_recall.md) |
 | 2026-03-11 | #74 entity expansion | exp/74-entity-expansion-precision-v1 | 89.36% (+0.0) | -- | -- | Hub-node detection. Zero delta — benchmark doesn't exercise graph expansion. → [postmortem](postmortems/2026-03-11_issue74_entity_expansion_precision.md) |
 | 2026-03-12 | #79 (PR #125) | exp/79-priority-ids-fetch-v1 | 89.36% (+0.0) | -- | -- | Bug fix: priority_ids now fetches by ID. Merged. → [postmortem](postmortems/2026-03-12_issue79_priority_ids_fetch.md) |
+| 2026-04-23 | #128 | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | **85.53% (201/235)** | -- | -- | Content keyword fallback + gentler adaptive floor. Improved **+3.40pp** vs the same-day baseline (`82.13%`, `193/235`) with no sampled question-level regressions across conv-26/conv-30. |
+| 2026-04-23 | #128 judge attempt | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | 82.13% (193/235) | -- | -- | `BENCH_JUDGE_MODEL=gpt-5.1` selected the new default judge model, but `judge_available=false` because `OPENAI_API_KEY` was unavailable in the eval process. 69 cat-5 questions were skipped, so the score matched judge-off baseline behavior. |
+| 2026-04-23 | #128 full judge | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | -- | **83.99% (1668/1986)** | -- | Full judge-on rerun after harness fixes. Judge preflight passed and cat-5 scored **92.83% (414/446)** with **0 skips**. Improves **+3.93pp** vs full baseline (`80.06%`, `1590/1986`), so #128 is strong enough to move forward to broader validation. |
 
 ### 2026-04-23 - #142 scoped relation expansion
 
@@ -63,6 +66,8 @@ Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-
 | 2026-03-11 | PR #80 BM25-only f10 | 81.4% (35/43) | 92.1% (58/63) | 46.2% (6/13) | 93.0% (106/114) | N/A |
 | 2026-03-11 | #74 entity expansion | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A |
 | 2026-03-12 | #79 (PR #125) | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A |
+| 2026-04-23 | #128 | **65.1% (28/43)** | 92.1% (58/63) | **38.5% (5/13)** | **94.7% (108/114)** | 100.0% (2/2, 69 skipped) |
+| 2026-04-23 | #128 judge attempt | 53.5% (23/43) | 92.1% (58/63) | 30.8% (4/13) | 93.0% (106/114) | 100.0% (2/2, 69 skipped) |
 
 \* Temporal was artificially low: evaluator compared question dates (empty) vs memory dates instead of answer dates.
 \*\* Complex was artificially 100%: dataset has no `answer` field for cat5 → empty string → `"" in content` always True.
