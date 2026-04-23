@@ -35,16 +35,15 @@ Complete setup instructions for AutoMem across all environments.
 git clone https://github.com/verygoodplugins/automem.git
 cd automem
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements-dev.txt
+# Create virtual environment (prefers Python 3.12)
+make install
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Start all services (FalkorDB + Qdrant + API)
 make dev
 ```
+
+`make install` creates `.venv`, refreshes `venv -> .venv` for compatibility with older scripts, and fails fast if your default `python3` is incompatible (for example Python 3.14).
 
 **Services:**
 
@@ -324,7 +323,7 @@ Run API without Docker (requires external FalkorDB):
 
 ```bash
 # Activate virtual environment
-source venv/bin/activate
+source .venv/bin/activate
 
 # Set connection details
 export FALKORDB_HOST=localhost

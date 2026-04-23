@@ -389,10 +389,25 @@ make dev
 Run API without Docker:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements-dev.txt
+make install
+source .venv/bin/activate
 PORT=8001 python app.py
+```
+
+AutoMem local dev now expects Python 3.12. `make install` prefers `python3.12`, creates `.venv`, and refreshes `venv -> .venv` so older scripts keep working.
+
+If you keep secrets in `~/.config/automem/.env`, `direnv` is the easiest way to auto-load them:
+
+```bash
+brew install direnv
+echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
+
+cat > .envrc <<'EOF'
+source .venv/bin/activate
+dotenv_if_exists ~/.config/automem/.env
+EOF
+
+direnv allow
 ```
 
 ## API Examples

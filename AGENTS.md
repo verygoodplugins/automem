@@ -13,8 +13,8 @@
 
 ## Build, Test, and Development
 
-- `make install`: Create `venv` and install dev deps.
-- `source venv/bin/activate`: Activate the virtualenv.
+- `make install`: Create `.venv` (and symlink `venv -> .venv`) and install dev deps. Prefers Python 3.12 and fails fast on incompatible `python3`.
+- `source .venv/bin/activate`: Activate the virtualenv.
 - `make dev`: Start local stack via Docker (FalkorDB, Qdrant, API).
 - `make test`: Run unit tests (fast, no services).
 - `make test-integration`: Start Docker and run full integration tests.
