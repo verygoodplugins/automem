@@ -227,15 +227,15 @@ Category 5 uses evidence-grounded complex reasoning and is opt-in for cost reaso
 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
 # Enable cat-5 judge with env var
-BENCH_JUDGE_MODEL=gpt-4o make bench-eval BENCH=locomo-mini CONFIG=baseline
+BENCH_JUDGE_MODEL=gpt-5.1 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
 # Or use the runner CLI flags directly
 ./test-locomo-benchmark.sh --conversations 0,1 --judge
-./test-locomo-benchmark.sh --conversations 0,1 --judge-model gpt-4o-mini
+./test-locomo-benchmark.sh --conversations 0,1 --judge-model gpt-5.1
 ```
 
 - `BENCH_JUDGE_MODEL` enables category-5 judging for `tests/benchmarks/test_locomo.py`.
-- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-4o` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
+- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-5.1` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
 - If the judge is disabled, category 5 remains `N/A`.
 - If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
 
@@ -313,6 +313,18 @@ Example benchmark output:
 If you run without the judge, category 5 will show as `N/A` and the comparison should be treated as directional rather than apples-to-apples.
 
 Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
+
+## Benchmark Ownership
+
+`automem` is the canonical home for official benchmark harnesses, published baselines, and any benchmark numbers referenced in docs, CI, or release notes.
+
+Use the separate `automem-evals` repo for:
+- ruleset experimentation
+- scenario authoring and seeded corpora
+- cross-agent or cross-backend comparisons
+- bulky timestamped result artifacts and exploratory writeups
+
+If you are building an external eval harness against local AutoMem, use the contract in [`EVALS_CONTRACT.md`](EVALS_CONTRACT.md) and treat this repo as the system under test.
 
 ### AutoMem's Advantages
 

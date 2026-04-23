@@ -13,8 +13,8 @@
 
 ## Build, Test, and Development
 
-- `make install`: Create `venv` and install dev deps.
-- `source venv/bin/activate`: Activate the virtualenv.
+- `make install`: Create `.venv` (and symlink `venv -> .venv`) and install dev deps. Prefers Python 3.12 and fails fast on incompatible `python3`.
+- `source .venv/bin/activate`: Activate the virtualenv.
 - `make dev`: Start local stack via Docker (FalkorDB, Qdrant, API).
 - `make test`: Run unit tests (fast, no services).
 - `make test-integration`: Start Docker and run full integration tests.
@@ -41,6 +41,8 @@
 The benchmark system uses **snapshot-based evaluation**: ingest once, eval many times from the same snapshot. This keeps runs deterministic and fast.
 
 **Source of truth**: `benchmarks/EXPERIMENT_LOG.md` — contains current baselines, all experiment results, and the tiered benchmark table.
+
+`automem` is the canonical home for official benchmark harnesses and published benchmark numbers. Use the separate `automem-evals` repo for exploratory ruleset work, seeded corpora, scenario authoring, cross-agent or cross-backend comparisons, and bulky timestamped result artifacts. External eval repos should treat AutoMem as a black-box service and follow `docs/EVALS_CONTRACT.md`.
 
 ### Tiered System
 

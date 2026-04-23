@@ -37,20 +37,23 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
-from uuid import UUID
 
-import requests
+from dotenv import load_dotenv
 
 # Add project root to path for imports (file -> longmemeval -> benchmarks -> tests -> project root)
 _project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+load_dotenv()
+load_dotenv(Path.home() / ".config" / "automem" / ".env")
+
 try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
 
+from tests.benchmarks.backends import MemoryRecord, SearchRequest, create_backend
 from tests.benchmarks.longmemeval.configs import LongMemEvalConfig, get_config
 from tests.benchmarks.longmemeval.evaluator import (
     LongMemEvalScorer,
@@ -76,6 +79,9 @@ class LongMemEvalResult(TypedDict):
     memories_stored: int
     is_abstention: bool
     question_date: str
+    answer_session_ids: List[str]
+    retrieved_session_ids: List[str]
+    recall_hit_at_5: bool
 
 
 class LongMemEvalBenchmark:
@@ -83,10 +89,14 @@ class LongMemEvalBenchmark:
 
     def __init__(self, config: LongMemEvalConfig) -> None:
         self.config = config
-        self.headers = {
-            "Authorization": f"Bearer {config.api_token}",
-            "Content-Type": "application/json",
-        }
+        scope_prefix = f"longmemeval-{config.backend}-{int(time.time())}"
+        self.backend = create_backend(
+            config.backend,
+            base_url=config.base_url,
+            api_token=config.api_token,
+            scope_prefix=scope_prefix,
+            work_dir=config.work_dir,
+        )
         self.scorer = LongMemEvalScorer()
         self.memory_ingest_failures = 0
         self.openai_client = None
@@ -94,16 +104,19 @@ class LongMemEvalBenchmark:
             self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def health_check(self) -> bool:
-        """Verify AutoMem API is accessible."""
-        try:
-            response = requests.get(
-                f"{self.config.base_url}/health",
-                timeout=self.config.request_timeout,
-            )
-            return response.status_code == 200
-        except Exception as e:
-            logger.exception("Health check failed: %s", e)
-            return False
+        """Verify the configured backend is accessible."""
+        return self.backend.health_check()
+
+    @staticmethod
+    def _record_to_memory(record: MemoryRecord) -> Dict[str, Any]:
+        return {
+            "id": record.id,
+            "content": record.content,
+            "metadata": dict(record.metadata),
+            "tags": list(record.tags),
+            "score": record.score,
+            "match_type": record.match_type,
+        }
 
     def load_dataset(self) -> List[Dict[str, Any]]:
         """Load LongMemEval dataset from JSON file."""
@@ -122,58 +135,18 @@ class LongMemEvalBenchmark:
 
     def cleanup_test_data(self, question_id: Optional[str] = None) -> None:
         """Remove test memories from AutoMem."""
-        tag = f"{self.config.tag_prefix}:{question_id}" if question_id else self.config.tag_prefix
-        match_mode = "exact" if question_id else "prefix"
+        if self.config.backend == "automem" and question_id:
+            scope_id = question_id
+        elif question_id:
+            scope_id = question_id
+        else:
+            return
 
-        total_deleted = 0
-        while True:
-            try:
-                response = requests.get(
-                    f"{self.config.base_url}/recall",
-                    headers=self.headers,
-                    params={"tags": tag, "tag_match": match_mode, "limit": 100},
-                    timeout=self.config.request_timeout,
-                )
-
-                if response.status_code != 200:
-                    break
-
-                results = response.json().get("results", [])
-                if not results:
-                    break
-
-                for r in results:
-                    memory_id = r.get("id")
-                    if memory_id:
-                        try:
-                            UUID(str(memory_id))
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                "Skipping invalid memory id during cleanup: %r (row=%r)",
-                                memory_id,
-                                r,
-                            )
-                            continue
-                        delete_response = requests.delete(
-                            f"{self.config.base_url}/memory/{memory_id}",
-                            headers=self.headers,
-                            timeout=self.config.request_timeout,
-                        )
-                        if delete_response.ok:
-                            total_deleted += 1
-                        else:
-                            logger.warning(
-                                "Failed to delete memory %s during cleanup: %s",
-                                memory_id,
-                                delete_response.status_code,
-                            )
-
-                if len(results) < 100:
-                    break
-
-            except Exception as e:
-                logger.exception("Cleanup error: %s", e)
-                break
+        try:
+            total_deleted = self.backend.cleanup_scope(scope_id)
+        except Exception as e:
+            logger.exception("Cleanup error: %s", e)
+            return
 
         if total_deleted > 0:
             print(f"  Cleaned up {total_deleted} memories")
@@ -213,11 +186,9 @@ class LongMemEvalBenchmark:
         sessions = item["haystack_sessions"]
         session_ids = item["haystack_session_ids"]
         session_dates = item["haystack_dates"]
-        stored = 0
+        payloads: List[Dict[str, Any]] = []
 
-        for i, (session_turns, sid, date_str) in enumerate(
-            zip(sessions, session_ids, session_dates, strict=True)
-        ):
+        for session_turns, sid, date_str in zip(sessions, session_ids, session_dates, strict=True):
             if not session_turns:
                 continue
 
@@ -245,23 +216,11 @@ class LongMemEvalBenchmark:
                     "importance": self.config.importance,
                     "metadata": metadata,
                     "type": "Context",
+                    "_benchmark_id": sid,
                 }
                 if timestamp:
                     payload["timestamp"] = timestamp
-
-                try:
-                    response = requests.post(
-                        f"{self.config.base_url}/memory",
-                        headers=self.headers,
-                        json=payload,
-                        timeout=self.config.request_timeout,
-                    )
-                    if response.status_code in [200, 201]:
-                        stored += 1
-                    else:
-                        print(f"  Failed to store session {sid}: " f"{response.status_code}")
-                except Exception as e:
-                    logger.exception("Error storing session %s: %s", sid, e)
+                payloads.append(payload)
 
             elif self.config.storage_strategy == "per-turn":
                 # One memory per turn
@@ -293,32 +252,25 @@ class LongMemEvalBenchmark:
                         "importance": self.config.importance,
                         "metadata": metadata,
                         "type": "Context",
+                        "_benchmark_id": f"{sid}:{j}",
                     }
                     if timestamp:
                         payload["timestamp"] = timestamp
+                    payloads.append(payload)
 
-                    try:
-                        response = requests.post(
-                            f"{self.config.base_url}/memory",
-                            headers=self.headers,
-                            json=payload,
-                            timeout=self.config.request_timeout,
-                        )
-                        if response.status_code in [200, 201]:
-                            stored += 1
-                    except Exception:
-                        self.memory_ingest_failures += 1
-                        logger.exception(
-                            "Failed to store turn for session %s at index %s",
-                            sid,
-                            j,
-                        )
+        try:
+            memory_map = self.backend.ingest_memories(
+                payloads,
+                scope_id=question_id,
+                batch_size=self.config.batch_size,
+                pause_between_batches=self.config.pause_between_batches,
+            )
+        except Exception:
+            self.memory_ingest_failures += len(payloads)
+            logger.exception("Failed to ingest memories for question %s", question_id)
+            return 0
 
-            # Pause between batches
-            if (i + 1) % self.config.batch_size == 0:
-                time.sleep(self.config.pause_between_batches)
-
-        return stored
+        return len(memory_map)
 
     def _extract_temporal_bounds(
         self, question: str, question_date: str
@@ -371,50 +323,25 @@ class LongMemEvalBenchmark:
         Uses the question text as semantic query, with optional
         temporal hints and graph expansion.
         """
-        params = {
-            "query": question,
-            "limit": self.config.recall_limit,
-            "tags": f"{self.config.tag_prefix}:{question_id}",
-            "tag_match": "exact",
-        }
-
-        if self.config.expand_entities:
-            params["expand_entities"] = "true"
-        if self.config.expand_relations:
-            params["expand_relations"] = "true"
-        if self.config.auto_decompose:
-            params["auto_decompose"] = "true"
-
         # Temporal bounds
         start_iso, end_iso = self._extract_temporal_bounds(question, question_date)
-        if start_iso:
-            params["start"] = start_iso
-        if end_iso:
-            params["end"] = end_iso
 
         try:
-            response = requests.get(
-                f"{self.config.base_url}/recall",
-                headers=self.headers,
-                params=params,
-                timeout=self.config.request_timeout,
+            records = self.backend.search(
+                SearchRequest(
+                    query=question,
+                    scope_id=question_id,
+                    limit=self.config.recall_limit,
+                    tags=[f"{self.config.tag_prefix}:{question_id}"],
+                    tag_match="exact",
+                    start=start_iso,
+                    end=end_iso,
+                    expand_entities=self.config.expand_entities,
+                    expand_relations=self.config.expand_relations,
+                    auto_decompose=self.config.auto_decompose,
+                )
             )
-            if response.status_code == 200:
-                results = response.json().get("results", [])
-                # Flatten: AutoMem nests memory data under "memory" key
-                flattened = []
-                for r in results:
-                    mem = r.get("memory")
-                    if not mem:
-                        continue
-                    mem_copy = dict(mem)
-                    mem_copy["score"] = r.get("score", 0)
-                    mem_copy["match_type"] = r.get("match_type", "")
-                    flattened.append(mem_copy)
-                return flattened
-            else:
-                print(f"  Recall failed for {question_id}: {response.status_code}")
-                return []
+            return [self._record_to_memory(record) for record in records]
         except Exception as e:
             logger.exception("Recall error for %s: %s", question_id, e)
             return []
@@ -435,6 +362,21 @@ class LongMemEvalBenchmark:
             else:
                 lines.append(f"[Memory {i}]\n{content}")
         return "\n\n".join(lines)
+
+    @staticmethod
+    def _top_unique_session_ids(memories: List[Dict[str, Any]], limit: int = 5) -> List[str]:
+        session_ids: List[str] = []
+        seen = set()
+        for memory in memories:
+            metadata = memory.get("metadata") or {}
+            session_id = metadata.get("session_id")
+            if not session_id or session_id in seen:
+                continue
+            seen.add(session_id)
+            session_ids.append(session_id)
+            if len(session_ids) >= limit:
+                break
+        return session_ids
 
     def generate_answer(
         self,
@@ -536,9 +478,14 @@ Answer:"""
         reference = item.get("answer", "")
         question_type = item["question_type"]
         question_date = item.get("question_date", "")
+        answer_session_ids = list(item.get("answer_session_ids") or [])
 
         # Recall
         memories = self.recall_for_question(question, question_id, question_date)
+        retrieved_session_ids = self._top_unique_session_ids(memories, limit=5)
+        recall_hit_at_5 = any(
+            session_id in retrieved_session_ids for session_id in answer_session_ids
+        )
 
         # Generate answer
         hypothesis = self.generate_answer(question, memories, question_date)
@@ -578,6 +525,9 @@ Answer:"""
             "memories_stored": memories_stored,
             "is_abstention": is_abstention_question(question_id),
             "question_date": question_date,
+            "answer_session_ids": answer_session_ids,
+            "retrieved_session_ids": retrieved_session_ids,
+            "recall_hit_at_5": recall_hit_at_5,
         }
 
         return result
@@ -599,7 +549,7 @@ Answer:"""
 
         # Health check
         if not self.health_check():
-            print("AutoMem API is not accessible. Aborting benchmark.")
+            print(f"{self.backend.name} backend is not accessible. Aborting benchmark.")
             return {"overall": {"accuracy": 0.0, "correct": 0, "total": 0}}
 
         # Load dataset
@@ -610,6 +560,7 @@ Answer:"""
             dataset = dataset[: self.config.max_questions]
 
         print("\nRunning LongMemEval benchmark:")
+        print(f"  Backend: {self.backend.name}")
         print(f"  Config: {self.config.name}")
         print(f"  Questions: {len(dataset)}")
         print(f"  Storage: {self.config.storage_strategy}")
@@ -660,8 +611,10 @@ Answer:"""
 
         # Print report
         scores = self.scorer.print_report(config_name=self.config.name, elapsed_time=elapsed_time)
+        scores["backend"] = self.backend.name
         scores["elapsed_time"] = elapsed_time
         scores["config"] = {
+            "backend": self.config.backend,
             "name": self.config.name,
             "storage_strategy": self.config.storage_strategy,
             "recall_limit": self.config.recall_limit,
@@ -715,16 +668,27 @@ def main() -> int:
     """Run LongMemEval benchmark evaluation."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Evaluate AutoMem on LongMemEval benchmark")
+    parser = argparse.ArgumentParser(description="Evaluate a memory backend on LongMemEval")
     parser.add_argument(
         "--base-url",
         default=os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001"),
-        help="AutoMem API base URL",
+        help="Backend API base URL",
     )
     parser.add_argument(
         "--api-token",
         default=os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token"),
-        help="AutoMem API token",
+        help="Backend API token",
+    )
+    parser.add_argument(
+        "--backend",
+        default="automem",
+        choices=["automem"],
+        help="Memory backend to benchmark (cross-backend runs live in automem-evals)",
+    )
+    parser.add_argument(
+        "--work-dir",
+        default=None,
+        help="Optional working directory for local backends like mempalace",
     )
     parser.add_argument(
         "--config",
@@ -787,8 +751,10 @@ def main() -> int:
 
     # Build config from preset + overrides
     overrides = {
+        "backend": args.backend,
         "base_url": args.base_url,
         "api_token": args.api_token,
+        "work_dir": args.work_dir,
     }
     if args.data_file:
         overrides["data_file"] = args.data_file

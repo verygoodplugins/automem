@@ -10,6 +10,7 @@ EXPECTED_ROUTE_METHODS = {
     ("PATCH", "/memory/<memory_id>"),
     ("DELETE", "/memory/<memory_id>"),
     ("GET", "/memory/by-tag"),
+    ("DELETE", "/memory/by-tag"),
     ("POST", "/associate"),
     ("GET", "/recall"),
     ("GET", "/startup-recall"),

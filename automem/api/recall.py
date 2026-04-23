@@ -970,6 +970,7 @@ def _expand_related_memories(
     expand_min_strength: Optional[float] = None,
     expand_min_importance: Optional[float] = None,
     exclude_tags: Optional[List[str]] = None,
+    expand_respect_tags: bool = False,
 ) -> List[Dict[str, Any]]:
     if graph is None or not seed_results or expansion_limit <= 0:
         return []
@@ -1062,8 +1063,17 @@ def _expand_related_memories(
                         continue
                 except (TypeError, ValueError):
                     continue
+            candidate_tag_filters = tag_filters if expand_respect_tags else None
+            candidate_tag_mode = tag_mode if expand_respect_tags else "any"
+            candidate_tag_match = tag_match if expand_respect_tags else "exact"
             if not result_passes_filters(
-                candidate, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                candidate,
+                start_time,
+                end_time,
+                candidate_tag_filters,
+                candidate_tag_mode,
+                candidate_tag_match,
+                exclude_tags,
             ):
                 continue
 
@@ -1253,6 +1263,10 @@ def handle_recall(
         request.args.get("expand_relations")
         or request.args.get("expand_associations")
         or request.args.get("expand"),
+        False,
+    )
+    expand_respect_tags = _parse_bool_param(
+        request.args.get("expand_respect_tags"),
         False,
     )
 
@@ -1589,6 +1603,7 @@ def handle_recall(
             expand_min_strength=expand_min_strength,
             expand_min_importance=expand_min_importance,
             exclude_tags=exclude_tags,
+            expand_respect_tags=expand_respect_tags,
         )
         results = seed_results + expansion_results
 
@@ -1606,21 +1621,30 @@ def handle_recall(
             limit_per_entity=5,
             total_limit=expansion_limit,
             logger=logger,
-            additional_tag_filters=tag_filters,  # Pass conversation tag filter
+            additional_tag_filters=tag_filters if expand_respect_tags else None,
         )
-        if start_time or end_time or tag_filters or exclude_tags:
+        entity_tag_filters = tag_filters if expand_respect_tags else None
+        entity_tag_mode = tag_mode if expand_respect_tags else "any"
+        entity_tag_match = tag_match if expand_respect_tags else "exact"
+        if start_time or end_time or entity_tag_filters or exclude_tags:
             entity_expansion_results = [
                 r
                 for r in entity_expansion_results
                 if result_passes_filters(
-                    r, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                    r,
+                    start_time,
+                    end_time,
+                    entity_tag_filters,
+                    entity_tag_mode,
+                    entity_tag_match,
+                    exclude_tags,
                 )
             ]
         results = seed_results + expansion_results + entity_expansion_results
 
     pre_filter_count = len(results)
 
-    # Apply adaptive score floor: detect steep dropoff and cut low-quality tail
+    # Apply adaptive score floor: detect a pronounced dropoff without discarding most results.
     score_floor_applied = None
     if sort_param == "score" and adaptive_floor and len(results) > 3:
         scores = sorted([float(r.get("final_score", 0.0)) for r in results], reverse=True)
@@ -1633,12 +1657,16 @@ def handle_recall(
             if gap > max_gap:
                 max_gap = gap
                 gap_idx = i
-        # If there's a steep dropoff (>15% of max score), cut below it
-        if max_gap > 0.15 * scores[0] and gap_idx > 0:
-            score_floor_applied = scores[gap_idx]
-            results = [
-                r for r in results if float(r.get("final_score", 0.0)) >= score_floor_applied
+        # Only cut on a large dropoff (>25% of top score), and only if at least half survive.
+        if max_gap > 0.25 * scores[0] and gap_idx > 0:
+            candidate_floor = scores[gap_idx]
+            filtered_results = [
+                r for r in results if float(r.get("final_score", 0.0)) >= candidate_floor
             ]
+            minimum_retained = (len(results) + 1) // 2
+            if len(filtered_results) >= minimum_retained:
+                score_floor_applied = candidate_floor
+                results = filtered_results
 
     # Apply explicit min_score on final assembled results (catches expansions)
     if min_score is not None and min_score > 0:
@@ -1676,6 +1704,7 @@ def handle_recall(
             "expanded_count": len(expansion_results),
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
+            "respect_tags": expand_respect_tags,
         }
     if expand_entities:
         response["entity_expansion"] = {

@@ -15,7 +15,9 @@ from qdrant_client import models as qdrant_models
 import app
 from app import _normalize_timestamp, utc_now
 from automem import config
-from automem.api.recall import _expand_related_memories
+from automem.api.recall import _expand_related_memories, handle_recall
+from automem.utils.scoring import _compute_metadata_score
+from automem.utils.text import _extract_keywords
 from tests.support.fake_graph import FakeGraph
 
 
@@ -67,6 +69,10 @@ class MockQdrantClient:
         self.delete_calls.append((collection_name, points_selector))
         if hasattr(points_selector, "points"):
             for point_id in points_selector.points:
+                if point_id in self.points:
+                    del self.points[point_id]
+        elif isinstance(points_selector, dict):
+            for point_id in points_selector.get("points", []):
                 if point_id in self.points:
                     del self.points[point_id]
 
@@ -242,6 +248,122 @@ def test_health_endpoint_falkordb_down(client, mock_state):
 
 
 # ==================== Test Memory Recall ====================
+
+
+def _make_floor_result(idx: int, score: float, query: str = "autojack") -> dict[str, Any]:
+    return {
+        "id": f"floor-{idx}",
+        "score": score,
+        "match_score": score,
+        "match_type": "vector",
+        "source": "qdrant",
+        "memory": {
+            "id": f"floor-{idx}",
+            "content": f"{query} memory {idx}",
+            "target_score": score,
+            "importance": 0.1,
+        },
+        "relations": [],
+    }
+
+
+def _call_handle_recall_for_scores(query: str, scores: list[float]):
+    vector_results = [
+        _make_floor_result(idx, score, query=query) for idx, score in enumerate(scores)
+    ]
+
+    with app.app.test_request_context(f"/recall?query={query}&limit={len(scores)}"):
+        response = handle_recall(
+            get_memory_graph=lambda: None,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=_normalize_timestamp,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, _query, _tokens, _context: (
+                float(result["memory"]["target_score"]),
+                {"keyword": 1.0},
+            ),
+            result_passes_filters=lambda *_args, **_kwargs: True,
+            graph_keyword_search=lambda *_args, **_kwargs: [],
+            vector_search=lambda *_args, **_kwargs: list(vector_results),
+            vector_filter_only_tag_search=lambda *_args, **_kwargs: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+
+    return response.get_json()
+
+
+def test_compute_metadata_score_uses_content_keyword_fallback_for_vector_results():
+    score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 1.0
+    assert score > config.SEARCH_WEIGHT_VECTOR * 0.7
+
+
+def test_compute_metadata_score_uses_partial_content_keyword_fallback():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.5
+
+
+def test_compute_metadata_score_leaves_keyword_zero_without_content_hits():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "Unrelated debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.0
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_keyword_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "keyword",
+            "match_score": 0.42,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.42
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_trending_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "trending",
+            "match_score": 0.33,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.33
 
 
 def test_recall_with_query(client, mock_state, auth_headers):
@@ -525,6 +647,71 @@ def test_recall_priority_ids_are_guaranteed_with_small_limit(client, mock_state,
     assert data["results"][0]["id"] == target_id
 
 
+def test_recall_vector_results_include_keyword_score_from_content(client, mock_state, auth_headers):
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors, query_filter
+        return [
+            SimpleNamespace(
+                id="vec-1",
+                score=0.71,
+                payload={
+                    "id": "vec-1",
+                    "content": "AutoJack recall investigation memory",
+                    "tags": ["debugging"],
+                    "importance": 0.3,
+                    "timestamp": utc_now(),
+                },
+            )
+        ]
+
+    mock_state.qdrant.search = custom_search
+    response = client.get("/recall?query=AutoJack recall&limit=1", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["count"] == 1
+    assert data["results"][0]["score_components"]["keyword"] == 1.0
+
+
+def test_recall_adaptive_floor_keeps_clustered_relevant_tail():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [0.76, 0.75, 0.73, 0.55, 0.54, 0.53, 0.52, 0.51],
+    )
+
+    assert data["count"] == 8
+    assert "score_filter" not in data
+
+
+def test_recall_adaptive_floor_applies_on_large_drop_when_half_remain():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.98, 0.4, 0.39, 0.38, 0.37, 0.36],
+    )
+
+    assert data["count"] == 4
+    assert data["score_filter"]["adaptive_floor"] == 0.4
+    assert data["score_filter"]["filtered_count"] == 4
+
+
+def test_recall_adaptive_floor_skips_cut_that_would_remove_more_than_half():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.3, 0.29, 0.28, 0.27, 0.26],
+    )
+
+    assert data["count"] == 7
+    assert "score_filter" not in data
+
+
 # ==================== Test Memory Update ====================
 
 
@@ -720,6 +907,9 @@ def test_memory_by_tag_single(client, mock_state, auth_headers):
     data = response.get_json()
     assert data["status"] == "success"
     assert "memories" in data  # API returns 'memories' not 'results'
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert data["has_more"] is False
 
 
 def test_memory_by_tag_multiple(client, mock_state, auth_headers):
@@ -734,6 +924,101 @@ def test_memory_by_tag_no_tags(client, mock_state, auth_headers):
     """Test error when no tags provided."""
     response = client.get("/memory/by-tag", headers=auth_headers)
     assert response.status_code == 400
+
+
+def test_memory_by_tag_pagination(client, mock_state, auth_headers):
+    """Test offset pagination for /memory/by-tag."""
+    tag = "paged-tag"
+    timestamp = utc_now()
+    for i in range(205):
+        memory_id = f"00000000-0000-0000-0000-{i:012d}"
+        memory = {
+            "id": memory_id,
+            "content": f"Paged memory {i}",
+            "tags": [tag],
+            "importance": 0.5,
+            "timestamp": timestamp,
+        }
+        mock_state.memory_graph.memories[memory_id] = memory
+
+    first = client.get("/memory/by-tag?tags=paged-tag&limit=200", headers=auth_headers)
+    assert first.status_code == 200
+    first_data = first.get_json()
+    assert first_data["count"] == 200
+    assert first_data["limit"] == 200
+    assert first_data["offset"] == 0
+    assert first_data["has_more"] is True
+
+    second = client.get("/memory/by-tag?tags=paged-tag&limit=200&offset=200", headers=auth_headers)
+    assert second.status_code == 200
+    second_data = second.get_json()
+    assert second_data["count"] == 5
+    assert second_data["limit"] == 200
+    assert second_data["offset"] == 200
+    assert second_data["has_more"] is False
+
+    first_ids = {memory["id"] for memory in first_data["memories"]}
+    second_ids = {memory["id"] for memory in second_data["memories"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_memory_by_tag_invalid_offset_normalized(client, mock_state, auth_headers):
+    """Test invalid or negative offset normalizes to zero."""
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab",
+        "content": "Offset memory",
+        "tags": ["offset-tag"],
+        "importance": 0.8,
+        "timestamp": utc_now(),
+    }
+
+    invalid = client.get("/memory/by-tag?tags=offset-tag&offset=nope", headers=auth_headers)
+    assert invalid.status_code == 200
+    invalid_data = invalid.get_json()
+    assert invalid_data["offset"] == 0
+    assert invalid_data["count"] == 1
+
+    negative = client.get("/memory/by-tag?tags=offset-tag&offset=-10", headers=auth_headers)
+    assert negative.status_code == 200
+    negative_data = negative.get_json()
+    assert negative_data["offset"] == 0
+    assert negative_data["count"] == 1
+
+
+def test_delete_memory_by_tag_bulk(client, mock_state, auth_headers):
+    """Test bulk delete by tag removes graph and vector entries."""
+    tag = "bulk-delete-tag"
+    for i in range(3):
+        memory_id = f"00000000-0000-0000-0000-0000000001{i:02d}"
+        payload = {
+            "content": f"Bulk delete memory {i}",
+            "tags": [tag],
+            "importance": 0.7,
+            "timestamp": utc_now(),
+        }
+        mock_state.memory_graph.memories[memory_id] = {"id": memory_id, **payload}
+        mock_state.qdrant.points[memory_id] = {"vector": [0.1] * 3, "payload": payload}
+
+    response = client.delete("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": [tag], "deleted_count": 3}
+
+    follow_up = client.get("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert follow_up.status_code == 200
+    follow_up_data = follow_up.get_json()
+    assert follow_up_data["count"] == 0
+    assert follow_up_data["has_more"] is False
+    deleted_ids = [f"00000000-0000-0000-0000-0000000001{i:02d}" for i in range(3)]
+    assert all(point_id not in mock_state.qdrant.points for point_id in deleted_ids)
+
+
+def test_delete_memory_by_tag_no_matches(client, mock_state, auth_headers):
+    """Test bulk delete by tag succeeds with zero matches."""
+    response = client.delete("/memory/by-tag?tags=missing-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": ["missing-tag"], "deleted_count": 0}
 
 
 # ==================== Test Admin Reembed ====================
@@ -1232,6 +1517,209 @@ def test_expand_related_memories_normalizes_legacy_discovered_relations():
     relation_info = results[0]["relations"][0]
     assert relation_info["type"] == "DISCOVERED"
     assert relation_info["kind"] == "explains"
+
+
+def test_expand_related_memories_bypasses_tag_filter_by_default():
+    seed_id = "33333333-0000-0000-0000-000000000001"
+    related_id = "33333333-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["rate", "limiter"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][3] is None
+
+
+def test_expand_related_memories_respects_tags_when_opted_in():
+    seed_id = "44444444-0000-0000-0000-000000000001"
+    related_id = "44444444-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "DERIVED_FROM",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="auth generic pattern",
+        query_tokens=["auth", "pattern"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"DERIVED_FROM"},
+        logger=Mock(),
+        expand_respect_tags=True,
+    )
+
+    assert results == []
+
+
+def test_expand_related_memories_still_honors_exclude_tags():
+    seed_id = "55555555-0000-0000-0000-000000000001"
+    related_id = "55555555-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "REINFORCES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[6] == ["archived"] and args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="cross project logging",
+        query_tokens=["logging"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"REINFORCES"},
+        logger=Mock(),
+        exclude_tags=["archived"],
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][6] == ["archived"]
+
+
+def test_expand_related_memories_still_honors_time_window():
+    seed_id = "66666666-0000-0000-0000-000000000001"
+    related_id = "66666666-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return (
+            args[1] == "2026-01-01T00:00:00Z"
+            and args[2] == "2026-12-31T23:59:59Z"
+            and args[3] is None
+        )
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["redis"],
+        context_profile=None,
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-12-31T23:59:59Z",
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][1] == "2026-01-01T00:00:00Z"
+    assert seen_filter_args[0][2] == "2026-12-31T23:59:59Z"
 
 
 def test_relation_taxonomy_sets_are_consistent():

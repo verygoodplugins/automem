@@ -16,6 +16,8 @@
 
 AutoMem is a **production-grade long-term memory system** for AI assistants with transparent [LoCoMo benchmark](docs/TESTING.md#locomo-benchmark) baselines (ACL 2024): **89.27%** on `locomo-mini` categories 1-4 with category 5 skipped, and **87.56%** on full `locomo` with the opt-in category-5 judge enabled. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology and current baselines.
 
+This repository is the canonical home for official AutoMem benchmark harnesses, published baselines, and any benchmark numbers referenced in docs, releases, or CI. Exploratory eval work such as ruleset sweeps, scenario authoring, cross-agent comparisons, and bulky timestamped artifacts belongs in the separate `automem-evals` repo.
+
 **Deploy in 60 seconds:**
 
 ```bash
@@ -389,10 +391,25 @@ make dev
 Run API without Docker:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements-dev.txt
+make install
+source .venv/bin/activate
 PORT=8001 python app.py
+```
+
+AutoMem supports Python 3.10 and newer. The local bootstrap workflow is standardized on Python 3.12 (via `.python-version` / `make install`). `make install` prefers `python3.12`, creates `.venv`, and refreshes `venv -> .venv` so older scripts keep working.
+
+If you keep secrets in `~/.config/automem/.env`, `direnv` is the easiest way to auto-load them:
+
+```bash
+brew install direnv
+echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
+
+cat > .envrc <<'EOF'
+source .venv/bin/activate
+dotenv_if_exists ~/.config/automem/.env
+EOF
+
+direnv allow
 ```
 
 ## API Examples

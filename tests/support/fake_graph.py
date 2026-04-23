@@ -239,6 +239,17 @@ class FakeGraph:
                 return FakeResult([["deleted"]])
             return FakeResult([])
 
+        if "MATCH (m:Memory) WHERE m.id IN $ids DETACH DELETE m" in query:
+            deleted = []
+            for memory_id in params.get("ids") or []:
+                memory_id = str(memory_id)
+                if memory_id:
+                    self.deleted.append(memory_id)
+                if memory_id in self.memories:
+                    del self.memories[memory_id]
+                    deleted.append(memory_id)
+            return FakeResult([[memory_id] for memory_id in deleted])
+
         # Search by exact tag pattern
         if "MATCH (m:Memory)" in query and "$tag IN m.tags" in query:
             tag = str(params.get("tag") or "").strip().lower()
@@ -266,17 +277,16 @@ class FakeGraph:
                 if any(tag in tags for tag in memory_tags):
                     results.append(memory)
 
-            results.sort(
-                key=lambda memory: (
-                    float(memory.get("importance") or 0.0),
-                    str(memory.get("timestamp") or ""),
-                ),
-                reverse=True,
-            )
+            results.sort(key=lambda memory: str(memory.get("id") or ""))
+            results.sort(key=lambda memory: str(memory.get("timestamp") or ""), reverse=True)
+            results.sort(key=lambda memory: float(memory.get("importance") or 0.0), reverse=True)
 
-            limit_param = params.get("limit")
+            offset_param = params.get("offset")
+            offset = 0 if offset_param is None else max(0, int(offset_param))
+            limit_param = params.get("limit_plus_one", params.get("limit"))
             limit = len(results) if limit_param is None else int(limit_param)
-            return FakeResult([[FakeNode(memory)] for memory in results[:limit]])
+            paged = results[offset : offset + limit]
+            return FakeResult([[FakeNode(memory)] for memory in paged])
 
         # Bulk fetch for reembed
         if "MATCH (m:Memory)" in query and "RETURN m.id, m.content" in query:

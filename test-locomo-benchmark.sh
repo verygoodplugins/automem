@@ -73,7 +73,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --live              Run against Railway deployment (default: local Docker)"
             echo "  --recall-limit N    Number of memories to recall per question (default: 10)"
             echo "  --conversations I,J Comma-separated conversation indices (e.g. 0,1 for mini mode)"
-            echo "  --judge             Enable category-5 LLM judge (defaults to gpt-4o)"
+            echo "  --judge             Enable category-5 LLM judge (defaults to gpt-5.1)"
             echo "  --judge-model MODEL Set the category-5 judge model (also enables judge)"
             echo "  --no-cleanup        Don't cleanup test data after evaluation"
             echo "  --output FILE       Save results to JSON file"

@@ -8,6 +8,115 @@ MEMORY_CONTENT_SOFT_LIMIT = 500
 MEMORY_CONTENT_HARD_LIMIT = 2000
 
 
+def _parse_by_tag_request(
+    *,
+    request_obj: Any,
+    normalize_tag_list_fn: Any,
+    abort_fn: Any,
+) -> tuple[List[str], int, int]:
+    raw_tags = request_obj.args.getlist("tags") or request_obj.args.get("tags")
+    tags = normalize_tag_list_fn(raw_tags)
+    if not tags:
+        abort_fn(400, description="'tags' query parameter is required")
+
+    try:
+        limit = int(request_obj.args.get("limit", 20))
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 200))
+
+    try:
+        offset = int(request_obj.args.get("offset", 0))
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(0, offset)
+
+    return tags, limit, offset
+
+
+def _load_memories_by_tag_page(
+    *,
+    graph: Any,
+    tags: List[str],
+    limit: int,
+    offset: int,
+    serialize_node_fn: Any,
+    parse_metadata_field_fn: Any,
+    logger: Any,
+    abort_fn: Any,
+) -> tuple[List[Dict[str, Any]], bool]:
+    params = {
+        "tags": [tag.lower() for tag in tags],
+        "offset": offset,
+        "limit_plus_one": limit + 1,
+    }
+    query = """
+        MATCH (m:Memory)
+        WHERE ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tags)
+        RETURN m
+        ORDER BY m.importance DESC, m.timestamp DESC, m.id ASC
+        SKIP $offset
+        LIMIT $limit_plus_one
+    """
+
+    try:
+        result = graph.query(query, params)
+    except Exception:
+        logger.exception("Tag search failed")
+        abort_fn(500, description="Failed to search by tag")
+
+    rows = list(getattr(result, "result_set", []) or [])
+    has_more = len(rows) > limit
+    memories: List[Dict[str, Any]] = []
+    for row in rows[:limit]:
+        data = serialize_node_fn(row[0])
+        data["metadata"] = parse_metadata_field_fn(data.get("metadata"))
+        memories.append(data)
+
+    return memories, has_more
+
+
+def _delete_qdrant_points(
+    *,
+    qdrant_client: Any,
+    collection_name: str,
+    memory_ids: List[str],
+    logger: Any,
+) -> None:
+    if qdrant_client is None or not memory_ids:
+        return
+
+    selector: Any = {"points": memory_ids}
+    try:
+        from qdrant_client.http import models as http_models  # type: ignore
+
+        selector = http_models.PointIdsList(points=memory_ids)
+    except Exception:
+        pass
+
+    try:
+        qdrant_client.delete(collection_name=collection_name, points_selector=selector)
+    except Exception:
+        logger.exception("Failed to delete vectors for %d memories", len(memory_ids))
+
+
+def _delete_graph_memories(
+    *,
+    graph: Any,
+    memory_ids: List[str],
+    logger: Any,
+    abort_fn: Any,
+) -> None:
+    if not memory_ids:
+        return
+
+    try:
+        graph.query("MATCH (m:Memory) WHERE m.id IN $ids DETACH DELETE m", {"ids": memory_ids})
+    except Exception:
+        logger.exception("Bulk delete by tag failed for %d memories", len(memory_ids))
+        abort_fn(500, description="Failed to delete memories by tag")
+
+
 def store_memory(
     *,
     request_obj: Any,
@@ -464,7 +573,6 @@ def delete_memory(
     memory_id: str,
     get_memory_graph_fn: Any,
     get_qdrant_client_fn: Any,
-    qdrant_models_obj: Any,
     collection_name: str,
     abort_fn: Any,
     jsonify_fn: Any,
@@ -485,16 +593,12 @@ def delete_memory(
 
     graph.query("MATCH (m:Memory {id: $id}) DETACH DELETE m", {"id": memory_id})
 
-    qdrant_client = get_qdrant_client_fn()
-    if qdrant_client is not None:
-        try:
-            if qdrant_models_obj is not None:
-                selector = qdrant_models_obj.PointIdsList(points=[memory_id])
-            else:
-                selector = {"points": [memory_id]}
-            qdrant_client.delete(collection_name=collection_name, points_selector=selector)
-        except Exception:
-            logger.exception("Failed to delete vector for memory %s", memory_id)
+    _delete_qdrant_points(
+        qdrant_client=get_qdrant_client_fn(),
+        collection_name=collection_name,
+        memory_ids=[memory_id],
+        logger=logger,
+    )
 
     return jsonify_fn({"status": "success", "memory_id": memory_id})
 
@@ -509,47 +613,79 @@ def memories_by_tag(
     abort_fn: Any,
     jsonify_fn: Any,
     logger: Any,
+    get_qdrant_client_fn: Any = None,
+    collection_name: str = "",
+    on_access_fn: Any = None,
 ) -> Any:
-    raw_tags = request_obj.args.getlist("tags") or request_obj.args.get("tags")
-    tags = normalize_tag_list_fn(raw_tags)
-    if not tags:
-        abort_fn(400, description="'tags' query parameter is required")
-
-    try:
-        limit = int(request_obj.args.get("limit", 20))
-    except (TypeError, ValueError):
-        limit = 20
-    limit = max(1, min(limit, 200))
-
     graph = get_memory_graph_fn()
     if graph is None:
         abort_fn(503, description="FalkorDB is unavailable")
 
-    params = {
-        "tags": [tag.lower() for tag in tags],
-        "limit": limit,
-    }
+    tags, limit, offset = _parse_by_tag_request(
+        request_obj=request_obj,
+        normalize_tag_list_fn=normalize_tag_list_fn,
+        abort_fn=abort_fn,
+    )
 
-    query = """
-        MATCH (m:Memory)
-        WHERE ANY(tag IN coalesce(m.tags, []) WHERE toLower(tag) IN $tags)
-        RETURN m
-        ORDER BY m.importance DESC, m.timestamp DESC
-        LIMIT $limit
-    """
+    if request_obj.method == "DELETE":
+        deleted_count = 0
+        while True:
+            memories, _ = _load_memories_by_tag_page(
+                graph=graph,
+                tags=tags,
+                limit=200,
+                offset=0,
+                serialize_node_fn=serialize_node_fn,
+                parse_metadata_field_fn=parse_metadata_field_fn,
+                logger=logger,
+                abort_fn=abort_fn,
+            )
+            memory_ids = [str(memory.get("id")) for memory in memories if memory.get("id")]
+            if not memory_ids:
+                break
 
-    try:
-        result = graph.query(query, params)
-    except Exception:
-        logger.exception("Tag search failed")
-        abort_fn(500, description="Failed to search by tag")
+            _delete_graph_memories(
+                graph=graph,
+                memory_ids=memory_ids,
+                logger=logger,
+                abort_fn=abort_fn,
+            )
 
-    memories: List[Dict[str, Any]] = []
-    for row in getattr(result, "result_set", []) or []:
-        data = serialize_node_fn(row[0])
-        data["metadata"] = parse_metadata_field_fn(data.get("metadata"))
-        memories.append(data)
+            if get_qdrant_client_fn and collection_name:
+                _delete_qdrant_points(
+                    qdrant_client=get_qdrant_client_fn(),
+                    collection_name=collection_name,
+                    memory_ids=memory_ids,
+                    logger=logger,
+                )
+            deleted_count += len(memory_ids)
+
+        return jsonify_fn({"status": "success", "tags": tags, "deleted_count": deleted_count})
+
+    memories, has_more = _load_memories_by_tag_page(
+        graph=graph,
+        tags=tags,
+        limit=limit,
+        offset=offset,
+        serialize_node_fn=serialize_node_fn,
+        parse_metadata_field_fn=parse_metadata_field_fn,
+        logger=logger,
+        abort_fn=abort_fn,
+    )
+
+    if on_access_fn and memories:
+        accessed_ids = [str(memory.get("id")) for memory in memories if memory.get("id")]
+        if accessed_ids:
+            on_access_fn(accessed_ids)
 
     return jsonify_fn(
-        {"status": "success", "tags": tags, "count": len(memories), "memories": memories}
+        {
+            "status": "success",
+            "tags": tags,
+            "count": len(memories),
+            "limit": limit,
+            "offset": offset,
+            "has_more": has_more,
+            "memories": memories,
+        }
     )
