@@ -15,7 +15,9 @@ from qdrant_client import models as qdrant_models
 import app
 from app import _normalize_timestamp, utc_now
 from automem import config
-from automem.api.recall import _expand_related_memories
+from automem.api.recall import _expand_related_memories, handle_recall
+from automem.utils.scoring import _compute_metadata_score
+from automem.utils.text import _extract_keywords
 from tests.support.fake_graph import FakeGraph
 
 
@@ -246,6 +248,122 @@ def test_health_endpoint_falkordb_down(client, mock_state):
 
 
 # ==================== Test Memory Recall ====================
+
+
+def _make_floor_result(idx: int, score: float, query: str = "autojack") -> dict[str, Any]:
+    return {
+        "id": f"floor-{idx}",
+        "score": score,
+        "match_score": score,
+        "match_type": "vector",
+        "source": "qdrant",
+        "memory": {
+            "id": f"floor-{idx}",
+            "content": f"{query} memory {idx}",
+            "target_score": score,
+            "importance": 0.1,
+        },
+        "relations": [],
+    }
+
+
+def _call_handle_recall_for_scores(query: str, scores: list[float]):
+    vector_results = [
+        _make_floor_result(idx, score, query=query) for idx, score in enumerate(scores)
+    ]
+
+    with app.app.test_request_context(f"/recall?query={query}&limit={len(scores)}"):
+        response = handle_recall(
+            get_memory_graph=lambda: None,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=_normalize_timestamp,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, _query, _tokens, _context: (
+                float(result["memory"]["target_score"]),
+                {"keyword": 1.0},
+            ),
+            result_passes_filters=lambda *_args, **_kwargs: True,
+            graph_keyword_search=lambda *_args, **_kwargs: [],
+            vector_search=lambda *_args, **_kwargs: list(vector_results),
+            vector_filter_only_tag_search=lambda *_args, **_kwargs: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+
+    return response.get_json()
+
+
+def test_compute_metadata_score_uses_content_keyword_fallback_for_vector_results():
+    score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 1.0
+    assert score > config.SEARCH_WEIGHT_VECTOR * 0.7
+
+
+def test_compute_metadata_score_uses_partial_content_keyword_fallback():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.5
+
+
+def test_compute_metadata_score_leaves_keyword_zero_without_content_hits():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "Unrelated debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.0
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_keyword_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "keyword",
+            "match_score": 0.42,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.42
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_trending_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "trending",
+            "match_score": 0.33,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.33
 
 
 def test_recall_with_query(client, mock_state, auth_headers):
@@ -527,6 +645,71 @@ def test_recall_priority_ids_are_guaranteed_with_small_limit(client, mock_state,
     data = response.get_json()
     assert data["count"] == 1
     assert data["results"][0]["id"] == target_id
+
+
+def test_recall_vector_results_include_keyword_score_from_content(client, mock_state, auth_headers):
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors, query_filter
+        return [
+            SimpleNamespace(
+                id="vec-1",
+                score=0.71,
+                payload={
+                    "id": "vec-1",
+                    "content": "AutoJack recall investigation memory",
+                    "tags": ["debugging"],
+                    "importance": 0.3,
+                    "timestamp": utc_now(),
+                },
+            )
+        ]
+
+    mock_state.qdrant.search = custom_search
+    response = client.get("/recall?query=AutoJack recall&limit=1", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["count"] == 1
+    assert data["results"][0]["score_components"]["keyword"] == 1.0
+
+
+def test_recall_adaptive_floor_keeps_clustered_relevant_tail():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [0.76, 0.75, 0.73, 0.55, 0.54, 0.53, 0.52, 0.51],
+    )
+
+    assert data["count"] == 8
+    assert "score_filter" not in data
+
+
+def test_recall_adaptive_floor_applies_on_large_drop_when_half_remain():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.98, 0.4, 0.39, 0.38, 0.37, 0.36],
+    )
+
+    assert data["count"] == 4
+    assert data["score_filter"]["adaptive_floor"] == 0.4
+    assert data["score_filter"]["filtered_count"] == 4
+
+
+def test_recall_adaptive_floor_skips_cut_that_would_remove_more_than_half():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.3, 0.29, 0.28, 0.27, 0.26],
+    )
+
+    assert data["count"] == 7
+    assert "score_filter" not in data
 
 
 # ==================== Test Memory Update ====================

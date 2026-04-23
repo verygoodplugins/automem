@@ -1644,7 +1644,7 @@ def handle_recall(
 
     pre_filter_count = len(results)
 
-    # Apply adaptive score floor: detect steep dropoff and cut low-quality tail
+    # Apply adaptive score floor: detect a pronounced dropoff without discarding most results.
     score_floor_applied = None
     if sort_param == "score" and adaptive_floor and len(results) > 3:
         scores = sorted([float(r.get("final_score", 0.0)) for r in results], reverse=True)
@@ -1657,12 +1657,16 @@ def handle_recall(
             if gap > max_gap:
                 max_gap = gap
                 gap_idx = i
-        # If there's a steep dropoff (>15% of max score), cut below it
-        if max_gap > 0.15 * scores[0] and gap_idx > 0:
-            score_floor_applied = scores[gap_idx]
-            results = [
-                r for r in results if float(r.get("final_score", 0.0)) >= score_floor_applied
+        # Only cut on a large dropoff (>25% of top score), and only if at least half survive.
+        if max_gap > 0.25 * scores[0] and gap_idx > 0:
+            candidate_floor = scores[gap_idx]
+            filtered_results = [
+                r for r in results if float(r.get("final_score", 0.0)) >= candidate_floor
             ]
+            minimum_retained = (len(results) + 1) // 2
+            if len(filtered_results) >= minimum_retained:
+                score_floor_applied = candidate_floor
+                results = filtered_results
 
     # Apply explicit min_score on final assembled results (catches expansions)
     if min_score is not None and min_score > 0:
