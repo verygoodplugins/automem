@@ -227,15 +227,15 @@ Category 5 uses evidence-grounded complex reasoning and is opt-in for cost reaso
 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
 # Enable cat-5 judge with env var
-BENCH_JUDGE_MODEL=gpt-4o make bench-eval BENCH=locomo-mini CONFIG=baseline
+BENCH_JUDGE_MODEL=gpt-5.1 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
 # Or use the runner CLI flags directly
 ./test-locomo-benchmark.sh --conversations 0,1 --judge
-./test-locomo-benchmark.sh --conversations 0,1 --judge-model gpt-4o-mini
+./test-locomo-benchmark.sh --conversations 0,1 --judge-model gpt-5.1
 ```
 
 - `BENCH_JUDGE_MODEL` enables category-5 judging for `tests/benchmarks/test_locomo.py`.
-- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-4o` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
+- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-5.1` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
 - If the judge is disabled, category 5 remains `N/A`.
 - If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
 

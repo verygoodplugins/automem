@@ -32,12 +32,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from dateutil import parser as date_parser
+from dotenv import load_dotenv
 from openai import OpenAI
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Match the app/script env loading behavior so standalone benchmark runs pick up
+# local secrets from either the repo root or ~/.config/automem/.env.
+load_dotenv()
+load_dotenv(Path.home() / ".config" / "automem" / ".env")
+
 from tests.benchmarks.backends import MemoryRecord, SearchRequest, create_backend
+
+DEFAULT_CAT5_JUDGE_MODEL = "gpt-5.1"
 
 
 @dataclass
@@ -91,6 +99,7 @@ class LoCoMoEvaluator:
     """Evaluates AutoMem against the LoCoMo benchmark"""
 
     OPENAI_REQUEST_TIMEOUT_SECONDS = 90.0
+    GPT5_JUDGE_MAX_COMPLETION_TOKENS = (250, 400, 600)
 
     def __init__(self, config: LoCoMoConfig):
         self.config = config
@@ -1092,6 +1101,54 @@ Respond in JSON format:
             content = fence_match.group("body").strip()
         return json.loads(content)
 
+    @staticmethod
+    def _judge_model_uses_structured_outputs(model_name: Optional[str]) -> bool:
+        """GPT-5 family models prefer strict json_schema over legacy json_object mode."""
+        return bool(model_name and model_name.strip().lower().startswith("gpt-5"))
+
+    def _judge_response_format(self) -> Dict[str, Any]:
+        if self._judge_model_uses_structured_outputs(self.config.judge_model):
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "locomo_cat5_judge",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "generated_answer": {"type": "string"},
+                            "verdict": {
+                                "type": "string",
+                                "enum": [
+                                    "supported",
+                                    "abstain",
+                                    "contradiction",
+                                    "unsupported",
+                                    "incorrect",
+                                ],
+                            },
+                            "correct": {"type": "boolean"},
+                            "confidence": {"type": "number"},
+                            "reasoning": {"type": "string"},
+                        },
+                        "required": [
+                            "generated_answer",
+                            "verdict",
+                            "correct",
+                            "confidence",
+                            "reasoning",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        return {"type": "json_object"}
+
+    def _judge_token_attempts(self) -> Tuple[int, ...]:
+        if self._judge_model_uses_structured_outputs(self.config.judge_model):
+            return self.GPT5_JUDGE_MAX_COMPLETION_TOKENS
+        return (250,)
+
     def judge_complex_reasoning(
         self,
         question: str,
@@ -1169,47 +1226,62 @@ Respond with ONLY a JSON object:
   "reasoning": "brief explanation grounded in the evidence dialogs"
 }}"""
 
-        try:
-            response = self.openai_client.chat.completions.create(
-                model=self.config.judge_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a strict benchmark judge. "
-                            "Use recalled memories to draft the answer and evidence dialogs "
-                            "only to verify correctness."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.0,
-                max_tokens=250,
-                response_format={"type": "json_object"},
-                timeout=self.OPENAI_REQUEST_TIMEOUT_SECONDS,
-            )
-            result = self._parse_json_object_response(response.choices[0].message.content)
-            correct = result.get("correct")
-            if not isinstance(correct, bool):
-                raise ValueError("Judge response missing boolean 'correct'")
+        last_error: Optional[Exception] = None
+        for token_budget in self._judge_token_attempts():
+            try:
+                request_kwargs: Dict[str, Any] = {
+                    "model": self.config.judge_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a strict benchmark judge. "
+                                "Use recalled memories to draft the answer and evidence dialogs "
+                                "only to verify correctness."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "response_format": self._judge_response_format(),
+                    "timeout": self.OPENAI_REQUEST_TIMEOUT_SECONDS,
+                }
+                if self._judge_model_uses_structured_outputs(self.config.judge_model):
+                    request_kwargs["max_completion_tokens"] = token_budget
+                else:
+                    request_kwargs["max_tokens"] = token_budget
+                    request_kwargs["temperature"] = 0.0
 
-            confidence = float(result.get("confidence", 0.0))
-            generated_answer = str(result.get("generated_answer", "")).strip() or None
-            reasoning = str(result.get("reasoning", "")).strip()
-            explanation = f"LLM judge: {reasoning}" if reasoning else "LLM judge"
-            judge_result = (correct, confidence, explanation, generated_answer, reasoning or None)
-            self.llm_cache[cache_key] = judge_result
-            return judge_result
-        except Exception as e:
-            error_result = (
-                None,
-                0.0,
-                f"Skipped: LLM judge error: {e}",
-                None,
-                f"LLM judge error: {e}",
-            )
-            self.llm_cache[cache_key] = error_result
-            return error_result
+                response = self.openai_client.chat.completions.create(**request_kwargs)
+                result = self._parse_json_object_response(response.choices[0].message.content)
+                correct = result.get("correct")
+                if not isinstance(correct, bool):
+                    raise ValueError("Judge response missing boolean 'correct'")
+
+                confidence = float(result.get("confidence", 0.0))
+                generated_answer = str(result.get("generated_answer", "")).strip() or None
+                reasoning = str(result.get("reasoning", "")).strip()
+                explanation = f"LLM judge: {reasoning}" if reasoning else "LLM judge"
+                judge_result = (
+                    correct,
+                    confidence,
+                    explanation,
+                    generated_answer,
+                    reasoning or None,
+                )
+                self.llm_cache[cache_key] = judge_result
+                return judge_result
+            except Exception as e:
+                last_error = e
+
+        error_result = (
+            None,
+            0.0,
+            f"Skipped: LLM judge error: {last_error}",
+            None,
+            f"LLM judge error: {last_error}",
+        )
+        self.llm_cache[cache_key] = error_result
+        return error_result
 
     def check_answer_in_memories(
         self,
@@ -1949,7 +2021,10 @@ def main():
     parser.add_argument(
         "--judge",
         action="store_true",
-        help="Enable category-5 LLM judging (defaults to gpt-4o unless BENCH_JUDGE_MODEL is set).",
+        help=(
+            "Enable category-5 LLM judging "
+            f"(defaults to {DEFAULT_CAT5_JUDGE_MODEL} unless BENCH_JUDGE_MODEL is set)."
+        ),
     )
     parser.add_argument(
         "--judge-model",
@@ -1977,7 +2052,7 @@ def main():
     if args.data_file:
         config.data_file = args.data_file
     if args.judge or args.judge_model:
-        config.judge_model = args.judge_model or config.judge_model or "gpt-4o"
+        config.judge_model = args.judge_model or config.judge_model or DEFAULT_CAT5_JUDGE_MODEL
 
     # Run evaluation
     evaluator = LoCoMoEvaluator(config)

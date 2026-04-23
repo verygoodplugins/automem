@@ -38,10 +38,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
+from dotenv import load_dotenv
+
 # Add project root to path for imports (file -> longmemeval -> benchmarks -> tests -> project root)
 _project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+load_dotenv()
+load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 try:
     from openai import OpenAI
