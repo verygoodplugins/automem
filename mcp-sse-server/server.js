@@ -775,12 +775,17 @@ export function createApp() {
   healthProbeTimer.unref?.();
   void probeUpstreamHealth('startup');
 
+  // Liveness probe: returns 200 whenever the Node process is able to serve HTTP.
+  // Upstream AutoMem status is reported in the body for observability but does
+  // NOT gate this endpoint — a bridge should be deployable and able to return
+  // errors to clients even when its upstream is temporarily unavailable.
+  // For strict upstream-gated readiness, point your orchestrator at /ready.
   app.get('/health', async (req, res) => {
     if (!healthState.checked_at) {
-      await probeUpstreamHealth('request');
+      void probeUpstreamHealth('request');
     }
 
-    const body = {
+    res.status(200).json({
       status: healthState.status,
       transports: ['streamable-http', 'sse'],
       endpoints: { streamableHttp: '/mcp', sse: '/mcp/sse' },
@@ -790,9 +795,23 @@ export function createApp() {
       checked_at: healthState.checked_at,
       timestamp: new Date().toISOString(),
       request_id: req.requestId,
-    };
+    });
+  });
 
-    res.status(healthState.status === 'healthy' ? 200 : 503).json(body);
+  // Readiness probe: 200 iff upstream is healthy, 503 otherwise.
+  // Use this when the orchestrator should block traffic/deploy on upstream
+  // availability. Not recommended as Railway's healthcheckPath for this bridge.
+  app.get('/ready', async (req, res) => {
+    await probeUpstreamHealth('request');
+
+    res.status(healthState.status === 'healthy' ? 200 : 503).json({
+      status: healthState.status,
+      upstream: healthState.upstream,
+      upstream_error: healthState.error,
+      checked_at: healthState.checked_at,
+      timestamp: new Date().toISOString(),
+      request_id: req.requestId,
+    });
   });
 
 // Helper: validate and extract token from multiple sources
