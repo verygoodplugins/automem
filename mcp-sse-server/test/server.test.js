@@ -408,7 +408,7 @@ test("GET /health returns healthy when upstream is reachable", async () => {
   }
 });
 
-test("GET /health returns degraded when upstream is unreachable", async () => {
+test("GET /health returns 200 with degraded body when upstream is unreachable", async () => {
   const originalFetch = globalThis.fetch;
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;
@@ -426,12 +426,83 @@ test("GET /health returns degraded when upstream is unreachable", async () => {
   try {
     await withServer(createApp(), async (port) => {
       const res = await originalFetch(`http://127.0.0.1:${port}/health`);
+      // /health is a liveness probe — always 200 while the process serves HTTP.
+      // Degraded upstream is reported in the body, not via HTTP status.
+      assert.equal(res.status, 200);
+
+      const body = await res.json();
+      assert.equal(body.status, "degraded");
+      assert.equal(body.upstream, "unreachable");
+      assert.match(body.upstream_error, /fetch failed/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
+test("GET /ready returns 503 when upstream is unreachable", async () => {
+  const originalFetch = globalThis.fetch;
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://example.test";
+
+  globalThis.fetch = async (url, options) => {
+    if (typeof url === "string" && url.startsWith("http://127.0.0.1:")) {
+      return originalFetch(url, options);
+    }
+
+    throw new TypeError("fetch failed");
+  };
+
+  try {
+    await withServer(createApp(), async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/ready`);
       assert.equal(res.status, 503);
 
       const body = await res.json();
       assert.equal(body.status, "degraded");
       assert.equal(body.upstream, "unreachable");
       assert.match(body.upstream_error, /fetch failed/);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
+test("GET /ready returns 200 when upstream is healthy", async () => {
+  const originalFetch = globalThis.fetch;
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://example.test";
+
+  globalThis.fetch = async (url, options) => {
+    if (typeof url === "string" && url.startsWith("http://127.0.0.1:")) {
+      return originalFetch(url, options);
+    }
+
+    return new Response(
+      JSON.stringify({ status: "healthy", falkordb: "connected", qdrant: "connected" }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  };
+
+  try {
+    await withServer(createApp(), async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/ready`);
+      assert.equal(res.status, 200);
+
+      const body = await res.json();
+      assert.equal(body.status, "healthy");
+      assert.equal(body.upstream, "reachable");
     });
   } finally {
     globalThis.fetch = originalFetch;
