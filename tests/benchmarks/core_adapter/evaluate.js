@@ -35,7 +35,7 @@ const CONFIG = {
   // GPT-4.1: ~$2/1M input, ~$8/1M output (good balance)
   // gpt-4o-mini: cheapest but weaker reasoning
   model: process.env.EVAL_MODEL || "gpt-5.1",
-  evalModel: process.env.EVAL_JUDGE_MODEL || "gpt-5.1",
+  evalModel: process.env.EVAL_JUDGE_MODEL || "gpt-5.4-mini-2026-03-17",
 };
 
 // Initialize services

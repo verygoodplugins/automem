@@ -54,6 +54,11 @@ except ImportError:
     OpenAI = None
 
 from tests.benchmarks.backends import MemoryRecord, SearchRequest, create_backend
+from tests.benchmarks.judge_policy import (
+    CANONICAL_BENCHMARK_JUDGE_MODEL,
+    DEFAULT_JUDGE_PROVIDER,
+    judge_metadata,
+)
 from tests.benchmarks.longmemeval.configs import LongMemEvalConfig, get_config
 from tests.benchmarks.longmemeval.evaluator import (
     LongMemEvalScorer,
@@ -102,6 +107,11 @@ class LongMemEvalBenchmark:
         self.openai_client = None
         if OpenAI and os.getenv("OPENAI_API_KEY"):
             self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    def effective_judge_model(self) -> Optional[str]:
+        if not self.config.use_llm_eval:
+            return None
+        return self.config.eval_llm_model or CANONICAL_BENCHMARK_JUDGE_MODEL
 
     def health_check(self) -> bool:
         """Verify the configured backend is accessible."""
@@ -492,7 +502,7 @@ Answer:"""
 
         # Score
         if self.config.use_llm_eval and self.openai_client:
-            eval_model = self.config.eval_llm_model or self.config.llm_model
+            eval_model = self.effective_judge_model()
             eval_result = llm_evaluate(
                 question=question,
                 hypothesis=hypothesis,
@@ -570,6 +580,8 @@ Answer:"""
         print(f"  Temporal hints: {self.config.use_temporal_hints}")
         print(f"  LLM model: {self.config.llm_model}")
         print(f"  LLM eval: {self.config.use_llm_eval}")
+        if self.config.use_llm_eval:
+            print(f"  Judge model: {self.effective_judge_model()}")
         has_llm = self.openai_client is not None
         print(f"  OpenAI available: {has_llm}")
         print()
@@ -613,6 +625,7 @@ Answer:"""
         scores = self.scorer.print_report(config_name=self.config.name, elapsed_time=elapsed_time)
         scores["backend"] = self.backend.name
         scores["elapsed_time"] = elapsed_time
+        effective_judge_model = self.effective_judge_model()
         scores["config"] = {
             "backend": self.config.backend,
             "name": self.config.name,
@@ -625,6 +638,7 @@ Answer:"""
             "llm_model": self.config.llm_model,
             "eval_llm_model": self.config.eval_llm_model,
             "use_llm_eval": self.config.use_llm_eval,
+            **judge_metadata(effective_judge_model, provider=DEFAULT_JUDGE_PROVIDER),
         }
         scores["memory_ingest_failures"] = self.memory_ingest_failures
         scores["details"] = all_results
@@ -728,7 +742,7 @@ def main() -> int:
     parser.add_argument(
         "--llm-eval",
         action="store_true",
-        help="Use GPT-4o for evaluation (costs money, more accurate)",
+        help="Use canonical OpenAI judge for evaluation (costs money, more accurate)",
     )
     parser.add_argument(
         "--no-cleanup",

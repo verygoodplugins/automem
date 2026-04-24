@@ -3,7 +3,7 @@ LongMemEval Evaluation Module
 
 Provides scoring utilities:
 - Quick local scoring (exact match, substring, F1 token overlap)
-- GPT-4o-based evaluation (matches LongMemEval paper's methodology)
+- LLM-based evaluation with the canonical AutoMem judge by default
 """
 
 import json
@@ -11,6 +11,8 @@ import os
 import re
 from collections import Counter
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
+
+from tests.benchmarks.judge_policy import is_gpt5_family
 
 try:
     from openai import OpenAI
@@ -153,7 +155,7 @@ def llm_evaluate(
     client: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
-    GPT-4o-based evaluation matching LongMemEval paper methodology.
+    LLM-based evaluation matching the LongMemEval paper's judge style.
 
     The evaluator asks the LLM to judge whether the hypothesis correctly
     answers the question given the reference answer.
@@ -202,12 +204,35 @@ Respond with ONLY a JSON object:
 {{"correct": true/false, "confidence": 0.0-1.0, "explanation": "brief reason"}}"""
 
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            max_tokens=200,
-        )
+        request_kwargs: Dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if is_gpt5_family(model):
+            request_kwargs["max_completion_tokens"] = 200
+            request_kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "longmemeval_judge",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "correct": {"type": "boolean"},
+                            "confidence": {"type": "number"},
+                            "explanation": {"type": "string"},
+                        },
+                        "required": ["correct", "confidence", "explanation"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        else:
+            request_kwargs["temperature"] = 0
+            request_kwargs["max_tokens"] = 200
+            request_kwargs["response_format"] = {"type": "json_object"}
+
+        response = client.chat.completions.create(**request_kwargs)
         content = response.choices[0].message.content.strip()
 
         # Parse JSON response (handle fenced markdown like ```json ... ```)

@@ -58,3 +58,17 @@ def test_longmemeval_benchmark_loads_openai_api_key_from_global_env(
     benchmark = module.LongMemEvalBenchmark(module.get_config("baseline"))
 
     assert benchmark.openai_client is not None
+
+
+def test_longmemeval_llm_eval_defaults_to_canonical_judge(monkeypatch) -> None:
+    monkeypatch.delenv("LONGMEMEVAL_EVAL_LLM_MODEL", raising=False)
+    module_path = (
+        Path(__file__).resolve().parent / "benchmarks" / "longmemeval" / "test_longmemeval.py"
+    )
+    module = _load_module("longmemeval_canonical_judge", module_path)
+    monkeypatch.setattr(module, "create_backend", lambda *args, **kwargs: _DummyBackend())
+
+    config = module.get_config("baseline", use_llm_eval=True)
+    benchmark = module.LongMemEvalBenchmark(config)
+
+    assert benchmark.effective_judge_model() == "gpt-5.4-mini-2026-03-17"

@@ -271,7 +271,7 @@ VECTOR_SIZE=768
 |-------|-------|--------|-------|
 | `gpt-4o-mini` | $0.15/1M | $0.60/1M | **Default** - Good enough for classification |
 | `gpt-4.1` | ~$2/1M | ~$8/1M | Better reasoning |
-| `gpt-5.1` | $1.25/1M | $10/1M | Best reasoning, use for benchmarks |
+| `gpt-5.1` | $1.25/1M | $10/1M | Higher reasoning; benchmark judge defaults are documented in `docs/BENCHMARK_JUDGE_POLICY.md` |
 
 **⚠️ Changing embedding models requires re-embedding all memories.** See [Re-embedding Guide](#re-embedding-memories) below.
 

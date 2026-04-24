@@ -50,7 +50,7 @@ class LongMemEvalConfig:
     request_timeout: int = 30
 
     # Evaluation
-    use_llm_eval: bool = False  # Use GPT-4o for evaluation (costs money)
+    use_llm_eval: bool = False  # Use canonical OpenAI judge for evaluation (costs money)
     max_questions: int = 0  # 0 = all questions
 
     # Tag prefix for cleanup

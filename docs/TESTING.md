@@ -227,17 +227,28 @@ Category 5 uses evidence-grounded complex reasoning and is opt-in for cost reaso
 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
 # Enable cat-5 judge with env var
-BENCH_JUDGE_MODEL=gpt-5.1 make bench-eval BENCH=locomo-mini CONFIG=baseline
+BENCH_JUDGE_MODEL=gpt-5.4-mini-2026-03-17 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
-# Or use the runner CLI flags directly
-./test-locomo-benchmark.sh --conversations 0,1 --judge
-./test-locomo-benchmark.sh --conversations 0,1 --judge-model gpt-5.1
+# Direct runner: 1 conversation, judge enabled
+./test-locomo-benchmark.sh --conversations 0 --judge --output benchmarks/results/locomo-smoke.json
+
+# Direct runner: mini mode (same 2 conversations as locomo-mini)
+./test-locomo-benchmark.sh --conversations 0,1 --judge --output benchmarks/results/locomo-mini.json
 ```
 
-- `BENCH_JUDGE_MODEL` enables category-5 judging for `tests/benchmarks/test_locomo.py`.
-- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-5.1` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
-- If the judge is disabled, category 5 remains `N/A`.
-- If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
+Relevant flags for `./test-locomo-benchmark.sh`:
+
+- `--conversations I,J,...` runs only the selected **0-based** conversation indices from `locomo10.json`. Default: all 10 conversations. Example: `0` runs the first conversation only; `0,1` is the same 2-conversation scope as `locomo-mini`.
+- `--judge` enables category-5 judging. Default: disabled.
+- `--judge-model MODEL` enables category-5 judging and uses `MODEL`. Default when judge is enabled: `gpt-5.4-mini-2026-03-17`, unless overridden by `BENCH_JUDGE_MODEL`.
+- `--output PATH` saves JSON results to `PATH`. Default: no output file is written.
+- `--recall-limit N` sets memories recalled per question. Default: `10`.
+- `--live` runs against Railway instead of local Docker. Default: local Docker.
+- `--no-cleanup` keeps benchmark test data after the run. Default: cleanup enabled.
+
+`make bench-eval` wraps the snapshot-based benchmark flow and always writes results to `benchmarks/results/<bench>_<config>_<timestamp>.json`.
+
+If the judge is disabled, category 5 remains `N/A`. If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
 
 ### What is LoCoMo?
 

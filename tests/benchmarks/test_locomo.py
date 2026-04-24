@@ -44,8 +44,14 @@ load_dotenv()
 load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 from tests.benchmarks.backends import MemoryRecord, SearchRequest, create_backend
+from tests.benchmarks.judge_policy import (
+    CANONICAL_BENCHMARK_JUDGE_MODEL,
+    DEFAULT_JUDGE_PROVIDER,
+    is_gpt5_family,
+    judge_metadata,
+)
 
-DEFAULT_CAT5_JUDGE_MODEL = "gpt-5.1"
+DEFAULT_CAT5_JUDGE_MODEL = CANONICAL_BENCHMARK_JUDGE_MODEL
 
 
 @dataclass
@@ -1104,7 +1110,10 @@ Respond in JSON format:
     @staticmethod
     def _judge_model_uses_structured_outputs(model_name: Optional[str]) -> bool:
         """GPT-5 family models prefer strict json_schema over legacy json_object mode."""
-        return bool(model_name and model_name.strip().lower().startswith("gpt-5"))
+        return is_gpt5_family(model_name)
+
+    def _judge_metadata(self) -> Dict[str, Any]:
+        return judge_metadata(self.config.judge_model, provider=DEFAULT_JUDGE_PROVIDER)
 
     def _judge_response_format(self) -> Dict[str, Any]:
         if self._judge_model_uses_structured_outputs(self.config.judge_model):
@@ -1162,7 +1171,13 @@ Respond in JSON format:
             return None, 0.0, "Skipped: requires LLM judge", None, None
 
         if not self.openai_client:
-            return None, 0.0, "Skipped: OPENAI_API_KEY not set for LLM judge", None, None
+            return (
+                None,
+                0.0,
+                "Skipped: OPENAI_API_KEY not set for LLM judge",
+                None,
+                None,
+            )
 
         evidence_memories = self.fetch_evidence_memories(
             evidence_dialog_ids,
@@ -1942,7 +1957,7 @@ Respond with ONLY a JSON object:
             "backend": self.backend.name,
             "judge_requested": bool(self.config.judge_model),
             "judge_available": bool(self.config.judge_model and self.openai_client),
-            "judge_model": self.config.judge_model,
+            **self._judge_metadata(),
             "categories": category_results,
             "conversations": conversation_results,
             "comparison": {

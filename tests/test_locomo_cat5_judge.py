@@ -568,7 +568,7 @@ def test_cat5_with_canonical_answer_stays_deterministic(
     assert result["explanation"].startswith("Deterministic cat-5 scoring:")
 
 
-def test_main_defaults_judge_to_gpt_5_1_when_env_unset(
+def test_main_defaults_judge_to_canonical_snapshot_when_env_unset(
     locomo_module: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("BENCH_JUDGE_MODEL", raising=False)
@@ -587,6 +587,7 @@ def test_main_defaults_judge_to_gpt_5_1_when_env_unset(
 
     assert locomo_module.main() == 0
     assert captured["config"].judge_model == locomo_module.DEFAULT_CAT5_JUDGE_MODEL
+    assert captured["config"].judge_model == "gpt-5.4-mini-2026-03-17"
 
 
 def test_main_prefers_bench_judge_model_env_override(
@@ -608,3 +609,21 @@ def test_main_prefers_bench_judge_model_env_override(
 
     assert locomo_module.main() == 0
     assert captured["config"].judge_model == "custom-judge-model"
+
+
+def test_locomo_judge_metadata_records_profile_and_snapshot(
+    locomo_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("BENCH_JUDGE_PROFILE", raising=False)
+    config = locomo_module.LoCoMoConfig()
+    config.judge_model = locomo_module.DEFAULT_CAT5_JUDGE_MODEL
+    evaluator = locomo_module.LoCoMoEvaluator(config)
+
+    metadata = evaluator._judge_metadata()
+
+    assert metadata == {
+        "judge_model": "gpt-5.4-mini-2026-03-17",
+        "judge_profile": "openai-gpt-5.4-mini-2026-03-17",
+        "judge_provider": "openai",
+        "judge_snapshot_pinned": True,
+    }
