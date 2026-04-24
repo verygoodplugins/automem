@@ -38,7 +38,7 @@ flowchart TB
         subgraph db [falkordb Service]
             FalkorDB[(FalkorDB<br/>Port 6379)]
             Volume[Persistent Volume<br/>/var/lib/falkordb/data]
-            TCPProxy[TCP Proxy<br/>Public access]
+            TCPProxy[TCP Proxy<br/>Optional admin access]
         end
 
         subgraph qdrantsvc [qdrant Service — Option B]
@@ -74,7 +74,7 @@ flowchart TB
     FalkorDB --> Volume
     Qdrant --> QdrantVolume
 
-    TCPProxy -.->|Optional<br/>External access| FalkorDB
+    TCPProxy -.->|Optional<br/>Admin-only TCP access| FalkorDB
 ```
 
 ---
@@ -148,6 +148,7 @@ Deploy `automem-graph-viewer` as a separate Railway service, then configure thes
 | `VIEWER_ALLOWED_ORIGINS` | `https://<your-viewer-domain>` |
 
 AutoMem keeps `/viewer` for compatibility and redirects/bootstraps users to the standalone viewer.
+Use `/viewer` on `memory-service` as the public entrypoint; the standalone viewer is the backing service behind that route. Keep FalkorDB internal and avoid using direct public DB access as a viewer transport.
 
 ### Get Your API Tokens
 
@@ -428,9 +429,9 @@ python scripts/recover_from_qdrant.py
 
 ---
 
-## Optional: FalkorDB Browser
+## Optional: FalkorDB Browser (Admin / Debug)
 
-For visual graph exploration:
+For low-level graph debugging by operators (separate from the public standalone graph-viewer):
 
 1. **Create new service**:
 
@@ -444,8 +445,8 @@ For visual graph exploration:
    ```
 
 3. **Access**:
-   - Generate public domain
-   - Open in browser
+   - Prefer private networking / access-controlled exposure (for example Cloudflare Access)
+   - Avoid treating this as the public product viewer path
    - Visual query builder included
 
 ---
@@ -639,7 +640,8 @@ REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru
 - [ ] Set up monitoring alerts (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
 - [ ] Configure automated backups (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
 - [x] Add Remote MCP server integration — see docs/MCP_SSE.md
-- [ ] Deploy FalkorDB Browser
+- [ ] Deploy standalone graph-viewer (public UI) if needed
+- [ ] Deploy FalkorDB Browser only for admin/debug workflows
 - [ ] Set up staging environment
 
 **Questions?** Open an issue: https://github.com/verygoodplugins/automem/issues

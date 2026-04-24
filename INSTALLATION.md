@@ -50,6 +50,9 @@ make dev
 - API: `http://localhost:8001`
 - FalkorDB: `localhost:6379`
 - Qdrant: `localhost:6333`
+- FalkorDB Browser (official local graph UI): `http://localhost:3000`
+
+`/viewer` is not the local FalkorDB browser. It redirects/bootstraps to a standalone graph viewer only when `GRAPH_VIEWER_URL` is configured.
 
 **Optional Enhancement:**
 
@@ -193,7 +196,7 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
 
 #### Get Your AutoMem URL
 
-1. Click on your **automem-api** service (the API, not FalkorDB)
+1. Click on your **memory-service** service (the API, not FalkorDB)
 2. Go to **"Settings"** tab
 3. Scroll to **"Networking"** → **"Public Networking"**
 4. Click **"Generate Domain"** (if not already generated)
@@ -298,8 +301,8 @@ Run complete stack locally:
 # Start all services
 make dev
 
-# Or manually with docker-compose
-docker-compose up -d
+# Or manually with docker compose
+docker compose up -d
 ```
 
 **docker-compose.yml** includes:
@@ -307,12 +310,13 @@ docker-compose up -d
 - AutoMem Flask API (port 8001)
 - FalkorDB (port 6379)
 - Qdrant (port 6333)
+- FalkorDB Browser via FalkorDB built-in UI (port 3000)
 
 Stop services:
 
 ```bash
 make stop
-# Or: docker-compose down
+# Or: docker compose down
 ```
 
 ---

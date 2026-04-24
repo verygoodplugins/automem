@@ -5,7 +5,7 @@ services:
     image: falkordb/falkordb:latest
     ports:
       - "6379:6379" # Redis/FalkorDB
-      - "3000:3000" # Browser UI
+      - "3000:3000" # Official local graph browser UI (FalkorDB built-in)
     volumes:
       - falkordb_data:/data # Persistent data
       - ./backups/falkordb:/backups # Local backups
@@ -18,7 +18,7 @@ services:
       - FALKORDB_DATA_PATH=/data
       - REDIS_PASSWORD=${FALKORDB_PASSWORD:-}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,10 +51,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       VECTOR_SIZE: ${VECTOR_SIZE:-1024}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}  # auto|voyage|openai|local|placeholder
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto} # auto|voyage|openai|local|placeholder
       MEMORY_CONTENT_HARD_LIMIT: ${MEMORY_CONTENT_HARD_LIMIT:-2000}
       MEMORY_AUTO_SUMMARIZE: ${MEMORY_AUTO_SUMMARIZE:-true}
-      AUTOMEM_MODELS_DIR: /root/.config/automem/models  # Keep in sync with volume mount
+      AUTOMEM_MODELS_DIR: /root/.config/automem/models # Keep in sync with volume mount
     depends_on:
       falkordb:
         condition: service_healthy
@@ -62,22 +62,10 @@ services:
         condition: service_started
     volumes:
       - .:/app
-      - fastembed_models:/root/.config/automem/models  # Persist embedding models
+      - fastembed_models:/root/.config/automem/models # Persist embedding models
     restart: unless-stopped
-
-  # Optional: FalkorDB Browser for visualization
-  falkordb-browser:
-    image: falkordb/falkordb-browser:latest
-    ports:
-      - "3001:3000" # Browser UI on different port
-    environment:
-      - FALKORDB_URL=redis://${FALKORDB_PASSWORD:+:${FALKORDB_PASSWORD}@}falkordb:6379
-    depends_on:
-      - falkordb
-    restart: unless-stopped
-    profiles: ["browser"] # Only start with: docker-compose --profile browser up
 
 volumes:
   falkordb_data:
   qdrant_data:
-  fastembed_models:  # Persistent cache for local embedding models
+  fastembed_models: # Persistent cache for local embedding models

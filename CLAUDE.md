@@ -15,6 +15,7 @@ source .venv/bin/activate
 
 # Development
 make dev             # Start full stack (FalkorDB + Qdrant + API) via Docker
+make stop            # Stop local containers (keep volumes)
 make test            # Run pytest test suite (unit tests only)
 make test-integration # Run all tests including integration tests (starts Docker)
 make test-live       # Run integration tests against live Railway server
@@ -81,7 +82,7 @@ The `automem/api` module provides **28 endpoints** (admin: 2, memory: 10, recall
 2. **FalkorDB** (port 6379) - Graph storage for Memory nodes and relationship edges
 3. **Qdrant** (optional, port 6333) - Vector search for semantic similarity (dimension depends on embedding provider; see `VECTOR_SIZE`)
 4. **Consolidation Engine** - Background processing for memory maintenance
-5. **FalkorDB Browser** (optional, port 3001) - Web UI for graph visualization (start with `docker compose --profile browser up`)
+5. **FalkorDB Browser** (local, port 3000) - FalkorDB built-in Web UI for local graph inspection
 
 ### Memory Consolidation Engine
 

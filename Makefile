@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-health
+.PHONY: help install dev stop test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-health
 
 VENV_DIR := $(if $(wildcard .venv/bin/python),.venv,venv)
 VENV_BIN := $(VENV_DIR)/bin
@@ -16,6 +16,7 @@ help:
 	@echo "  make test       - Run unit tests only"
 	@echo "  make fmt        - Format code (black + isort)"
 	@echo "  make lint       - Lint code (flake8)"
+	@echo "  make stop       - Stop local containers (keep volumes)"
 	@echo "  make test-integration - Run all tests including integration tests"
 	@echo "  make test-live  - Run integration tests against live Railway server"
 	@echo "  make logs       - Show development logs"
@@ -51,6 +52,11 @@ install:
 dev:
 	@echo "🚀 Starting local development environment..."
 	docker compose up --build
+
+# Stop local development containers (preserve volumes)
+stop:
+	@echo "⏹️  Stopping local development environment..."
+	docker compose down
 
 # Run tests
 test:

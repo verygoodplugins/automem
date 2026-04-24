@@ -62,7 +62,7 @@ flowchart TD
     PreDeploy -->|No| LocalIntegration
 
     LiveCheck -->|Yes| LiveIntegration
-    LiveCheck -->|No| SetupDocker[Set up Docker first<br/>docker-compose up]
+    LiveCheck -->|No| SetupDocker[Set up Docker first<br/>docker compose up]
 
     SetupDocker --> LocalIntegration
 

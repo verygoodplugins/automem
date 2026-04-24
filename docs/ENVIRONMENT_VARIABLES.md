@@ -184,6 +184,7 @@ When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_
 - AutoMem no longer serves built viewer assets in-process.
 - `/viewer` now redirects/bootstraps to `GRAPH_VIEWER_URL` and forwards `server=<automem-origin>`.
 - URL hash tokens (for example `#token=...`) stay client-side and are preserved during redirect.
+- Local Docker graph inspection uses FalkorDB's built-in browser at `http://localhost:3000` (not `/viewer`).
 
 ### Scripts Only
 

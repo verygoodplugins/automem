@@ -29,7 +29,10 @@ railway up
 ## Graph Viewer (Standalone)
 
 The visualizer now runs as a separate service/repository (`automem-graph-viewer`).
-AutoMem keeps `/viewer` as a compatibility entrypoint and forwards users to the standalone app.
+AutoMem keeps `/viewer` as the public entrypoint and forwards it to the standalone app when `GRAPH_VIEWER_URL` is configured.
+
+For local Docker graph inspection, use FalkorDB's built-in browser at `http://localhost:3000`.
+`/viewer` is not the local FalkorDB browser and requires `GRAPH_VIEWER_URL`.
 
 Set these variables on the AutoMem API service:
 
@@ -384,7 +387,19 @@ make dev
 # API: http://localhost:8001
 # FalkorDB: localhost:6379
 # Qdrant: localhost:6333
+# FalkorDB Browser (official local graph UI): http://localhost:3000
 ```
+
+Local Docker runtime surface:
+
+| Service | URL / Port | Purpose |
+|---|---|---|
+| AutoMem API | `http://localhost:8001` | Memory API and `/viewer` compatibility redirect route |
+| FalkorDB | `localhost:6379` | Graph database |
+| Qdrant | `localhost:6333` | Vector database |
+| FalkorDB Browser | `http://localhost:3000` | Official local graph inspection UI |
+
+`/viewer` is not the local FalkorDB browser. It redirects to standalone `automem-graph-viewer` when `GRAPH_VIEWER_URL` is configured.
 
 ### Option 3: Development Mode
 
