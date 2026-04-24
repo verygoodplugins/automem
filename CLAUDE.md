@@ -238,6 +238,10 @@ EMBEDDING_PROVIDER=auto      # auto|voyage|openai|ollama|local|placeholder
 OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
 OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs used by embeddings and classification/enrichment (optional)
 
+# LLM provider for classification/summarization (separate from embedding)
+LLM_PROVIDER=auto            # auto|openai|minimax — auto tries OPENAI_API_KEY, then MINIMAX_API_KEY
+MINIMAX_API_KEY=             # MiniMax API key for classification/summarization (optional)
+
 # Consolidation intervals (seconds)
 CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD=0.3  # Only skip truly low-importance items

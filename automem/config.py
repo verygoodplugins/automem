@@ -112,6 +112,15 @@ JIT_ENRICHMENT_ENABLED = os.getenv("JIT_ENRICHMENT_ENABLED", "true").lower() not
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 
+# LLM provider for classification/summarization
+# "auto" (default): Use OPENAI_API_KEY if set, else MINIMAX_API_KEY
+# "openai": Use OpenAI explicitly
+# "minimax": Use MiniMax explicitly (OpenAI-compatible API at api.minimax.io)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").strip().lower()
+MINIMAX_API_KEY: str | None = os.getenv("MINIMAX_API_KEY")
+MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+MINIMAX_DEFAULT_MODEL = "MiniMax-M2.7"
+
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
 RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.0"))

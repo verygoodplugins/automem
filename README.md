@@ -609,6 +609,8 @@ Run benchmarks: `make bench-eval BENCH=locomo-mini CONFIG=baseline` (quick) or `
 - `VOYAGE_API_KEY` / `VOYAGE_MODEL` - Voyage embeddings (if using `voyage`)
 - `OPENAI_API_KEY` - OpenAI embeddings (if using `openai`)
 - `OPENAI_BASE_URL` - Custom endpoint for OpenAI-compatible providers (OpenRouter, LiteLLM, vLLM, etc.)
+- `MINIMAX_API_KEY` - [MiniMax](https://platform.minimaxi.com) API key for classification/summarization LLM
+- `LLM_PROVIDER` - Choose `auto`, `openai`, or `minimax` for classification/summarization LLM (`auto` tries OpenAI then MiniMax)
 - `OLLAMA_BASE_URL` / `OLLAMA_MODEL` - Ollama embeddings (if using `ollama`)
 - `ADMIN_API_TOKEN` - Required for `/admin/reembed` and enrichment controls
 - Consolidation tuning: `CONSOLIDATION_*_INTERVAL_SECONDS`

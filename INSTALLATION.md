@@ -394,6 +394,8 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `VOYAGE_MODEL`      | Voyage model (Voyage provider)        | `voyage-4` |
 | `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
 | `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
+| `LLM_PROVIDER`      | LLM provider for classification/summarization (`auto`, `openai`, `minimax`) | `auto` |
+| `MINIMAX_API_KEY`   | MiniMax API key (alternative to OpenAI for classification/summarization) | _unset_ |
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for setup options (self-hosted on Railway or Qdrant Cloud).
 
