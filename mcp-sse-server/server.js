@@ -782,7 +782,7 @@ export function createApp() {
   // For strict upstream-gated readiness, point your orchestrator at /ready.
   app.get('/health', async (req, res) => {
     if (!healthState.checked_at) {
-      await probeUpstreamHealth('request');
+      void probeUpstreamHealth('request');
     }
 
     res.status(200).json({
@@ -802,9 +802,7 @@ export function createApp() {
   // Use this when the orchestrator should block traffic/deploy on upstream
   // availability. Not recommended as Railway's healthcheckPath for this bridge.
   app.get('/ready', async (req, res) => {
-    if (!healthState.checked_at) {
-      await probeUpstreamHealth('request');
-    }
+    await probeUpstreamHealth('request');
 
     res.status(healthState.status === 'healthy' ? 200 : 503).json({
       status: healthState.status,
