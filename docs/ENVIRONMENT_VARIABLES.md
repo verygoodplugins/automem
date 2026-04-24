@@ -131,7 +131,7 @@ VECTOR_SIZE=768                                  # must match the model's output
 ## Hosting Considerations (Railway vs Self-Hosted)
 
 - **Railway / managed PaaS:** Voyage and OpenAI are the simplest choices (no local model downloads). FastEmbed works but increases image size and cold-start time; use a persistent volume for `AUTOMEM_MODELS_DIR` if supported. Ollama typically requires a **separate service** (Railway does not ship Ollama by default), so you'll need to deploy Ollama elsewhere and set `OLLAMA_BASE_URL` to that service.
-- **Self-hosted Docker/VPS:** FastEmbed and Ollama are straightforward and avoid API costs. Ollama benefits from GPU acceleration if available; otherwise expect higher latency on CPU. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in docker-compose setups).
+- **Self-hosted Docker/VPS:** FastEmbed and Ollama are straightforward and avoid API costs. Ollama benefits from GPU acceleration if available; otherwise expect higher latency on CPU. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in docker compose setups).
 - **Dimension consistency:** Regardless of host, make sure `VECTOR_SIZE` matches the embedding model output. Changing models requires re-embedding existing memories.
 
 ## Optional Variables

@@ -127,7 +127,10 @@ Verify results are returned and scores look reasonable.
 #### 6. Restart Application
 ```bash
 # If using Docker
-make restart
+docker compose up -d
+
+# Or rerun the foreground dev stack
+make dev
 
 # If using systemd
 sudo systemctl restart automem
