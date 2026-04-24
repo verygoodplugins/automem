@@ -18,7 +18,7 @@ services:
       - FALKORDB_DATA_PATH=/data
       - REDIS_PASSWORD=${FALKORDB_PASSWORD:-}
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD-SHELL", "if [ -n \"$REDIS_PASSWORD\" ]; then redis-cli -a \"$REDIS_PASSWORD\" ping; else redis-cli ping; fi" ]
       interval: 10s
       timeout: 5s
       retries: 5
