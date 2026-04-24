@@ -21,110 +21,110 @@
 name: Release Please
 
 on:
-    push:
-        branches: [main]
-    workflow_dispatch: {}
+  push:
+    branches: [main]
+  workflow_dispatch: {}
 
 permissions:
-    contents: write
-    pull-requests: write
+  contents: write
+  pull-requests: write
 
 jobs:
-    release-please:
-        runs-on: ubuntu-latest
-        outputs:
-            release_created: ${{ steps.release.outputs.release_created }}
-            tag_name: ${{ steps.release.outputs.tag_name }}
-        steps:
-            - uses: googleapis/release-please-action@v4
-              id: release
-              with:
-                  release-type: python
-                  token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          release-type: python
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
-    # Dispatch docs update to automem-website when a release is created
-    docs-dispatch:
-        needs: release-please
-        if: ${{ needs.release-please.outputs.release_created == 'true' }}
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0
+  # Dispatch docs update to automem-website when a release is created
+  docs-dispatch:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-            - name: Get changed files since last release
-              id: changed
-              run: |
-                  CURR_TAG="${{ needs.release-please.outputs.tag_name }}"
-                  # Get the tag before the current one
-                  PREV_TAG=$(git tag --sort=-version:refname | grep -F -x -v -- "$CURR_TAG" | head -1)
+      - name: Get changed files since last release
+        id: changed
+        run: |
+          CURR_TAG="${{ needs.release-please.outputs.tag_name }}"
+          # Get the tag before the current one
+          PREV_TAG=$(git tag --sort=-version:refname | grep -F -x -v -- "$CURR_TAG" | head -1)
 
-                  if [ -z "$PREV_TAG" ]; then
-                    echo "::warning::No previous tag found, diffing against first commit"
-                    PREV_TAG=$(git rev-list --max-parents=0 HEAD)
-                  fi
+          if [ -z "$PREV_TAG" ]; then
+            echo "::warning::No previous tag found, diffing against first commit"
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
 
-                  echo "Diffing $PREV_TAG..$CURR_TAG"
-                  FILES=$(git diff --name-only "$PREV_TAG" "$CURR_TAG" | jq -R -s -c 'split("\n") | map(select(. != ""))')
-                  echo "files=$FILES" >> $GITHUB_OUTPUT
+          echo "Diffing $PREV_TAG..$CURR_TAG"
+          FILES=$(git diff --name-only "$PREV_TAG" "$CURR_TAG" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          echo "files=$FILES" >> $GITHUB_OUTPUT
 
-            - name: Check file-doc mapping
-              id: check
-              env:
-                  CHANGED_FILES: ${{ steps.changed.outputs.files }}
-              run: |
-                  if ! MAP=$(curl -sf --connect-timeout 10 --max-time 30 --retry 2 --retry-connrefused \
-                    -H "Authorization: token ${{ secrets.RELEASE_PLEASE_TOKEN }}" \
-                    "https://raw.githubusercontent.com/verygoodplugins/automem-website/main/scripts/file-doc-map.json"); then
-                    echo "::warning::Failed to fetch file-doc-map.json, dispatching anyway"
-                    echo "affected=unknown" >> $GITHUB_OUTPUT
-                    exit 0
-                  fi
+      - name: Check file-doc mapping
+        id: check
+        env:
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: |
+          if ! MAP=$(curl -sf --connect-timeout 10 --max-time 30 --retry 2 --retry-connrefused \
+            -H "Authorization: token ${{ secrets.RELEASE_PLEASE_TOKEN }}" \
+            "https://raw.githubusercontent.com/verygoodplugins/automem-website/main/scripts/file-doc-map.json"); then
+            echo "::warning::Failed to fetch file-doc-map.json, dispatching anyway"
+            echo "affected=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
-                  REPO_KEY="${{ github.event.repository.name }}"
-                  CHANGED="$CHANGED_FILES"
+          REPO_KEY="${{ github.event.repository.name }}"
+          CHANGED="$CHANGED_FILES"
 
-                  AFFECTED=$(echo "$MAP" | jq -r --arg repo "$REPO_KEY" --argjson changed "$CHANGED" '
-                    def matches_pattern($file; $pattern):
-                      if ($pattern | endswith("/**")) then
-                        ($file | startswith($pattern[0:-2]))
-                      else
-                        $file == $pattern
-                      end;
+          AFFECTED=$(echo "$MAP" | jq -r --arg repo "$REPO_KEY" --argjson changed "$CHANGED" '
+            def matches_pattern($file; $pattern):
+              if ($pattern | endswith("/**")) then
+                ($file | startswith($pattern[0:-2]))
+              else
+                $file == $pattern
+              end;
 
-                    .[$repo] // {} | to_entries | map(
-                      select(.key as $pattern | $changed | any(. as $file | matches_pattern($file; $pattern)))
-                    ) | map(.value) | flatten | unique | .[]
-                  ')
+            .[$repo] // {} | to_entries | map(
+              select(.key as $pattern | $changed | any(. as $file | matches_pattern($file; $pattern)))
+            ) | map(.value) | flatten | unique | .[]
+          ')
 
-                  if [ -z "$AFFECTED" ]; then
-                    echo "No doc pages affected by this release"
-                    echo "affected=none" >> $GITHUB_OUTPUT
-                  else
-                    AFFECTED_JSON=$(echo "$AFFECTED" | jq -R -s -c 'split("\n") | map(select(. != ""))')
-                    echo "Affected doc pages: $AFFECTED_JSON"
-                    echo "affected=$AFFECTED_JSON" >> $GITHUB_OUTPUT
-                  fi
+          if [ -z "$AFFECTED" ]; then
+            echo "No doc pages affected by this release"
+            echo "affected=none" >> $GITHUB_OUTPUT
+          else
+            AFFECTED_JSON=$(echo "$AFFECTED" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+            echo "Affected doc pages: $AFFECTED_JSON"
+            echo "affected=$AFFECTED_JSON" >> $GITHUB_OUTPUT
+          fi
 
-            - name: Dispatch to automem-website
-              if: steps.check.outputs.affected != 'none'
-              env:
-                  GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-              run: |
-                  jq -n \
-                    --arg event_type "docs-update" \
-                    --arg source_repo "${{ github.event.repository.full_name }}" \
-                    --arg source_sha "${{ needs.release-please.outputs.tag_name }}" \
-                    --arg changed_files '${{ steps.changed.outputs.files }}' \
-                    --arg affected_docs '${{ steps.check.outputs.affected }}' \
-                    --arg reason "Release ${{ needs.release-please.outputs.tag_name }}" \
-                    '{
-                      event_type: $event_type,
-                      client_payload: {
-                        source_repo: $source_repo,
-                        source_sha: $source_sha,
-                        changed_files: ($changed_files | fromjson),
-                        affected_docs: (try ($affected_docs | fromjson) catch $affected_docs),
-                        reason: $reason
-                      }
-                    }' | gh api repos/verygoodplugins/automem-website/dispatches --input -
+      - name: Dispatch to automem-website
+        if: steps.check.outputs.affected != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          jq -n \
+            --arg event_type "docs-update" \
+            --arg source_repo "${{ github.event.repository.full_name }}" \
+            --arg source_sha "${{ needs.release-please.outputs.tag_name }}" \
+            --arg changed_files '${{ steps.changed.outputs.files }}' \
+            --arg affected_docs '${{ steps.check.outputs.affected }}' \
+            --arg reason "Release ${{ needs.release-please.outputs.tag_name }}" \
+            '{
+              event_type: $event_type,
+              client_payload: {
+                source_repo: $source_repo,
+                source_sha: $source_sha,
+                changed_files: ($changed_files | fromjson),
+                affected_docs: (try ($affected_docs | fromjson) catch $affected_docs),
+                reason: $reason
+              }
+            }' | gh api repos/verygoodplugins/automem-website/dispatches --input -
