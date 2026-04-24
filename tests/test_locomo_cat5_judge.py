@@ -1,3 +1,4 @@
+import json
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -627,3 +628,116 @@ def test_locomo_judge_metadata_records_profile_and_snapshot(
         "judge_provider": "openai",
         "judge_snapshot_pinned": True,
     }
+
+
+def test_run_benchmark_records_judge_config_and_stats(
+    locomo_module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_file = tmp_path / "locomo-mini.json"
+    data_file.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "conv-1",
+                    "qa": [_cat5_qa()],
+                }
+            ]
+        )
+    )
+
+    config = locomo_module.LoCoMoConfig(data_file=str(data_file))
+    config.judge_model = locomo_module.DEFAULT_CAT5_JUDGE_MODEL
+    evaluator = locomo_module.LoCoMoEvaluator(config)
+    evaluator.openai_client = None
+    evaluator.has_openai_api_key = True
+    evaluator.use_embedding_similarity = False
+
+    monkeypatch.setattr(evaluator, "health_check", lambda: True)
+    monkeypatch.setattr(evaluator, "cleanup_test_data", lambda sample_ids: True)
+    monkeypatch.setattr(
+        evaluator,
+        "load_conversation_into_automem",
+        lambda conversation, sample_id: {},
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "_recall_memories_for_qa",
+        lambda question, sample_id, evidence: [
+            _fake_memory("D10:20", "Jolene is watching videos and planning beginner climbs.")
+        ],
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "fetch_evidence_memories",
+        lambda evidence_dialog_ids, sample_id, use_local_cache=False: [
+            _fake_memory("D10:20", "Jolene is watching videos and planning beginner climbs.")
+        ],
+    )
+    monkeypatch.setattr(locomo_module.time, "sleep", lambda seconds: None)
+
+    perf_samples = iter([10.0, 10.25])
+    monkeypatch.setattr(locomo_module.time, "perf_counter", lambda: next(perf_samples))
+
+    class FakeCompletions:
+        def create(self, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                '{"generated_answer": "She plans to train and start with '
+                                'beginner climbs.", "verdict": "supported", '
+                                '"correct": true, "confidence": 0.91, '
+                                '"reasoning": "Matches the evidence dialog."}'
+                            )
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=120,
+                    completion_tokens=30,
+                    total_tokens=150,
+                ),
+            )
+
+    evaluator.openai_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+
+    results = evaluator.run_benchmark(cleanup_after=False)
+    captured = capsys.readouterr()
+
+    assert results["judge_config"]["enabled"] is True
+    assert results["judge_config"]["provider"] == "openai"
+    assert results["judge_config"]["api"] == "chat.completions"
+    assert results["judge_config"]["model"] == "gpt-5.4-mini-2026-03-17"
+    assert results["judge_config"]["profile"] == "openai-gpt-5.4-mini-2026-03-17"
+    assert results["judge_config"]["snapshot_pinned"] is True
+    assert results["judge_config"]["prompt_version"] == "locomo-cat5-v1"
+    assert len(results["judge_config"]["prompt_sha256"]) == 64
+    assert results["judge_config"]["response_schema_version"] == "locomo-cat5-json-v1"
+    assert len(results["judge_config"]["response_schema_sha256"]) == 64
+    assert results["judge_config"]["reasoning_effort"] is None
+    assert results["judge_config"]["seed"] is None
+    assert results["judge_config"]["temperature"] is None
+    assert results["judge_config"]["max_completion_tokens_attempts"] == [250, 400, 600]
+    assert results["judge_config"]["timeout_seconds"] == 90.0
+    assert results["judge_stats"] == {
+        "questions_requiring_judge": 1,
+        "api_calls": 1,
+        "cache_hits": 0,
+        "errors": 0,
+        "skipped": 0,
+        "prompt_tokens": 120,
+        "completion_tokens": 30,
+        "total_tokens": 150,
+        "estimated_cost_usd": 0.000225,
+        "latency_ms": {
+            "avg": 250.0,
+            "p50": 250.0,
+            "p95": 250.0,
+            "max": 250.0,
+        },
+    }
+    assert "Comparison with published CORE reference" not in captured.out

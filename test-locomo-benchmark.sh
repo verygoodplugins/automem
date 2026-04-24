@@ -73,7 +73,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --live              Run against Railway deployment (default: local Docker)"
             echo "  --recall-limit N    Number of memories to recall per question (default: 10)"
             echo "  --conversations I,J Comma-separated conversation indices (e.g. 0,1 for mini mode)"
-            echo "  --judge             Enable category-5 LLM judge (defaults to gpt-5.1)"
+            echo "  --judge             Enable category-5 LLM judge (defaults to gpt-5.4-mini-2026-03-17)"
             echo "  --judge-model MODEL Set the category-5 judge model (also enables judge)"
             echo "  --no-cleanup        Don't cleanup test data after evaluation"
             echo "  --output FILE       Save results to JSON file"
@@ -204,8 +204,46 @@ if [ -n "$JUDGE_MODEL" ]; then
     PYTHON_CMD="$PYTHON_CMD --judge-model $JUDGE_MODEL"
 fi
 
+RESOLVED_JUDGE_MODEL=""
+if [ "$JUDGE" = true ]; then
+    if [ -n "$JUDGE_MODEL" ]; then
+        RESOLVED_JUDGE_MODEL="$JUDGE_MODEL"
+    elif [ -n "${BENCH_JUDGE_MODEL:-}" ]; then
+        RESOLVED_JUDGE_MODEL="$BENCH_JUDGE_MODEL"
+    else
+        RESOLVED_JUDGE_MODEL="gpt-5.4-mini-2026-03-17"
+    fi
+fi
+
 echo ""
 echo -e "${BLUE}🚀 Starting benchmark evaluation...${NC}"
+echo -e "${BLUE}Configuration:${NC}"
+if [ "$RUN_LIVE" = true ]; then
+    echo "  Target: Railway"
+else
+    echo "  Target: local Docker"
+fi
+if [ -n "$CONVERSATIONS" ]; then
+    echo "  Conversations: $CONVERSATIONS"
+else
+    echo "  Conversations: all"
+fi
+echo "  Recall limit: $RECALL_LIMIT"
+if [ "$NO_CLEANUP" = true ]; then
+    echo "  Cleanup: disabled"
+else
+    echo "  Cleanup: enabled"
+fi
+if [ "$JUDGE" = true ]; then
+    echo "  Judge: enabled ($RESOLVED_JUDGE_MODEL)"
+else
+    echo "  Judge: disabled"
+fi
+if [ -n "$OUTPUT_FILE" ]; then
+    echo "  Output: $OUTPUT_FILE"
+else
+    echo "  Output: none"
+fi
 echo ""
 
 # Run the benchmark

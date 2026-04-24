@@ -25,7 +25,7 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 2026-03-02 | PR #87 | jescalan/feat/write-time-dedup | 76.97% (+0.0) | -- | -- | Write-time dedup gate. Neutral on recall (expected) |
 | 2026-03-02 | #78 | exp/78-decay-fix | 76.97% (+0.0) | 79.51% (-0.55) | -- | Decay rate 0.1→0.01, importance floor, archive filter. Within variance. Impact is on production (rehabilitated via rescore) |
 | 2026-03-10 | pre-refactor | main (@ 795368a) | 76.97% (+0.0) | -- | -- | Baseline re-confirmed after #73, #78, #115, #116 merged. Stable. Pre-relation-tier-refactor checkpoint. |
-| 2026-03-10 | eval-fix | docs/benchmark-agent-guidelines | **89.27% (208/233)** | -- | -- | Fix temporal matching (answer vs memory dates) + skip cat5 (no ground truth). Honest score, beats CORE by 1.03pp. |
+| 2026-03-10 | eval-fix | docs/benchmark-agent-guidelines | **89.27% (208/233)** | -- | -- | Fix temporal matching (answer vs memory dates) + skip cat5 (no ground truth). Honest corrected baseline after evaluator fixes. |
 | 2026-03-10 | cat5-judge | feat/bench-cat5-judge | **89.80% (273/304)** | **87.56% (1739/1986)** | -- | Opt-in GPT-4o judge for cat5. Full run scored cat5 at 95.74% (427/446) with 0 judge skips/errors; added 90s OpenAI request timeout to prevent stuck full runs. |
 | 2026-03-10 | main-refresh (no judge) | main | **89.36% (210/235)** | -- | -- | Fresh current-main rerun before PR #80 experiment. Comparison anchor for judge-off. |
 | 2026-03-10 | main-refresh (judge) | main | **90.13% (274/304)** | -- | -- | Fresh current-main rerun with `BENCH_JUDGE_MODEL=gpt-4o`. Comparison anchor for judge-on. |

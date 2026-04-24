@@ -260,7 +260,7 @@ LoCoMo evaluates AI systems' ability to remember and reason across very long con
 4. **Open Domain** (Category 4) - General knowledge questions
 5. **Complex Reasoning** (Category 5) - Advanced inference tasks
 
-Published reference point: CORE is widely cited at **88.24%** (June 2025), but public LoCoMo setups are not perfectly apples-to-apples, especially around category-5 handling.
+Historical note: older public LoCoMo references such as CORE's **88.24%** are still useful background context, but they are not AutoMem's primary comparison target because the public setups are not perfectly apples-to-apples, especially around category-5 handling.
 
 AutoMem currently publishes two LoCoMo baselines:
 
@@ -315,13 +315,9 @@ Example benchmark output:
   Open Domain              : 95.24% (801/841)
   Complex Reasoning        : 95.74% (427/446)
 
-📊 Comparison with published CORE reference:
-  CORE: 88.24%
-  AutoMem: 87.56%
-  📉 AutoMem is 0.68% behind that reference
 ```
 
-If you run without the judge, category 5 will show as `N/A` and the comparison should be treated as directional rather than apples-to-apples.
+If you run without the judge, category 5 will show as `N/A`.
 
 Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
 
@@ -341,7 +337,7 @@ If you are building an external eval harness against local AutoMem, use the cont
 
 AutoMem is expected to perform well due to:
 
-1. **Richer Graph**: 11 relationship types vs CORE's basic temporal links
+1. **Richer Graph**: 11 relationship types, beyond simple temporal-link-only baselines
    - `RELATES_TO`, `LEADS_TO`, `OCCURRED_BEFORE`
    - `PREFERS_OVER`, `EXEMPLIFIES`, `CONTRADICTS`
    - `REINFORCES`, `INVALIDATED_BY`, `EVOLVED_INTO`

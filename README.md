@@ -572,15 +572,14 @@ AutoMem publishes two reference baselines with Voyage 4 embeddings:
 | **Multi-hop Reasoning**    | **46.15%** | Connecting disparate memories           |
 | **Complex Reasoning**      | N/A        | Skipped in this setup; use judge-on run |
 
-Reference point:
+Current AutoMem baselines:
 
 | System | Score |
 |--------|-------|
-| Published CORE result | 88.24% |
 | AutoMem `locomo-mini` judge off | 89.27% |
 | AutoMem `locomo` judge on | 87.56% |
 
-> **Methodology note:** We do not present this as a strict leaderboard claim. The published CORE number is a useful reference point, but the public LoCoMo setups are not perfectly apples-to-apples, especially around category-5 handling. AutoMem is above that published reference on the `locomo-mini` categories 1-4 run and below it on the full judge-enabled run.
+> **Methodology note:** We do not present LoCoMo as a strict public leaderboard claim. Older external references such as CORE's published 88.24% remain useful historical context, but the setup and evaluator differences are large enough that AutoMem tracks its own corrected baselines in [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md).
 > **History note:** Earlier versions reported 90.53%, but that included two evaluator bugs: temporal matching compared the wrong text (false negatives) and category 5 matched empty strings (false positives). See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for the corrected timeline.
 
 Run benchmarks: `make bench-eval BENCH=locomo-mini CONFIG=baseline` (quick) or `BENCH_JUDGE_MODEL=gpt-4o make bench-eval BENCH=locomo CONFIG=baseline` (full, includes category 5)
