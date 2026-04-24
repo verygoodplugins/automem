@@ -1479,7 +1479,10 @@ Respond with ONLY a JSON object:
                 self.llm_cache[cache_key] = judge_result
                 return judge_result
             except Exception as e:
-                self._judge_api_latencies_ms.append((time.perf_counter() - request_started) * 1000)
+                if len(self._judge_api_latencies_ms) < self.judge_stats["api_calls"]:
+                    self._judge_api_latencies_ms.append(
+                        (time.perf_counter() - request_started) * 1000
+                    )
                 last_error = e
 
         self.judge_stats["errors"] += 1
