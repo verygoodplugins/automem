@@ -203,9 +203,7 @@ requests.post(
 
 Until each PNG exists, the table cells will render as broken-image icons on GitHub. -->
 
-| Graph relationships | Claude integration | Railway deployment |
-|---|---|---|
-| ![Graph recall](docs/img/graph-recall.png) | ![Claude recall](docs/img/claude-recall.png) | ![Railway services](docs/img/railway-services.png) |
+_Screenshots will be added once the referenced in-repo image assets are available._
 
 ## Docs, community, and license
 
