@@ -8,7 +8,7 @@
   <a href="https://automem.ai/discord"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://x.com/automem_ai"><img src="https://img.shields.io/badge/X-@automem__ai-000000?logo=x&logoColor=white" alt="X" /></a>
   <a href="benchmarks/EXPERIMENT_LOG.md"><img src="https://img.shields.io/badge/LoCoMo-89.27%25-success" alt="LoCoMo benchmark" /></a>
-  <a href="https://railway.com/deploy/automem-ai-memory-service"><img src="https://img.shields.io/badge/Deploy%20on-Railway-0B0D0E?logo=railway&logoColor=white" alt="Deploy on Railway" /></a>
+  <a href="https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic"><img src="https://img.shields.io/badge/Deploy%20on-Railway-0B0D0E?logo=railway&logoColor=white" alt="Deploy on Railway" /></a>
 </p>
 
 <p align="center">
@@ -132,7 +132,7 @@ Full writeups, findings, and how AutoMem implements each → [`docs/RESEARCH.md`
 
 ### Railway (60 seconds)
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.com/deploy/automem-ai-memory-service)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic)
 
 Deploys three services: the AutoMem API, FalkorDB with persistent storage, and an MCP-SSE bridge for ChatGPT, Claude.ai, and ElevenLabs. Roughly **$0.50/month** after the $5 free trial.
 

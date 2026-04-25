@@ -103,7 +103,7 @@ python -m spacy download en_core_web_sm
 
 #### Option A: One-Click Deploy ⭐ (Fastest)
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=template&utm_campaign=generic)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic)
 
 **What this does:**
 
