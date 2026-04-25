@@ -99,7 +99,7 @@ python -m spacy download en_core_web_sm
 - **Developing/testing** - Local is faster for iteration
 
 <!-- Screenshot placeholder: docs/img/railway-services.png — Railway dashboard showing the four deployed services (automem, mcp-automem, qdrant, falkordb). Capture once and host in-repo so this stops depending on a fragile GitHub user-attachment URL. -->
-![Railway services dashboard](docs/img/railway-services.png)
+_Screenshot pending: Railway services dashboard image will be added at `docs/img/railway-services.png` once captured._
 
 ---
 
