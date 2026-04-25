@@ -22,7 +22,7 @@ Complete setup instructions for AutoMem across all environments.
 
 - **Python 3.10+** (the codebase supports 3.10 and newer; local bootstrap is standardized on 3.12)
 - **Docker & Docker Compose** (for bundled stack)
-- **Railway CLI** (for Railway deployment): `npm i -g @railway/cli`
+- **Railway CLI** (optional, only needed if you prefer the terminal over the dashboard): `npm i -g @railway/cli`
 
 ---
 
@@ -76,6 +76,7 @@ python -m spacy download en_core_web_sm
 - ✅ **$5 free credits** for 30-day trial (no credit card required)
 - ✅ **~$0.50/month** typical AutoMem usage after trial
 - ✅ **$1/month minimum** if you use less than that
+- ✅ **No image-build cost** — services pull pre-built Docker images from GitHub Container Registry, so you only pay Railway compute
 
 ---
 
@@ -97,7 +98,8 @@ python -m spacy download en_core_web_sm
 - **Prefer zero cost** - No cloud bills, just local compute
 - **Developing/testing** - Local is faster for iteration
 
-- ![Very Good Plugins  Brave Browser+automem  Railway  2025-10-06 at 00 27 17@2x](https://github.com/user-attachments/assets/02e36c5b-515c-4675-993f-ead2fc022842)
+<!-- Screenshot placeholder: docs/img/railway-services.png — Railway dashboard showing the three deployed services (memory-service, mcp-server, falkordb). Capture once and host in-repo so this stops depending on a fragile GitHub user-attachment URL. -->
+![Railway services dashboard](docs/img/railway-services.png)
 
 ---
 
@@ -107,7 +109,10 @@ python -m spacy download en_core_web_sm
 
 **What this does:**
 
-- Creates AutoMem API + Remote MCP server + FalkorDB services automatically
+- Creates three Railway services from pre-built Docker images:
+  - `memory-service` ← `ghcr.io/verygoodplugins/automem:stable`
+  - `mcp-server` ← `ghcr.io/verygoodplugins/mcp-automem:stable`
+  - `falkordb` ← `falkordb/falkordb:latest`
 - Sets up persistent storage and volumes
 - Generates secure API tokens (`AUTOMEM_API_TOKEN`, `ADMIN_API_TOKEN`)
 - Configures internal networking (`FALKORDB_HOST`, `FALKORDB_PORT`)
@@ -122,6 +127,26 @@ python -m spacy download en_core_web_sm
 5. Wait ~60 seconds for deployment to complete ✅
 
 **Next:** Skip to [Get Your AutoMem URL](#get-your-automem-url) below to get your endpoint.
+
+---
+
+#### How Updates Work
+
+Once deployed, your Railway services pull updates automatically — no `git push`, no rebuild on every commit:
+
+| Service | Image | Update cadence |
+|---|---|---|
+| `memory-service` | `ghcr.io/verygoodplugins/automem:stable` | Auto-redeploy nightly |
+| `mcp-server` | `ghcr.io/verygoodplugins/mcp-automem:stable` | Auto-redeploy nightly |
+| `falkordb` | `falkordb/falkordb:latest` | Auto-redeploy nightly |
+
+The `:stable` tag always points at the most recent `vX.Y.Z` release tag. New releases ship through [release-please](https://github.com/googleapis/release-please) — when a release PR is merged to `main`, GitHub Actions builds the image, publishes the new version (`v0.15.2`, `v0.15`, `v0`), and re-points `:stable`. See [`CHANGELOG.md`](CHANGELOG.md) for the release history.
+
+**Want to ship faster than nightly?** In Railway, click the service → **Deployments** → **Deploy latest** to pull `:stable` immediately.
+
+**Want to pin a specific version?** Edit the service's image (Settings → Source → Image) from `:stable` to `:v0.15.2` (or any published `vX.Y.Z`). Roll back the same way.
+
+**Using the legacy MCP image path?** `ghcr.io/verygoodplugins/automem/mcp-sse-server:stable` is dual-published from the same workflow and tracks the same release tags — existing deployments keep working without changes.
 
 ---
 
@@ -162,15 +187,14 @@ Railway automatically exposes:
 
 Reference these in AutoMem config via `${{service.<name>.internalHost}}`
 
-#### Step 3: Deploy AutoMem
+#### Step 3: Deploy AutoMem from the published Docker image
 
-1. Deploy from repo:
+1. **Create a new Railway service from the AutoMem image:**
 
-   ```bash
-   railway up
-   ```
-
-   Or connect repo in Railway UI for auto-deploys.
+   - In Railway → **+ New** → **Deploy from Docker image**
+   - Image: `ghcr.io/verygoodplugins/automem:stable`
+   - (Optional) pin a specific version with `:v0.15.2` instead of `:stable`
+   - Add a public domain: **Settings → Networking → Generate Domain**
 
 2. Configure environment variables:
 
@@ -193,6 +217,13 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
 
    Expected: `{"status": "healthy"}`
    `503` = FalkorDB connection issue (check host/port/password)
+
+4. (Optional) Add the MCP bridge service the same way:
+
+   - Image: `ghcr.io/verygoodplugins/mcp-automem:stable`
+   - Set `AUTOMEM_API_URL` to the internal URL of `memory-service` (e.g. `http://memory-service.railway.internal:8001`)
+   - Set `AUTOMEM_API_TOKEN` to the same token as the API service
+   - Generate a public domain so cloud AI clients (ChatGPT, Claude.ai, ElevenLabs) can reach it
 
 #### Get Your AutoMem URL
 

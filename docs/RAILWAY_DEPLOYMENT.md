@@ -10,7 +10,7 @@ This template automatically sets up:
 
 - ✅ **memory-service** — AutoMem Flask API with health checks
 - ✅ **falkordb** — Graph database with **persistent volumes** and password protection
-- ✅ **mcp-sse-server** — MCP bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
+- ✅ **mcp-server** — MCP bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
 - ✅ Automatic secret generation and service networking
 
 ```mermaid
@@ -79,6 +79,56 @@ flowchart TB
 
 ---
 
+## How Updates Work
+
+Once your services are running, Railway pulls new images automatically — no `git push`, no source rebuild on every commit:
+
+| Service | Image | Update cadence |
+|---|---|---|
+| `memory-service` | `ghcr.io/verygoodplugins/automem:stable` | Auto-redeploy nightly |
+| `mcp-server` | `ghcr.io/verygoodplugins/mcp-automem:stable` | Auto-redeploy nightly |
+| `falkordb` | `falkordb/falkordb:latest` | Auto-redeploy nightly |
+
+### How `:stable` is built
+
+Two GitHub Actions workflows publish to GHCR:
+
+- **[`.github/workflows/docker-build.yml`](../.github/workflows/docker-build.yml)** — builds the AutoMem API image from `Dockerfile`
+- **[`.github/workflows/docker-build-mcp-automem.yml`](../.github/workflows/docker-build-mcp-automem.yml)** — builds the MCP bridge image from `mcp-sse-server/Dockerfile`
+
+Both workflows publish on every `v*` tag push (cut by [release-please](https://github.com/googleapis/release-please) when a release PR merges to `main`). On every release the workflows publish:
+
+- `:vX.Y.Z`, `:vX.Y`, `:vX` — semver pointers
+- `:sha-abcdef0` — short commit SHA
+- `:latest` — every released main commit (don't use this in production; it tracks every release)
+- **`:stable`** — same as the latest `vX.Y.Z`, the conservative pointer Railway tracks
+
+### Tag strategy
+
+| Tag | What it points at | When to use |
+|---|---|---|
+| `:stable` | Latest released `vX.Y.Z` | **Recommended for production** — what the Railway template uses |
+| `:vX.Y.Z` | A specific release | Pin a known-good version after a regression |
+| `:vX.Y` | Latest patch in a minor line | Stay on a minor version, accept patches |
+| `:latest` | Latest released main commit | Same as `:stable` today, but no contractual guarantee — avoid in prod |
+| `:sha-xxxxxxx` | A specific commit | Reproduce a single CI run for debugging |
+
+### Operating the deploy
+
+**Deploy a new release immediately (don't wait for nightly):**
+Railway → service → **Deployments** → **Deploy latest**.
+
+**Pin to a specific version:**
+Service → **Settings** → **Source** → **Image** → change `:stable` to `:v0.15.2`. Railway will pull and redeploy.
+
+**Roll back:**
+Same flow — change the image tag to the prior `vX.Y.Z`, redeploy. Persistent volumes (FalkorDB data) are unaffected.
+
+**Use the legacy MCP image path:**
+`ghcr.io/verygoodplugins/automem/mcp-sse-server:stable` is dual-published from the same workflow and tracks the same release tags — existing services that use the old path keep working without changes.
+
+---
+
 ## Post-Deploy Checklist
 
 After deploying, complete these steps to fully configure AutoMem:
@@ -117,7 +167,7 @@ curl -X POST "https://your-automem.up.railway.app/memory" \
 
 ### MCP Bridge (Included)
 
-The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
+The template includes **mcp-server**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
 
 | Platform          | How to Connect                                                                                 |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
@@ -131,7 +181,7 @@ The template includes **mcp-sse-server**, which exposes AutoMem as an MCP server
 
 **Don't need the MCP bridge?** If you only use Cursor, Claude Code, or direct API access:
 
-1. Go to Railway Dashboard → `mcp-sse-server` service
+1. Go to Railway Dashboard → `mcp-server` service
 2. Click the three dots menu → **Delete Service**
 3. This saves ~$2-3/month and has no impact on the core memory API
 
@@ -494,7 +544,7 @@ This will:
 
 - **memory-service**: 512MB RAM, 0.5 vCPU (~$5/mo)
 - **FalkorDB**: 1GB RAM, 1 vCPU + 2GB volume (~$10/mo)
-- **mcp-sse-server**: 256MB RAM, 0.25 vCPU (~$2-3/mo)
+- **mcp-server**: 256MB RAM, 0.25 vCPU (~$2-3/mo)
 - **Qdrant** (choose one):
   - *Cloud*: Free tier (1GB) or $25/mo (10GB)
   - *Self-hosted on Railway*: ~$3-5/mo (256MB RAM + 1GB volume)
@@ -507,7 +557,7 @@ This will:
 - Or use Qdrant Cloud free tier initially
 - Start with smaller FalkorDB volume (1GB)
 - Use Railway's usage-based pricing (scales down when idle)
-- **Remove mcp-sse-server** if you only use Cursor/Claude Desktop (saves ~$2-3/mo)
+- **Remove mcp-server** if you only use Cursor/Claude Desktop (saves ~$2-3/mo)
 
 ---
 
