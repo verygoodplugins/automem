@@ -297,7 +297,7 @@ The benchmark takes approximately:
 
 Memory usage:
 - **FalkorDB**: ~6,000–10,000 nodes
-- **Qdrant**: ~6,000–10,000 vectors (3072 dimensions by default, or 768 with small model)
+- **Qdrant**: ~6,000–10,000 vectors (1024 dimensions by default with `voyage-4`; older/OpenAI setups may use 768 or 3072)
 
 ### Interpreting Results
 
@@ -320,6 +320,42 @@ Example benchmark output:
 If you run without the judge, category 5 will show as `N/A`.
 
 Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
+
+## LongMemEval Benchmark
+
+AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat the current published number as a provisional mini result, not a full benchmark claim.
+
+```bash
+# Mini run for scoring/entity changes
+make bench-mini-longmemeval
+
+# Full local run
+make test-longmemeval
+
+# Full live Railway run
+make test-longmemeval-live
+```
+
+Current provisional result:
+
+| Setup | Scope | Score | Retrieval | Notes |
+|------|-------|-------|-----------|-------|
+| `longmemeval` mini | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Judged with `gpt-4o`; recall_limit=10, no entity/relation expansion. Not directly comparable to the older 35.6% / 500-question setup. |
+
+For future published LongMemEval results, use the pinned judge policy in [`docs/BENCHMARK_JUDGE_POLICY.md`](BENCHMARK_JUDGE_POLICY.md) so runs remain comparable over time.
+
+## BEAM Benchmark
+
+BEAM experiments currently live in [`automem-evals`](https://github.com/verygoodplugins/automem-evals), because the harness is exploratory and wraps the upstream memory-benchmarks runner through an AutoMem shim. The durable findings are summarized here because official benchmark claims and docs references belong in this repo.
+
+Current BEAM 100K diagnostic results:
+
+| Setup | Scope | Score | Notes |
+|------|-------|-------|-------|
+| V1 raw-dialogue shim | 20 conversations, 400 questions | **76.25% (305/400)**, avg 0.677 | `gpt-5-mini` answerer/judge, top-k 200, zero errors. |
+| V2 fact-extraction shim | 20 conversations, 400 questions | **73.75% (295/400)**, avg 0.653 | -2.50pp vs V1 overall. Abstention and knowledge_update improved; event_ordering and information_extraction regressed. |
+
+Do not read the BEAM 100K number as an apples-to-apples product comparison with mem0's published 1M/10M results. The 100K tier is an easier retrieval setting, and the shim/judge setup differs from the published comparison target. It is useful as a failure-mode and regression signal.
 
 ## Benchmark Ownership
 

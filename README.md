@@ -29,6 +29,8 @@ AutoMem stores typed relationships *and* embeddings. When you ask "why did we ch
 
 It scores **89.27%** on the LoCoMo long-term memory benchmark (ACL 2024) judge-off, and **87.56%** judge-on. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology and history.
 
+Additional LongMemEval and BEAM validation is tracked in [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md); BEAM is currently reported as exploratory because published comparisons are not yet apples-to-apples.
+
 ## Should you use AutoMem?
 
 | Use AutoMem if... | Look elsewhere if... |
@@ -220,7 +222,7 @@ Until each PNG exists, the table cells will render as broken-image icons on GitH
 **Research and comparison**
 - [Research foundation](docs/RESEARCH.md) — papers and how AutoMem implements them
 - [Comparison](docs/COMPARISON.md) — vs. RAG, vector DBs, building your own
-- [Benchmark history](benchmarks/EXPERIMENT_LOG.md) — LoCoMo methodology and runs
+- [Benchmark history](benchmarks/EXPERIMENT_LOG.md) — LoCoMo, LongMemEval, and BEAM methodology and runs
 
 **Operations**
 - [Health monitoring & backups](docs/MONITORING_AND_BACKUPS.md)
