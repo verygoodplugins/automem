@@ -88,9 +88,10 @@ Once your services are running, Railway pulls new images automatically — no `g
 |---|---|---|
 | `automem` | `ghcr.io/verygoodplugins/automem:stable` | Auto-redeploy nightly |
 | `mcp-automem` | `ghcr.io/verygoodplugins/mcp-automem:stable` | Auto-redeploy nightly |
-| `qdrant` | `qdrant/qdrant:latest` | Auto-redeploy nightly |
-| `falkordb` | `falkordb/falkordb:latest` | Auto-redeploy nightly |
+| `qdrant` | `qdrant/qdrant:v1.11.3` | Pinned; upgrade deliberately |
+| `falkordb` | `falkordb/falkordb:latest` | Template default; pin in production |
 
+> **Production recommendation:** For stateful services such as Qdrant and FalkorDB, prefer pinned image versions over mutable tags like `:latest` so Railway redeploys do not unexpectedly roll your database to a new release.
 ### How `:stable` is built
 
 Two GitHub Actions workflows publish to GHCR:
