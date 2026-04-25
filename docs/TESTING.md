@@ -323,10 +323,10 @@ Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
 
 ## LongMemEval Benchmark
 
-AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat the current published number as a provisional mini result, not a full benchmark claim.
+AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat the current published number as a provisional partial result, not a full benchmark claim.
 
 ```bash
-# Mini run for scoring/entity changes
+# Current mini target: prefix slice smoke test, not the 50-question result below
 make bench-mini-longmemeval
 
 # Full local run
@@ -340,9 +340,9 @@ Current provisional result:
 
 | Setup | Scope | Score | Retrieval | Notes |
 |------|-------|-------|-----------|-------|
-| `longmemeval` mini | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Judged with `gpt-4o`; recall_limit=10, no entity/relation expansion. Not directly comparable to the older 35.6% / 500-question setup. |
+| `longmemeval` partial (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional partial run; recall_limit=10, no entity/relation expansion. Not reproduced by the current `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup. |
 
-For future published LongMemEval results, use the pinned judge policy in [`docs/BENCHMARK_JUDGE_POLICY.md`](BENCHMARK_JUDGE_POLICY.md) so runs remain comparable over time.
+For future published LongMemEval results, use the pinned judge policy in [`docs/BENCHMARK_JUDGE_POLICY.md`](BENCHMARK_JUDGE_POLICY.md) so runs remain comparable over time. Result metadata should distinguish the answer model (`llm_model`, currently `gpt-4o`) from the judge model (`judge_model`, currently `gpt-5.4-mini-2026-03-17` when `--llm-eval` is enabled).
 
 ## BEAM Benchmark
 

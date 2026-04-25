@@ -182,6 +182,8 @@ Direct API call:
 ```python
 import requests
 
+token = "your-automem-api-token"
+
 requests.post(
     "https://your-automem.railway.app/memory",
     headers={"Authorization": f"Bearer {token}"},

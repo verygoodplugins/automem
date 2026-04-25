@@ -74,7 +74,7 @@ claims belong in this repo once they become durable enough to cite.
 |------|-----------|-------|-------|-----------|-------|
 | 2026-04-22 | BEAM 100K V1 raw-dialogue shim | 20 conversations, 400 questions | **76.25% (305/400)**, avg 0.677 | top-k 200 | `gpt-5-mini` answerer/judge, zero errors. Diagnostic result only: BEAM 100K is easier than mem0's published 1M/10M settings, and the V1 shim stores raw dialogue rather than mem0-style extracted facts. |
 | 2026-04-22 | BEAM 100K V2 fact-extraction shim | 20 conversations, 400 questions | **73.75% (295/400)**, avg 0.653 | top-k 200 | -2.50pp vs V1 overall, within the estimated noise floor. Category signal was useful: abstention +15pp and knowledge_update +7.5pp; event_ordering -20pp and information_extraction -12.5pp. |
-| 2026-04-24 | LongMemEval mini | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional mini run judged with `gpt-4o`; recall_limit=10, no entity/relation expansion. Not directly comparable to the older 35.6% / 500-question setup or to a full LongMemEval claim. |
+| 2026-04-24 | LongMemEval partial (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional partial run; recall_limit=10, no entity/relation expansion. Not reproduced by the current `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup or to a full LongMemEval claim. |
 
 ## How to add an entry
 
