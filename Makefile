@@ -114,8 +114,8 @@ status:
 # Compare deployed commit vs origin/main HEAD (detect stale deploys)
 deploy-check:
 	@rc=0; \
-	./scripts/deploy_check.sh memory-service   || rc=1; \
-	./scripts/deploy_check.sh automem-mcp-sse  || rc=1; \
+	./scripts/deploy_check.sh automem      || rc=1; \
+	./scripts/deploy_check.sh mcp-automem  || rc=1; \
 	exit $$rc
 
 # Run LoCoMo benchmark (local)

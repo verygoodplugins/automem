@@ -160,7 +160,7 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 #### Self-Hosted Qdrant on Railway
 
-When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_HOST=qdrant` on memory-service. Railway's internal DNS resolves service names automatically.
+When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_HOST=qdrant` on the AutoMem API service. Railway's internal DNS resolves service names automatically.
 
 **Critical**: You must also set `QDRANT__SERVICE__HOST=::` on the **Qdrant service itself**. Railway's internal networking uses IPv6, but Qdrant defaults to binding `0.0.0.0` (IPv4 only). Without this, connections from other Railway services will be refused even though DNS resolves correctly. See [Railway Deployment Guide — Self-Hosted Qdrant](RAILWAY_DEPLOYMENT.md#option-b-self-hosted-qdrant-on-railway) for full setup.
 

@@ -69,13 +69,13 @@ Create a new Railway service for continuous monitoring:
 
 ```bash
 # One-time health check (safe)
-railway run --service memory-service python scripts/health_monitor.py --once
+railway run --service automem python scripts/health_monitor.py --once
 
 # Alert-only monitoring (no auto-recovery)
-railway run --service memory-service python scripts/health_monitor.py --interval 300
+railway run --service automem python scripts/health_monitor.py --interval 300
 
 # With Slack webhook alerts
-railway run --service memory-service python scripts/health_monitor.py \
+railway run --service automem python scripts/health_monitor.py \
   --interval 300 \
   --webhook https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 ```
@@ -295,7 +295,7 @@ Then configure in Railway dashboard:
 
 - Set Builder to Dockerfile
 - Dockerfile Path: `scripts/Dockerfile.backup`
-- Add environment variables (same as memory-service)
+- Add environment variables (same as the AutoMem API service)
 
 **Cost:** ~$1-2/month
 
@@ -338,7 +338,7 @@ flowchart TD
 If FalkorDB data is lost but Qdrant is intact:
 
 ```bash
-railway run --service memory-service python scripts/recover_from_qdrant.py
+railway run --service automem python scripts/recover_from_qdrant.py
 ```
 
 This rebuilds the FalkorDB graph from Qdrant vectors and payloads.

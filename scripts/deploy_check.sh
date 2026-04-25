@@ -3,13 +3,13 @@
 # to detect when Railway's GitHub integration silently disconnects.
 #
 # Usage:
-#   ./scripts/deploy_check.sh                    # check memory-service (default)
-#   ./scripts/deploy_check.sh automem-mcp-sse    # check a specific service
+#   ./scripts/deploy_check.sh                    # check automem (default)
+#   ./scripts/deploy_check.sh mcp-automem        # check a specific service
 #   DEPLOY_CHECK_QUIET=1 ./scripts/deploy_check.sh  # exit code only (for CI)
 
 set -euo pipefail
 
-SERVICE="${1:-memory-service}"
+SERVICE="${1:-automem}"
 QUIET="${DEPLOY_CHECK_QUIET:-0}"
 MAX_AGE_HOURS="${DEPLOY_CHECK_MAX_AGE:-24}"
 
