@@ -8,9 +8,10 @@ Complete guide to deploying AutoMem on Railway with persistent storage, backups,
 
 This template automatically sets up:
 
-- ✅ **memory-service** — AutoMem Flask API with health checks
+- ✅ **automem** — AutoMem Flask API with health checks
+- ✅ **mcp-automem** — MCP bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
+- ✅ **qdrant** — Vector database for semantic search (with persistent volume)
 - ✅ **falkordb** — Graph database with **persistent volumes** and password protection
-- ✅ **mcp-server** — MCP bridge for cloud AI platforms (ChatGPT, Claude.ai, ElevenLabs)
 - ✅ Automatic secret generation and service networking
 
 ```mermaid
@@ -27,7 +28,7 @@ flowchart TB
             MCPDomain[Public Domain<br/>mcp.up.railway.app]
         end
 
-        subgraph api [memory-service Service]
+        subgraph api [automem Service]
             FlaskAPI[Flask API<br/>Port 8001]
             APIDomain[Public Domain<br/>automem.up.railway.app]
 
@@ -41,13 +42,13 @@ flowchart TB
             TCPProxy[TCP Proxy<br/>Optional admin access]
         end
 
-        subgraph qdrantsvc [qdrant Service — Option B]
+        subgraph qdrantsvc [qdrant Service]
             Qdrant[(Qdrant<br/>Port 6333)]
             QdrantVolume[Persistent Volume<br/>/qdrant/storage]
         end
 
         subgraph external [External Services]
-            QdrantCloud[(Qdrant Cloud<br/>Vector DB — Option A)]
+            QdrantCloud[(Qdrant Cloud<br/>Optional managed alternative)]
             OpenAI[OpenAI API<br/>Embeddings]
         end
     end
@@ -59,11 +60,11 @@ flowchart TB
     MCPDomain --> MCPServer
     APIDomain --> FlaskAPI
 
-    MCPServer -->|Internal<br/>memory-service.railway.internal:8001| FlaskAPI
+    MCPServer -->|Internal<br/>automem.railway.internal:8001| FlaskAPI
 
     FlaskAPI -->|Internal<br/>falkordb.railway.internal:6379| FalkorDB
-    FlaskAPI -.->|Option A| QdrantCloud
-    FlaskAPI -.->|Option B · Internal<br/>qdrant.railway.internal:6333| Qdrant
+    FlaskAPI -->|Internal<br/>qdrant.railway.internal:6333| Qdrant
+    FlaskAPI -.->|Optional alternative| QdrantCloud
     FlaskAPI --> OpenAI
 
     Enrichment --> FalkorDB
@@ -85,8 +86,9 @@ Once your services are running, Railway pulls new images automatically — no `g
 
 | Service | Image | Update cadence |
 |---|---|---|
-| `memory-service` | `ghcr.io/verygoodplugins/automem:stable` | Auto-redeploy nightly |
-| `mcp-server` | `ghcr.io/verygoodplugins/mcp-automem:stable` | Auto-redeploy nightly |
+| `automem` | `ghcr.io/verygoodplugins/automem:stable` | Auto-redeploy nightly |
+| `mcp-automem` | `ghcr.io/verygoodplugins/mcp-automem:stable` | Auto-redeploy nightly |
+| `qdrant` | `qdrant/qdrant:latest` | Auto-redeploy nightly |
 | `falkordb` | `falkordb/falkordb:latest` | Auto-redeploy nightly |
 
 ### How `:stable` is built
@@ -135,7 +137,7 @@ After deploying, complete these steps to fully configure AutoMem:
 
 ### Required: Add Your API Keys
 
-1. **Go to `memory-service` → Variables**
+1. **Go to `automem` → Variables**
 2. **Set these variables:**
 
 | Variable         | Required    | How to Get                                                           |
@@ -150,7 +152,7 @@ After deploying, complete these steps to fully configure AutoMem:
 👉 **Qdrant Cloud?** Follow the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step collection setup.
 👉 **Self-hosted Qdrant?** See [Step 1b](#step-1b-qdrant-vector-database) — remember to set `QDRANT__SERVICE__HOST=::` on the Qdrant service.
 
-3. **Redeploy** the memory-service after adding variables.
+3. **Redeploy** the automem after adding variables.
 
 ### Verify Deployment
 
@@ -167,7 +169,7 @@ curl -X POST "https://your-automem.up.railway.app/memory" \
 
 ### MCP Bridge (Included)
 
-The template includes **mcp-server**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
+The template includes **mcp-automem**, which exposes AutoMem as an MCP server over HTTPS. This enables cloud AI platforms to access your memories:
 
 | Platform          | How to Connect                                                                                 |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
@@ -181,7 +183,7 @@ The template includes **mcp-server**, which exposes AutoMem as an MCP server ove
 
 **Don't need the MCP bridge?** If you only use Cursor, Claude Code, or direct API access:
 
-1. Go to Railway Dashboard → `mcp-server` service
+1. Go to Railway Dashboard → `mcp-automem` service
 2. Click the three dots menu → **Delete Service**
 3. This saves ~$2-3/month and has no impact on the core memory API
 
@@ -189,7 +191,7 @@ Claude Desktop can still use the local MCP package, but Anthropic now syncs conn
 
 ### Optional: Standalone Graph Viewer Service
 
-Deploy `automem-graph-viewer` as a separate Railway service, then configure these on `memory-service`:
+Deploy `automem-graph-viewer` as a separate Railway service, then configure these on `automem`:
 
 | Variable | Value |
 |----------|-------|
@@ -198,13 +200,13 @@ Deploy `automem-graph-viewer` as a separate Railway service, then configure thes
 | `VIEWER_ALLOWED_ORIGINS` | `https://<your-viewer-domain>` |
 
 AutoMem keeps `/viewer` for compatibility and redirects/bootstraps users to the standalone viewer.
-Use `/viewer` on `memory-service` as the public entrypoint; the standalone viewer is the backing service behind that route. Keep FalkorDB internal and avoid using direct public DB access as a viewer transport.
+Use `/viewer` on `automem` as the public entrypoint; the standalone viewer is the backing service behind that route. Keep FalkorDB internal and avoid using direct public DB access as a viewer transport.
 
 ### Get Your API Tokens
 
 Your tokens were auto-generated during deployment. Find them in:
 
-- Railway Dashboard → `memory-service` → Variables
+- Railway Dashboard → `automem` → Variables
 - Look for `AUTOMEM_API_TOKEN` and `ADMIN_API_TOKEN`
 
 ---
@@ -251,7 +253,7 @@ Choose **one** of these options:
 
 #### Option A: Qdrant Cloud (Managed)
 
-Use [Qdrant Cloud](https://cloud.qdrant.io) for a fully managed vector database. See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions. Set `QDRANT_URL` and `QDRANT_API_KEY` on memory-service.
+Use [Qdrant Cloud](https://cloud.qdrant.io) for a fully managed vector database. See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions. Set `QDRANT_URL` and `QDRANT_API_KEY` on automem.
 
 #### Option B: Self-Hosted Qdrant on Railway
 
@@ -281,7 +283,7 @@ Run Qdrant inside your Railway project for lower latency (internal networking, n
 
 4. **No health check needed**: Qdrant doesn't expose an HTTP health path that Railway can use. Container monitoring handles restarts.
 
-5. **On memory-service**, set:
+5. **On automem**, set:
 
    ```bash
    QDRANT_HOST=qdrant   # Must match your Qdrant service name in Railway
@@ -358,7 +360,7 @@ Run Qdrant inside your Railway project for lower latency (internal networking, n
 
    **Note**: Hardcoded values (Option B) are more stable and easier to debug, while variable references (Option A) update automatically but can be harder to troubleshoot.
 
-   **⚠️ Important**: `PORT=8001` is **required** for the memory-service. Without it, Flask defaults to port 5000, causing connection failures from other services.
+   **⚠️ Important**: `PORT=8001` is **required** for the automem. Without it, Flask defaults to port 5000, causing connection failures from other services.
 
 3. **Set health check**:
 
@@ -412,7 +414,7 @@ If you get `503`:
 - Check FalkorDB is running and healthy
 - Verify `FALKORDB_HOST` is set to private domain (use `falkordb.railway.internal`, not `${{...}}` syntax)
 - Confirm `FALKORDB_PASSWORD` matches between services
-- Test connection: `railway logs --service memory-service | grep -i falkordb`
+- Test connection: `railway logs --service automem | grep -i falkordb`
 
 ### Step 4: Store First Memory
 
@@ -542,9 +544,9 @@ This will:
 
 **Service Sizing**:
 
-- **memory-service**: 512MB RAM, 0.5 vCPU (~$5/mo)
+- **automem**: 512MB RAM, 0.5 vCPU (~$5/mo)
 - **FalkorDB**: 1GB RAM, 1 vCPU + 2GB volume (~$10/mo)
-- **mcp-server**: 256MB RAM, 0.25 vCPU (~$2-3/mo)
+- **mcp-automem**: 256MB RAM, 0.25 vCPU (~$2-3/mo)
 - **Qdrant** (choose one):
   - *Cloud*: Free tier (1GB) or $25/mo (10GB)
   - *Self-hosted on Railway*: ~$3-5/mo (256MB RAM + 1GB volume)
@@ -557,7 +559,7 @@ This will:
 - Or use Qdrant Cloud free tier initially
 - Start with smaller FalkorDB volume (1GB)
 - Use Railway's usage-based pricing (scales down when idle)
-- **Remove mcp-server** if you only use Cursor/Claude Desktop (saves ~$2-3/mo)
+- **Remove mcp-automem** if you only use Cursor/Claude Desktop (saves ~$2-3/mo)
 
 ---
 
@@ -571,19 +573,19 @@ This will:
 
 ```bash
 # Check internal networking
-railway logs --service memory-service | grep FalkorDB
+railway logs --service automem | grep FalkorDB
 
 # Verify private domain
 echo $FALKORDB_HOST  # Should be: falkordb.railway.internal
 
 # Test connection
-railway run --service memory-service
+railway run --service automem
 > redis-cli -h $FALKORDB_HOST -p 6379 -a $FALKORDB_PASSWORD ping
 ```
 
 ### Service Connection Refused (ECONNREFUSED)
 
-**Problem**: SSE or other services get "fetch failed" or "ECONNREFUSED" when connecting to memory-service
+**Problem**: SSE or other services get "fetch failed" or "ECONNREFUSED" when connecting to automem
 
 **Symptoms**:
 
@@ -595,9 +597,9 @@ Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
 
 1. **Missing PORT variable** (most common):
 
-   - Check memory-service variables: `PORT` must be set to `8001`
+   - Check automem variables: `PORT` must be set to `8001`
    - Without it, Flask defaults to port 5000
-   - **Fix**: Add `PORT=8001` to memory-service environment variables and redeploy
+   - **Fix**: Add `PORT=8001` to automem environment variables and redeploy
 
 2. **IPv6 binding issue** (fixed in latest code):
 
@@ -607,16 +609,16 @@ Error: connect ECONNREFUSED fd12:ca03:42be:0:1000:50:1079:5b6c:8001
    - Check startup logs should show: `* Running on http://[::1]:8001`
 
 3. **Wrong internal hostname**:
-   - Verify `AUTOMEM_API_URL` in SSE service matches memory-service's `RAILWAY_PRIVATE_DOMAIN`
-   - Should be: `http://memory-service.railway.internal:8001`
+   - Verify `AUTOMEM_API_URL` in SSE service matches automem's `RAILWAY_PRIVATE_DOMAIN`
+   - Should be: `http://automem.railway.internal:8001`
 
 ### Qdrant "Connection Refused" on Internal Networking
 
-**Problem**: memory-service can't connect to self-hosted Qdrant via internal networking. Health endpoint shows `qdrant: "disconnected"`, logs show `Connection refused (errno 111)`.
+**Problem**: automem can't connect to self-hosted Qdrant via internal networking. Health endpoint shows `qdrant: "disconnected"`, logs show `Connection refused (errno 111)`.
 
 **Root cause**: Railway's internal networking uses **IPv6**, but Qdrant's Docker image binds to `0.0.0.0` (IPv4 only) by default. The internal hostname resolves to an IPv6 address, but Qdrant isn't listening on IPv6 — the kernel refuses the connection before it ever reaches the Qdrant process. This is why Qdrant logs show zero incoming connection attempts even though DNS resolves correctly.
 
-**Fix**: Set this environment variable on the **Qdrant service** (not memory-service):
+**Fix**: Set this environment variable on the **Qdrant service** (not automem):
 
 ```bash
 QDRANT__SERVICE__HOST=::
@@ -624,7 +626,7 @@ QDRANT__SERVICE__HOST=::
 
 `::` is the IPv6 equivalent of `0.0.0.0` — it enables dual-stack binding (IPv6 + IPv4). Redeploy Qdrant after setting this.
 
-**Also verify** on memory-service:
+**Also verify** on automem:
 - `QDRANT_HOST=qdrant` (Railway resolves short service names internally)
 - Or `QDRANT_URL=http://qdrant:6333` (explicit URL form)
 - Do NOT use `https://` for internal connections
@@ -681,7 +683,7 @@ REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru
 4. **Rotate API tokens** periodically via Railway dashboard
 5. **Enable Railway's Audit Logs** (Enterprise plan)
 
-**Note on Service Naming**: Railway's internal DNS is based on the service name (e.g., `memory-service.railway.internal`). If you rename a service, its `RAILWAY_PRIVATE_DOMAIN` updates automatically, but you'll need to update any hardcoded hostnames in other services' environment variables.
+**Note on Service Naming**: Railway's internal DNS is based on the service name (e.g., `automem.railway.internal`). If you rename a service, its `RAILWAY_PRIVATE_DOMAIN` updates automatically, but you'll need to update any hardcoded hostnames in other services' environment variables.
 
 ---
 
