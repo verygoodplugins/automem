@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import tests.benchmarks.longmemeval.test_longmemeval as harness
@@ -191,3 +192,148 @@ def test_judge_failure_records_error_after_retries(monkeypatch) -> None:
     assert result["is_correct"] is False
     assert result["judge_attempts"] == 3
     assert "RuntimeError: judge unavailable" in result["judge_error"]
+
+
+def _sample_item(question_id: str = "q1") -> dict:
+    return {
+        "question_id": question_id,
+        "question_type": "multi-session",
+        "question": "Where did I go?",
+        "answer": "Paris",
+        "question_date": "2023/05/30 (Tue) 20:42",
+        "answer_session_ids": ["s1"],
+        "haystack_sessions": [[{"role": "user", "content": "I went to Paris."}]],
+        "haystack_session_ids": ["s1"],
+        "haystack_dates": ["2023/05/30 (Tue) 20:42"],
+    }
+
+
+def _result(question_id: str, *, judge_error=None, is_correct=True) -> dict:
+    return {
+        "question_id": question_id,
+        "question_type": "multi-session",
+        "question": "Where did I go?",
+        "reference": "Paris",
+        "hypothesis": "Paris" if is_correct else "Lyon",
+        "is_correct": is_correct,
+        "confidence": 1.0 if is_correct else 0.0,
+        "explanation": "test result",
+        "recalled_count": 1,
+        "memories_stored": 1,
+        "is_abstention": False,
+        "question_date": "2023/05/30 (Tue) 20:42",
+        "answer_session_ids": ["s1"],
+        "retrieved_session_ids": ["s1"],
+        "recall_hit_at_5": True,
+        "judge_attempts": 1,
+        "judge_error": judge_error,
+    }
+
+
+def _benchmark(monkeypatch, tmp_path):
+    monkeypatch.setattr(harness, "create_backend", lambda *args, **kwargs: _DummyBackend())
+    config = harness.get_config(
+        "baseline",
+        results_dir=str(tmp_path),
+        data_file=str(tmp_path / "unused.json"),
+    )
+    return harness.LongMemEvalBenchmark(config)
+
+
+def test_resume_loads_completed_partial_rows_and_skips_completed_question(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    benchmark = _benchmark(monkeypatch, tmp_path)
+    output_base = str(tmp_path / "resume-run")
+    partial_path = benchmark.artifact_paths(output_base)["partial"]
+    completed = _result("q1")
+    with open(partial_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(completed) + "\n")
+
+    monkeypatch.setattr(benchmark, "load_dataset", lambda: [_sample_item("q1"), _sample_item("q2")])
+    monkeypatch.setattr(benchmark, "ingest_sessions", lambda item: 1)
+    monkeypatch.setattr(
+        benchmark,
+        "evaluate_question",
+        lambda item, stored: _result(item["question_id"]),
+    )
+    cleaned = []
+    monkeypatch.setattr(
+        benchmark,
+        "cleanup_test_data",
+        lambda question_id=None: cleaned.append(question_id),
+    )
+
+    scores = benchmark.run_benchmark(output_path=output_base, resume=True)
+
+    assert [row["question_id"] for row in scores["details"]] == ["q1", "q2"]
+    assert cleaned == ["q2"]
+    assert scores["overall"]["total"] == 2
+    assert len(open(partial_path, encoding="utf-8").read().splitlines()) == 2
+
+
+def test_load_partial_results_ignores_malformed_trailing_jsonl_line(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    benchmark = _benchmark(monkeypatch, tmp_path)
+    output_base = str(tmp_path / "partial-run")
+    partial_path = benchmark.artifact_paths(output_base)["partial"]
+    with open(partial_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(_result("q1")) + "\n")
+        f.write("{not-json")
+
+    results = benchmark._load_partial_results(output_base)
+
+    assert [row["question_id"] for row in results] == ["q1"]
+
+
+def test_status_json_records_progress_and_artifact_metadata(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    benchmark = _benchmark(monkeypatch, tmp_path)
+    output_base = str(tmp_path / "status-run")
+    monkeypatch.setattr(benchmark, "load_dataset", lambda: [_sample_item("q1")])
+    monkeypatch.setattr(benchmark, "ingest_sessions", lambda item: 1)
+    monkeypatch.setattr(
+        benchmark,
+        "evaluate_question",
+        lambda item, stored: _result(item["question_id"]),
+    )
+    monkeypatch.setattr(benchmark, "cleanup_test_data", lambda question_id=None: None)
+
+    benchmark.run_benchmark(output_path=output_base)
+    status_path = benchmark.artifact_paths(output_base)["status"]
+
+    with open(status_path, encoding="utf-8") as f:
+        status = json.load(f)
+
+    assert status["status"] == "completed"
+    assert status["completed"] == 1
+    assert status["remaining"] == 0
+    assert status["artifacts"]["partial"].endswith(".partial.jsonl")
+    assert status["config"]["answerer_model"] == "gpt-5-mini"
+
+
+def test_publishable_false_when_any_judge_errors_are_recorded(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    benchmark = _benchmark(monkeypatch, tmp_path)
+    output_base = str(tmp_path / "judge-error-run")
+    monkeypatch.setattr(benchmark, "load_dataset", lambda: [_sample_item("q1")])
+    monkeypatch.setattr(benchmark, "ingest_sessions", lambda item: 1)
+    monkeypatch.setattr(
+        benchmark,
+        "evaluate_question",
+        lambda item, stored: _result(item["question_id"], judge_error="timeout", is_correct=False),
+    )
+    monkeypatch.setattr(benchmark, "cleanup_test_data", lambda question_id=None: None)
+
+    scores = benchmark.run_benchmark(output_path=output_base)
+
+    assert scores["judge_errors"] == 1
+    assert scores["publishable"] is False
+    assert scores["publishable_reason"] == "judge_errors_present"
