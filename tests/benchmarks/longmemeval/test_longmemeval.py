@@ -862,9 +862,7 @@ Answer:"""
                 if qid:
                     seen[qid] = result
                 else:
-                    print(
-                        f"WARNING: resumed result missing question_id; skipping: {result!r:.200}"
-                    )
+                    print(f"WARNING: resumed result missing question_id; skipping: {result!r:.200}")
             resumed_results = list(seen.values())
             for result in resumed_results:
                 completed_ids.add(result["question_id"])
