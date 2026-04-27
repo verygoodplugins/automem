@@ -839,6 +839,14 @@ Answer:"""
             print(f"{self.backend.name} backend is not accessible. Aborting benchmark.")
             return {"overall": {"accuracy": 0.0, "correct": 0, "total": 0}}
 
+        # Fail fast if LLM eval is requested but no OpenAI client is available.
+        if self.config.use_llm_eval and not self.openai_client:
+            raise RuntimeError(
+                "--llm-eval requires OPENAI_API_KEY to be set, but no OpenAI client is "
+                "configured. Set OPENAI_API_KEY and retry, or omit --llm-eval to use "
+                "quick_score instead."
+            )
+
         # Load dataset
         full_dataset = self.load_dataset()
         dataset, selection_metadata = self.select_dataset(full_dataset)
@@ -846,12 +854,20 @@ Answer:"""
         resumed_results: List[Dict[str, Any]] = []
         completed_ids = set()
         if resume:
-            resumed_results = self._load_partial_results(output_base)
+            raw_results = self._load_partial_results(output_base)
+            # De-duplicate by question_id (last occurrence wins, preserving order).
+            seen: Dict[str, Dict[str, Any]] = {}
+            for result in raw_results:
+                qid = result.get("question_id")
+                if qid:
+                    seen[qid] = result
+                else:
+                    print(
+                        f"WARNING: resumed result missing question_id; skipping: {result!r:.200}"
+                    )
+            resumed_results = list(seen.values())
             for result in resumed_results:
-                question_id = result.get("question_id")
-                if not question_id or question_id in completed_ids:
-                    continue
-                completed_ids.add(question_id)
+                completed_ids.add(result["question_id"])
                 self.scorer.add_result(result)
 
         print("\nRunning LongMemEval benchmark:")
