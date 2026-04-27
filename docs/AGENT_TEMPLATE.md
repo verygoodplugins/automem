@@ -16,11 +16,12 @@ Reusable playbook for long-running coding sessions with GitHub PRs and CodeRabit
 1) Read context (recent commits, open PRs, failing checks) and make a short plan.
 2) Implement minimal scoped changes; add/adjust tests.
 3) Run targeted tests first (`<targeted test cmd>`), then format/lint (`<fmt/lint cmd>`).
-4) Commit with Conventional Commits; keep diffs tight. Push and open a draft PR early for CI.
+4) Commit and title PRs with Conventional Commits; the PR title becomes the squash-merge release commit title. Push and open a draft PR early for CI.
 5) While CI runs, pick up the next queued item or address feedback.
 
 ## PR & CodeRabit Reviews
 - PR body must include: Goal; Scope; Tests (commands + results); Risks/Rollback; Follow-ups; Screenshots if UI.
+- Do not prefix PR titles with `[codex]`, `[claude]`, `[copilot]`, `[wip]`, or similar labels; put agent/status context in the PR body.
 - Rebase/merge main regularly (e.g., every 60–90 minutes or after each issue).
 - Request CodeRabit review when ready; re-request after changes; summarize deltas in PR comments to speed review.
 

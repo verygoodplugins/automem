@@ -81,7 +81,9 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 
 ## Commit & Pull Requests
 
-- Use Conventional Commits style: `feat`, `fix`, `docs`, `refactor`, `test`, `chore` (e.g., `feat(api): add /analyze endpoint`).
+- PR titles must use Conventional Commit format because squash merges use the PR title as the release commit title. Do not prefix titles with `[codex]`, `[claude]`, `[copilot]`, `[wip]`, or similar labels; put agent/status context in the PR body.
+- Use Conventional Commit types: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `build`, `chore`, `perf`, `revert` (e.g., `feat(api): add /analyze endpoint`).
+- For public API changes, use `feat(api): ...` unless the change is strictly a bug fix with no new public surface. For docs-only changes, use `docs: ...`; for release automation, use `ci(release): ...` or `chore(release): ...`.
 - PRs must include: clear description and scope, linked issues, test plan/output, and notes on API or config changes. Update relevant docs under `docs/`.
 - CI must pass; formatting/lint clean.
 
