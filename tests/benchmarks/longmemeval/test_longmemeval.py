@@ -33,7 +33,7 @@ import os
 import re
 import sys
 import time
-from collections import defaultdict
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
@@ -57,6 +57,7 @@ from tests.benchmarks.backends import MemoryRecord, SearchRequest, create_backen
 from tests.benchmarks.judge_policy import (
     CANONICAL_BENCHMARK_JUDGE_MODEL,
     DEFAULT_JUDGE_PROVIDER,
+    is_gpt5_family,
     judge_metadata,
 )
 from tests.benchmarks.longmemeval.configs import LongMemEvalConfig, get_config
@@ -71,7 +72,7 @@ from tests.benchmarks.longmemeval.evaluator import (
 logger = logging.getLogger(__name__)
 
 
-class LongMemEvalResult(TypedDict):
+class LongMemEvalResult(TypedDict, total=False):
     question_id: str
     question_type: str
     question: str
@@ -87,10 +88,19 @@ class LongMemEvalResult(TypedDict):
     answer_session_ids: List[str]
     retrieved_session_ids: List[str]
     recall_hit_at_5: bool
+    judge_attempts: int
+    judge_error: Optional[str]
+    error: Optional[str]
+    error_type: Optional[str]
 
 
 class LongMemEvalBenchmark:
     """Evaluates AutoMem against the LongMemEval benchmark."""
+
+    JUDGE_MAX_ATTEMPTS = 3
+    JUDGE_RETRY_BASE_SECONDS = 0.5
+    GPT5_ANSWER_MAX_COMPLETION_TOKENS = (2000, 4000)
+    LEGACY_ANSWER_MAX_TOKENS = 500
 
     def __init__(self, config: LongMemEvalConfig) -> None:
         self.config = config
@@ -107,6 +117,7 @@ class LongMemEvalBenchmark:
         self.openai_client = None
         if OpenAI and os.getenv("OPENAI_API_KEY"):
             self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self._last_output_base: Optional[str] = None
 
     def effective_judge_model(self) -> Optional[str]:
         if not self.config.use_llm_eval:
@@ -143,6 +154,52 @@ class LongMemEvalBenchmark:
         print(f"Loaded {len(data)} questions from {Path(data_file).name}")
         return data
 
+    @staticmethod
+    def question_type_distribution(dataset: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Return a stable question-type distribution for result metadata."""
+        return dict(
+            sorted(Counter(item.get("question_type", "unknown") for item in dataset).items())
+        )
+
+    def select_dataset(
+        self, dataset: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Apply configured question selection and return metadata about the slice."""
+        full_distribution = self.question_type_distribution(dataset)
+
+        if self.config.per_type > 0:
+            selected: List[Dict[str, Any]] = []
+            selected_counts: Counter[str] = Counter()
+            for item in dataset:
+                question_type = item.get("question_type", "unknown")
+                if selected_counts[question_type] >= self.config.per_type:
+                    continue
+                selected.append(item)
+                selected_counts[question_type] += 1
+            strategy = "stratified_per_type"
+            strategy_params: Dict[str, Any] = {"per_type": self.config.per_type}
+        elif self.config.max_questions > 0:
+            selected = dataset[: self.config.max_questions]
+            strategy = "prefix"
+            strategy_params = {
+                "max_questions": self.config.max_questions,
+                "debug_prefix": True,
+            }
+        else:
+            selected = list(dataset)
+            strategy = "all"
+            strategy_params = {}
+
+        selected_distribution = self.question_type_distribution(selected)
+        return selected, {
+            "strategy": strategy,
+            **strategy_params,
+            "full_total": len(dataset),
+            "selected_total": len(selected),
+            "full_type_distribution": full_distribution,
+            "selected_type_distribution": selected_distribution,
+        }
+
     def cleanup_test_data(self, question_id: Optional[str] = None) -> None:
         """Remove test memories from AutoMem."""
         if self.config.backend == "automem" and question_id:
@@ -160,6 +217,103 @@ class LongMemEvalBenchmark:
 
         if total_deleted > 0:
             print(f"  Cleaned up {total_deleted} memories")
+
+    def resolve_output_base(self, output_path: Optional[str] = None) -> str:
+        """Resolve the output base used for final, partial, and status artifacts."""
+        if output_path is None:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(
+                self.config.results_dir,
+                f"{self.config.name}_{timestamp}",
+            )
+
+        for suffix in (".partial.jsonl", ".status.json", ".jsonl", ".json"):
+            if output_path.endswith(suffix):
+                output_path = output_path[: -len(suffix)]
+                break
+        self._last_output_base = output_path
+        return output_path
+
+    @staticmethod
+    def artifact_paths(output_base: str) -> Dict[str, str]:
+        return {
+            "json": f"{output_base}.json",
+            "jsonl": f"{output_base}.jsonl",
+            "partial": f"{output_base}.partial.jsonl",
+            "status": f"{output_base}.status.json",
+        }
+
+    def _append_partial_result(self, output_base: str, result: Dict[str, Any]) -> None:
+        paths = self.artifact_paths(output_base)
+        os.makedirs(os.path.dirname(paths["partial"]) or ".", exist_ok=True)
+        with open(paths["partial"], "a", encoding="utf-8") as f:
+            f.write(json.dumps(result, ensure_ascii=False) + "\n")
+            f.flush()
+
+    def _write_status(
+        self,
+        output_base: str,
+        *,
+        started_at: str,
+        selection: Dict[str, Any],
+        completed: int,
+        total: int,
+        skipped: int,
+        elapsed_time: float,
+        status: str,
+        judge_errors: int,
+    ) -> None:
+        paths = self.artifact_paths(output_base)
+        os.makedirs(os.path.dirname(paths["status"]) or ".", exist_ok=True)
+        payload = {
+            "status": status,
+            "started_at": started_at,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "elapsed_time": elapsed_time,
+            "output_base": output_base,
+            "artifacts": paths,
+            "completed": completed,
+            "total": total,
+            "skipped": skipped,
+            "remaining": max(total - completed, 0),
+            "memory_ingest_failures": self.memory_ingest_failures,
+            "judge_errors": judge_errors,
+            "selection": selection,
+            "config": {
+                "backend": self.config.backend,
+                "name": self.config.name,
+                "answerer_model": self.config.llm_model,
+                "llm_model": self.config.llm_model,
+                "use_llm_eval": self.config.use_llm_eval,
+                "judge_model": self.effective_judge_model(),
+            },
+        }
+        with open(paths["status"], "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    def _load_partial_results(self, output_base: str) -> List[Dict[str, Any]]:
+        paths = self.artifact_paths(output_base)
+        partial_path = paths["partial"]
+        if not os.path.exists(partial_path):
+            return []
+
+        with open(partial_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        results: List[Dict[str, Any]] = []
+        for index, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError:
+                if index == len(lines) - 1:
+                    print(f"Warning: ignoring malformed trailing line in {partial_path}")
+                    break
+                raise
+            if result.get("question_id"):
+                results.append(result)
+        return results
 
     def _parse_session_date(self, date_str: str) -> Optional[str]:
         """Parse LongMemEval date format to ISO format.
@@ -435,13 +589,34 @@ Question: {question}
 Answer:"""
 
         try:
-            response = self.openai_client.chat.completions.create(
-                model=self.config.llm_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=500,
-            )
-            full_answer = response.choices[0].message.content.strip()
+            if is_gpt5_family(self.config.llm_model):
+                token_budgets = self.GPT5_ANSWER_MAX_COMPLETION_TOKENS
+            else:
+                token_budgets = (self.LEGACY_ANSWER_MAX_TOKENS,)
+
+            full_answer = ""
+            for token_budget in token_budgets:
+                request_kwargs: Dict[str, Any] = {
+                    "model": self.config.llm_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+                if is_gpt5_family(self.config.llm_model):
+                    request_kwargs["max_completion_tokens"] = token_budget
+                else:
+                    request_kwargs["temperature"] = 0
+                    request_kwargs["max_tokens"] = token_budget
+
+                response = self.openai_client.chat.completions.create(**request_kwargs)
+                full_answer = response.choices[0].message.content.strip()
+                if full_answer:
+                    break
+                logger.warning(
+                    "LLM answer generation returned empty content for %s at token budget %s",
+                    self.config.llm_model,
+                    token_budget,
+                )
+            if not full_answer:
+                raise ValueError("LLM answer generation returned empty content")
 
             # Extract final answer from chain-of-note format
             if self.config.use_chain_of_note:
@@ -477,6 +652,53 @@ Answer:"""
                 return memories[0].get("content", "I don't know.")
             return "I don't know."
 
+    def _llm_evaluate_with_retries(
+        self,
+        *,
+        question: str,
+        hypothesis: str,
+        reference: str,
+        question_id: str,
+        model: str,
+    ) -> Dict[str, Any]:
+        """Run the judge with retries and return a non-crashing error result on failure."""
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.JUDGE_MAX_ATTEMPTS + 1):
+            try:
+                result = llm_evaluate(
+                    question=question,
+                    hypothesis=hypothesis,
+                    reference=reference,
+                    question_id=question_id,
+                    model=model,
+                    client=self.openai_client,
+                    fallback_on_error=False,
+                )
+                result["judge_attempts"] = attempt
+                result["judge_error"] = None
+                return result
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.JUDGE_MAX_ATTEMPTS:
+                    sleep_seconds = self.JUDGE_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Judge attempt %s/%s failed for %s: %s",
+                        attempt,
+                        self.JUDGE_MAX_ATTEMPTS,
+                        question_id,
+                        exc,
+                    )
+                    time.sleep(sleep_seconds)
+
+        error = f"{type(last_error).__name__}: {last_error}" if last_error else "unknown error"
+        return {
+            "is_correct": False,
+            "confidence": 0.0,
+            "explanation": f"Judge failed after {self.JUDGE_MAX_ATTEMPTS} attempts: {error}",
+            "judge_attempts": self.JUDGE_MAX_ATTEMPTS,
+            "judge_error": error,
+        }
+
     def evaluate_question(self, item: Dict[str, Any], memories_stored: int) -> LongMemEvalResult:
         """
         Evaluate a single question: recall, generate answer, score.
@@ -501,19 +723,31 @@ Answer:"""
         hypothesis = self.generate_answer(question, memories, question_date)
 
         # Score
-        if self.config.use_llm_eval and self.openai_client:
+        judge_attempts = 0
+        judge_error = None
+        if self.config.use_llm_eval:
             eval_model = self.effective_judge_model()
-            eval_result = llm_evaluate(
-                question=question,
-                hypothesis=hypothesis,
-                reference=reference,
-                question_id=question_id,
-                model=eval_model,
-                client=self.openai_client,
-            )
+            if self.openai_client and eval_model:
+                eval_result = self._llm_evaluate_with_retries(
+                    question=question,
+                    hypothesis=hypothesis,
+                    reference=reference,
+                    question_id=question_id,
+                    model=eval_model,
+                )
+            else:
+                eval_result = {
+                    "is_correct": False,
+                    "confidence": 0.0,
+                    "explanation": "LLM eval unavailable: OPENAI_API_KEY required",
+                    "judge_attempts": 0,
+                    "judge_error": "OPENAI_API_KEY required",
+                }
             is_correct = eval_result["is_correct"]
             confidence = eval_result["confidence"]
             explanation = eval_result["explanation"]
+            judge_attempts = int(eval_result.get("judge_attempts") or 0)
+            judge_error = eval_result.get("judge_error")
         else:
             qs = quick_score(hypothesis, reference, question_id)
             is_correct = qs["is_correct"]
@@ -538,11 +772,46 @@ Answer:"""
             "answer_session_ids": answer_session_ids,
             "retrieved_session_ids": retrieved_session_ids,
             "recall_hit_at_5": recall_hit_at_5,
+            "judge_attempts": judge_attempts,
+            "judge_error": judge_error,
         }
 
         return result
 
-    def run_benchmark(self, cleanup_after: bool = True) -> Dict[str, Any]:
+    def _build_error_result(
+        self, item: Dict[str, Any], memories_stored: int, exc: Exception
+    ) -> LongMemEvalResult:
+        """Build a persisted result for unexpected per-question failures."""
+        question_id = item.get("question_id", "unknown")
+        error = f"{type(exc).__name__}: {exc}"
+        return {
+            "question_id": question_id,
+            "question_type": item.get("question_type", "unknown"),
+            "question": item.get("question", ""),
+            "reference": item.get("answer", ""),
+            "hypothesis": "",
+            "is_correct": False,
+            "confidence": 0.0,
+            "explanation": f"Benchmark question failed: {error}",
+            "recalled_count": 0,
+            "memories_stored": memories_stored,
+            "is_abstention": is_abstention_question(question_id),
+            "question_date": item.get("question_date", ""),
+            "answer_session_ids": list(item.get("answer_session_ids") or []),
+            "retrieved_session_ids": [],
+            "recall_hit_at_5": False,
+            "judge_attempts": 0,
+            "judge_error": None,
+            "error": error,
+            "error_type": type(exc).__name__,
+        }
+
+    def run_benchmark(
+        self,
+        cleanup_after: bool = True,
+        output_path: Optional[str] = None,
+        resume: bool = False,
+    ) -> Dict[str, Any]:
         """
         Run the full LongMemEval benchmark.
 
@@ -556,6 +825,14 @@ Answer:"""
         Returns comprehensive results dict.
         """
         self.memory_ingest_failures = 0
+        self.scorer = LongMemEvalScorer()
+        output_base = self.resolve_output_base(output_path)
+        paths = self.artifact_paths(output_base)
+        os.makedirs(os.path.dirname(paths["partial"]) or ".", exist_ok=True)
+
+        if not resume:
+            with open(paths["partial"], "w", encoding="utf-8"):
+                pass
 
         # Health check
         if not self.health_check():
@@ -563,50 +840,85 @@ Answer:"""
             return {"overall": {"accuracy": 0.0, "correct": 0, "total": 0}}
 
         # Load dataset
-        dataset = self.load_dataset()
+        full_dataset = self.load_dataset()
+        dataset, selection_metadata = self.select_dataset(full_dataset)
 
-        # Apply question limit
-        if self.config.max_questions > 0:
-            dataset = dataset[: self.config.max_questions]
+        resumed_results: List[Dict[str, Any]] = []
+        completed_ids = set()
+        if resume:
+            resumed_results = self._load_partial_results(output_base)
+            for result in resumed_results:
+                question_id = result.get("question_id")
+                if not question_id or question_id in completed_ids:
+                    continue
+                completed_ids.add(question_id)
+                self.scorer.add_result(result)
 
         print("\nRunning LongMemEval benchmark:")
         print(f"  Backend: {self.backend.name}")
         print(f"  Config: {self.config.name}")
         print(f"  Questions: {len(dataset)}")
+        print(f"  Selection: {selection_metadata['strategy']}")
+        if self.config.per_type > 0:
+            print(f"  Per type: {self.config.per_type}")
         print(f"  Storage: {self.config.storage_strategy}")
         print(f"  Recall limit: {self.config.recall_limit}")
         print(f"  Expand entities: {self.config.expand_entities}")
         print(f"  Expand relations: {self.config.expand_relations}")
         print(f"  Temporal hints: {self.config.use_temporal_hints}")
-        print(f"  LLM model: {self.config.llm_model}")
+        print(f"  Answerer model: {self.config.llm_model}")
         print(f"  LLM eval: {self.config.use_llm_eval}")
         if self.config.use_llm_eval:
             print(f"  Judge model: {self.effective_judge_model()}")
         has_llm = self.openai_client is not None
         print(f"  OpenAI available: {has_llm}")
+        print(f"  Output base: {output_base}")
+        if resume:
+            print(f"  Resumed completed questions: {len(completed_ids)}")
         print()
 
         start_time = time.time()
-        all_results = []
+        started_at = datetime.now(timezone.utc).isoformat()
+        all_results = resumed_results[:]
+        skipped = 0
 
         for idx, item in enumerate(dataset):
             question_id = item["question_id"]
             question_type = item["question_type"]
             num_sessions = len(item.get("haystack_sessions", []))
 
+            if question_id in completed_ids:
+                skipped += 1
+                print(f"[{idx + 1}/{len(dataset)}] SKIP completed {question_id}")
+                continue
+
             print(f"[{idx + 1}/{len(dataset)}] {question_type}: " f"{item['question'][:60]}...")
 
-            # 1. Ingest sessions
-            stored = self.ingest_sessions(item)
-            print(f"  Ingested {stored} memories from {num_sessions} sessions")
+            stored = 0
+            try:
+                # 1. Ingest sessions
+                stored = self.ingest_sessions(item)
+                print(f"  Ingested {stored} memories from {num_sessions} sessions")
 
-            # 2. Evaluate (recall + generate + score)
-            result = self.evaluate_question(item, stored)
+                # 2. Evaluate (recall + generate + score)
+                result = self.evaluate_question(item, stored)
+            except Exception as exc:
+                logger.exception("Question failed for %s: %s", question_id, exc)
+                result = self._build_error_result(item, stored, exc)
+            finally:
+                # 3. Clean up this question's data even when recall/generation/judge fails
+                if cleanup_after:
+                    self.cleanup_test_data(question_id)
+
             all_results.append(result)
             self.scorer.add_result(result)
+            completed_ids.add(question_id)
+            self._append_partial_result(output_base, result)
 
             status = "CORRECT" if result["is_correct"] else "WRONG"
             print(f"  {status} | recalled={result['recalled_count']} | " f"{result['explanation']}")
+            if result.get("judge_error"):
+                print(f"    Judge error: {result['judge_error']}")
             if not result["is_correct"]:
                 expected = result.get("reference")
                 hypothesis = result.get("hypothesis")
@@ -615,9 +927,18 @@ Answer:"""
                 print(f"    Expected: {expected_preview}")
                 print(f"    Got:      {hypothesis_preview}")
 
-            # 3. Clean up this question's data
-            if cleanup_after:
-                self.cleanup_test_data(question_id)
+            elapsed_so_far = time.time() - start_time
+            self._write_status(
+                output_base,
+                started_at=started_at,
+                selection=selection_metadata,
+                completed=len(completed_ids),
+                total=len(dataset),
+                skipped=skipped,
+                elapsed_time=elapsed_so_far,
+                status="running",
+                judge_errors=sum(1 for row in all_results if row.get("judge_error")),
+            )
 
         elapsed_time = time.time() - start_time
 
@@ -625,6 +946,7 @@ Answer:"""
         scores = self.scorer.print_report(config_name=self.config.name, elapsed_time=elapsed_time)
         scores["backend"] = self.backend.name
         scores["elapsed_time"] = elapsed_time
+        scores["selection"] = selection_metadata
         effective_judge_model = self.effective_judge_model()
         scores["config"] = {
             "backend": self.config.backend,
@@ -635,13 +957,32 @@ Answer:"""
             "expand_relations": self.config.expand_relations,
             "auto_decompose": self.config.auto_decompose,
             "use_temporal_hints": self.config.use_temporal_hints,
+            "answerer_model": self.config.llm_model,
             "llm_model": self.config.llm_model,
             "eval_llm_model": self.config.eval_llm_model,
             "use_llm_eval": self.config.use_llm_eval,
+            "max_questions": self.config.max_questions,
+            "per_type": self.config.per_type,
             **judge_metadata(effective_judge_model, provider=DEFAULT_JUDGE_PROVIDER),
         }
+        judge_errors = sum(1 for row in all_results if row.get("judge_error"))
         scores["memory_ingest_failures"] = self.memory_ingest_failures
+        scores["judge_errors"] = judge_errors
+        scores["publishable"] = judge_errors == 0
+        scores["publishable_reason"] = None if judge_errors == 0 else "judge_errors_present"
+        scores["artifacts"] = paths
         scores["details"] = all_results
+        self._write_status(
+            output_base,
+            started_at=started_at,
+            selection=selection_metadata,
+            completed=len(completed_ids),
+            total=len(dataset),
+            skipped=skipped,
+            elapsed_time=elapsed_time,
+            status="completed",
+            judge_errors=judge_errors,
+        )
 
         return scores
 
@@ -649,30 +990,28 @@ Answer:"""
         self, scores: Dict[str, Any], output_path: Optional[str] = None
     ) -> Tuple[str, str]:
         """Save benchmark results to JSONL and JSON files."""
-        if output_path is None:
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            output_path = os.path.join(
-                self.config.results_dir,
-                f"{self.config.name}_{timestamp}",
-            )
+        if output_path is None and self._last_output_base:
+            output_path = self._last_output_base
+        output_path = self.resolve_output_base(output_path)
+        paths = self.artifact_paths(output_path)
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
         # Save full results as JSON
-        json_path = f"{output_path}.json"
-        with open(json_path, "w") as f:
+        json_path = paths["json"]
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(scores, f, indent=2)
         print(f"\nResults saved to: {json_path}")
 
         # Save hypotheses as JSONL (for LongMemEval's evaluator)
-        jsonl_path = f"{output_path}.jsonl"
-        with open(jsonl_path, "w") as f:
+        jsonl_path = paths["jsonl"]
+        with open(jsonl_path, "w", encoding="utf-8") as f:
             for detail in scores.get("details", []):
                 line = {
                     "question_id": detail["question_id"],
                     "hypothesis": detail["hypothesis"],
                 }
-                f.write(json.dumps(line) + "\n")
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
         print(f"Hypotheses saved to: {jsonl_path}")
 
         return json_path, jsonl_path
@@ -732,12 +1071,12 @@ def main() -> int:
     parser.add_argument(
         "--llm-model",
         default=None,
-        help="LLM model for answer generation (default: gpt-4o)",
+        help="LLM model for answer generation (default: gpt-5-mini)",
     )
     parser.add_argument(
         "--eval-llm-model",
         default=None,
-        help="LLM model for evaluation (default: same as --llm-model)",
+        help=f"LLM model for evaluation (default: {CANONICAL_BENCHMARK_JUDGE_MODEL})",
     )
     parser.add_argument(
         "--llm-eval",
@@ -753,15 +1092,30 @@ def main() -> int:
         "--max-questions",
         type=int,
         default=0,
-        help="Limit number of questions (0 = all, useful for debugging)",
+        help="Prefix-limit questions (0 = all; debug smoke only, biased by dataset order)",
+    )
+    parser.add_argument(
+        "--per-type",
+        type=int,
+        default=0,
+        help="Select up to N questions per LongMemEval question_type",
     )
     parser.add_argument(
         "--output",
         default=None,
         help="Output file path (without extension)",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from <output>.partial.jsonl; requires --output",
+    )
 
     args = parser.parse_args()
+    if args.max_questions > 0 and args.per_type > 0:
+        parser.error("--max-questions and --per-type are mutually exclusive")
+    if args.resume and not args.output:
+        parser.error("--resume requires --output so the partial artifact is explicit")
 
     # Build config from preset + overrides
     overrides = {
@@ -782,15 +1136,22 @@ def main() -> int:
         overrides["use_llm_eval"] = True
     if args.max_questions > 0:
         overrides["max_questions"] = args.max_questions
+    if args.per_type > 0:
+        overrides["per_type"] = args.per_type
 
     config = get_config(args.config, **overrides)
 
     # Run benchmark
     benchmark = LongMemEvalBenchmark(config)
-    scores = benchmark.run_benchmark(cleanup_after=not args.no_cleanup)
+    output_base = benchmark.resolve_output_base(args.output)
+    scores = benchmark.run_benchmark(
+        cleanup_after=not args.no_cleanup,
+        output_path=output_base,
+        resume=args.resume,
+    )
 
     # Save results
-    benchmark.save_results(scores, args.output)
+    benchmark.save_results(scores, output_base)
 
     # Return exit code
     return 0 if scores.get("overall", {}).get("total", 0) > 0 else 1

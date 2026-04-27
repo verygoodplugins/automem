@@ -24,7 +24,7 @@ help:
 	@echo ""
 	@echo "Benchmarks:"
 	@echo "  make bench-mini-locomo    - Mini LoCoMo (2 conversations, <5 min)"
-	@echo "  make bench-mini-longmemeval - Mini LongMemEval (20 questions)"
+	@echo "  make bench-mini-longmemeval - Mini LongMemEval (stratified 30 questions)"
 	@echo "  make bench-mini           - Both mini benchmarks"
 	@echo "  make bench-ingest BENCH=locomo - Ingest + snapshot (run once)"
 	@echo "  make bench-eval BENCH=locomo CONFIG=baseline - Eval from snapshot (~2 min)"
@@ -143,7 +143,7 @@ bench-mini-locomo:
 	@./test-locomo-benchmark.sh --conversations 0,1
 
 bench-mini-longmemeval:
-	@./test-longmemeval-benchmark.sh --max-questions 20
+	@./test-longmemeval-benchmark.sh --llm-eval --per-type 5 --llm-model gpt-5-mini
 
 bench-mini: bench-mini-locomo bench-mini-longmemeval
 

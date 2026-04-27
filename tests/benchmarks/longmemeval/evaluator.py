@@ -12,7 +12,7 @@ import re
 from collections import Counter
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
-from tests.benchmarks.judge_policy import is_gpt5_family
+from tests.benchmarks.judge_policy import CANONICAL_BENCHMARK_JUDGE_MODEL, is_gpt5_family
 
 try:
     from openai import OpenAI
@@ -151,8 +151,9 @@ def llm_evaluate(
     hypothesis: str,
     reference: str,
     question_id: str,
-    model: str = "gpt-4o",
+    model: str = CANONICAL_BENCHMARK_JUDGE_MODEL,
     client: Optional[Any] = None,
+    fallback_on_error: bool = True,
 ) -> Dict[str, Any]:
     """
     LLM-based evaluation matching the LongMemEval paper's judge style.
@@ -248,6 +249,8 @@ Respond with ONLY a JSON object:
         }
 
     except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
+        if not fallback_on_error:
+            raise
         # Fall back to quick scoring on LLM failure
         qs = quick_score(hypothesis, reference, question_id)
         return {

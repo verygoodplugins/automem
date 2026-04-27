@@ -323,11 +323,14 @@ Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
 
 ## LongMemEval Benchmark
 
-AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat the current published number as a provisional partial result, not a full benchmark claim.
+AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat prefix slices as smoke tests only; cite the canonical full run or the stratified representative mini for current results.
 
 ```bash
-# Current mini target: prefix slice smoke test, not the 50-question result below
+# Representative judged mini: stratified 5 questions per question type (30 total)
 make bench-mini-longmemeval
+
+# Prefix smoke only; biased by dataset order
+./test-longmemeval-benchmark.sh --max-questions 20
 
 # Full local run
 make test-longmemeval
@@ -336,13 +339,15 @@ make test-longmemeval
 make test-longmemeval-live
 ```
 
-Current provisional result:
+Current LongMemEval results:
 
 | Setup | Scope | Score | Retrieval | Notes |
 |------|-------|-------|-----------|-------|
-| `longmemeval` partial (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional partial run; recall_limit=10, no entity/relation expansion. Not reproduced by the current `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup. |
+| `longmemeval-mini` representative | 30 questions, stratified 5 per question type | **60.0% (18/30)** | recall@5 **96.67% (29/30)** | Canonical run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`. |
+| `longmemeval` full canonical | 500 questions | **86.20% (431/500)** | recall@5 **97.20% (486/500)** | Canonical run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`. |
+| `longmemeval` partial legacy prefix (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional prefix run with legacy `gpt-4o` answerer; recall_limit=10, no entity/relation expansion. Not reproduced by the current stratified `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup. |
 
-For future published LongMemEval results, use the pinned judge policy in [`docs/BENCHMARK_JUDGE_POLICY.md`](BENCHMARK_JUDGE_POLICY.md) so runs remain comparable over time. Result metadata should distinguish the answer model (`llm_model`, currently `gpt-4o`) from the judge model (`judge_model`, currently `gpt-5.4-mini-2026-03-17` when `--llm-eval` is enabled).
+For future published LongMemEval results, use the pinned judge policy in [`docs/BENCHMARK_JUDGE_POLICY.md`](BENCHMARK_JUDGE_POLICY.md) so runs remain comparable over time. The primary answerer is `gpt-5-mini`; `gpt-4o` is legacy continuity only and should be labeled as such. Result metadata distinguishes the answer model (`answerer_model` / `llm_model`) from the judge model (`judge_model`, currently `gpt-5.4-mini-2026-03-17` when `--llm-eval` is enabled).
 
 ## BEAM Benchmark
 

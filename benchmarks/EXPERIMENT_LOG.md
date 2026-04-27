@@ -12,7 +12,7 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | 0 | `make test` (unit) | 30s | free | Every change |
 | 1 | `locomo-mini` (2 convos, 304 Qs) | 2-3 min | free / ~$0.20 with judge | Rapid iteration |
 | 2 | `locomo` (10 convos, 1986 Qs) | 5-10 min | free / ~$1-3 with judge | Before merge |
-| 3 | `longmemeval-mini` (20 Qs) | 15 min | ~$1 | Scoring/entity changes |
+| 3 | `longmemeval-mini` (stratified 30 Qs) | 15 min | ~$1 | Scoring/entity changes |
 | 4 | `longmemeval` (500 Qs) | 1-2 hr | ~$10 | Milestones only |
 
 ## Results
@@ -74,7 +74,9 @@ claims belong in this repo once they become durable enough to cite.
 |------|-----------|-------|-------|-----------|-------|
 | 2026-04-22 | BEAM 100K V1 raw-dialogue shim | 20 conversations, 400 questions | **76.25% (305/400)**, avg 0.677 | top-k 200 | `gpt-5-mini` answerer/judge, zero errors. Diagnostic result only: BEAM 100K is easier than mem0's published 1M/10M settings, and the V1 shim stores raw dialogue rather than mem0-style extracted facts. |
 | 2026-04-22 | BEAM 100K V2 fact-extraction shim | 20 conversations, 400 questions | **73.75% (295/400)**, avg 0.653 | top-k 200 | -2.50pp vs V1 overall, within the estimated noise floor. Category signal was useful: abstention +15pp and knowledge_update +7.5pp; event_ordering -20pp and information_extraction -12.5pp. |
-| 2026-04-24 | LongMemEval partial (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional partial run; recall_limit=10, no entity/relation expansion. Not reproduced by the current `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup or to a full LongMemEval claim. |
+| 2026-04-24 | LongMemEval partial legacy prefix (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional prefix run with legacy `gpt-4o` answerer; recall_limit=10, no entity/relation expansion. Not reproduced by the current stratified `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup or to a full LongMemEval claim. |
+| 2026-04-25 | LongMemEval representative mini | 30 questions, stratified 5 per type | **60.0% (18/30)** | recall@5 **96.67% (29/30)** | Canonical run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`. Result artifact: `benchmarks/results/longmemeval_mini_stratified_gpt5mini_20260425_225854.json`. |
+| 2026-04-26 | LongMemEval full | 500 questions | **86.20% (431/500)** | recall@5 **97.20% (486/500)** | Canonical run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`. Result artifact: `benchmarks/results/longmemeval_full_gpt5mini_20260425_231308.json`. |
 
 ## How to add an entry
 

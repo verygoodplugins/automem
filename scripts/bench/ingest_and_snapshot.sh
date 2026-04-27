@@ -44,7 +44,7 @@ elif [[ "$BENCH_NAME" == "longmemeval-mini" ]]; then
     python3 tests/benchmarks/longmemeval/test_longmemeval.py \
         --base-url "$AUTOMEM_TEST_BASE_URL" \
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
-        --max-questions 20 --no-cleanup
+        --per-type 5 --no-cleanup
 else
     echo -e "${RED}Unknown benchmark: ${BENCH_NAME}${NC}"
     echo "Supported: locomo, locomo-mini, longmemeval-mini"

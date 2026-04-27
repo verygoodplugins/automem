@@ -72,3 +72,14 @@ def test_longmemeval_llm_eval_defaults_to_canonical_judge(monkeypatch) -> None:
     benchmark = module.LongMemEvalBenchmark(config)
 
     assert benchmark.effective_judge_model() == "gpt-5.4-mini-2026-03-17"
+
+
+def test_longmemeval_answerer_defaults_to_gpt5_mini(monkeypatch) -> None:
+    monkeypatch.delenv("LONGMEMEVAL_LLM_MODEL", raising=False)
+    monkeypatch.delitem(sys.modules, "tests.benchmarks.longmemeval.configs", raising=False)
+    module_path = (
+        Path(__file__).resolve().parent / "benchmarks" / "longmemeval" / "test_longmemeval.py"
+    )
+    module = _load_module("longmemeval_default_answerer", module_path)
+
+    assert module.get_config("baseline").llm_model == "gpt-5-mini"

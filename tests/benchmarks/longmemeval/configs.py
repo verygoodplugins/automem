@@ -40,7 +40,7 @@ class LongMemEvalConfig:
     importance: float = 0.5
 
     # Answer generation
-    llm_model: str = os.getenv("LONGMEMEVAL_LLM_MODEL", "gpt-4o")
+    llm_model: str = os.getenv("LONGMEMEVAL_LLM_MODEL", "gpt-5-mini")
     eval_llm_model: Optional[str] = os.getenv("LONGMEMEVAL_EVAL_LLM_MODEL")
     use_chain_of_note: bool = True
 
@@ -52,6 +52,7 @@ class LongMemEvalConfig:
     # Evaluation
     use_llm_eval: bool = False  # Use canonical OpenAI judge for evaluation (costs money)
     max_questions: int = 0  # 0 = all questions
+    per_type: int = 0  # 0 = no stratified selection; otherwise questions per type
 
     # Tag prefix for cleanup
     tag_prefix: str = "longmemeval"
