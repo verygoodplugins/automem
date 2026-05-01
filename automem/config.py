@@ -35,22 +35,19 @@ CONSOLIDATION_CREATIVE_INTERVAL_SECONDS = int(
     os.getenv("CONSOLIDATION_CREATIVE_INTERVAL_SECONDS", str(604800))
 )
 CONSOLIDATION_CLUSTER_INTERVAL_SECONDS = int(
-    os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(604800))
+    os.getenv("CONSOLIDATION_CLUSTER_INTERVAL_SECONDS", str(2592000))
 )
 CONSOLIDATION_FORGET_INTERVAL_SECONDS = int(
     os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(0))
 )
 
-# Clustering tuning (exposed for deployment-specific calibration). Defaults are
-# tuned for 1024d embeddings (Voyage-4 and OpenAI text-embedding-3-small via
-# Matryoshka truncation). Operators on different embedding geometries (e.g.
-# text-embedding-3-large at 3072d, FastEmbed bge at 768d) may need to retune.
+# Clustering tuning is deployment-specific and depends on embedding geometry,
+# corpus shape, and acceptable merge risk. Defaults preserve existing behavior;
+# operators can lower thresholds or min cluster size after measuring local data.
 CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD = float(
-    os.getenv("CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD", "0.65")
+    os.getenv("CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD", "0.75")
 )
-CONSOLIDATION_MIN_CLUSTER_SIZE = int(
-    os.getenv("CONSOLIDATION_MIN_CLUSTER_SIZE", "2")
-)
+CONSOLIDATION_MIN_CLUSTER_SIZE = int(os.getenv("CONSOLIDATION_MIN_CLUSTER_SIZE", "3"))
 _DECAY_THRESHOLD_RAW = os.getenv("CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD", "0.3").strip()
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD = (
     float(_DECAY_THRESHOLD_RAW) if _DECAY_THRESHOLD_RAW else None

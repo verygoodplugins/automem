@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import pytest
 
 import consolidation as consolidation_module
+from automem.consolidation.runtime_helpers import build_consolidator_from_config
 from consolidation import MemoryConsolidator
 from tests.support.fake_graph import FakeGraph  # noqa: F401 - used via dummy_graph fixture
 
@@ -108,6 +109,40 @@ def test_cluster_similar_memories_groups_items(dummy_graph) -> None:
     assert clusters
     assert clusters[0]["size"] == 3
     assert clusters[0]["dominant_type"] in {"Insight", "Pattern"}
+
+
+def test_build_consolidator_from_config_preserves_cluster_defaults(dummy_graph) -> None:
+    consolidator = build_consolidator_from_config(
+        dummy_graph,
+        None,
+        memory_consolidator_cls=MemoryConsolidator,
+        delete_threshold=0.05,
+        archive_threshold=0.2,
+        grace_period_days=90,
+        importance_protection_threshold=0.7,
+        protected_types={"Decision", "Insight"},
+    )
+
+    assert consolidator.similarity_threshold == 0.75
+    assert consolidator.min_cluster_size == 3
+
+
+def test_build_consolidator_from_config_applies_cluster_overrides(dummy_graph) -> None:
+    consolidator = build_consolidator_from_config(
+        dummy_graph,
+        None,
+        memory_consolidator_cls=MemoryConsolidator,
+        delete_threshold=0.05,
+        archive_threshold=0.2,
+        grace_period_days=90,
+        importance_protection_threshold=0.7,
+        protected_types={"Decision", "Insight"},
+        cluster_similarity_threshold=0.65,
+        min_cluster_size=2,
+    )
+
+    assert consolidator.similarity_threshold == 0.65
+    assert consolidator.min_cluster_size == 2
 
 
 def build_forgetting_rows() -> List[List[Any]]:
