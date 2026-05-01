@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from automem.api.admin import create_admin_blueprint_full
+from automem.api.backup import create_backup_blueprint
 from automem.api.consolidation import create_consolidation_blueprint_full
 from automem.api.enrichment import create_enrichment_blueprint
 from automem.api.graph import create_graph_blueprint
@@ -147,6 +148,15 @@ def register_blueprints(
         logger,
     )
 
+    backup_bp = create_backup_blueprint(
+        require_admin_token_fn,
+        get_memory_graph_fn,
+        get_qdrant_client_fn,
+        graph_name,
+        collection_name,
+        logger,
+    )
+
     consolidation_bp = create_consolidation_blueprint_full(
         get_memory_graph_fn,
         get_qdrant_client_fn,
@@ -176,6 +186,7 @@ def register_blueprints(
     app.register_blueprint(enrichment_bp)
     app.register_blueprint(memory_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(backup_bp)
     app.register_blueprint(recall_bp)
     app.register_blueprint(consolidation_bp)
     app.register_blueprint(graph_bp)
