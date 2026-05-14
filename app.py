@@ -144,6 +144,8 @@ from automem.config import (
     CONSOLIDATION_TASK_FIELDS,
     CONSOLIDATION_TICK_SECONDS,
     DEFAULT_EXPAND_RELATIONS,
+    DOCUMENT_MAX_BYTES,
+    DOCUMENT_PRESIGNED_EXPIRES,
     EMBEDDING_MODEL,
     ENRICHMENT_ENABLE_SUMMARIES,
     ENRICHMENT_FAILURE_BACKOFF_SECONDS,
@@ -182,6 +184,7 @@ from automem.search.runtime_recall_helpers import (
     configure_recall_helpers,
 )
 from automem.search.runtime_relations import fetch_relations as _fetch_relations_runtime
+from automem.stores.bucket_store import build_bucket_store_from_config
 from automem.stores.graph_store import _build_graph_tag_predicate
 from automem.stores.vector_store import _build_qdrant_tag_filter
 from automem.sync.runtime_bindings import create_sync_runtime
@@ -223,6 +226,17 @@ RELATION_TAXONOMY = {
     "filterable": FILTERABLE_RELATIONS,
     "default_expand": DEFAULT_EXPAND_RELATIONS,
 }
+
+# Optional S3-compatible bucket store for document originals. Returns None
+# unless all S3_* env vars are configured, in which case /documents endpoints
+# return 503 with a clear message.
+try:
+    bucket_store = build_bucket_store_from_config()
+    if bucket_store is not None:
+        logger.info("Bucket store initialized for document originals")
+except Exception:
+    logger.exception("Bucket store init failed; /documents endpoints disabled")
+    bucket_store = None
 
 # Search weights are imported from automem.config
 

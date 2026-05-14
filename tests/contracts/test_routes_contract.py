@@ -31,6 +31,10 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/viewer/<path:path>"),
     ("GET", "/stream"),
     ("GET", "/stream/status"),
+    ("POST", "/documents"),
+    ("GET", "/documents"),
+    ("DELETE", "/documents/<memory_id>"),
+    ("GET", "/documents/<memory_id>/download"),
 }
 
 

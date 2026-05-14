@@ -12,7 +12,7 @@ ENV REDIS_ARGS="--save 900 1 --save 300 10 --save 60 10000 --appendonly yes --di
 EXPOSE 6379
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=10 \
   CMD redis-cli ping || exit 1
 
 # Volume for persistent data

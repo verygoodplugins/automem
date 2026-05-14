@@ -240,6 +240,36 @@ class InMemoryEventStore {
   }
 }
 
+// Some MCP client transports JSON-encode nested object/array arguments as
+// strings before calling tools, even when the input schema declares them as
+// `object` or `array`. The upstream AutoMem service rejects those with
+// `'metadata' must be an object` (etc.) because its strict JSON body parse
+// expects native types. Coerce known offenders back to their native form
+// before forwarding. Exported for unit tests.
+export function coerceJsonFields(obj, fields) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const out = { ...obj };
+  for (const field of fields) {
+    const value = out[field];
+    if (typeof value === 'string' && value.length > 0) {
+      try {
+        const parsed = JSON.parse(value);
+        // Only accept parses that match the expected native shape (object
+        // for metadata, array for embedding/tags). This avoids accidentally
+        // turning a plain string value into a number or other primitive.
+        if (field === 'metadata' && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          out[field] = parsed;
+        } else if ((field === 'embedding' || field === 'tags') && Array.isArray(parsed)) {
+          out[field] = parsed;
+        }
+      } catch (_) {
+        // Leave as-is — the upstream service will return a clear 400.
+      }
+    }
+  }
+  return out;
+}
+
 // Simple AutoMem HTTP client (mirrors the npm package behavior but inline to avoid version conflicts)
 export class AutoMemClient {
   constructor(config) {
@@ -264,20 +294,21 @@ export class AutoMemClient {
     });
   }
   async storeMemory(args, options) {
+    const coerced = coerceJsonFields(args || {}, ['metadata', 'embedding', 'tags']);
     const body = {
-      content: args.content,
-      tags: args.tags || [],
-      importance: args.importance,
-      embedding: args.embedding,
-      metadata: args.metadata,
-      timestamp: args.timestamp,
-      type: args.type,
-      confidence: args.confidence,
-      id: args.id,
-      t_valid: args.t_valid,
-      t_invalid: args.t_invalid,
-      updated_at: args.updated_at,
-      last_accessed: args.last_accessed
+      content: coerced.content,
+      tags: coerced.tags || [],
+      importance: coerced.importance,
+      embedding: coerced.embedding,
+      metadata: coerced.metadata,
+      timestamp: coerced.timestamp,
+      type: coerced.type,
+      confidence: coerced.confidence,
+      id: coerced.id,
+      t_valid: coerced.t_valid,
+      t_invalid: coerced.t_invalid,
+      updated_at: coerced.updated_at,
+      last_accessed: coerced.last_accessed
     };
     const r = await this._request('POST', 'memory', body, options);
     return { memory_id: r.memory_id || r.id, message: r.message || 'Memory stored successfully' };
@@ -327,7 +358,8 @@ export class AutoMemClient {
     return { success: true, message: r.message || 'Association created successfully' };
   }
   async updateMemory(args, options) {
-    const { memory_id, ...updates } = args;
+    const coerced = coerceJsonFields(args || {}, ['metadata', 'embedding', 'tags']);
+    const { memory_id, ...updates } = coerced;
     const r = await this._request('PATCH', `memory/${memory_id}`, updates, options);
     return { memory_id: r.memory_id || memory_id, message: r.message || 'Memory updated successfully' };
   }
@@ -341,6 +373,118 @@ export class AutoMemClient {
       timeoutMs: options.timeoutMs ?? readIntEnv('HEALTH_TIMEOUT_MS', DEFAULT_HEALTH_TIMEOUT_MS),
       maxRetries: options.maxRetries ?? 0,
     });
+  }
+
+  // -------------------- Document storage (Stage 1) -----------------------
+  // Agent-driven uploads: the caller must read the file and provide an accurate
+  // ``title`` + ``summary`` BEFORE calling. AutoMem never parses file content.
+
+  async uploadDocument(args, options = {}) {
+    const { file_base64, filename, mime, title, summary } = args;
+    if (!file_base64 || !filename) {
+      throw new Error('upload_document requires file_base64 and filename');
+    }
+    if (!title || !summary) {
+      throw new Error(
+        'upload_document requires title and summary. Read the file first and generate an accurate title (<200 chars) and 1-3 sentence summary.'
+      );
+    }
+
+    const bytes = Buffer.from(file_base64, 'base64');
+    const blob = new Blob([bytes], { type: mime || 'application/octet-stream' });
+    const form = new FormData();
+    form.append('file', blob, filename);
+    form.append('title', title);
+    form.append('summary', summary);
+    if (args.tags !== undefined) {
+      form.append('tags', Array.isArray(args.tags) ? JSON.stringify(args.tags) : String(args.tags));
+    }
+    if (args.importance !== undefined) form.append('importance', String(args.importance));
+    if (args.metadata !== undefined) {
+      form.append(
+        'metadata',
+        typeof args.metadata === 'string' ? args.metadata : JSON.stringify(args.metadata)
+      );
+    }
+    if (args.memory_id) form.append('memory_id', String(args.memory_id));
+
+    const url = `${this.config.endpoint.replace(/\/$/, '')}/documents`;
+    const headers = {};
+    if (this.config.apiKey) headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+    const requestId = options.requestId || randomUUID();
+    const timeoutMs = options.timeoutMs ?? readIntEnv('UPSTREAM_TIMEOUT_MS', DEFAULT_UPSTREAM_TIMEOUT_MS);
+
+    // No retries for multipart — uploads are expensive to repeat and the
+    // single attempt gives clearer error semantics to the caller.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      log('info', 'document_upload', {
+        reqId: requestId,
+        url: sanitizeUrlForLog(url),
+        filename,
+        size: bytes.length,
+        mime,
+      });
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: form,
+        signal: controller.signal,
+      });
+      const data = await parseResponseBody(res);
+      if (!res.ok) {
+        const message = summarizeUpstreamErrorBody(res.status, data);
+        log('error', 'document_upload_failed', {
+          reqId: requestId,
+          status: res.status,
+          message,
+        });
+        throw new UpstreamRequestError(message, {
+          status: res.status,
+          requestId,
+          kind: 'http',
+          retryable: false,
+          endpoint: url,
+        });
+      }
+      return data;
+    } catch (error) {
+      if (error instanceof UpstreamRequestError) throw error;
+      throw new UpstreamRequestError(
+        error?.name === 'AbortError'
+          ? `document upload timed out after ${timeoutMs}ms`
+          : `document upload failed: ${error?.message || error}`,
+        { requestId, kind: error?.name === 'AbortError' ? 'timeout' : 'network', endpoint: url, cause: error }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async getDocumentUrl(args, options) {
+    const id = args.memory_id;
+    if (!id) throw new Error('get_document_url requires memory_id');
+    const p = new URLSearchParams();
+    if (args.expires_in !== undefined) p.set('expires_in', String(args.expires_in));
+    if (args.disposition) p.set('disposition', String(args.disposition));
+    const path = p.toString() ? `documents/${id}/download?${p.toString()}` : `documents/${id}/download`;
+    return this._request('GET', path, undefined, options);
+  }
+
+  async listDocuments(args = {}, options) {
+    const p = new URLSearchParams();
+    if (Array.isArray(args.tags)) args.tags.forEach(t => p.append('tags', t));
+    else if (typeof args.tags === 'string' && args.tags.trim()) p.set('tags', args.tags.trim());
+    if (args.limit !== undefined) p.set('limit', String(args.limit));
+    const path = p.toString() ? `documents?${p.toString()}` : 'documents';
+    return this._request('GET', path, undefined, options);
+  }
+
+  async deleteDocument(args, options) {
+    const id = args.memory_id;
+    if (!id) throw new Error('delete_document requires memory_id');
+    return this._request('DELETE', `documents/${id}`, undefined, options);
   }
 }
 
@@ -543,7 +687,102 @@ export function buildMcpServer(client) {
       description: 'Check AutoMem service health (FalkorDB, Qdrant, embedding provider)',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: { type: 'object', properties: {} }
-    }
+    },
+    {
+      name: 'upload_document',
+      description:
+        'Upload a document (PDF, DOCX, image, text, etc.) to AutoMem. IMPORTANT: BEFORE calling this tool you MUST read the file yourself and provide an accurate human-quality title AND a 1-3 sentence summary of what it contains. AutoMem does not parse file content; your title and summary become the searchable representation. The file bytes are stored as an opaque original; later you (or another agent) can retrieve a short-lived download URL via get_document_url when you need the raw bytes. Reject the task if the user has not given you enough context to write a faithful summary.',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          file_base64: { type: 'string', description: 'Base64-encoded file bytes (binary-safe).' },
+          filename: { type: 'string', description: 'Original filename, e.g. "report-2026-q2.pdf"' },
+          mime: {
+            type: 'string',
+            description: 'MIME type, e.g. "application/pdf". Defaults to application/octet-stream.',
+          },
+          title: {
+            type: 'string',
+            description:
+              'A concise human-readable title (<200 chars). You must have read the file before writing this; do not echo the filename.',
+          },
+          summary: {
+            type: 'string',
+            description:
+              '1-3 sentence summary capturing what this document is, who it is for, and what is inside. Becomes the vector+keyword search representation — write it well.',
+          },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional tags for filtering (the tag "document" is added automatically).',
+          },
+          importance: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            description: 'Importance score 0-1 (default 0.5).',
+          },
+          metadata: {
+            type: 'object',
+            description: 'Arbitrary extra metadata merged into the Memory node.',
+          },
+          memory_id: {
+            type: 'string',
+            description: 'Optional UUID for the memory. Auto-generated if omitted.',
+          },
+        },
+        required: ['file_base64', 'filename', 'title', 'summary'],
+      },
+    },
+    {
+      name: 'get_document_url',
+      description:
+        'Return a short-lived (default 5 min) presigned HTTPS URL to download the original file for a Document memory. Use this when you need to read the raw bytes (e.g. open the PDF).',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          memory_id: { type: 'string', description: 'UUID of the Document memory.' },
+          expires_in: {
+            type: 'integer',
+            minimum: 30,
+            maximum: 3600,
+            description: 'Seconds the URL remains valid (30-3600, default 300).',
+          },
+          disposition: {
+            type: 'string',
+            enum: ['inline', 'attachment'],
+            description: 'How downstream browsers should handle the response.',
+          },
+        },
+        required: ['memory_id'],
+      },
+    },
+    {
+      name: 'list_documents',
+      description: 'List Document memories, optionally filtered by tags.',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tags: { type: 'array', items: { type: 'string' } },
+          limit: { type: 'integer', minimum: 1, maximum: 200, default: 25 },
+        },
+      },
+    },
+    {
+      name: 'delete_document',
+      description: 'Delete a Document memory and remove its original file from the bucket.',
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          memory_id: { type: 'string', description: 'UUID of the Document memory to remove.' },
+        },
+        required: ['memory_id'],
+      },
+    },
   ];
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -642,6 +881,53 @@ export function buildMcpServer(client) {
         case 'check_database_health': {
           const r = await client.checkHealth({ requestId });
           return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+        }
+        case 'upload_document': {
+          const r = await client.uploadDocument(args || {}, { requestId });
+          const doc = r?.document || {};
+          const lines = [
+            `Document stored: ${r.memory_id}`,
+            r.title ? `Title: ${r.title}` : null,
+            doc.filename ? `Filename: ${doc.filename}` : null,
+            doc.size !== undefined ? `Size: ${doc.size} bytes` : null,
+            doc.mime ? `MIME: ${doc.mime}` : null,
+            doc.sha256 ? `SHA-256: ${doc.sha256}` : null,
+            r.download_url ? `Download URL (${r.download_url_expires_in}s): ${r.download_url}` : null,
+          ].filter(Boolean);
+          return { content: [{ type: 'text', text: lines.join('\n') }] };
+        }
+        case 'get_document_url': {
+          const r = await client.getDocumentUrl(args || {}, { requestId });
+          const lines = [
+            `Download URL (expires in ${r.expires_in}s): ${r.download_url}`,
+            r.filename ? `Filename: ${r.filename}` : null,
+            r.mime ? `MIME: ${r.mime}` : null,
+            r.size !== undefined ? `Size: ${r.size} bytes` : null,
+          ].filter(Boolean);
+          return { content: [{ type: 'text', text: lines.join('\n') }] };
+        }
+        case 'list_documents': {
+          const r = await client.listDocuments(args || {}, { requestId });
+          const docs = Array.isArray(r.documents) ? r.documents : [];
+          if (!docs.length) {
+            return { content: [{ type: 'text', text: 'No documents found.' }] };
+          }
+          const lines = docs.map((d, i) => {
+            const meta = d.document || {};
+            return [
+              `${i + 1}. ${meta.title || '(untitled)'}`,
+              `   ID: ${d.memory_id}`,
+              meta.filename ? `   File: ${meta.filename} (${meta.size || '?'} bytes, ${meta.mime || 'unknown'})` : null,
+              Array.isArray(d.tags) && d.tags.length ? `   Tags: ${d.tags.join(', ')}` : null,
+            ].filter(Boolean).join('\n');
+          });
+          return {
+            content: [{ type: 'text', text: `${docs.length} document(s):\n\n${lines.join('\n\n')}` }],
+          };
+        }
+        case 'delete_document': {
+          const r = await client.deleteDocument(args || {}, { requestId });
+          return { content: [{ type: 'text', text: `Deleted ${r.memory_id} (graph=${r.graph}, bucket=${r.bucket})` }] };
         }
         default:
           throw new Error(`Unknown tool: ${name}`);

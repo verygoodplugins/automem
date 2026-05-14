@@ -78,7 +78,11 @@ CONSOLIDATION_TASK_FIELDS = {
 
 # Sync configuration (background sync worker)
 SYNC_CHECK_INTERVAL_SECONDS = int(os.getenv("SYNC_CHECK_INTERVAL_SECONDS", "3600"))  # 1 hour
-SYNC_AUTO_REPAIR = os.getenv("SYNC_AUTO_REPAIR", "true").lower() not in {"0", "false", "no"}
+SYNC_AUTO_REPAIR = os.getenv("SYNC_AUTO_REPAIR", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
 # Enrichment configuration
 ENRICHMENT_MAX_ATTEMPTS = int(os.getenv("ENRICHMENT_MAX_ATTEMPTS", "3"))
@@ -115,7 +119,11 @@ CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
 RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.0"))
-RECALL_ADAPTIVE_FLOOR = os.getenv("RECALL_ADAPTIVE_FLOOR", "true").lower() in ("true", "1", "yes")
+RECALL_ADAPTIVE_FLOOR = os.getenv("RECALL_ADAPTIVE_FLOOR", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # Memory content size limits (governs auto-summarization on store)
 # Soft limit: Content above this triggers auto-summarization
@@ -131,8 +139,56 @@ MEMORY_AUTO_SUMMARIZE = os.getenv("MEMORY_AUTO_SUMMARIZE", "true").lower() not i
 # Target length for summarized content
 MEMORY_SUMMARY_TARGET_LENGTH = int(os.getenv("MEMORY_SUMMARY_TARGET_LENGTH", "300"))
 
+# -----------------------------------------------------------------------------
+# Document storage (S3-compatible bucket, e.g. Railway Buckets)
+# -----------------------------------------------------------------------------
+# When all S3_* vars are configured, /documents endpoints are enabled for
+# agent-driven document uploads. Originals live in the bucket; a Memory node of
+# type=Document is created with agent-provided title + summary so existing
+# vector/keyword recall can find the doc. The agent fetches the original via a
+# short-lived presigned URL when it needs to read the actual content.
+S3_ENDPOINT: str | None = os.getenv("S3_ENDPOINT") or None
+S3_BUCKET: str | None = os.getenv("S3_BUCKET") or None
+S3_REGION: str = os.getenv("S3_REGION", "auto")
+S3_ACCESS_KEY_ID: str | None = os.getenv("S3_ACCESS_KEY_ID") or None
+S3_SECRET_ACCESS_KEY: str | None = os.getenv("S3_SECRET_ACCESS_KEY") or None
+# virtual-host (bucket.endpoint) vs path (endpoint/bucket)
+S3_URL_STYLE: str = os.getenv("S3_URL_STYLE", "virtual-host")
+S3_FORCE_PATH_STYLE: bool = os.getenv("S3_FORCE_PATH_STYLE", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+# Hard cap on document uploads (bytes). Default 100 MB.
+DOCUMENT_MAX_BYTES: int = int(os.getenv("DOCUMENT_MAX_BYTES", str(100 * 1024 * 1024)))
+# Default expiry for GET /documents/:id/download presigned URLs (seconds).
+DOCUMENT_PRESIGNED_EXPIRES: int = int(os.getenv("DOCUMENT_PRESIGNED_EXPIRES", "300"))
+
+
+def is_bucket_configured() -> bool:
+    """True when all required S3 env vars are present so bucket upload works."""
+    return all(
+        v
+        for v in (
+            S3_ENDPOINT,
+            S3_BUCKET,
+            S3_ACCESS_KEY_ID,
+            S3_SECRET_ACCESS_KEY,
+        )
+    )
+
+
 # Memory types for classification
-MEMORY_TYPES = {"Decision", "Pattern", "Preference", "Style", "Habit", "Insight", "Context"}
+MEMORY_TYPES = {
+    "Decision",
+    "Pattern",
+    "Preference",
+    "Style",
+    "Habit",
+    "Insight",
+    "Context",
+    "Document",
+}
 
 # Type aliases for normalization (lowercase and legacy types → canonical)
 # Non-canonical types are auto-mapped to canonical types on store
@@ -145,12 +201,12 @@ TYPE_ALIASES: dict[str, str] = {
     "habit": "Habit",
     "insight": "Insight",
     "context": "Context",
+    "document": "Document",
     # Legacy/alternative types
     "memory": "Context",
     "milestone": "Context",
     "analysis": "Insight",
     "observation": "Insight",
-    "document": "Context",
     "meeting_notes": "Context",
     "template": "Pattern",
     "project": "Context",

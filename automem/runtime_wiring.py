@@ -53,7 +53,7 @@ def wire_recall_and_blueprints(
         serialize_node_fn=module._serialize_node,
         summarize_relation_node_fn=module._summarize_relation_node,
         update_last_accessed_fn=module.update_last_accessed,
-        jit_enrich_fn=module.jit_enrich_lightweight if module.JIT_ENRICHMENT_ENABLED else None,
+        jit_enrich_fn=(module.jit_enrich_lightweight if module.JIT_ENRICHMENT_ENABLED else None),
         normalize_tags_fn=module._normalize_tags,
         compute_tag_prefixes_fn=module._compute_tag_prefixes,
         coerce_importance_fn=module._coerce_importance,
@@ -77,6 +77,10 @@ def wire_recall_and_blueprints(
         consolidation_tick_seconds=module.CONSOLIDATION_TICK_SECONDS,
         consolidation_history_limit=module.CONSOLIDATION_HISTORY_LIMIT,
         require_api_token_fn=module.require_api_token,
+        bucket_store=getattr(module, "bucket_store", None),
+        qdrant_models_obj=getattr(module, "qdrant_models", None),
+        document_max_bytes=getattr(module, "DOCUMENT_MAX_BYTES", 100 * 1024 * 1024),
+        document_presigned_expires=getattr(module, "DOCUMENT_PRESIGNED_EXPIRES", 300),
     )
 
 
