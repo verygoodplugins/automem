@@ -196,8 +196,10 @@ def build_consolidator_from_config(
     protected_types: Set[str],
     base_decay_rate: float = 0.01,
     importance_floor_factor: float = 0.3,
+    cluster_similarity_threshold: float | None = None,
+    min_cluster_size: int | None = None,
 ) -> Any:
-    return memory_consolidator_cls(
+    consolidator = memory_consolidator_cls(
         graph,
         vector_store,
         delete_threshold=delete_threshold,
@@ -208,3 +210,8 @@ def build_consolidator_from_config(
         base_decay_rate=base_decay_rate,
         importance_floor_factor=importance_floor_factor,
     )
+    if cluster_similarity_threshold is not None:
+        consolidator.similarity_threshold = float(cluster_similarity_threshold)
+    if min_cluster_size is not None:
+        consolidator.min_cluster_size = int(min_cluster_size)
+    return consolidator
