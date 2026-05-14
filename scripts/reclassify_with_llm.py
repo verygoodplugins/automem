@@ -300,9 +300,7 @@ def main():
     # response_format=json_object is OpenAI-only. Gate on the endpoint, not the
     # model name — a gpt-* model name routed through OpenRouter would otherwise
     # request a parameter the gateway may reject.
-    supports_json_mode = base_url is None and model.startswith(
-        ("gpt-", "o1-", "o3-", "o4-")
-    )
+    supports_json_mode = base_url is None and model.startswith(("gpt-", "o1-", "o3-", "o4-"))
 
     print("=" * 70)
     print("🤖 AutoMem LLM Reclassification Tool")
@@ -315,7 +313,9 @@ def main():
 
     if not api_key:
         if args.provider == "openrouter":
-            print("❌ No API key for OpenRouter. Set OPENROUTER_API_KEY (or CLASSIFICATION_API_KEY).")
+            print(
+                "❌ No API key for OpenRouter. Set OPENROUTER_API_KEY (or CLASSIFICATION_API_KEY)."
+            )
         elif base_url:
             print(f"❌ No API key for {base_url}. Set CLASSIFICATION_API_KEY.")
         else:
@@ -351,7 +351,9 @@ def main():
     # Initialize OpenAI-compatible client (OpenAI or OpenRouter)
     endpoint_label = base_url or "https://api.openai.com/v1 (OpenAI default)"
     print(f"🤖 Initializing client (model: {model}, endpoint: {endpoint_label})")
-    openai_client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
+    openai_client = (
+        OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
+    )
     print("✅ Client ready\n")
 
     # Push --limit into Cypher for head sampling so we don't materialize the
@@ -425,9 +427,7 @@ def main():
         if args.dry_run:
             success_count += 1
             print(f"   🧪 (dry-run, not written)")
-        elif update_memory_type(
-            falkor_client, qdrant_client, memory_id, new_type, new_confidence
-        ):
+        elif update_memory_type(falkor_client, qdrant_client, memory_id, new_type, new_confidence):
             success_count += 1
             print(f"   ✅ Updated")
         else:
