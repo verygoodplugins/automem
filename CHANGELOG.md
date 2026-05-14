@@ -2,6 +2,25 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.16.0](https://github.com/verygoodplugins/automem/compare/v0.15.2...v0.16.0) (2026-05-14)
+
+
+### Features
+
+* **scripts:** safer reclassify_with_llm.py with provider flags + tighter prompt ([#164](https://github.com/verygoodplugins/automem/issues/164)) ([a742602](https://github.com/verygoodplugins/automem/commit/a742602f5d6ad2dea5a4d3c387d5b49d610afe2c))
+
+
+### Bug Fixes
+
+* **consolidation:** skip eager first tick at startup to avoid FalkorDB load race ([#165](https://github.com/verygoodplugins/automem/issues/165)) ([1b812cf](https://github.com/verygoodplugins/automem/commit/1b812cf883cbc95632d5f9f1ed180d1865c0638a))
+* **mcp-sse:** decouple /health liveness from upstream readiness ([#151](https://github.com/verygoodplugins/automem/issues/151)) ([5bcfb8b](https://github.com/verygoodplugins/automem/commit/5bcfb8b2ec5f2fb32ef56adf0bf5e3032f181530))
+
+
+### Documentation
+
+* refresh README and benchmark guidance ([#157](https://github.com/verygoodplugins/automem/issues/157)) ([bba31cc](https://github.com/verygoodplugins/automem/commit/bba31ccdb864c5fe70de56ed309ff6bd587cdb28))
+* **runtime:** align Docker viewer paths and setup guidance ([#155](https://github.com/verygoodplugins/automem/issues/155)) ([bbda79b](https://github.com/verygoodplugins/automem/commit/bbda79b37cc18066b1de9a83ba7a8487cd6c7a7b))
+
 ## [0.15.2](https://github.com/verygoodplugins/automem/compare/v0.15.1...v0.15.2) (2026-04-23)
 
 
