@@ -16,7 +16,6 @@ Usage:
 """
 
 import argparse
-import gzip
 import json
 import logging
 import os
@@ -28,6 +27,12 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient
+
+from automem.backup import (
+    cleanup_old_backup_files,
+    write_falkordb_backup_file,
+    write_qdrant_backup_file,
+)
 
 # Load environment
 load_dotenv()
@@ -53,7 +58,7 @@ QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "memories")
 
 
 class AutoMemBackup:
-    """Handles backup and restoration of AutoMem data."""
+    """Handles backup of AutoMem data."""
 
     def __init__(self, backup_dir: Path, s3_bucket: Optional[str] = None):
         self.backup_dir = backup_dir
@@ -78,102 +83,21 @@ class AutoMemBackup:
             )
             graph = db.select_graph(FALKORDB_GRAPH)
 
-            # Export all nodes (using LIMIT to handle large graphs in batches)
-            # Note: FalkorDB has a default result limit, so we need to paginate
-            nodes = []
-            batch_size = 10000
-            offset = 0
-
-            while True:
-                nodes_result = graph.query(
-                    f"""
-                    MATCH (n)
-                    RETURN
-                        id(n) as id,
-                        labels(n) as labels,
-                        properties(n) as props
-                    SKIP {offset} LIMIT {batch_size}
-                """
-                )
-
-                if not nodes_result.result_set:
-                    break
-
-                batch_count = 0
-                for row in nodes_result.result_set:
-                    nodes.append({"id": row[0], "labels": row[1], "properties": row[2]})
-                    batch_count += 1
-
-                logger.info(f"   Exported batch: {batch_count} nodes (total: {len(nodes)})")
-
-                if batch_count < batch_size:
-                    break  # Last batch
-
-                offset += batch_size
-
-            # Export all relationships (using LIMIT to handle large graphs in batches)
-            # Note: FalkorDB has a default result limit, so we need to paginate
-            relationships = []
-            batch_size = 10000
-            offset = 0
-
-            while True:
-                rels_result = graph.query(
-                    f"""
-                    MATCH (a)-[r]->(b)
-                    RETURN
-                        id(a) as source_id,
-                        type(r) as rel_type,
-                        id(b) as target_id,
-                        properties(r) as props
-                    SKIP {offset} LIMIT {batch_size}
-                """
-                )
-
-                if not rels_result.result_set:
-                    break
-
-                batch_count = 0
-                for row in rels_result.result_set:
-                    relationships.append(
-                        {
-                            "source_id": row[0],
-                            "type": row[1],
-                            "target_id": row[2],
-                            "properties": row[3],
-                        }
-                    )
-                    batch_count += 1
-
-                logger.info(
-                    f"   Exported batch: {batch_count} relationships (total: {len(relationships)})"
-                )
-
-                if batch_count < batch_size:
-                    break  # Last batch
-
-                offset += batch_size
-
-            # Create backup data
-            backup_data = {
-                "timestamp": self.timestamp,
-                "graph_name": FALKORDB_GRAPH,
-                "nodes": nodes,
-                "relationships": relationships,
-                "stats": {
-                    "node_count": len(nodes),
-                    "relationship_count": len(relationships),
-                },
-            }
-
-            # Write to compressed file
-            backup_file = self.backup_dir / "falkordb" / f"falkordb_{self.timestamp}.json.gz"
-            with gzip.open(backup_file, "wt", encoding="utf-8") as f:
-                json.dump(backup_data, f, indent=2, default=str)
-
+            backup = write_falkordb_backup_file(
+                backup_dir=self.backup_dir,
+                graph=graph,
+                graph_name=FALKORDB_GRAPH,
+                timestamp=self.timestamp,
+                logger=logger,
+            )
+            backup_file = backup.path
             size_mb = backup_file.stat().st_size / 1024 / 1024
             logger.info(f"✅ FalkorDB backup saved: {backup_file.name} ({size_mb:.2f} MB)")
-            logger.info(f"   Nodes: {len(nodes)}, Relationships: {len(relationships)}")
+            logger.info(
+                "   Nodes: %d, Relationships: %d",
+                backup.stats["node_count"],
+                backup.stats["relationship_count"],
+            )
 
             return backup_file
 
@@ -188,55 +112,17 @@ class AutoMemBackup:
         try:
             client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
-            # Fetch all points
-            all_points = []
-            offset = None
-            batch_size = 100
-
-            while True:
-                result = client.scroll(
-                    collection_name=QDRANT_COLLECTION,
-                    limit=batch_size,
-                    offset=offset,
-                    with_payload=True,
-                    with_vectors=True,
-                )
-
-                points, next_offset = result
-
-                for point in points:
-                    all_points.append(
-                        {
-                            "id": point.id,
-                            "vector": point.vector,
-                            "payload": point.payload,
-                        }
-                    )
-
-                if next_offset is None:
-                    break
-                offset = next_offset
-
-            # Create backup data
-            collection_info = client.get_collection(QDRANT_COLLECTION)
-            backup_data = {
-                "timestamp": self.timestamp,
-                "collection_name": QDRANT_COLLECTION,
-                "points": all_points,
-                "stats": {
-                    "points_count": len(all_points),
-                    "vector_size": collection_info.config.params.vectors.size,
-                },
-            }
-
-            # Write to compressed file
-            backup_file = self.backup_dir / "qdrant" / f"qdrant_{self.timestamp}.json.gz"
-            with gzip.open(backup_file, "wt", encoding="utf-8") as f:
-                json.dump(backup_data, f, indent=2, default=str)
-
+            backup = write_qdrant_backup_file(
+                backup_dir=self.backup_dir,
+                qdrant_client=client,
+                collection_name=QDRANT_COLLECTION,
+                timestamp=self.timestamp,
+                logger=logger,
+            )
+            backup_file = backup.path
             size_mb = backup_file.stat().st_size / 1024 / 1024
             logger.info(f"✅ Qdrant backup saved: {backup_file.name} ({size_mb:.2f} MB)")
-            logger.info(f"   Points: {len(all_points)}")
+            logger.info("   Points: %d", backup.stats["points_count"])
 
             return backup_file
 
@@ -268,25 +154,7 @@ class AutoMemBackup:
     def cleanup_old_backups(self, keep: int = 7):
         """Remove old backup files, keeping only the most recent N."""
         logger.info(f"🧹 Cleaning up old backups (keeping last {keep})...")
-
-        for backup_type in ["falkordb", "qdrant"]:
-            backup_path = self.backup_dir / backup_type
-
-            # Get all backup files sorted by modification time
-            backup_files = sorted(
-                backup_path.glob("*.json.gz"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-
-            # Remove old files
-            for old_file in backup_files[keep:]:
-                logger.info(f"   🗑️  Removing old backup: {old_file.name}")
-                old_file.unlink()
-
-            kept = min(len(backup_files), keep)
-            removed = max(0, len(backup_files) - keep)
-            logger.info(f"   ✅ {backup_type}: kept {kept}, removed {removed}")
+        cleanup_old_backup_files(backup_dir=self.backup_dir, keep=keep, logger=logger)
 
     def run_backup(self, cleanup: bool = False, keep: int = 7) -> Dict[str, Any]:
         """Run full backup process."""

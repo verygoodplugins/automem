@@ -18,6 +18,7 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/memories/<memory_id>/related"),
     ("POST", "/admin/reembed"),
     ("POST", "/admin/sync"),
+    ("GET", "/backup"),
     ("POST", "/consolidate"),
     ("GET", "/consolidate/status"),
     ("GET", "/enrichment/status"),
