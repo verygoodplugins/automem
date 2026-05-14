@@ -6,6 +6,11 @@ them using the configured CLASSIFICATION_MODEL for more accurate type assignment
 
 Environment:
     CLASSIFICATION_MODEL: LLM model for classification (default: gpt-4o-mini)
+    CLASSIFICATION_BASE_URL: Optional OpenAI-compatible endpoint
+        (e.g. https://openrouter.ai/api/v1 for OpenRouter).
+    CLASSIFICATION_API_KEY: API key paired with CLASSIFICATION_BASE_URL.
+    OPENROUTER_API_KEY: Fallback key when --provider openrouter is selected.
+    OPENAI_API_KEY: Fallback key when --provider openai (or default) is selected.
 """
 
 import argparse
@@ -78,18 +83,27 @@ Confidence: 0.95+ if the type is obvious, 0.75-0.9 if you had to apply a priorit
 Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
 
 
-def get_fallback_memories(client) -> list[Dict[str, Any]]:
-    """Fetch all memories with type='Memory' (fallback)."""
+def get_fallback_memories(client, db_limit: int | None = None) -> list[Dict[str, Any]]:
+    """Fetch memories with type='Memory' (fallback).
+
+    When `db_limit` is set, the cap is applied in Cypher so we don't materialize
+    the whole corpus on head-sampled partial runs. Random sampling still requires
+    the full set, so this stays None in that path.
+    """
     print("📥 Fetching memories with fallback type='Memory'...")
     g = client.select_graph("memories")
 
-    result = g.query(
-        """
-        MATCH (m:Memory)
-        WHERE m.type = 'Memory'
-        RETURN m.id as id, m.content as content, m.confidence as confidence
-    """
+    cypher = (
+        "MATCH (m:Memory) "
+        "WHERE m.type = 'Memory' "
+        "RETURN m.id as id, m.content as content, m.confidence as confidence"
     )
+    params: Dict[str, Any] = {}
+    if db_limit is not None:
+        cypher += " LIMIT $limit"
+        params["limit"] = db_limit
+
+    result = g.query(cypher, params) if params else g.query(cypher)
 
     memories = []
     for row in result.result_set:
@@ -127,10 +141,14 @@ def _extract_json(text: str) -> dict:
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         return json.loads(text[start : end + 1])
-    raise ValueError(f"No JSON object found in: {text[:200]}")
+    # Avoid echoing model output (may include memory content) into the exception
+    # message — the caller logs exceptions, which would leak corpus data.
+    raise ValueError("Model returned non-JSON output (no parseable object)")
 
 
-def classify_with_llm(openai_client: OpenAI, content: str) -> tuple[str, float]:
+def classify_with_llm(
+    openai_client: OpenAI, content: str, *, supports_json_mode: bool = False
+) -> tuple[str, float]:
     """Classify memory type via OpenAI-compatible chat completion."""
     kwargs = dict(
         model=CLASSIFICATION_MODEL,
@@ -141,8 +159,9 @@ def classify_with_llm(openai_client: OpenAI, content: str) -> tuple[str, float]:
         temperature=0.3,
         max_tokens=50,
     )
-    # Only request json_object mode for OpenAI models — OpenRouter Gemini rejects it.
-    if CLASSIFICATION_MODEL.startswith(("gpt-", "o1-", "o3-", "o4-")):
+    # response_format=json_object is OpenAI-specific. Gate on the selected endpoint
+    # (not the model name) — OpenRouter etc. may reject it even for gpt-* models.
+    if supports_json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
     try:
@@ -196,14 +215,25 @@ def update_memory_type(
         return False
 
 
+def _positive_int(raw: str) -> int:
+    """argparse type for a positive integer (rejects 0 and negatives)."""
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected integer, got {raw!r}")
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {value}")
+    return value
+
+
 def main():
     """Main reclassification process."""
     parser = argparse.ArgumentParser(description="Reclassify fallback 'Memory' types via LLM.")
     parser.add_argument(
         "--limit",
-        type=int,
+        type=_positive_int,
         default=None,
-        help="Process at most N memories (sampled). Useful for dry-runs.",
+        help="Process at most N memories (must be >= 1). Useful for dry-runs.",
     )
     parser.add_argument(
         "--dry-run",
@@ -240,24 +270,39 @@ def main():
     )
     args = parser.parse_args()
 
-    # Resolve provider → base_url + api_key
-    base_url = CLASSIFICATION_BASE_URL
-    api_key = CLASSIFICATION_API_KEY
+    # Resolve provider → base_url + api_key.
+    #
+    # Explicit --provider FORCES its canonical base URL so a stale
+    # CLASSIFICATION_BASE_URL in the env can't pair an OpenRouter key with the
+    # wrong endpoint (or vice versa). Provider-specific keys are only honored
+    # for that provider — we never silently fall back across providers (which
+    # would leak e.g. OPENAI_API_KEY to a third-party endpoint).
     if args.provider == "openrouter":
-        base_url = base_url or "https://openrouter.ai/api/v1"
-        api_key = api_key or OPENROUTER_API_KEY
+        base_url = "https://openrouter.ai/api/v1"
+        api_key = CLASSIFICATION_API_KEY or OPENROUTER_API_KEY
     elif args.provider == "openai":
-        base_url = None  # use OpenAI default
-        api_key = api_key or OPENAI_API_KEY
-
-    # Fallbacks
-    if not api_key:
-        api_key = OPENAI_API_KEY
+        base_url = None  # OpenAI default endpoint
+        api_key = CLASSIFICATION_API_KEY or OPENAI_API_KEY
+    else:
+        # No explicit provider. Honor CLASSIFICATION_BASE_URL if present
+        # (with its paired CLASSIFICATION_API_KEY only), else default to OpenAI.
+        base_url = CLASSIFICATION_BASE_URL
+        if base_url:
+            api_key = CLASSIFICATION_API_KEY
+        else:
+            api_key = CLASSIFICATION_API_KEY or OPENAI_API_KEY
 
     # Override model if passed on CLI
     model = args.model or CLASSIFICATION_MODEL
     # Share model with classify_with_llm via a module-level rebind
     globals()["CLASSIFICATION_MODEL"] = model
+
+    # response_format=json_object is OpenAI-only. Gate on the endpoint, not the
+    # model name — a gpt-* model name routed through OpenRouter would otherwise
+    # request a parameter the gateway may reject.
+    supports_json_mode = base_url is None and model.startswith(
+        ("gpt-", "o1-", "o3-", "o4-")
+    )
 
     print("=" * 70)
     print("🤖 AutoMem LLM Reclassification Tool")
@@ -269,7 +314,13 @@ def main():
     print()
 
     if not api_key:
-        print("❌ No API key found. Set OPENAI_API_KEY or OPENROUTER_API_KEY.")
+        if args.provider == "openrouter":
+            print("❌ No API key for OpenRouter. Set OPENROUTER_API_KEY (or CLASSIFICATION_API_KEY).")
+        elif base_url:
+            print(f"❌ No API key for {base_url}. Set CLASSIFICATION_API_KEY.")
+        else:
+            print("❌ No API key for OpenAI. Set OPENAI_API_KEY,")
+            print("   or pass --provider openrouter (with OPENROUTER_API_KEY) to use OpenRouter.")
         sys.exit(1)
 
     # Connect to FalkorDB
@@ -303,8 +354,11 @@ def main():
     openai_client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
     print("✅ Client ready\n")
 
-    # Get fallback memories
-    memories = get_fallback_memories(falkor_client)
+    # Push --limit into Cypher for head sampling so we don't materialize the
+    # entire fallback corpus on partial runs. Random sampling still requires
+    # the full set, so we only cap at the DB for head mode.
+    db_limit = args.limit if (args.limit is not None and args.sample == "head") else None
+    memories = get_fallback_memories(falkor_client, db_limit=db_limit)
 
     if not memories:
         print("✅ No memories need reclassification!")
@@ -312,22 +366,29 @@ def main():
 
     total_available = len(memories)
 
-    # Apply --limit slice
-    if args.limit is not None and args.limit < len(memories):
-        if args.sample == "random":
-            if args.seed is not None:
-                random.seed(args.seed)
-            memories = random.sample(memories, args.limit)
-        else:  # head
-            memories = memories[: args.limit]
+    # Apply --limit slice (random sampling still needs the full set).
+    if args.limit is not None and args.sample == "random" and args.limit < len(memories):
+        if args.seed is not None:
+            random.seed(args.seed)
+        memories = random.sample(memories, args.limit)
         print(f"🎯 Sliced to {len(memories)} memories (of {total_available} available)\n")
+    elif args.limit is not None and args.sample == "head":
+        print(f"🎯 Capped at {len(memories)} memories (head, db-side LIMIT)\n")
 
-    # Estimate cost
+    # Estimate cost — the per-token figure below is OpenAI gpt-4o-mini pricing.
+    # For other models / providers (OpenRouter, Azure, vLLM, …) actual cost
+    # varies; surface the assumption so the confirmation prompt isn't misleading.
     tokens_per_memory = 370  # ~350 input + 20 output
     total_tokens = len(memories) * tokens_per_memory
-    estimated_cost = (total_tokens / 1_000_000) * 0.20  # Combined input/output
+    estimated_cost = (total_tokens / 1_000_000) * 0.20  # OpenAI gpt-4o-mini blended rate
 
+    pricing_basis = (
+        "OpenAI gpt-4o-mini pricing"
+        if base_url is None and model.startswith("gpt-4o-mini")
+        else f"OpenAI gpt-4o-mini pricing — actual cost depends on {model}"
+    )
     print(f"💰 Estimated cost: ${estimated_cost:.4f} (~{estimated_cost * 100:.1f} cents)")
+    print(f"   ({pricing_basis})")
     print(f"📊 Tokens: ~{total_tokens:,}")
     print()
 
@@ -354,7 +415,9 @@ def main():
         print(f"[{i}/{len(memories)}] {content_preview}")
 
         # Classify with LLM
-        new_type, new_confidence = classify_with_llm(openai_client, content)
+        new_type, new_confidence = classify_with_llm(
+            openai_client, content, supports_json_mode=supports_json_mode
+        )
         type_counts[new_type] = type_counts.get(new_type, 0) + 1
 
         print(f"   → {new_type} (confidence: {new_confidence:.2f})")

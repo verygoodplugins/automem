@@ -241,6 +241,9 @@ Controls embedding provider and classification model settings.
 | `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4, 1536=text-embedding-3-small native; choose ≤1536 when truncating, 3072=text-embedding-3-large native) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
 | `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
+| `CLASSIFICATION_BASE_URL` | Optional OpenAI-compatible endpoint for `scripts/reclassify_with_llm.py` | _(unset → OpenAI)_ | e.g. `https://openrouter.ai/api/v1` |
+| `CLASSIFICATION_API_KEY` | API key paired with `CLASSIFICATION_BASE_URL` (never falls back across providers) | _(unset)_ | provider key |
+| `OPENROUTER_API_KEY` | API key consumed when `scripts/reclassify_with_llm.py --provider openrouter` is selected | _(unset)_ | OpenRouter key |
 
 **Embedding Provider Comparison:**
 
