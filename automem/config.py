@@ -1,14 +1,130 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Mapping
 
 from dotenv import load_dotenv
 
 # Load environment variables before configuring the application.
 load_dotenv()
 load_dotenv(Path.home() / ".config" / "automem" / ".env")
+
+
+def _env_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = env.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+@dataclass(frozen=True)
+class RuntimeProfile:
+    tier: str
+    mode: str
+    embedding_tier: str
+    consolidation_tier: str
+    qdrant_expected: bool
+    writes_enabled: bool
+    admin_mutations_enabled: bool
+    archive_export_enabled: bool
+    self_service_export_enabled: bool
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "tier": self.tier,
+            "mode": self.mode,
+            "embedding_tier": self.embedding_tier,
+            "consolidation_tier": self.consolidation_tier,
+            "capabilities": {
+                "qdrant_expected": self.qdrant_expected,
+                "writes_enabled": self.writes_enabled,
+                "admin_mutations_enabled": self.admin_mutations_enabled,
+                "archive_export_enabled": self.archive_export_enabled,
+                "self_service_export_enabled": self.self_service_export_enabled,
+            },
+        }
+
+
+def resolve_runtime_profile(env: Mapping[str, str] | None = None) -> RuntimeProfile:
+    env_map = dict(env or os.environ)
+    tier_defaults: Dict[str, Dict[str, Any]] = {
+        "trial": {
+            "embedding_tier": "managed",
+            "consolidation_tier": "standard",
+            "qdrant_expected": True,
+            "self_service_export_enabled": False,
+        },
+        "pro": {
+            "embedding_tier": "managed",
+            "consolidation_tier": "standard",
+            "qdrant_expected": True,
+            "self_service_export_enabled": False,
+        },
+        "ultimate": {
+            "embedding_tier": "premium",
+            "consolidation_tier": "full",
+            "qdrant_expected": True,
+            "self_service_export_enabled": True,
+        },
+        "archived": {
+            "embedding_tier": "disabled",
+            "consolidation_tier": "disabled",
+            "qdrant_expected": True,
+            "self_service_export_enabled": False,
+        },
+    }
+
+    tier = (env_map.get("AUTOMEM_SERVICE_TIER", "pro") or "pro").strip().lower()
+    if tier not in tier_defaults:
+        tier = "pro"
+
+    default_mode = "archived" if tier == "archived" else "active"
+    mode = (env_map.get("AUTOMEM_SERVICE_MODE", default_mode) or default_mode).strip().lower()
+    if mode not in {"active", "read_only", "archived"}:
+        mode = default_mode
+
+    defaults = tier_defaults[tier]
+    writes_enabled = mode == "active"
+    admin_mutations_enabled = mode == "active"
+
+    return RuntimeProfile(
+        tier=tier,
+        mode=mode,
+        embedding_tier=(
+            env_map.get("AUTOMEM_EMBEDDING_TIER", defaults["embedding_tier"])
+            or defaults["embedding_tier"]
+        )
+        .strip()
+        .lower(),
+        consolidation_tier=(
+            env_map.get("AUTOMEM_CONSOLIDATION_TIER", defaults["consolidation_tier"])
+            or defaults["consolidation_tier"]
+        )
+        .strip()
+        .lower(),
+        qdrant_expected=_env_bool(
+            env_map, "AUTOMEM_QDRANT_EXPECTED", bool(defaults["qdrant_expected"])
+        ),
+        writes_enabled=_env_bool(env_map, "AUTOMEM_WRITES_ENABLED", writes_enabled),
+        admin_mutations_enabled=_env_bool(
+            env_map, "AUTOMEM_ADMIN_MUTATIONS_ENABLED", admin_mutations_enabled
+        ),
+        archive_export_enabled=_env_bool(env_map, "AUTOMEM_ARCHIVE_EXPORT_ENABLED", True),
+        self_service_export_enabled=_env_bool(
+            env_map,
+            "AUTOMEM_SELF_SERVICE_EXPORT_ENABLED",
+            bool(defaults["self_service_export_enabled"]),
+        ),
+    )
+
+
+RUNTIME_PROFILE = resolve_runtime_profile()
+SERVICE_TIER = RUNTIME_PROFILE.tier
+SERVICE_MODE = RUNTIME_PROFILE.mode
+SERVICE_PROFILE = RUNTIME_PROFILE.to_dict()
+UPGRADE_URL = os.getenv("AUTOMEM_UPGRADE_URL", "https://automem.ai/subscribe").strip()
 
 # Qdrant / FalkorDB configuration
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "memories")

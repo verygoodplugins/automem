@@ -200,10 +200,29 @@ def create_memory_blueprint_full(
 ) -> Blueprint:
     bp = Blueprint("memory", __name__)
 
-    @bp.route("/memory", methods=["POST"])
-    def store() -> Any:
+    def _merge_tags(raw_tags: Any, forced_tags: Optional[List[str]] = None) -> List[str]:
+        tags = normalize_tags(raw_tags)
+        if not forced_tags:
+            return tags
+
+        seen = {str(tag).strip().lower() for tag in tags if isinstance(tag, str) and tag.strip()}
+        for forced_tag in forced_tags:
+            normalized = str(forced_tag).strip()
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if lowered in seen:
+                continue
+            tags.append(normalized)
+            seen.add(lowered)
+        return tags
+
+    def _store_memory_payload(
+        payload: Dict[str, Any],
+        *,
+        forced_tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         query_start = time.perf_counter()
-        payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
 
@@ -252,7 +271,7 @@ def create_memory_blueprint_full(
                     len(content),
                 )
 
-        tags = normalize_tags(payload.get("tags"))
+        tags = _merge_tags(payload.get("tags"), forced_tags)
         tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
         tag_prefixes = compute_tag_prefixes(tags_lower)
         importance = coerce_importance(payload.get("importance"))
@@ -473,6 +492,80 @@ def create_memory_blueprint_full(
                 "enrichment_queued": bool(state.enrichment_queue),
             },
         )
+        return response
+
+    def _associate_memories(
+        *,
+        memory1_id: str,
+        memory2_id: str,
+        relation_type: str,
+        strength: Any,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        relation_type = (relation_type or "RELATES_TO").upper()
+        strength_value = coerce_importance(strength)
+
+        if not memory1_id or not memory2_id:
+            abort(400, description="'memory1_id' and 'memory2_id' are required")
+        _validate_memory_id(memory1_id)
+        _validate_memory_id(memory2_id)
+        if memory1_id == memory2_id:
+            abort(400, description="Cannot associate a memory with itself")
+        if relation_type not in set(authorable_relations):
+            abort(
+                400,
+                description=f"Relation type must be one of {sorted(authorable_relations)}",
+            )
+
+        graph = get_memory_graph()
+        if graph is None:
+            abort(503, description="FalkorDB is unavailable")
+
+        timestamp = utc_now()
+        relationship_props = {"strength": strength_value, "updated_at": timestamp}
+        relation_config = relation_types.get(relation_type, {})
+        source_payload = payload or {}
+        if "properties" in relation_config:
+            for prop in relation_config["properties"]:
+                if prop in source_payload:
+                    relationship_props[prop] = source_payload[prop]
+
+        set_clauses = [f"r.{key} = ${key}" for key in relationship_props]
+        set_clause = ", ".join(set_clauses)
+
+        try:
+            result = graph.query(
+                f"""
+                MATCH (m1:Memory {{id: $id1}})
+                MATCH (m2:Memory {{id: $id2}})
+                MERGE (m1)-[r:{relation_type}]->(m2)
+                SET {set_clause}
+                RETURN r
+                """,
+                {"id1": memory1_id, "id2": memory2_id, **relationship_props},
+            )
+        except Exception:
+            logger.exception("Failed to create association")
+            abort(500, description="Failed to create association")
+
+        if not getattr(result, "result_set", None):
+            abort(404, description="One or both memories do not exist")
+
+        response = {
+            "status": "success",
+            "message": f"Association created between {memory1_id} and {memory2_id}",
+            "relation_type": relation_type,
+            "strength": strength_value,
+        }
+        for prop in relation_config.get("properties", []):
+            if prop in relationship_props:
+                response[prop] = relationship_props[prop]
+        return response
+
+    @bp.route("/memory", methods=["POST"])
+    def store() -> Any:
+        payload = request.get_json(silent=True)
+        response = _store_memory_payload(payload)
         return jsonify(response), 201
 
     @bp.route("/memory/<memory_id>", methods=["GET"])
@@ -745,68 +838,189 @@ def create_memory_blueprint_full(
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
+        response = _associate_memories(
+            memory1_id=(payload.get("memory1_id") or "").strip(),
+            memory2_id=(payload.get("memory2_id") or "").strip(),
+            relation_type=(payload.get("type") or "RELATES_TO").upper(),
+            strength=payload.get("strength", 0.5),
+            payload=payload,
+        )
+        return jsonify(response), 201
 
-        memory1_id = (payload.get("memory1_id") or "").strip()
-        memory2_id = (payload.get("memory2_id") or "").strip()
-        relation_type = (payload.get("type") or "RELATES_TO").upper()
-        strength = coerce_importance(payload.get("strength", 0.5))
+    @bp.route("/api/v1/preseed", methods=["POST"])
+    def preseed() -> Any:
+        internal_header = (request.headers.get("X-AutoMem-Internal") or "").strip().lower()
+        if internal_header != "preseed":
+            abort(403, description="Internal preseed authorization required")
 
-        if not memory1_id or not memory2_id:
-            abort(400, description="'memory1_id' and 'memory2_id' are required")
-        _validate_memory_id(memory1_id)
-        _validate_memory_id(memory2_id)
-        if memory1_id == memory2_id:
-            abort(400, description="Cannot associate a memory with itself")
-        if relation_type not in set(authorable_relations):
-            abort(
-                400,
-                description=f"Relation type must be one of {sorted(authorable_relations)}",
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            abort(400, description="JSON body with 'memories' array required")
+
+        memories_input = payload.get("memories")
+        if not isinstance(memories_input, list) or not memories_input:
+            abort(400, description="'memories' must be a non-empty array")
+
+        associations_input = payload.get("associations", [])
+        if not isinstance(associations_input, list):
+            abort(400, description="'associations' must be an array when provided")
+
+        normalized_associations: List[Dict[str, Any]] = []
+        for index, association in enumerate(associations_input):
+            if not isinstance(association, dict):
+                abort(400, description=f"Association at index {index} must be an object")
+
+            try:
+                from_index = int(association.get("from_index"))
+                to_index = int(association.get("to_index"))
+            except (TypeError, ValueError):
+                abort(
+                    400,
+                    description=(
+                        f"Association at index {index} must include integer "
+                        "'from_index' and 'to_index' fields"
+                    ),
+                )
+
+            if from_index < 0 or to_index < 0:
+                abort(400, description=f"Association at index {index} cannot use negative indexes")
+            if from_index >= len(memories_input) or to_index >= len(memories_input):
+                abort(
+                    400,
+                    description=(
+                        f"Association at index {index} references an out-of-range memory index"
+                    ),
+                )
+            if from_index == to_index:
+                abort(
+                    400,
+                    description=f"Association at index {index} cannot reference the same memory",
+                )
+
+            relation_type = (
+                association.get("relationship") or association.get("type") or "RELATES_TO"
+            )
+            if str(relation_type).upper() not in set(authorable_relations):
+                abort(
+                    400,
+                    description=(
+                        f"Association at index {index} must use one of "
+                        f"{sorted(authorable_relations)}"
+                    ),
+                )
+
+            normalized_associations.append(
+                {
+                    **association,
+                    "from_index": from_index,
+                    "to_index": to_index,
+                    "type": str(relation_type).upper(),
+                }
             )
 
+        created_responses: List[Dict[str, Any]] = []
+        for index, memory_payload in enumerate(memories_input):
+            if not isinstance(memory_payload, dict):
+                abort(400, description=f"Memory at index {index} must be an object")
+            created_responses.append(
+                _store_memory_payload(memory_payload, forced_tags=["onboarding"])
+            )
+
+        memory_ids = [response["memory_id"] for response in created_responses]
+
+        for association in normalized_associations:
+            _associate_memories(
+                memory1_id=memory_ids[int(association["from_index"])],
+                memory2_id=memory_ids[int(association["to_index"])],
+                relation_type=str(association["type"]),
+                strength=association.get("strength", 0.5),
+                payload=association,
+            )
+
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "memories_created": len(memory_ids),
+                    "associations_created": len(normalized_associations),
+                    "memory_ids": memory_ids,
+                }
+            ),
+            201,
+        )
+
+    @bp.route("/api/v1/stats", methods=["GET"])
+    def api_stats() -> Any:
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
-        timestamp = utc_now()
-
-        relationship_props = {"strength": strength, "updated_at": timestamp}
-        relation_config = relation_types.get(relation_type, {})
-        if "properties" in relation_config:
-            for prop in relation_config["properties"]:
-                if prop in payload:
-                    relationship_props[prop] = payload[prop]
-
-        set_clauses = [f"r.{key} = ${key}" for key in relationship_props]
-        set_clause = ", ".join(set_clauses)
-
         try:
-            result = graph.query(
-                f"""
-                MATCH (m1:Memory {{id: $id1}})
-                MATCH (m2:Memory {{id: $id2}})
-                MERGE (m1)-[r:{relation_type}]->(m2)
-                SET {set_clause}
-                RETURN r
-                """,
-                {"id1": memory1_id, "id2": memory2_id, **relationship_props},
+            memory_count_result = graph.query("MATCH (m:Memory) RETURN count(m) as count")
+            association_count_result = graph.query("MATCH ()-[r]->() RETURN count(r)")
+            type_result = graph.query(
+                """
+                MATCH (m:Memory)
+                WHERE m.type IS NOT NULL
+                RETURN m.type, COUNT(m) as count
+                ORDER BY count DESC
+                """
+            )
+            tag_result = graph.query(
+                """
+                MATCH (m:Memory)
+                UNWIND coalesce(m.tags, []) AS tag
+                RETURN toLower(tag) AS tag, count(*) AS count
+                ORDER BY count DESC, tag ASC
+                LIMIT 10
+                """
+            )
+            last_activity_result = graph.query(
+                """
+                MATCH (m:Memory)
+                RETURN max(coalesce(m.updated_at, m.last_accessed, m.timestamp)) AS last_activity
+                """
             )
         except Exception:
-            logger.exception("Failed to create association")
-            abort(500, description="Failed to create association")
+            logger.exception("Failed to build dashboard stats")
+            abort(500, description="Failed to build stats")
 
-        if not getattr(result, "result_set", None):
-            abort(404, description="One or both memories do not exist")
-
-        response = {
-            "status": "success",
-            "message": f"Association created between {memory1_id} and {memory2_id}",
-            "relation_type": relation_type,
-            "strength": strength,
+        memories_stored = (
+            int(memory_count_result.result_set[0][0]) if memory_count_result.result_set else 0
+        )
+        associations = (
+            int(association_count_result.result_set[0][0])
+            if association_count_result.result_set
+            else 0
+        )
+        memory_types = {
+            str(row[0]): int(row[1])
+            for row in getattr(type_result, "result_set", []) or []
+            if row and row[0] is not None
         }
-        for prop in relation_config.get("properties", []):
-            if prop in relationship_props:
-                response[prop] = relationship_props[prop]
-        return jsonify(response), 201
+        top_tags = [
+            {"tag": str(row[0]), "count": int(row[1])}
+            for row in getattr(tag_result, "result_set", []) or []
+            if row and row[0]
+        ]
+        last_activity = None
+        if getattr(last_activity_result, "result_set", None):
+            raw_last_activity = last_activity_result.result_set[0][0]
+            last_activity = str(raw_last_activity) if raw_last_activity is not None else None
+
+        graph_density = round((associations / memories_stored), 4) if memories_stored else 0.0
+
+        return jsonify(
+            {
+                "status": "success",
+                "memories_stored": memories_stored,
+                "associations": associations,
+                "memory_types": memory_types,
+                "top_tags": top_tags,
+                "last_activity": last_activity,
+                "graph_density": graph_density,
+            }
+        )
 
     @bp.route("/memory/batch", methods=["POST"])
     def store_batch() -> Any:

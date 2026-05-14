@@ -195,6 +195,37 @@ class FakeGraph:
             }
             return FakeResult([[FakeNode(self.memories[memory_id])]])
 
+        if (
+            "MATCH (n)" in query
+            and "labels(n) AS labels" in query
+            and "properties(n) AS props" in query
+        ):
+            rows = []
+            for memory in self.memories.values():
+                rows.append([["Memory"], dict(memory)])
+            return FakeResult(rows)
+
+        if (
+            "MATCH (a)-[r]->(b)" in query
+            and "properties(a).id AS source_id" in query
+            and "properties(r) AS props" in query
+        ):
+            rows = []
+            for rel in self.relationships:
+                rows.append(
+                    [
+                        rel.get("id1"),
+                        rel.get("type"),
+                        rel.get("id2"),
+                        {
+                            key: value
+                            for key, value in rel.items()
+                            if key not in {"id1", "id2", "type"}
+                        },
+                    ]
+                )
+            return FakeResult(rows)
+
         # Memory update
         if "MATCH (m:Memory {id:" in query and "SET m.content" in query:
             memory_id = str(params["id"])
@@ -319,6 +350,41 @@ class FakeGraph:
                         ]
                     )
             return FakeResult(rows)
+
+        if "MATCH (m:Memory)" in query and "RETURN count(m) as count" in query:
+            return FakeResult([[len(self.memories)]])
+
+        if "MATCH ()-[r]->() RETURN count(r)" in query:
+            return FakeResult([[len(self.relationships)]])
+
+        if "UNWIND coalesce(m.tags, []) AS tag" in query and "RETURN toLower(tag) AS tag" in query:
+            tag_counts: Dict[str, int] = {}
+            for memory in self.memories.values():
+                for tag in memory.get("tags") or []:
+                    normalized = str(tag).strip().lower()
+                    if not normalized:
+                        continue
+                    tag_counts[normalized] = tag_counts.get(normalized, 0) + 1
+            rows = [[tag, count] for tag, count in tag_counts.items()]
+            rows.sort(key=lambda row: (-int(row[1]), str(row[0])))
+            return FakeResult(rows[:10])
+
+        if (
+            "RETURN max(coalesce(m.updated_at, m.last_accessed, m.timestamp)) AS last_activity"
+            in query
+        ):
+            values = []
+            for memory in self.memories.values():
+                values.append(
+                    str(
+                        memory.get("updated_at")
+                        or memory.get("last_accessed")
+                        or memory.get("timestamp")
+                        or ""
+                    )
+                )
+            values = [value for value in values if value]
+            return FakeResult([[max(values) if values else None]])
 
         # Startup recall query patterns
         if "WHERE 'critical' IN m.tags OR 'lesson' IN m.tags OR 'ai-assistant' IN m.tags" in query:
