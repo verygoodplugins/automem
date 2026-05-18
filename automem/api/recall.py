@@ -2117,8 +2117,11 @@ def create_recall_blueprint(
             ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
             LIMIT $limit
         """
+        # FalkorDB does not accept parameters inside variable-length relationship ranges.
+        # max_depth is parsed and clamped above, so inlining it here is safe.
+        fallback_depth = max_depth
         fallback_query = f"""
-            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + '*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
+            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..{fallback_depth}]-' if rel_pattern else f'-[r*1..{fallback_depth}]-'}(related:Memory)
             WHERE m.id <> related.id
             RETURN DISTINCT related
             ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC

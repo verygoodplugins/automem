@@ -1800,6 +1800,35 @@ def test_related_memories_supports_explicit_system_relation_opt_ins(
     assert "PARALLEL_CONTEXT" in query
 
 
+def test_related_memories_fallback_inlines_sanitized_depth(client, mock_state, auth_headers):
+    class Graph:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self, query: str, params: dict[str, Any] | None = None) -> SimpleNamespace:
+            self.calls.append((query, params or {}))
+            if len(self.calls) == 1:
+                raise RuntimeError("apoc unavailable")
+            if "$max_depth" in query:
+                raise RuntimeError("FalkorDB rejects parameterized variable-length ranges")
+            return SimpleNamespace(result_set=[])
+
+    graph = Graph()
+    mock_state.memory_graph = graph
+
+    response = client.get(
+        "/memories/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/related?max_depth=2",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert len(graph.calls) == 2
+    fallback_query, fallback_params = graph.calls[1]
+    assert "*1..2" in fallback_query
+    assert "$max_depth" not in fallback_query
+    assert fallback_params["max_depth"] == 2
+
+
 # ==================== Test Rate Limiting (if implemented) ====================
 
 
