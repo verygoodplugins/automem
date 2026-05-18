@@ -262,12 +262,14 @@ LoCoMo evaluates AI systems' ability to remember and reason across very long con
 
 Historical note: older public LoCoMo references such as CORE's **88.24%** are still useful background context, but they are not AutoMem's primary comparison target because the public setups are not perfectly apples-to-apples, especially around category-5 handling.
 
-AutoMem currently publishes two LoCoMo baselines:
+AutoMem currently publishes the following LoCoMo baselines:
 
 | Setup | Scope | Score | Notes |
 |------|-------|-------|-------|
-| `locomo-mini`, judge off | 2 conversations, categories 1-4 only | **89.27% (208/233)** | 71 category-5 questions skipped |
-| `locomo`, judge on (`gpt-4o`) | Full 10 conversations | **87.56% (1739/1986)** | Category 5 scored at 95.74% (427/446) |
+| `locomo`, judge on | Full 10 conversations | **84.74% (1683/1986)** | Current canonical full run from the May 2026 publication verification; category 5 used pinned `gpt-5.4-mini-2026-03-17` and scored **95.52% (426/446)** with 0 skips/errors. |
+| `locomo`, judge on | Full 10 conversations | **83.99% (1668/1986)** | Historical #128 full run; category 5 used `gpt-5.1` and scored **92.83% (414/446)** with 0 skips. |
+| `locomo-mini`, judge off | 2 conversations, categories 1-4 only | **89.27% (208/233)** | Historical mini anchor after evaluator fixes; not the current headline full-run claim. |
+| `locomo`, judge on (`gpt-4o`) | Full 10 conversations | **87.56% (1739/1986)** | Historical March 2026 run; kept for trend context only. |
 
 ### Running the Benchmark
 
@@ -304,20 +306,16 @@ Memory usage:
 Example benchmark output:
 ```text
 📊 FINAL RESULTS
-🎯 Overall Accuracy: 87.56% (1739/1986)
-⏱️ Total Time: 3497s
+🎯 Overall Accuracy: 84.74% (1683/1986)
+⏱️ Total Time: 3164s
 💾 Total Memories Stored: 5882
 
-📈 Category Breakdown:
-  Single-hop Recall        : 66.31% (187/282)
-  Temporal Understanding   : 87.23% (280/321)
-  Multi-hop Reasoning      : 45.83% ( 44/ 96)
-  Open Domain              : 95.24% (801/841)
-  Complex Reasoning        : 95.74% (427/446)
+📈 Category Breakdown excerpt:
+  Complex Reasoning        : 95.52% (426/446)
 
 ```
 
-If you run without the judge, category 5 will show as `N/A`.
+See `benchmarks/EXPERIMENT_LOG.md` for the full per-category table. If you run without the judge, category 5 will show as `N/A`.
 
 Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
 
@@ -343,8 +341,9 @@ Current LongMemEval results:
 
 | Setup | Scope | Score | Retrieval | Notes |
 |------|-------|-------|-----------|-------|
-| `longmemeval-mini` representative | 30 questions, stratified 5 per question type | **60.0% (18/30)** | recall@5 **96.67% (29/30)** | Canonical run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`. |
-| `longmemeval` full canonical | 500 questions | **86.20% (431/500)** | recall@5 **97.20% (486/500)** | Canonical run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`. |
+| `longmemeval-mini` representative | 30 questions, stratified 5 per question type | **70.00% (21/30)** | recall@5 **96.67% (29/30)** | Fresh publication verification run: `gpt-5-mini` answerer, script LLM eval, 2 empty-answer warnings. |
+| `longmemeval` full canonical | 500 questions | **87.00% (435/500)** | recall@5 **97.00% (485/500)** | Fresh publication verification run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`, `publishable=true`. |
+| `longmemeval` full historical | 500 questions | **86.20% (431/500)** | recall@5 **97.20% (486/500)** | April 2026 canonical milestone with the same answerer and judge policy; kept for trend context. |
 | `longmemeval` partial legacy prefix (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional prefix run with legacy `gpt-4o` answerer; recall_limit=10, no entity/relation expansion. Not reproduced by the current stratified `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup. |
 
 For future published LongMemEval results, use the pinned judge policy in [`docs/BENCHMARK_JUDGE_POLICY.md`](BENCHMARK_JUDGE_POLICY.md) so runs remain comparable over time. The primary answerer is `gpt-5-mini`; `gpt-4o` is legacy continuity only and should be labeled as such. Result metadata distinguishes the answer model (`answerer_model` / `llm_model`) from the judge model (`judge_model`, currently `gpt-5.4-mini-2026-03-17` when `--llm-eval` is enabled).
@@ -385,8 +384,8 @@ AutoMem is expected to perform well due to:
    - `DERIVED_FROM`, `PART_OF`
 
 2. **Hybrid Search**: Vector + keyword + tags + importance + time
-   - Better than pure semantic search
-   - More reliable than vector-only systems
+   - Designed to recover both semantic matches and explicit structured context
+   - Useful for testing graph/vector tradeoffs against snapshot-based evals
 
 3. **Background Intelligence**:
    - Entity extraction for structured queries
