@@ -635,9 +635,7 @@ def test_recall_current_only_injects_active_replacement(
     assert data["state_filter"]["suppressed"][0]["replacement_id"] == replacement_id
 
 
-def test_recall_current_only_batch_loads_relation_replacements(
-    client, mock_state, auth_headers
-):
+def test_recall_current_only_batch_loads_relation_replacements(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     mock_state.memory_graph.relationships.clear()
 
@@ -680,9 +678,7 @@ def test_recall_current_only_batch_loads_relation_replacements(
     assert len(replacement_queries) == 1
 
 
-def test_recall_current_only_keeps_replacement_score_order(
-    client, mock_state, auth_headers
-):
+def test_recall_current_only_keeps_replacement_score_order(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     mock_state.memory_graph.relationships.clear()
     old_id = "cc000000-0000-0000-0000-000000000019"
@@ -706,9 +702,7 @@ def test_recall_current_only_keeps_replacement_score_order(
     assert [result["id"] for result in data["results"]] == [replacement_id, active_id]
 
 
-def test_recall_current_only_replacement_respects_tag_filter(
-    client, mock_state, auth_headers
-):
+def test_recall_current_only_replacement_respects_tag_filter(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     mock_state.memory_graph.relationships.clear()
     old_id = "cc000000-0000-0000-0000-000000000012"
@@ -767,9 +761,7 @@ def test_recall_current_only_false_keeps_relation_history(
     assert "state_filter" not in data
 
 
-def test_recall_current_only_does_not_suppress_contradictions(
-    client, mock_state, auth_headers
-):
+def test_recall_current_only_does_not_suppress_contradictions(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     mock_state.memory_graph.relationships.clear()
     old_id = "cc000000-0000-0000-0000-000000000020"

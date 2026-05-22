@@ -380,11 +380,7 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
 def _result_memory_id(result: Dict[str, Any]) -> str:
     memory = result.get("memory") or {}
     return str(
-        result.get("id")
-        or memory.get("id")
-        or memory.get("memory_id")
-        or memory.get("uuid")
-        or ""
+        result.get("id") or memory.get("id") or memory.get("memory_id") or memory.get("uuid") or ""
     ).strip()
 
 
@@ -436,7 +432,9 @@ def _active_replacements_for_memories(
             {"ids": ordered_ids, "types": sorted(STATE_SUPPRESSING_RELATIONS)},
         )
     except Exception:
-        logger.exception("Failed to load current-state replacements for %d memories", len(ordered_ids))
+        logger.exception(
+            "Failed to load current-state replacements for %d memories", len(ordered_ids)
+        )
         return {}
 
     replacements: Dict[str, Dict[str, Any]] = {}
