@@ -161,7 +161,7 @@ bench-compare-branch:
 	@scripts/bench/compare_branch.sh $(BRANCH) $(or $(CONFIG),baseline) $(or $(BENCH),locomo)
 
 bench-health:
-	@python3 scripts/bench/health_check.py --base-url $(or $(BASE_URL),http://localhost:8001)
+	@$(or $(VENV_BIN),.venv/bin)/python scripts/bench/health_check.py --base-url $(or $(BASE_URL),http://localhost:8001)
 
 bench-snapshots:
 	@ls -la benchmarks/snapshots/ 2>/dev/null || echo "No snapshots yet. Run: make bench-ingest BENCH=locomo"

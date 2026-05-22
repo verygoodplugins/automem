@@ -7,7 +7,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/verygoodplugins/automem" alt="License" /></a>
   <a href="https://automem.ai/discord"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://x.com/automem_ai"><img src="https://img.shields.io/badge/X-@automem__ai-000000?logo=x&logoColor=white" alt="X" /></a>
-  <a href="benchmarks/EXPERIMENT_LOG.md"><img src="https://img.shields.io/badge/LoCoMo-89.27%25-success" alt="LoCoMo benchmark" /></a>
+  <a href="benchmarks/EXPERIMENT_LOG.md"><img src="https://img.shields.io/badge/LongMemEval-87.00%25-success" alt="LongMemEval benchmark" /></a>
   <a href="https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic"><img src="https://img.shields.io/badge/Deploy%20on-Railway-0B0D0E?logo=railway&logoColor=white" alt="Deploy on Railway" /></a>
 </p>
 
@@ -27,9 +27,9 @@ Your AI forgets between sessions. RAG dumps documents that look similar. Vector 
 
 AutoMem stores typed relationships *and* embeddings. When you ask "why did we choose PostgreSQL?", recall returns not just the matching memory — but the alternatives you considered, the principle behind the choice, and the related decisions that came after.
 
-It scores **89.27%** on the LoCoMo long-term memory benchmark (ACL 2024) judge-off, and **87.56%** judge-on. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology and history.
+Current canonical benchmark results are **87.00%** on LongMemEval full with **97.00% recall@5**, and **84.74%** on LoCoMo full. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology, judge policy, category breakdowns, and historical runs.
 
-Additional LongMemEval and BEAM validation is tracked in [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md); BEAM is currently reported as exploratory because published comparisons are not yet apples-to-apples.
+Exploratory BEAM validation is tracked separately in [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md); those numbers are diagnostic and not apples-to-apples product claims against published 1M/10M BEAM results.
 
 ## Should you use AutoMem?
 
@@ -223,6 +223,7 @@ _Screenshots will be added once the referenced in-repo image assets are availabl
 - [Research foundation](docs/RESEARCH.md) — papers and how AutoMem implements them
 - [Comparison](docs/COMPARISON.md) — vs. RAG, vector DBs, building your own
 - [Benchmark history](benchmarks/EXPERIMENT_LOG.md) — LoCoMo, LongMemEval, and BEAM methodology and runs
+- [Publication bundle](benchmarks/publication/2026-05-arxiv/) — arXiv claim posture, reproducibility commands, and artifact manifest
 
 **Operations**
 - [Health monitoring & backups](docs/MONITORING_AND_BACKUPS.md)

@@ -84,7 +84,7 @@ When building your own is the right answer:
 | **Confidence** | 0.05 | The memory's `confidence` score (0–1) |
 | **Relevance** | 0.00 | Consolidation decay relevance — disabled by default |
 
-These defaults reflect the current LoCoMo baseline (89.27% judge-off, 87.56% judge-on). For a query like `GET /recall?query=database+migration&tags=decision&time_query=last+month`, the temporal-alignment and tag components dominate; for `GET /recall?query=why+postgres&expand_relations=true`, the relation component does.
+These defaults reflect the current canonical benchmark posture: LongMemEval full at 87.00% with 97.00% recall@5, and LoCoMo full at 84.74%. For a query like `GET /recall?query=database+migration&tags=decision&time_query=last+month`, the temporal-alignment and tag components dominate; for `GET /recall?query=why+postgres&expand_relations=true`, the relation component does.
 
 The Recall Quality Lab (`scripts/lab/`) lets you sweep any weight and A/B-compare configs against snapshots of production data without touching the service.
 
