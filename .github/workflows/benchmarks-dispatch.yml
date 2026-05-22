@@ -1,0 +1,43 @@
+name: Dispatch Benchmark Website Update
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - benchmarks/EXPERIMENT_LOG.md
+      - benchmarks/publication/**
+      - docs/BENCHMARK_JUDGE_POLICY.md
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Commit SHA, branch, or tag to publish to the website"
+        required: false
+      reason:
+        description: "Why benchmark data needs updating"
+        required: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Dispatch benchmark update
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          SOURCE_SHA: ${{ github.event.inputs.source_sha || github.sha }}
+          REASON: ${{ github.event.inputs.reason || format('Benchmark files changed in {0}', github.sha) }}
+        run: |
+          jq -n \
+            --arg event_type "benchmarks-update" \
+            --arg source_repo "${{ github.repository }}" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg reason "$REASON" \
+            '{
+              event_type: $event_type,
+              client_payload: {
+                source_repo: $source_repo,
+                source_sha: $source_sha,
+                reason: $reason
+              }
+            }' | gh api repos/verygoodplugins/automem-website/dispatches --input -
