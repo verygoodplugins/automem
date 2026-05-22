@@ -266,8 +266,8 @@ AutoMem currently publishes the following LoCoMo baselines:
 
 | Setup | Scope | Score | Notes |
 |------|-------|-------|-------|
-| `locomo`, judge on | Full 10 conversations | **84.74% (1683/1986)** | Current canonical full run from the May 2026 publication verification; category 5 used pinned `gpt-5.4-mini-2026-03-17` and scored **95.52% (426/446)** with 0 skips/errors. |
-| `locomo`, judge on | Full 10 conversations | **83.99% (1668/1986)** | Historical #128 full run; category 5 used `gpt-5.1` and scored **92.83% (414/446)** with 0 skips. |
+| `locomo`, canonical judge on (`gpt-5.4-mini-2026-03-17`) | Full 10 conversations | **84.74% (1683/1986)** | Current canonical full run from the May 2026 publication verification; category 5 scored **95.52% (426/446)** with 0 skips/errors. |
+| `locomo`, historical judge on (`gpt-5.1`) | Full 10 conversations | **83.99% (1668/1986)** | Historical #128 full run; category 5 scored **92.83% (414/446)** with 0 skips. |
 | `locomo-mini`, judge off | 2 conversations, categories 1-4 only | **89.27% (208/233)** | Historical mini anchor after evaluator fixes; not the current headline full-run claim. |
 | `locomo`, judge on (`gpt-4o`) | Full 10 conversations | **87.56% (1739/1986)** | Historical March 2026 run; kept for trend context only. |
 

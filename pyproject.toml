@@ -3,12 +3,14 @@ line-length = 100
 extend-exclude = '''
 /(
   \.bench-venv
+  | \.venv
   | \.worktrees
   | benchmarks/results
   | benchmarks/snapshots
   | node_modules
   | packages/graph-viewer/node_modules
   | showcase
+  | venv
 )/
 '''
 

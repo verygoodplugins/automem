@@ -1826,7 +1826,9 @@ def test_related_memories_fallback_inlines_sanitized_depth(client, mock_state, a
     fallback_query, fallback_params = graph.calls[1]
     assert "*1..2" in fallback_query
     assert "$max_depth" not in fallback_query
-    assert fallback_params["max_depth"] == 2
+    assert "max_depth" not in fallback_params
+    assert fallback_params["id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert fallback_params["limit"] == 5
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

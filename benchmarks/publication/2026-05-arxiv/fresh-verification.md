@@ -45,7 +45,8 @@ verification artifact:
 
 ## Supplemental Eval Repo Checks
 
-From `/Users/jgarturo/Projects/OpenAI/automem-evals`:
+From a clone of the `automem-evals` repository. The local verification used a
+sibling checkout referenced as `../automem-evals` below.
 
 | Check | Result |
 |---|---|
@@ -60,7 +61,7 @@ update fidelity 20.0%, drift rate 0.0% across 5 drift scenarios.
 
 ## Paper Checks
 
-The paper source in `/Users/jgarturo/Projects/OpenAI/automem-paper` passed
-static checks for input-file existence and BibTeX cite-key resolution. No local
-LaTeX compiler (`pdflatex`, `latexmk`, `tectonic`, or `pandoc`) was available,
-so no PDF compilation is claimed.
+The separate AutoMem paper source checkout passed static checks for input-file
+existence and BibTeX cite-key resolution. No local LaTeX compiler (`pdflatex`,
+`latexmk`, `tectonic`, or `pandoc`) was available, so no PDF compilation is
+claimed.

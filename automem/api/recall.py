@@ -2128,11 +2128,12 @@ def create_recall_blueprint(
             LIMIT $limit
         """
         params = {"id": memory_id, "max_depth": max_depth, "limit": limit}
+        fallback_params = {"id": memory_id, "limit": limit}
         try:
             result = graph.query(query, params)
         except Exception:
             try:
-                result = graph.query(fallback_query, params)
+                result = graph.query(fallback_query, fallback_params)
             except Exception:
                 logger.exception("Failed to traverse related memories for %s", memory_id)
                 abort(500, description="Failed to fetch related memories")

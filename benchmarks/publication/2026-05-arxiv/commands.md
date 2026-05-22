@@ -1,6 +1,6 @@
 # Publication Verification Commands
 
-Run these from `/Users/jgarturo/Projects/OpenAI/automem` unless noted.
+Run these from the repository root unless noted.
 
 ## Repository Checks
 
@@ -31,7 +31,7 @@ same `--output` base if interrupted.
 
 ## Supplemental Evals
 
-From `/Users/jgarturo/Projects/OpenAI/automem-evals`:
+From a clone of the `automem-evals` repository:
 
 ```bash
 python3 -m unittest discover -s runners -p 'test_*.py'
