@@ -502,8 +502,7 @@ def _apply_current_state_filter(
     state_debug: bool = False,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     now = datetime.now(timezone.utc)
-    kept: List[Dict[str, Any]] = []
-    replacements: List[Dict[str, Any]] = []
+    filtered_results: List[Dict[str, Any]] = []
     seen_ids = {_result_memory_id(result) for result in results if _result_memory_id(result)}
     replacements_by_id = _active_replacements_for_memories(
         graph,
@@ -514,6 +513,7 @@ def _apply_current_state_filter(
     suppressed_debug: List[Dict[str, Any]] = []
     replacements_debug: List[Dict[str, Any]] = []
     suppressed_count = 0
+    replacement_count = 0
 
     for result in results:
         memory = result.get("memory") or {}
@@ -531,7 +531,7 @@ def _apply_current_state_filter(
                     reason = "superseded"
 
         if reason is None:
-            kept.append(result)
+            filtered_results.append(result)
             continue
 
         suppressed_count += 1
@@ -579,8 +579,9 @@ def _apply_current_state_filter(
                     exclude_tags,
                 )
             ):
-                replacements.append(candidate)
+                filtered_results.append(candidate)
                 seen_ids.add(replacement_id)
+                replacement_count += 1
                 if state_debug:
                     replacements_debug.append(
                         {
@@ -596,13 +597,13 @@ def _apply_current_state_filter(
     state_filter: Dict[str, Any] = {
         "current_only": True,
         "suppressed_count": suppressed_count,
-        "replacement_count": len(replacements),
+        "replacement_count": replacement_count,
     }
     if state_debug:
         state_filter["suppressed"] = suppressed_debug
         state_filter["replacements"] = replacements_debug
 
-    return kept + replacements, state_filter
+    return filtered_results, state_filter
 
 
 def _split_multi_value(raw: Any) -> List[str]:

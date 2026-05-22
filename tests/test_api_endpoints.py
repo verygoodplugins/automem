@@ -680,6 +680,32 @@ def test_recall_current_only_batch_loads_relation_replacements(
     assert len(replacement_queries) == 1
 
 
+def test_recall_current_only_keeps_replacement_score_order(
+    client, mock_state, auth_headers
+):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    old_id = "cc000000-0000-0000-0000-000000000019"
+    active_id = "cc000000-0000-0000-0000-000000000119"
+    replacement_id = "cc000000-0000-0000-0000-000000000219"
+
+    _store_memory(mock_state, old_id, "Highest scoring legacy state", ["state"], 1.0)
+    _store_memory(mock_state, active_id, "Lower scoring active state", ["state"], 0.9)
+    _store_memory(mock_state, replacement_id, "Current replacement state", ["state"], 0.1)
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": replacement_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=2&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [replacement_id, active_id]
+
+
 def test_recall_current_only_replacement_respects_tag_filter(
     client, mock_state, auth_headers
 ):
