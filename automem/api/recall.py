@@ -403,21 +403,24 @@ def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[
     return None
 
 
-def _active_replacement_for_memory(
+def _active_replacements_for_memories(
     graph: Any,
-    memory_id: str,
+    memory_ids: List[str],
     now: datetime,
     logger: Any,
-) -> Optional[Dict[str, Any]]:
-    if graph is None or not memory_id:
-        return None
+) -> Dict[str, Dict[str, Any]]:
+    ordered_ids = list(dict.fromkeys(memory_id for memory_id in memory_ids if memory_id))
+    if graph is None or not ordered_ids:
+        return {}
 
     try:
         records = graph.query(
             """
-            MATCH (m:Memory {id: $id})-[r]->(related:Memory)
+            UNWIND $ids AS source_id
+            MATCH (m:Memory {id: source_id})-[r]->(related:Memory)
             WHERE type(r) IN $types
-            RETURN type(r) as relation_type,
+            RETURN source_id,
+                   type(r) as relation_type,
                    coalesce(
                        r.strength,
                        r.score,
@@ -428,22 +431,26 @@ def _active_replacement_for_memory(
                    ) as strength,
                    r.kind as relation_kind,
                    related
-            ORDER BY coalesce(r.updated_at, related.timestamp) DESC
-            LIMIT $limit
+            ORDER BY source_id, coalesce(r.updated_at, related.timestamp) DESC
             """,
-            {"id": memory_id, "types": sorted(STATE_SUPPRESSING_RELATIONS), "limit": 5},
+            {"ids": ordered_ids, "types": sorted(STATE_SUPPRESSING_RELATIONS)},
         )
     except Exception:
-        logger.exception("Failed to load current-state replacement for memory %s", memory_id)
-        return None
+        logger.exception("Failed to load current-state replacements for %d memories", len(ordered_ids))
+        return {}
 
+    replacements: Dict[str, Dict[str, Any]] = {}
     for row in getattr(records, "result_set", []) or []:
-        if len(row) >= 4:
-            relation_type, strength, relation_kind, related = row[:4]
-        elif len(row) >= 3:
-            relation_type, strength, related = row[:3]
+        if len(row) >= 5:
+            source_id, relation_type, strength, relation_kind, related = row[:5]
+        elif len(row) >= 4:
+            source_id, relation_type, strength, related = row[:4]
             relation_kind = None
         else:  # pragma: no cover - defensive for malformed graph rows
+            continue
+
+        source_id = str(source_id or "")
+        if not source_id or source_id in replacements:
             continue
 
         replacement = _serialize_node(related)
@@ -464,9 +471,9 @@ def _active_replacement_for_memory(
         kind = normalized_props.get("kind")
         if kind:
             replacement["_state_relation"]["kind"] = kind
-        return replacement
+        replacements[source_id] = replacement
 
-    return None
+    return replacements
 
 
 def _apply_current_state_filter(
@@ -498,6 +505,12 @@ def _apply_current_state_filter(
     kept: List[Dict[str, Any]] = []
     replacements: List[Dict[str, Any]] = []
     seen_ids = {_result_memory_id(result) for result in results if _result_memory_id(result)}
+    replacements_by_id = _active_replacements_for_memories(
+        graph,
+        [_result_memory_id(result) for result in results],
+        now,
+        logger,
+    )
     suppressed_debug: List[Dict[str, Any]] = []
     replacements_debug: List[Dict[str, Any]] = []
     suppressed_count = 0
@@ -510,7 +523,7 @@ def _apply_current_state_filter(
         relation_type = None
 
         if memory_id:
-            replacement = _active_replacement_for_memory(graph, memory_id, now, logger)
+            replacement = replacements_by_id.get(memory_id)
             if replacement is not None:
                 relation = replacement.get("_state_relation") or {}
                 relation_type = str(relation.get("type") or "").strip() or None

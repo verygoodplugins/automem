@@ -575,6 +575,34 @@ def test_recall_current_only_filters_temporal_state(client, mock_state, auth_hea
     assert "state_filter" not in data
 
 
+def test_recall_current_only_filters_archived_state(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    active_id = "cc000000-0000-0000-0000-000000000004"
+    archived_id = "cc000000-0000-0000-0000-000000000005"
+
+    _store_memory(mock_state, active_id, "Active retained state", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        archived_id,
+        "Archived stale state",
+        ["state"],
+        0.95,
+        archived=True,
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=10&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [active_id]
+    assert data["state_filter"]["suppressed_count"] == 1
+    assert data["state_filter"]["suppressed"][0]["id"] == archived_id
+    assert data["state_filter"]["suppressed"][0]["reason"] == "archived"
+
+
 @pytest.mark.parametrize("relation_type", ["INVALIDATED_BY", "EVOLVED_INTO"])
 def test_recall_current_only_injects_active_replacement(
     client, mock_state, auth_headers, relation_type
@@ -605,6 +633,51 @@ def test_recall_current_only_injects_active_replacement(
     assert data["state_filter"]["suppressed_count"] == 1
     assert data["state_filter"]["replacement_count"] == 1
     assert data["state_filter"]["suppressed"][0]["replacement_id"] == replacement_id
+
+
+def test_recall_current_only_batch_loads_relation_replacements(
+    client, mock_state, auth_headers
+):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+
+    old_ids = [
+        "cc000000-0000-0000-0000-000000000016",
+        "cc000000-0000-0000-0000-000000000017",
+        "cc000000-0000-0000-0000-000000000018",
+    ]
+    replacement_ids = [
+        "cc000000-0000-0000-0000-000000000116",
+        "cc000000-0000-0000-0000-000000000117",
+        "cc000000-0000-0000-0000-000000000118",
+    ]
+    for idx, (old_id, replacement_id) in enumerate(zip(old_ids, replacement_ids)):
+        _store_memory(mock_state, old_id, f"Legacy state {idx}", ["state"], 1.0 - idx / 10)
+        _store_memory(mock_state, replacement_id, f"Current state {idx}", ["state"], 0.1)
+        mock_state.memory_graph.relationships.append(
+            {
+                "id1": old_id,
+                "id2": replacement_id,
+                "type": "INVALIDATED_BY",
+                "strength": 0.9,
+            }
+        )
+
+    response = client.get(
+        "/recall?tags=state&limit=3&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == replacement_ids
+    assert data["state_filter"]["suppressed_count"] == 3
+    replacement_queries = [
+        query
+        for query, params in mock_state.memory_graph.queries
+        if "RETURN source_id" in query and set(params.get("ids") or []) == set(old_ids)
+    ]
+    assert len(replacement_queries) == 1
 
 
 def test_recall_current_only_replacement_respects_tag_filter(

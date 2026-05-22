@@ -428,6 +428,40 @@ class FakeGraph:
                 )
             return FakeResult(rows[: int(params.get("limit") or len(rows) or 1)])
 
+        if (
+            "UNWIND $ids AS source_id" in query
+            and "RETURN source_id" in query
+            and "related" in query
+        ):
+            source_ids = [str(memory_id) for memory_id in (params.get("ids") or [])]
+            requested_types = {
+                str(rel_type).strip()
+                for rel_type in (params.get("types") or [])
+                if str(rel_type).strip()
+            }
+            rows = []
+            for source_id in source_ids:
+                for rel in self.relationships:
+                    rel_type = str(rel.get("type") or "")
+                    if requested_types and rel_type not in requested_types:
+                        continue
+                    if rel.get("id1") != source_id:
+                        continue
+                    related_id = str(rel.get("id2") or "")
+                    related = self.memories.get(related_id)
+                    if related is None:
+                        continue
+                    rows.append(
+                        [
+                            source_id,
+                            rel_type,
+                            rel.get("strength", 0.5),
+                            rel.get("kind"),
+                            FakeNode(related),
+                        ]
+                    )
+            return FakeResult(rows)
+
         # Recall-style graph query over memories
         if (
             "MATCH (m:Memory)" in query
