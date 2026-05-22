@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -21,6 +22,7 @@ from automem.config import (
     normalize_relation_type,
 )
 from automem.utils.graph import _serialize_node
+from automem.utils.time import _parse_iso_datetime
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
     "coding-style",
@@ -69,6 +71,8 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
     ".cxx": "cpp",
     ".swift": "swift",
 }
+
+STATE_SUPPRESSING_RELATIONS: Set[str] = {"INVALIDATED_BY", "EVOLVED_INTO"}
 
 # Words to skip when extracting entities from queries
 ENTITY_STOPWORDS: Set[str] = {
@@ -371,6 +375,221 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
         deduped.append(item)
 
     return deduped, removed
+
+
+def _result_memory_id(result: Dict[str, Any]) -> str:
+    memory = result.get("memory") or {}
+    return str(
+        result.get("id")
+        or memory.get("id")
+        or memory.get("memory_id")
+        or memory.get("uuid")
+        or ""
+    ).strip()
+
+
+def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[str]:
+    if memory.get("archived") is True:
+        return "archived"
+
+    t_valid = _parse_iso_datetime(memory.get("t_valid"))
+    if t_valid is not None and t_valid > now:
+        return "not_yet_valid"
+
+    t_invalid = _parse_iso_datetime(memory.get("t_invalid"))
+    if t_invalid is not None and t_invalid <= now:
+        return "expired"
+
+    return None
+
+
+def _active_replacement_for_memory(
+    graph: Any,
+    memory_id: str,
+    now: datetime,
+    logger: Any,
+) -> Optional[Dict[str, Any]]:
+    if graph is None or not memory_id:
+        return None
+
+    try:
+        records = graph.query(
+            """
+            MATCH (m:Memory {id: $id})-[r]->(related:Memory)
+            WHERE type(r) IN $types
+            RETURN type(r) as relation_type,
+                   coalesce(
+                       r.strength,
+                       r.score,
+                       r.confidence,
+                       r.similarity,
+                       toFloat(r.count),
+                       0.0
+                   ) as strength,
+                   r.kind as relation_kind,
+                   related
+            ORDER BY coalesce(r.updated_at, related.timestamp) DESC
+            LIMIT $limit
+            """,
+            {"id": memory_id, "types": sorted(STATE_SUPPRESSING_RELATIONS), "limit": 5},
+        )
+    except Exception:
+        logger.exception("Failed to load current-state replacement for memory %s", memory_id)
+        return None
+
+    for row in getattr(records, "result_set", []) or []:
+        if len(row) >= 4:
+            relation_type, strength, relation_kind, related = row[:4]
+        elif len(row) >= 3:
+            relation_type, strength, related = row[:3]
+            relation_kind = None
+        else:  # pragma: no cover - defensive for malformed graph rows
+            continue
+
+        replacement = _serialize_node(related)
+        replacement_id = str(replacement.get("id") or "")
+        if not replacement_id:
+            continue
+        if _state_reason_for_memory(replacement, now) is not None:
+            continue
+
+        normalized_type, normalized_props = normalize_relation_type(
+            relation_type,
+            {"kind": relation_kind} if relation_kind else {},
+        )
+        replacement["_state_relation"] = {
+            "type": normalized_type,
+            "strength": float(strength or 0.0),
+        }
+        kind = normalized_props.get("kind")
+        if kind:
+            replacement["_state_relation"]["kind"] = kind
+        return replacement
+
+    return None
+
+
+def _apply_current_state_filter(
+    *,
+    results: List[Dict[str, Any]],
+    graph: Any,
+    result_passes_filters: Callable[
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
+    ],
+    start_time: Optional[str],
+    end_time: Optional[str],
+    tag_filters: Optional[List[str]],
+    tag_mode: str,
+    tag_match: str,
+    exclude_tags: Optional[List[str]],
+    logger: Any,
+    state_debug: bool = False,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    kept: List[Dict[str, Any]] = []
+    replacements: List[Dict[str, Any]] = []
+    seen_ids = {_result_memory_id(result) for result in results if _result_memory_id(result)}
+    suppressed_debug: List[Dict[str, Any]] = []
+    replacements_debug: List[Dict[str, Any]] = []
+    suppressed_count = 0
+
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = _result_memory_id(result)
+        reason = _state_reason_for_memory(memory, now)
+        replacement = None
+        relation_type = None
+
+        if memory_id:
+            replacement = _active_replacement_for_memory(graph, memory_id, now, logger)
+            if replacement is not None:
+                relation = replacement.get("_state_relation") or {}
+                relation_type = str(relation.get("type") or "").strip() or None
+                if reason is None:
+                    reason = "superseded"
+
+        if reason is None:
+            kept.append(result)
+            continue
+
+        suppressed_count += 1
+        debug_item: Dict[str, Any] = {"id": memory_id, "reason": reason}
+
+        if replacement is not None:
+            replacement_id = str(replacement.get("id") or "")
+            debug_item["replacement_id"] = replacement_id
+            if relation_type:
+                debug_item["relation_type"] = relation_type
+
+            candidate_memory = dict(replacement)
+            relation = candidate_memory.pop("_state_relation", {})
+            candidate = {
+                "id": replacement_id,
+                "score": float(result.get("score") or result.get("final_score") or 0.0),
+                "match_score": float(result.get("match_score") or result.get("score") or 0.0),
+                "match_type": "state_replacement",
+                "source": "graph",
+                "memory": candidate_memory,
+                "relations": [
+                    {
+                        "type": relation.get("type", relation_type or "INVALIDATED_BY"),
+                        "strength": float(relation.get("strength") or 0.0),
+                        "from": memory_id,
+                    }
+                ],
+                "state_replaces": memory_id,
+                "final_score": float(result.get("final_score") or result.get("score") or 0.0),
+                "score_components": dict(result.get("score_components") or {}),
+            }
+            if relation.get("kind"):
+                candidate["relations"][0]["kind"] = relation["kind"]
+
+            if (
+                replacement_id
+                and replacement_id not in seen_ids
+                and result_passes_filters(
+                    candidate,
+                    start_time,
+                    end_time,
+                    tag_filters,
+                    tag_mode,
+                    tag_match,
+                    exclude_tags,
+                )
+            ):
+                replacements.append(candidate)
+                seen_ids.add(replacement_id)
+                if state_debug:
+                    replacements_debug.append(
+                        {
+                            "id": replacement_id,
+                            "replaces_id": memory_id,
+                            "relation_type": relation_type,
+                        }
+                    )
+
+        if state_debug:
+            suppressed_debug.append(debug_item)
+
+    state_filter: Dict[str, Any] = {
+        "current_only": True,
+        "suppressed_count": suppressed_count,
+        "replacement_count": len(replacements),
+    }
+    if state_debug:
+        state_filter["suppressed"] = suppressed_debug
+        state_filter["replacements"] = replacements_debug
+
+    return kept + replacements, state_filter
 
 
 def _split_multi_value(raw: Any) -> List[str]:
@@ -1269,6 +1488,8 @@ def handle_recall(
         request.args.get("expand_respect_tags"),
         False,
     )
+    current_only = _parse_bool_param(request.args.get("current_only"), True)
+    state_debug = _parse_bool_param(request.args.get("state_debug"), False)
 
     # Entity expansion for multi-hop reasoning
     expand_entities = _parse_bool_param(
@@ -1642,6 +1863,22 @@ def handle_recall(
             ]
         results = seed_results + expansion_results + entity_expansion_results
 
+    state_filter_info: Optional[Dict[str, Any]] = None
+    if current_only:
+        results, state_filter_info = _apply_current_state_filter(
+            results=results,
+            graph=graph,
+            result_passes_filters=result_passes_filters,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_filters,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            exclude_tags=exclude_tags,
+            logger=logger,
+            state_debug=state_debug,
+        )
+
     pre_filter_count = len(results)
 
     # Apply adaptive score floor: detect a pronounced dropoff without discarding most results.
@@ -1724,6 +1961,8 @@ def handle_recall(
         response["tags"] = tag_filters
     if exclude_tags:
         response["exclude_tags"] = exclude_tags
+    if state_filter_info is not None:
+        response["state_filter"] = state_filter_info
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
     if jit_enriched_count:
