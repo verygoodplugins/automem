@@ -187,6 +187,8 @@ class FakeGraph:
                 "metadata": params.get("metadata", existing.get("metadata", "{}")),
                 "updated_at": params.get("updated_at", existing.get("updated_at")),
                 "last_accessed": params.get("last_accessed", existing.get("last_accessed")),
+                "t_valid": params.get("t_valid", existing.get("t_valid")),
+                "t_invalid": params.get("t_invalid", existing.get("t_invalid")),
                 "confidence": params.get("confidence", existing.get("confidence", 1.0)),
                 "summary": params.get("summary", existing.get("summary")),
                 "processed": params.get("processed", existing.get("processed", False)),
@@ -213,6 +215,8 @@ class FakeGraph:
                     "timestamp": params.get("timestamp", memory.get("timestamp")),
                     "last_accessed": params.get("last_accessed", memory.get("last_accessed")),
                     "updated_at": params.get("updated_at", _utc_now()),
+                    "t_valid": params.get("t_valid", memory.get("t_valid")),
+                    "t_invalid": params.get("t_invalid", memory.get("t_invalid")),
                 }
             )
             return FakeResult([[FakeNode(memory)]])
@@ -386,6 +390,77 @@ class FakeGraph:
                 }
             )
             return FakeResult([["created"]])
+
+        if (
+            "MATCH (m:Memory {id: $id})-[r" in query
+            and "RETURN type(r) as relation_type" in query
+            and "related" in query
+        ):
+            memory_id = str(params.get("id") or "")
+            requested_types = {
+                str(rel_type).strip()
+                for rel_type in (params.get("types") or [])
+                if str(rel_type).strip()
+            }
+            directed = "]->" in query
+            rows = []
+            for rel in self.relationships:
+                rel_type = str(rel.get("type") or "")
+                if requested_types and rel_type not in requested_types:
+                    continue
+                related_id = None
+                if rel.get("id1") == memory_id:
+                    related_id = str(rel.get("id2") or "")
+                elif not directed and rel.get("id2") == memory_id:
+                    related_id = str(rel.get("id1") or "")
+                if not related_id:
+                    continue
+                related = self.memories.get(related_id)
+                if related is None:
+                    continue
+                rows.append(
+                    [
+                        rel_type,
+                        rel.get("strength", 0.5),
+                        rel.get("kind"),
+                        FakeNode(related),
+                    ]
+                )
+            return FakeResult(rows[: int(params.get("limit") or len(rows) or 1)])
+
+        if (
+            "UNWIND $ids AS source_id" in query
+            and "RETURN source_id" in query
+            and "related" in query
+        ):
+            source_ids = [str(memory_id) for memory_id in (params.get("ids") or [])]
+            requested_types = {
+                str(rel_type).strip()
+                for rel_type in (params.get("types") or [])
+                if str(rel_type).strip()
+            }
+            rows = []
+            for source_id in source_ids:
+                for rel in self.relationships:
+                    rel_type = str(rel.get("type") or "")
+                    if requested_types and rel_type not in requested_types:
+                        continue
+                    if rel.get("id1") != source_id:
+                        continue
+                    related_id = str(rel.get("id2") or "")
+                    related = self.memories.get(related_id)
+                    if related is None:
+                        continue
+                    rows.append(
+                        [
+                            source_id,
+                            rel_type,
+                            rel.get("strength", 0.5),
+                            rel.get("kind"),
+                            FakeNode(related),
+                        ]
+                    )
+            return FakeResult(rows)
 
         # Recall-style graph query over memories
         if (
