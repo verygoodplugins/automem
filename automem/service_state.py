@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Event, Lock, Thread
@@ -8,7 +9,7 @@ from typing import Any, Dict, Optional, Set
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient
 
-from automem.config import VECTOR_SIZE
+from automem.config import SERVICE_MODE, SERVICE_PROFILE, SERVICE_TIER, VECTOR_SIZE
 from automem.embedding.provider import EmbeddingProvider
 from automem.utils.time import utc_now
 
@@ -82,3 +83,7 @@ class ServiceState:
     sync_last_result: Optional[Dict[str, Any]] = None
     # Effective vector size (auto-detected from existing collection or config default)
     effective_vector_size: int = VECTOR_SIZE
+    service_tier: str = SERVICE_TIER
+    service_mode: str = SERVICE_MODE
+    service_profile: Dict[str, Any] = field(default_factory=lambda: deepcopy(SERVICE_PROFILE))
+    export_registry: Dict[str, Dict[str, Any]] = field(default_factory=dict)

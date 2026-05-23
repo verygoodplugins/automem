@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AutoMemClient, createApp, formatRecallAsItems } from "../server.js";
+import {
+  AutoMemClient,
+  UpstreamRequestError,
+  createApp,
+  formatRecallAsItems,
+  formatToolError,
+} from "../server.js";
 
 async function withServer(app, fn) {
   const server = await new Promise((resolve) => {
@@ -154,6 +160,24 @@ test("AutoMemClient._request retries transient upstream errors", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("formatToolError explains archived and read-only lock states clearly", () => {
+  const archived = new UpstreamRequestError("Service is archived", {
+    status: 423,
+    kind: "http",
+    details: { error: "service_locked", service_mode: "archived" },
+  });
+  assert.match(formatToolError(archived, "req-archived"), /archived/i);
+  assert.match(formatToolError(archived, "req-archived"), /writes are disabled/i);
+
+  const readOnly = new UpstreamRequestError("Service is read only", {
+    status: 423,
+    kind: "http",
+    details: { error: "service_locked", service_mode: "read_only" },
+  });
+  assert.match(formatToolError(readOnly, "req-readonly"), /read-only mode/i);
+  assert.match(formatToolError(readOnly, "req-readonly"), /recall is still available/i);
 });
 
 // =============================================================================

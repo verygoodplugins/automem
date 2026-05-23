@@ -67,8 +67,8 @@ function isRetryableFetchError(error) {
   return name === 'AbortError' || name === 'TimeoutError' || error instanceof TypeError;
 }
 
-class UpstreamRequestError extends Error {
-  constructor(message, { status, requestId, kind, retryable = false, endpoint, cause } = {}) {
+export class UpstreamRequestError extends Error {
+  constructor(message, { status, requestId, kind, retryable = false, endpoint, cause, details } = {}) {
     super(message);
     this.name = 'UpstreamRequestError';
     this.status = status;
@@ -77,12 +77,24 @@ class UpstreamRequestError extends Error {
     this.retryable = retryable;
     this.endpoint = endpoint;
     this.cause = cause;
+    this.details = details;
   }
 }
 
-function formatToolError(error, requestId) {
+export function formatToolError(error, requestId) {
   const suffix = requestId ? ` (request_id: ${requestId})` : '';
   if (error instanceof UpstreamRequestError) {
+    const serviceMode = error?.details?.service_mode;
+    const serviceLocked = error?.status === 423 || error?.details?.error === 'service_locked';
+    if (serviceLocked) {
+      if (serviceMode === 'archived') {
+        return `AutoMem is archived. Recall may remain available, but memory writes are disabled.${suffix}`;
+      }
+      if (serviceMode === 'read_only') {
+        return `AutoMem is in read-only mode. Recall is still available, but memory writes are disabled.${suffix}`;
+      }
+      return `AutoMem is currently locked for write operations.${suffix}`;
+    }
     if (error.kind === 'timeout') {
       return `AutoMem request timed out. The service may be slow or restarting.${suffix}`;
     }
@@ -152,6 +164,7 @@ async function fetchWithRetry(url, { method, headers, body, requestId, timeoutMs
         kind: 'http',
         retryable,
         endpoint: url,
+        details: data,
       });
     } catch (error) {
       if (error instanceof UpstreamRequestError) {

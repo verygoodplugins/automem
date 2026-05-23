@@ -103,6 +103,20 @@ def create_health_blueprint(
                 "processed": state.enrichment_stats.successes,
                 "failed": state.enrichment_stats.failures,
             },
+            "service": {
+                "tier": getattr(state, "service_tier", "pro"),
+                "mode": getattr(state, "service_mode", "active"),
+                "writes_enabled": bool(
+                    getattr(state, "service_profile", {})
+                    .get("capabilities", {})
+                    .get("writes_enabled", True)
+                ),
+                "self_service_export_enabled": bool(
+                    getattr(state, "service_profile", {})
+                    .get("capabilities", {})
+                    .get("self_service_export_enabled", False)
+                ),
+            },
             "timestamp": utc_now(),
             "graph": graph_name,
         }

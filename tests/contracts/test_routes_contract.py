@@ -6,6 +6,7 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/health"),
     ("POST", "/memory"),
     ("POST", "/memory/batch"),
+    ("POST", "/api/v1/preseed"),
     ("GET", "/memory/<memory_id>"),
     ("PATCH", "/memory/<memory_id>"),
     ("DELETE", "/memory/<memory_id>"),
@@ -18,6 +19,9 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/memories/<memory_id>/related"),
     ("POST", "/admin/reembed"),
     ("POST", "/admin/sync"),
+    ("POST", "/admin/exports"),
+    ("GET", "/admin/exports/<export_id>"),
+    ("GET", "/admin/exports/<export_id>/download"),
     ("POST", "/consolidate"),
     ("GET", "/consolidate/status"),
     ("GET", "/enrichment/status"),
@@ -25,12 +29,14 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/graph/snapshot"),
     ("GET", "/graph/neighbors/<memory_id>"),
     ("GET", "/graph/stats"),
+    ("GET", "/api/v1/stats"),
     ("GET", "/graph/types"),
     ("GET", "/graph/relations"),
     ("GET", "/viewer/"),
     ("GET", "/viewer/<path:path>"),
     ("GET", "/stream"),
     ("GET", "/stream/status"),
+    ("GET", "/service/profile"),
 }
 
 
