@@ -69,6 +69,8 @@ def create_consolidation_runtime(
     decay_importance_threshold: float,
     base_decay_rate: float = 0.01,
     importance_floor_factor: float = 0.3,
+    cluster_similarity_threshold: float | None = None,
+    min_cluster_size: int | None = None,
 ) -> ConsolidationRuntimeBindings:
     def _load_control_record(graph: Any) -> Dict[str, Any]:
         return _load_control_record_runtime(
@@ -122,6 +124,8 @@ def create_consolidation_runtime(
             protected_types=set(protected_types),
             base_decay_rate=base_decay_rate,
             importance_floor_factor=importance_floor_factor,
+            cluster_similarity_threshold=cluster_similarity_threshold,
+            min_cluster_size=min_cluster_size,
         )
 
     def build_scheduler_from_graph(graph: Any) -> ConsolidationScheduler:
