@@ -10,6 +10,9 @@ Usage:
     # Restore from specific backup
     python scripts/restore_from_backup.py --backup-timestamp 20251019_085625
 
+    # Restore from downloaded API backup tarball
+    python scripts/restore_from_backup.py --backup-dir snapshot.tar.gz
+
     # Dry run (show what would be restored)
     python scripts/restore_from_backup.py --dry-run
 
@@ -22,10 +25,14 @@ import gzip
 import json
 import logging
 import os
+import shutil
 import sys
+import tarfile
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterator
 
 from dotenv import load_dotenv
 from falkordb import FalkorDB
@@ -53,6 +60,48 @@ FALKORDB_GRAPH = os.getenv("FALKORDB_GRAPH", "memories")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "memories")
+
+
+def _is_tar_gz(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith(".tar.gz") or name.endswith(".tgz")
+
+
+def _safe_extract_tar_gz(archive_path: Path, target_dir: Path) -> None:
+    target_root = target_dir.resolve()
+    with tarfile.open(archive_path, "r:gz") as archive:
+        for member in archive.getmembers():
+            if member.issym() or member.islnk():
+                raise ValueError(f"Refusing to extract link from backup archive: {member.name}")
+            if not (member.isdir() or member.isfile()):
+                raise ValueError(
+                    f"Refusing to extract special file from backup archive: {member.name}"
+                )
+            destination = (target_root / member.name).resolve()
+            if not destination.is_relative_to(target_root):
+                raise ValueError(f"Refusing to extract unsafe backup path: {member.name}")
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                raise ValueError(f"Unable to read backup archive member: {member.name}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with source, destination.open("wb") as target:
+                shutil.copyfileobj(source, target)
+
+
+@contextmanager
+def resolve_backup_dir(backup_path: Path) -> Iterator[Path]:
+    """Resolve a backup directory or extract a downloaded tar.gz backup to a temp dir."""
+    if backup_path.is_file() and _is_tar_gz(backup_path):
+        with tempfile.TemporaryDirectory(prefix="automem-restore-") as temp_dir:
+            extracted = Path(temp_dir)
+            _safe_extract_tar_gz(backup_path, extracted)
+            yield extracted
+        return
+
+    yield backup_path
 
 
 class AutoMemRestore:
@@ -461,6 +510,9 @@ Examples:
   # Restore from specific timestamp
   python scripts/restore_from_backup.py --backup-timestamp 20251019_085625
 
+  # Restore from downloaded API backup tarball
+  python scripts/restore_from_backup.py --backup-dir snapshot.tar.gz
+
   # Dry run (preview only)
   python scripts/restore_from_backup.py --dry-run
 
@@ -478,7 +530,7 @@ Examples:
         "--backup-dir",
         type=str,
         default=str(BACKUP_DIR),
-        help="Directory containing backup files (default: ./backups)",
+        help="Directory containing backup files or downloaded .tar.gz (default: ./backups)",
     )
     parser.add_argument(
         "--backup-timestamp",
@@ -510,19 +562,19 @@ Examples:
 
     args = parser.parse_args()
 
-    restore = AutoMemRestore(
-        backup_dir=Path(args.backup_dir),
-        dry_run=args.dry_run,
-        force=args.force,
-        merge=args.merge,
-    )
-
     try:
-        results = restore.run_restore(
-            timestamp=args.backup_timestamp,
-            falkordb_only=args.falkordb_only,
-            qdrant_only=args.qdrant_only,
-        )
+        with resolve_backup_dir(Path(args.backup_dir)) as backup_dir:
+            restore = AutoMemRestore(
+                backup_dir=backup_dir,
+                dry_run=args.dry_run,
+                force=args.force,
+                merge=args.merge,
+            )
+            results = restore.run_restore(
+                timestamp=args.backup_timestamp,
+                falkordb_only=args.falkordb_only,
+                qdrant_only=args.qdrant_only,
+            )
         print(json.dumps(results, indent=2))
         sys.exit(0)
     except Exception as e:

@@ -25,6 +25,13 @@ def _returns_whole_memory_node(query: str) -> bool:
     return re.search(r"\bRETURN\s+m\b(?![\w.])", query) is not None
 
 
+def _skip_limit(query: str) -> tuple[int, int | None]:
+    match = re.search(r"\bSKIP\s+(\d+)\s+LIMIT\s+(\d+)", query)
+    if not match:
+        return 0, None
+    return int(match.group(1)), int(match.group(2))
+
+
 class FakeGraph:
     """Shared fake FalkorDB graph used across unit tests.
 
@@ -170,6 +177,43 @@ class FakeGraph:
                     }
                 )
             return FakeResult([])
+
+        # Full graph backup export
+        if "MATCH (n)" in query and "id(n) as id" in query and "properties(n) as props" in query:
+            memory_items = sorted(self.memories.items(), key=lambda item: item[0])
+            rows = [
+                [index, ["Memory"], dict(memory)]
+                for index, (_memory_id, memory) in enumerate(memory_items)
+            ]
+            skip, limit = _skip_limit(query)
+            return FakeResult(rows[skip : None if limit is None else skip + limit])
+
+        if (
+            "MATCH (a)-[r]->(b)" in query
+            and "id(a) as source_id" in query
+            and "properties(r) as props" in query
+        ):
+            memory_ids = [memory_id for memory_id, _memory in sorted(self.memories.items())]
+            backup_ids = {memory_id: index for index, memory_id in enumerate(memory_ids)}
+            rows = []
+            for rel in self.relationships:
+                source_id = str(rel.get("id1") or "")
+                target_id = str(rel.get("id2") or "")
+                if source_id not in backup_ids or target_id not in backup_ids:
+                    continue
+                props = {
+                    key: value for key, value in rel.items() if key not in {"id1", "id2", "type"}
+                }
+                rows.append(
+                    [
+                        backup_ids[source_id],
+                        str(rel.get("type") or "RELATES_TO"),
+                        backup_ids[target_id],
+                        props,
+                    ]
+                )
+            skip, limit = _skip_limit(query)
+            return FakeResult(rows[skip : None if limit is None else skip + limit])
 
         # Memory create/upsert
         if "MERGE (m:Memory {id:" in query or "CREATE (m:Memory {id:" in query:
@@ -359,7 +403,13 @@ class FakeGraph:
                     if isinstance(tag, str) and tag.strip()
                 ]
                 if any(tag in {"system", "memory-recall"} for tag in tags):
-                    rows.append([memory.get("id"), memory.get("content"), memory.get("tags", [])])
+                    rows.append(
+                        [
+                            memory.get("id"),
+                            memory.get("content"),
+                            memory.get("tags", []),
+                        ]
+                    )
             return FakeResult(rows[:5])
 
         # Association creation
@@ -521,17 +571,20 @@ class FakeGraph:
                 results.sort(key=lambda memory: (_timestamp_key(memory), -_importance(memory)))
             elif "ORDER BY m.timestamp DESC" in query:
                 results.sort(
-                    key=lambda memory: (_timestamp_key(memory), _importance(memory)), reverse=True
+                    key=lambda memory: (_timestamp_key(memory), _importance(memory)),
+                    reverse=True,
                 )
             elif "ORDER BY coalesce(m.updated_at, m.timestamp) ASC" in query:
                 results.sort(key=lambda memory: (_timestamp_key(memory), -_importance(memory)))
             elif "ORDER BY coalesce(m.updated_at, m.timestamp) DESC" in query:
                 results.sort(
-                    key=lambda memory: (_timestamp_key(memory), _importance(memory)), reverse=True
+                    key=lambda memory: (_timestamp_key(memory), _importance(memory)),
+                    reverse=True,
                 )
             else:
                 results.sort(
-                    key=lambda memory: (_importance(memory), _timestamp_key(memory)), reverse=True
+                    key=lambda memory: (_importance(memory), _timestamp_key(memory)),
+                    reverse=True,
                 )
 
             limit_param = params.get("limit")
