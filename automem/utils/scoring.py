@@ -154,11 +154,16 @@ def _compute_metadata_score(
     vector_component = (
         result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
     )
-    keyword_component = (
-        result.get("match_score", 0.0)
-        if result.get("match_type") in {"keyword", "trending"}
-        else 0.0
-    )
+    keyword_component = 0.0
+    if result.get("match_type") in {"keyword", "trending"}:
+        keyword_component = result.get("match_score", 0.0)
+    elif tokens:
+        content_lower = str(memory.get("content") or "").lower()
+        if content_lower:
+            content_tokens = set(re.findall(r"\b[a-z0-9]+\b", content_lower))
+            if content_tokens:
+                content_hits = sum(1 for token in tokens if token in content_tokens)
+                keyword_component = content_hits / len(tokens)
 
     relation_component = 0.0
     if result.get("match_type") == "relation":

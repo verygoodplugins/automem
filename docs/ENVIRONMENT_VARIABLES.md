@@ -131,7 +131,7 @@ VECTOR_SIZE=768                                  # must match the model's output
 ## Hosting Considerations (Railway vs Self-Hosted)
 
 - **Railway / managed PaaS:** Voyage and OpenAI are the simplest choices (no local model downloads). FastEmbed works but increases image size and cold-start time; use a persistent volume for `AUTOMEM_MODELS_DIR` if supported. Ollama typically requires a **separate service** (Railway does not ship Ollama by default), so you'll need to deploy Ollama elsewhere and set `OLLAMA_BASE_URL` to that service.
-- **Self-hosted Docker/VPS:** FastEmbed and Ollama are straightforward and avoid API costs. Ollama benefits from GPU acceleration if available; otherwise expect higher latency on CPU. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in docker-compose setups).
+- **Self-hosted Docker/VPS:** FastEmbed and Ollama are straightforward and avoid API costs. Ollama benefits from GPU acceleration if available; otherwise expect higher latency on CPU. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in docker compose setups).
 - **Dimension consistency:** Regardless of host, make sure `VECTOR_SIZE` matches the embedding model output. Changing models requires re-embedding existing memories.
 
 ## Optional Variables
@@ -160,7 +160,7 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 #### Self-Hosted Qdrant on Railway
 
-When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_HOST=qdrant` on memory-service. Railway's internal DNS resolves service names automatically.
+When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_HOST=qdrant` on the AutoMem API service. Railway's internal DNS resolves service names automatically.
 
 **Critical**: You must also set `QDRANT__SERVICE__HOST=::` on the **Qdrant service itself**. Railway's internal networking uses IPv6, but Qdrant defaults to binding `0.0.0.0` (IPv4 only). Without this, connections from other Railway services will be refused even though DNS resolves correctly. See [Railway Deployment Guide — Self-Hosted Qdrant](RAILWAY_DEPLOYMENT.md#option-b-self-hosted-qdrant-on-railway) for full setup.
 
@@ -184,6 +184,7 @@ When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_
 - AutoMem no longer serves built viewer assets in-process.
 - `/viewer` now redirects/bootstraps to `GRAPH_VIEWER_URL` and forwards `server=<automem-origin>`.
 - URL hash tokens (for example `#token=...`) stay client-side and are preserved during redirect.
+- Local Docker graph inspection uses FalkorDB's built-in browser at `http://localhost:3000` (not `/viewer`).
 
 ### Scripts Only
 
@@ -218,6 +219,8 @@ Controls memory merging, pattern detection, and decay.
 | `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Decay check interval | `86400` | seconds |
 | `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Pattern detection interval | `604800` | seconds |
 | `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `2592000` | seconds |
+| `CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD` | Min similarity for cluster membership | `0.75` | 0-1 |
+| `CONSOLIDATION_MIN_CLUSTER_SIZE` | Min memories required to form a cluster | `3` | count |
 | `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forget interval (`0` disables) | `0` | seconds |
 | `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Min importance to keep | `0.3` | 0-1 |
 | `CONSOLIDATION_HISTORY_LIMIT` | Max consolidation history | `20` | count |
@@ -240,6 +243,9 @@ Controls embedding provider and classification model settings.
 | `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4, 1536=text-embedding-3-small native; choose ≤1536 when truncating, 3072=text-embedding-3-large native) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
 | `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
+| `CLASSIFICATION_BASE_URL` | Optional OpenAI-compatible endpoint for `scripts/reclassify_with_llm.py` | _(unset → OpenAI)_ | e.g. `https://openrouter.ai/api/v1` |
+| `CLASSIFICATION_API_KEY` | API key paired with `CLASSIFICATION_BASE_URL` (never falls back across providers) | _(unset)_ | provider key |
+| `OPENROUTER_API_KEY` | API key consumed when `scripts/reclassify_with_llm.py --provider openrouter` is selected | _(unset)_ | OpenRouter key |
 
 **Embedding Provider Comparison:**
 
@@ -271,7 +277,7 @@ VECTOR_SIZE=768
 |-------|-------|--------|-------|
 | `gpt-4o-mini` | $0.15/1M | $0.60/1M | **Default** - Good enough for classification |
 | `gpt-4.1` | ~$2/1M | ~$8/1M | Better reasoning |
-| `gpt-5.1` | $1.25/1M | $10/1M | Best reasoning, use for benchmarks |
+| `gpt-5.1` | $1.25/1M | $10/1M | Higher reasoning; benchmark judge defaults are documented in `docs/BENCHMARK_JUDGE_POLICY.md` |
 
 **⚠️ Changing embedding models requires re-embedding all memories.** See [Re-embedding Guide](#re-embedding-memories) below.
 
@@ -301,7 +307,7 @@ Controls how different factors are weighted in memory recall scoring.
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
 | `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search via Qdrant |
-| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | TF-IDF style |
+| `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | Graph keyword hits plus content-token fallback for vector-sourced results |
 | `SEARCH_WEIGHT_RELATION` | Graph relationship boost | `0.25` | Memories connected via edges |
 | `SEARCH_WEIGHT_TAG` | Tag matching | `0.20` | Tag overlap scoring |
 | `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.20` | Full query in metadata |

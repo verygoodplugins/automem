@@ -62,7 +62,7 @@ flowchart TD
     PreDeploy -->|No| LocalIntegration
 
     LiveCheck -->|Yes| LiveIntegration
-    LiveCheck -->|No| SetupDocker[Set up Docker first<br/>docker-compose up]
+    LiveCheck -->|No| SetupDocker[Set up Docker first<br/>docker compose up]
 
     SetupDocker --> LocalIntegration
 
@@ -227,17 +227,28 @@ Category 5 uses evidence-grounded complex reasoning and is opt-in for cost reaso
 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
 # Enable cat-5 judge with env var
-BENCH_JUDGE_MODEL=gpt-4o make bench-eval BENCH=locomo-mini CONFIG=baseline
+BENCH_JUDGE_MODEL=gpt-5.4-mini-2026-03-17 make bench-eval BENCH=locomo-mini CONFIG=baseline
 
-# Or use the runner CLI flags directly
-./test-locomo-benchmark.sh --conversations 0,1 --judge
-./test-locomo-benchmark.sh --conversations 0,1 --judge-model gpt-4o-mini
+# Direct runner: 1 conversation, judge enabled
+./test-locomo-benchmark.sh --conversations 0 --judge --output benchmarks/results/locomo-smoke.json
+
+# Direct runner: mini mode (same 2 conversations as locomo-mini)
+./test-locomo-benchmark.sh --conversations 0,1 --judge --output benchmarks/results/locomo-mini.json
 ```
 
-- `BENCH_JUDGE_MODEL` enables category-5 judging for `tests/benchmarks/test_locomo.py`.
-- `--judge` and `--judge-model` both enable the judge; `--judge` defaults to `gpt-4o` unless overridden by `BENCH_JUDGE_MODEL` or `--judge-model`.
-- If the judge is disabled, category 5 remains `N/A`.
-- If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
+Relevant flags for `./test-locomo-benchmark.sh`:
+
+- `--conversations I,J,...` runs only the selected **0-based** conversation indices from `locomo10.json`. Default: all 10 conversations. Example: `0` runs the first conversation only; `0,1` is the same 2-conversation scope as `locomo-mini`.
+- `--judge` enables category-5 judging. Default: disabled.
+- `--judge-model MODEL` enables category-5 judging and uses `MODEL`. Default when judge is enabled: `gpt-5.4-mini-2026-03-17`, unless overridden by `BENCH_JUDGE_MODEL`.
+- `--output PATH` saves JSON results to `PATH`. Default: no output file is written.
+- `--recall-limit N` sets memories recalled per question. Default: `10`.
+- `--live` runs against Railway instead of local Docker. Default: local Docker.
+- `--no-cleanup` keeps benchmark test data after the run. Default: cleanup enabled.
+
+`make bench-eval` wraps the snapshot-based benchmark flow and always writes results to `benchmarks/results/<bench>_<config>_<timestamp>.json`.
+
+If the judge is disabled, category 5 remains `N/A`. If the judge is enabled but evidence is missing or the LLM response is invalid, the affected category-5 questions are skipped rather than counted wrong.
 
 ### What is LoCoMo?
 
@@ -249,14 +260,16 @@ LoCoMo evaluates AI systems' ability to remember and reason across very long con
 4. **Open Domain** (Category 4) - General knowledge questions
 5. **Complex Reasoning** (Category 5) - Advanced inference tasks
 
-Published reference point: CORE is widely cited at **88.24%** (June 2025), but public LoCoMo setups are not perfectly apples-to-apples, especially around category-5 handling.
+Historical note: older public LoCoMo references such as CORE's **88.24%** are still useful background context, but they are not AutoMem's primary comparison target because the public setups are not perfectly apples-to-apples, especially around category-5 handling.
 
-AutoMem currently publishes two LoCoMo baselines:
+AutoMem currently publishes the following LoCoMo baselines:
 
 | Setup | Scope | Score | Notes |
 |------|-------|-------|-------|
-| `locomo-mini`, judge off | 2 conversations, categories 1-4 only | **89.27% (208/233)** | 71 category-5 questions skipped |
-| `locomo`, judge on (`gpt-4o`) | Full 10 conversations | **87.56% (1739/1986)** | Category 5 scored at 95.74% (427/446) |
+| `locomo`, canonical judge on (`gpt-5.4-mini-2026-03-17`) | Full 10 conversations | **84.74% (1683/1986)** | Current canonical full run from the May 2026 publication verification; category 5 scored **95.52% (426/446)** with 0 skips/errors. |
+| `locomo`, historical judge on (`gpt-5.1`) | Full 10 conversations | **83.99% (1668/1986)** | Historical #128 full run; category 5 scored **92.83% (414/446)** with 0 skips. |
+| `locomo-mini`, judge off | 2 conversations, categories 1-4 only | **89.27% (208/233)** | Historical mini anchor after evaluator fixes; not the current headline full-run claim. |
+| `locomo`, judge on (`gpt-4o`) | Full 10 conversations | **87.56% (1739/1986)** | Historical March 2026 run; kept for trend context only. |
 
 ### Running the Benchmark
 
@@ -286,47 +299,108 @@ The benchmark takes approximately:
 
 Memory usage:
 - **FalkorDB**: ~6,000–10,000 nodes
-- **Qdrant**: ~6,000–10,000 vectors (3072 dimensions by default, or 768 with small model)
+- **Qdrant**: ~6,000–10,000 vectors (1024 dimensions by default with `voyage-4`; older/OpenAI setups may use 768 or 3072)
 
 ### Interpreting Results
 
 Example benchmark output:
 ```text
 📊 FINAL RESULTS
-🎯 Overall Accuracy: 87.56% (1739/1986)
-⏱️ Total Time: 3497s
+🎯 Overall Accuracy: 84.74% (1683/1986)
+⏱️ Total Time: 3164s
 💾 Total Memories Stored: 5882
 
-📈 Category Breakdown:
-  Single-hop Recall        : 66.31% (187/282)
-  Temporal Understanding   : 87.23% (280/321)
-  Multi-hop Reasoning      : 45.83% ( 44/ 96)
-  Open Domain              : 95.24% (801/841)
-  Complex Reasoning        : 95.74% (427/446)
+📈 Category Breakdown excerpt:
+  Complex Reasoning        : 95.52% (426/446)
 
-📊 Comparison with published CORE reference:
-  CORE: 88.24%
-  AutoMem: 87.56%
-  📉 AutoMem is 0.68% behind that reference
 ```
 
-If you run without the judge, category 5 will show as `N/A` and the comparison should be treated as directional rather than apples-to-apples.
+See `benchmarks/EXPERIMENT_LOG.md` for the full per-category table. If you run without the judge, category 5 will show as `N/A`.
 
 Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
+
+## Current-State Recall Smoke
+
+Use `make bench-current-state` as the no-LLM regression gate for recall state
+semantics. It covers active, expired, future, archived, invalidated, evolved,
+contradictory, replacement, and tag-gated replacement cases, plus the public
+`state_mode=current|history` contract.
+
+The smoke target is deterministic and runs against unit fixtures, so it is
+appropriate for every recall contract change. Use LongMemEval or LoCoMo only
+when the change affects ranking, scoring, entity expansion, or answer quality.
+
+## LongMemEval Benchmark
+
+AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat prefix slices as smoke tests only; cite the canonical full run or the stratified representative mini for current results.
+
+```bash
+# Representative judged mini: stratified 5 questions per question type (30 total)
+make bench-mini-longmemeval
+
+# Prefix smoke only; biased by dataset order
+./test-longmemeval-benchmark.sh --max-questions 20
+
+# Full local run
+make test-longmemeval
+
+# Full live Railway run
+make test-longmemeval-live
+```
+
+Current LongMemEval results:
+
+| Setup | Scope | Score | Retrieval | Notes |
+|------|-------|-------|-----------|-------|
+| `longmemeval-mini` representative | 30 questions, stratified 5 per question type | **70.00% (21/30)** | recall@5 **96.67% (29/30)** | Fresh publication verification run: `gpt-5-mini` answerer, script LLM eval, 2 empty-answer warnings. |
+| `longmemeval` full canonical | 500 questions | **87.00% (435/500)** | recall@5 **97.00% (485/500)** | Fresh publication verification run: `gpt-5-mini` answerer, `gpt-5.4-mini-2026-03-17` judge, `judge_errors=0`, `memory_ingest_failures=0`, `publishable=true`. |
+| `longmemeval` full historical | 500 questions | **86.20% (431/500)** | recall@5 **97.20% (486/500)** | April 2026 canonical milestone with the same answerer and judge policy; kept for trend context. |
+| `longmemeval` partial legacy prefix (50q) | 50 questions, single-session-user type | **82.0% (41/50)** | recall@5 **92.0% (46/50)** | Provisional prefix run with legacy `gpt-4o` answerer; recall_limit=10, no entity/relation expansion. Not reproduced by the current stratified `bench-mini-longmemeval` target and not directly comparable to the older 35.6% / 500-question setup. |
+
+For future published LongMemEval results, use the pinned judge policy in [`docs/BENCHMARK_JUDGE_POLICY.md`](BENCHMARK_JUDGE_POLICY.md) so runs remain comparable over time. The primary answerer is `gpt-5-mini`; `gpt-4o` is legacy continuity only and should be labeled as such. Result metadata distinguishes the answer model (`answerer_model` / `llm_model`) from the judge model (`judge_model`, currently `gpt-5.4-mini-2026-03-17` when `--llm-eval` is enabled).
+
+## BEAM Benchmark
+
+BEAM experiments currently live in [`automem-evals`](https://github.com/verygoodplugins/automem-evals), because the harness is exploratory and wraps the upstream memory-benchmarks runner through an AutoMem shim. The durable findings are summarized here because official benchmark claims and docs references belong in this repo.
+
+Current BEAM 100K diagnostic results:
+
+| Setup | Scope | Score | Notes |
+|------|-------|-------|-------|
+| V1 raw-dialogue shim | 20 conversations, 400 questions | **76.25% (305/400)**, avg 0.677 | `gpt-5-mini` answerer/judge, top-k 200, zero errors. |
+| V2 fact-extraction shim | 20 conversations, 400 questions | **73.75% (295/400)**, avg 0.653 | -2.50pp vs V1 overall. Abstention and knowledge_update improved; event_ordering and information_extraction regressed. |
+
+Do not read the BEAM 100K number as an apples-to-apples product comparison with mem0's published 1M/10M results. The 100K tier is an easier retrieval setting, and the shim/judge setup differs from the published comparison target. It is useful as a failure-mode and regression signal.
+
+## Benchmark Ownership
+
+`automem` is the canonical home for official benchmark harnesses, published baselines, and any benchmark numbers referenced in docs, CI, or release notes.
+
+Use the separate `automem-evals` repo for:
+- ruleset experimentation
+- scenario authoring and seeded corpora
+- cross-agent or cross-backend comparisons
+- bulky timestamped result artifacts and exploratory writeups
+
+Memora/FAMA and WRIT runs remain diagnostic unless their scenario, harness,
+and result artifacts are promoted into this repo's official benchmark flow and
+recorded in `benchmarks/EXPERIMENT_LOG.md`.
+
+If you are building an external eval harness against local AutoMem, use the contract in [`EVALS_CONTRACT.md`](EVALS_CONTRACT.md) and treat this repo as the system under test.
 
 ### AutoMem's Advantages
 
 AutoMem is expected to perform well due to:
 
-1. **Richer Graph**: 11 relationship types vs CORE's basic temporal links
+1. **Richer Graph**: 11 relationship types, beyond simple temporal-link-only baselines
    - `RELATES_TO`, `LEADS_TO`, `OCCURRED_BEFORE`
    - `PREFERS_OVER`, `EXEMPLIFIES`, `CONTRADICTS`
    - `REINFORCES`, `INVALIDATED_BY`, `EVOLVED_INTO`
    - `DERIVED_FROM`, `PART_OF`
 
 2. **Hybrid Search**: Vector + keyword + tags + importance + time
-   - Better than pure semantic search
-   - More reliable than vector-only systems
+   - Designed to recover both semantic matches and explicit structured context
+   - Useful for testing graph/vector tradeoffs against snapshot-based evals
 
 3. **Background Intelligence**:
    - Entity extraction for structured queries

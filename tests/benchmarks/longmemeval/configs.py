@@ -15,9 +15,11 @@ from typing import Dict, List, Optional
 class LongMemEvalConfig:
     """Configuration for LongMemEval benchmark evaluation."""
 
-    # AutoMem API settings
+    # Backend settings
+    backend: str = "automem"
     base_url: str = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
     api_token: str = os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token")
+    work_dir: Optional[str] = None
 
     # Dataset paths
     data_file: str = str(Path(__file__).parent / "data" / "longmemeval_s_cleaned.json")
@@ -38,7 +40,7 @@ class LongMemEvalConfig:
     importance: float = 0.5
 
     # Answer generation
-    llm_model: str = os.getenv("LONGMEMEVAL_LLM_MODEL", "gpt-4o")
+    llm_model: str = os.getenv("LONGMEMEVAL_LLM_MODEL", "gpt-5-mini")
     eval_llm_model: Optional[str] = os.getenv("LONGMEMEVAL_EVAL_LLM_MODEL")
     use_chain_of_note: bool = True
 
@@ -48,8 +50,9 @@ class LongMemEvalConfig:
     request_timeout: int = 30
 
     # Evaluation
-    use_llm_eval: bool = False  # Use GPT-4o for evaluation (costs money)
+    use_llm_eval: bool = False  # Use canonical OpenAI judge for evaluation (costs money)
     max_questions: int = 0  # 0 = all questions
+    per_type: int = 0  # 0 = no stratified selection; otherwise questions per type
 
     # Tag prefix for cleanup
     tag_prefix: str = "longmemeval"

@@ -1,0 +1,555 @@
+{
+  "overall": {
+    "accuracy": 0.75,
+    "correct": 15,
+    "total": 20
+  },
+  "retrieval": {
+    "recall_any_at_5": 0.85,
+    "hits": 17,
+    "total": 20
+  },
+  "by_type": {
+    "single-session-user": {
+      "correct": 15,
+      "total": 20,
+      "accuracy": 0.75,
+      "name": "Single-Session (User)"
+    }
+  },
+  "retrieval_by_type": {
+    "single-session-user": {
+      "hits": 17,
+      "total": 20,
+      "recall_any_at_5": 0.85,
+      "name": "Single-Session (User)"
+    }
+  },
+  "abstention": {
+    "total": 0,
+    "correct": 0,
+    "accuracy": 0.0
+  },
+  "backend": "automem",
+  "elapsed_time": 228.66235494613647,
+  "config": {
+    "backend": "automem",
+    "name": "baseline",
+    "storage_strategy": "per-session",
+    "recall_limit": 10,
+    "expand_entities": false,
+    "expand_relations": false,
+    "auto_decompose": false,
+    "use_temporal_hints": false,
+    "llm_model": "gpt-4o",
+    "eval_llm_model": null,
+    "use_llm_eval": true,
+    "judge_model": "gpt-5.4-mini-2026-03-17",
+    "judge_profile": "openai-gpt-5.4-mini-2026-03-17",
+    "judge_provider": "openai",
+    "judge_snapshot_pinned": true
+  },
+  "memory_ingest_failures": 0,
+  "details": [
+    {
+      "question_id": "e47becba",
+      "question_type": "single-session-user",
+      "question": "What degree did I graduate with?",
+      "reference": "Business Administration",
+      "hypothesis": "I don't know.",
+      "is_correct": false,
+      "confidence": 0.99,
+      "explanation": "The assistant did not provide the degree; it \u067e\u0627\u0633\u062e 'I don't know' instead of 'Business Administration'.",
+      "recalled_count": 10,
+      "memories_stored": 53,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 23:40",
+      "answer_session_ids": [
+        "answer_280352e9"
+      ],
+      "retrieved_session_ids": [
+        "f6859b48_2",
+        "d414cac5_4",
+        "e348269f_1",
+        "d94b721b",
+        "7045db85_1"
+      ],
+      "recall_hit_at_5": false
+    },
+    {
+      "question_id": "118b2229",
+      "question_type": "single-session-user",
+      "question": "How long is my daily commute to work?",
+      "reference": "45 minutes each way",
+      "hypothesis": "Your daily commute to work is 45 minutes each way.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant\u2019s answer matches the reference answer exactly in meaning: the commute is 45 minutes each way.",
+      "recalled_count": 10,
+      "memories_stored": 45,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 20:36",
+      "answer_session_ids": [
+        "answer_40a90d51"
+      ],
+      "retrieved_session_ids": [
+        "answer_40a90d51",
+        "db50c0f6",
+        "afe04238_1",
+        "5209e813_2",
+        "7d8b5834_1"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "51a45a95",
+      "question_type": "single-session-user",
+      "question": "Where did I redeem a $5 coupon on coffee creamer?",
+      "reference": "Target",
+      "hypothesis": "You redeemed a $5 coupon on coffee creamer at Target.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant\u2019s answer matches the reference answer by identifying Target as the place where the $5 coupon on coffee creamer was redeemed.",
+      "recalled_count": 10,
+      "memories_stored": 50,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 20:42",
+      "answer_session_ids": [
+        "answer_d61669c7"
+      ],
+      "retrieved_session_ids": [
+        "answer_d61669c7",
+        "98c198fb",
+        "217debf7",
+        "07d1915d_1",
+        "f32d1ccf_1"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "58bf7951",
+      "question_type": "single-session-user",
+      "question": "What play did I attend at the local community theater?",
+      "reference": "The Glass Menagerie",
+      "hypothesis": "You attended a production of \"The Glass Menagerie\" at the local community theater.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant identifies the play as \"The Glass Menagerie,\" which matches the reference answer.",
+      "recalled_count": 10,
+      "memories_stored": 56,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 22:53",
+      "answer_session_ids": [
+        "answer_355c48bb"
+      ],
+      "retrieved_session_ids": [
+        "answer_355c48bb",
+        "ultrachat_268434",
+        "ultrachat_155546",
+        "ultrachat_221066",
+        "ultrachat_71618"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "1e043500",
+      "question_type": "single-session-user",
+      "question": "What is the name of the playlist I created on Spotify?",
+      "reference": "Summer Vibes",
+      "hypothesis": "The name of the playlist you created on Spotify is \"Summer Vibes.\"",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant gave the same playlist name as the reference answer: \"Summer Vibes.\"",
+      "recalled_count": 10,
+      "memories_stored": 49,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 19:19",
+      "answer_session_ids": [
+        "answer_3e012175"
+      ],
+      "retrieved_session_ids": [
+        "answer_3e012175",
+        "01bd9def",
+        "8020d945_2",
+        "sharegpt_Clr6oyu_0",
+        "2d0d0004"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "c5e8278d",
+      "question_type": "single-session-user",
+      "question": "What was my last name before I changed it?",
+      "reference": "Johnson",
+      "hypothesis": "Your last name before you changed it was Johnson.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant\u2019s answer matches the reference answer exactly in meaning: the last name before the change was Johnson.",
+      "recalled_count": 10,
+      "memories_stored": 44,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 22:36",
+      "answer_session_ids": [
+        "answer_f6168136"
+      ],
+      "retrieved_session_ids": [
+        "answer_f6168136",
+        "89b1028d_1",
+        "aaf71ce2_2",
+        "f58317c6",
+        "d777e7da_1"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "6ade9755",
+      "question_type": "single-session-user",
+      "question": "Where do I take yoga classes?",
+      "reference": "Serenity Yoga",
+      "hypothesis": "You take yoga classes at Serenity Yoga and also practice at home using the Down Dog app.",
+      "is_correct": true,
+      "confidence": 0.98,
+      "explanation": "The assistant correctly identifies Serenity Yoga as the place to take yoga classes. The extra mention of the Down Dog app is additional context and does not change the core answer.",
+      "recalled_count": 10,
+      "memories_stored": 51,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 21:04",
+      "answer_session_ids": [
+        "answer_9398da02"
+      ],
+      "retrieved_session_ids": [
+        "answer_9398da02",
+        "7c5ab02a_2",
+        "ultrachat_462",
+        "ultrachat_270925",
+        "e49a0b52_1"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "6f9b354f",
+      "question_type": "single-session-user",
+      "question": "What color did I repaint my bedroom walls?",
+      "reference": "a lighter shade of gray",
+      "hypothesis": "You repainted your bedroom walls a lighter shade of gray.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant's answer matches the reference answer by stating the walls were repainted a lighter shade of gray.",
+      "recalled_count": 10,
+      "memories_stored": 50,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 22:42",
+      "answer_session_ids": [
+        "answer_feb5200f"
+      ],
+      "retrieved_session_ids": [
+        "answer_feb5200f",
+        "0c0f2449_2",
+        "sharegpt_VAELSB3_0",
+        "de877349",
+        "sharegpt_BYHT3Xz_0"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "58ef2f1c",
+      "question_type": "single-session-user",
+      "question": "When did I volunteer at the local animal shelter's fundraising dinner?",
+      "reference": "February 14th",
+      "hypothesis": "You volunteered at the local animal shelter's fundraising dinner, \"Love is in the Air,\" in February.",
+      "is_correct": false,
+      "confidence": 0.88,
+      "explanation": "The assistant only states the month (February) and does not provide the specific date February 14th, so it misses key information from the reference answer.",
+      "recalled_count": 10,
+      "memories_stored": 50,
+      "is_abstention": false,
+      "question_date": "2023/04/02 (Sun) 23:49",
+      "answer_session_ids": [
+        "answer_59547700"
+      ],
+      "retrieved_session_ids": [
+        "answer_59547700",
+        "e6ab6a7b_2",
+        "ultrachat_5212",
+        "ultrachat_246324",
+        "e82ce7cd_1"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "f8c5f88b",
+      "question_type": "single-session-user",
+      "question": "Where did I buy my new tennis racket from?",
+      "reference": "the sports store downtown",
+      "hypothesis": "You bought your new tennis racket from a sports store downtown.",
+      "is_correct": true,
+      "confidence": 0.98,
+      "explanation": "The assistant\u2019s answer matches the reference answer in meaning: it says the tennis racket was bought from a sports store downtown.",
+      "recalled_count": 10,
+      "memories_stored": 46,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 23:39",
+      "answer_session_ids": [
+        "answer_c3567066"
+      ],
+      "retrieved_session_ids": [
+        "answer_c3567066",
+        "91880423",
+        "68ace657_1",
+        "sharegpt_TKj3yO8_0",
+        "54e9197a"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "5d3d2817",
+      "question_type": "single-session-user",
+      "question": "What was my previous occupation?",
+      "reference": "Marketing specialist at a small startup",
+      "hypothesis": "I don't know.",
+      "is_correct": false,
+      "confidence": 0.99,
+      "explanation": "The assistant did not identify the previous occupation; it replied that it didn't know instead of stating 'marketing specialist at a small startup'.",
+      "recalled_count": 10,
+      "memories_stored": 53,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 20:08",
+      "answer_session_ids": [
+        "answer_235eb6fb"
+      ],
+      "retrieved_session_ids": [
+        "sharegpt_BKl952A_23",
+        "sharegpt_8zsFRKh_0",
+        "e00298a6_1",
+        "ultrachat_371333",
+        "sharegpt_P6UZzFA_9"
+      ],
+      "recall_hit_at_5": false
+    },
+    {
+      "question_id": "7527f7e2",
+      "question_type": "single-session-user",
+      "question": "How much did I spend on a designer handbag?",
+      "reference": "$800",
+      "hypothesis": "You spent $800 on a designer handbag.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant states the same amount as the reference answer: $800.",
+      "recalled_count": 10,
+      "memories_stored": 45,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 23:20",
+      "answer_session_ids": [
+        "answer_7cb94507"
+      ],
+      "retrieved_session_ids": [
+        "answer_7cb94507",
+        "44bbd8cd_2",
+        "1cafd864_3",
+        "c7c4cf1e_2",
+        "4e2acecc"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "c960da58",
+      "question_type": "single-session-user",
+      "question": "How many playlists do I have on Spotify?",
+      "reference": "20",
+      "hypothesis": "You have 20 playlists on Spotify.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant states the same number of playlists as the reference answer: 20.",
+      "recalled_count": 10,
+      "memories_stored": 46,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 18:45",
+      "answer_session_ids": [
+        "answer_e05e4612"
+      ],
+      "retrieved_session_ids": [
+        "answer_e05e4612",
+        "89d3053f",
+        "b65f51fb_5",
+        "f7ffddbc",
+        "ultrachat_198948"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "3b6f954b",
+      "question_type": "single-session-user",
+      "question": "Where did I attend for my study abroad program?",
+      "reference": "University of Melbourne in Australia",
+      "hypothesis": "You attended your study abroad program at the University of Melbourne.",
+      "is_correct": true,
+      "confidence": 0.98,
+      "explanation": "The assistant correctly identified the study abroad institution as the University of Melbourne, matching the reference answer. It omitted the country, but the core information is correct.",
+      "recalled_count": 10,
+      "memories_stored": 50,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 16:24",
+      "answer_session_ids": [
+        "answer_94030872"
+      ],
+      "retrieved_session_ids": [
+        "answer_94030872",
+        "c271c071",
+        "f5f4b6f6_2",
+        "4ed9cd1b_1",
+        "ultrachat_294369"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "726462e0",
+      "question_type": "single-session-user",
+      "question": "What was the discount I got on my first purchase from the new clothing brand?",
+      "reference": "10%",
+      "hypothesis": "I don't know.",
+      "is_correct": false,
+      "confidence": 0.99,
+      "explanation": "The assistant did not provide the discount amount. The reference answer is 10%, but the assistant said it doesn't know.",
+      "recalled_count": 10,
+      "memories_stored": 48,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 23:15",
+      "answer_session_ids": [
+        "answer_f38f679b"
+      ],
+      "retrieved_session_ids": [
+        "741c6781_1",
+        "6ef99651_2",
+        "9c05acfe_2",
+        "cdd9704d_1",
+        "7e4dab66_1"
+      ],
+      "recall_hit_at_5": false
+    },
+    {
+      "question_id": "94f70d80",
+      "question_type": "single-session-user",
+      "question": "How long did it take me to assemble the IKEA bookshelf?",
+      "reference": "4 hours",
+      "hypothesis": "It took you 4 hours to assemble the IKEA bookshelf.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant states the assembly time was 4 hours, which matches the reference answer.",
+      "recalled_count": 10,
+      "memories_stored": 49,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 23:11",
+      "answer_session_ids": [
+        "answer_c63c0458"
+      ],
+      "retrieved_session_ids": [
+        "answer_c63c0458",
+        "sharegpt_6fTnCnw_76",
+        "67045503",
+        "b015c3c3_1",
+        "43df393f"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "66f24dbb",
+      "question_type": "single-session-user",
+      "question": "What did I buy for my sister's birthday gift?",
+      "reference": "a yellow dress",
+      "hypothesis": "You bought a yellow dress and a pair of earrings to match for your sister's birthday gift.",
+      "is_correct": false,
+      "confidence": 0.98,
+      "explanation": "The reference answer says the gift was only a yellow dress. The assistant added a pair of earrings, which changes the content and is not supported by the reference.",
+      "recalled_count": 10,
+      "memories_stored": 50,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 17:09",
+      "answer_session_ids": [
+        "answer_fea2e4d3"
+      ],
+      "retrieved_session_ids": [
+        "answer_fea2e4d3",
+        "89452526_2",
+        "798e4ba3_2",
+        "21c6c41d",
+        "8d46b8fa_1"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "ad7109d1",
+      "question_type": "single-session-user",
+      "question": "What speed is my new internet plan?",
+      "reference": "500 Mbps",
+      "hypothesis": "Your new internet plan speed is 500 Mbps.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant states the plan speed is 500 Mbps, matching the reference answer exactly.",
+      "recalled_count": 10,
+      "memories_stored": 44,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 21:56",
+      "answer_session_ids": [
+        "answer_679840f8"
+      ],
+      "retrieved_session_ids": [
+        "answer_679840f8",
+        "3dc02d26_2",
+        "22aa7cca_3",
+        "3030efec_2",
+        "f2939479_1"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "af8d2e46",
+      "question_type": "single-session-user",
+      "question": "How many shirts did I pack for my 5-day trip to Costa Rica?",
+      "reference": "7",
+      "hypothesis": "You packed 7 shirts for your 5-day trip to Costa Rica.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant states the same number of shirts as the reference answer: 7.",
+      "recalled_count": 10,
+      "memories_stored": 50,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 14:18",
+      "answer_session_ids": [
+        "answer_82a04f59"
+      ],
+      "retrieved_session_ids": [
+        "answer_82a04f59",
+        "73d5f10c",
+        "33c3b457",
+        "ultrachat_164840",
+        "ced213c6"
+      ],
+      "recall_hit_at_5": true
+    },
+    {
+      "question_id": "dccbc061",
+      "question_type": "single-session-user",
+      "question": "What was my previous stance on spirituality?",
+      "reference": "A staunch atheist",
+      "hypothesis": "Your previous stance on spirituality was that of a staunch atheist.",
+      "is_correct": true,
+      "confidence": 0.99,
+      "explanation": "The assistant conveys the same meaning as the reference answer by stating the previous stance was a staunch atheist.",
+      "recalled_count": 10,
+      "memories_stored": 49,
+      "is_abstention": false,
+      "question_date": "2023/05/30 (Tue) 19:10",
+      "answer_session_ids": [
+        "answer_8f276838"
+      ],
+      "retrieved_session_ids": [
+        "answer_8f276838",
+        "0f417163",
+        "ultrachat_519037",
+        "ultrachat_343",
+        "sharegpt_sZKME3y_0"
+      ],
+      "recall_hit_at_5": true
+    }
+  ]
+}

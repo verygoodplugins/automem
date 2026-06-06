@@ -2,6 +2,15 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.15.2](https://github.com/verygoodplugins/automem/compare/v0.15.1...v0.15.2) (2026-04-23)
+
+
+### Bug Fixes
+
+* **benchmarks:** make LoCoMo judge runs reliable ([#149](https://github.com/verygoodplugins/automem/issues/149)) ([c22f2c9](https://github.com/verygoodplugins/automem/commit/c22f2c9db57f45e30525ce0d0c7f523aaeee721d))
+* **recall:** bypass tag filter on expansion candidates ([#142](https://github.com/verygoodplugins/automem/issues/142)) ([#146](https://github.com/verygoodplugins/automem/issues/146)) ([4f0fcf8](https://github.com/verygoodplugins/automem/commit/4f0fcf8d1c7cb30c24a4bfb572504bcf6c36e62e))
+* **recall:** keyword scoring for vector results + softer adaptive floor ([#150](https://github.com/verygoodplugins/automem/issues/150)) ([591b2c7](https://github.com/verygoodplugins/automem/commit/591b2c7a4e65af90922a7f286b1c16e67761aea5))
+
 ## [0.15.1](https://github.com/verygoodplugins/automem/compare/v0.15.0...v0.15.1) (2026-03-25)
 
 

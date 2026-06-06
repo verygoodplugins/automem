@@ -127,7 +127,10 @@ Verify results are returned and scores look reasonable.
 #### 6. Restart Application
 ```bash
 # If using Docker
-make restart
+docker compose up -d
+
+# Or rerun the foreground dev stack
+make dev
 
 # If using systemd
 sudo systemctl restart automem
@@ -141,7 +144,7 @@ If migration fails or results are poor:
 
 ```bash
 # 1. Stop application
-docker-compose down  # or however you run AutoMem
+docker compose down  # or however you run AutoMem
 
 # 2. Restore from backup
 python scripts/restore_from_backup.py backups/qdrant/qdrant_snapshot_YYYYMMDD_HHMMSS.tar.gz
@@ -152,7 +155,7 @@ export VECTOR_SIZE=768
 export EMBEDDING_MODEL=text-embedding-3-small
 
 # 4. Restart
-docker-compose up -d
+docker compose up -d
 ```
 
 ---

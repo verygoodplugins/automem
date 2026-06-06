@@ -15,7 +15,9 @@ from qdrant_client import models as qdrant_models
 import app
 from app import _normalize_timestamp, utc_now
 from automem import config
-from automem.api.recall import _expand_related_memories
+from automem.api.recall import _expand_related_memories, handle_recall
+from automem.utils.scoring import _compute_metadata_score
+from automem.utils.text import _extract_keywords
 from tests.support.fake_graph import FakeGraph
 
 
@@ -67,6 +69,10 @@ class MockQdrantClient:
         self.delete_calls.append((collection_name, points_selector))
         if hasattr(points_selector, "points"):
             for point_id in points_selector.points:
+                if point_id in self.points:
+                    del self.points[point_id]
+        elif isinstance(points_selector, dict):
+            for point_id in points_selector.get("points", []):
                 if point_id in self.points:
                     del self.points[point_id]
 
@@ -244,6 +250,122 @@ def test_health_endpoint_falkordb_down(client, mock_state):
 # ==================== Test Memory Recall ====================
 
 
+def _make_floor_result(idx: int, score: float, query: str = "autojack") -> dict[str, Any]:
+    return {
+        "id": f"floor-{idx}",
+        "score": score,
+        "match_score": score,
+        "match_type": "vector",
+        "source": "qdrant",
+        "memory": {
+            "id": f"floor-{idx}",
+            "content": f"{query} memory {idx}",
+            "target_score": score,
+            "importance": 0.1,
+        },
+        "relations": [],
+    }
+
+
+def _call_handle_recall_for_scores(query: str, scores: list[float]):
+    vector_results = [
+        _make_floor_result(idx, score, query=query) for idx, score in enumerate(scores)
+    ]
+
+    with app.app.test_request_context(f"/recall?query={query}&limit={len(scores)}"):
+        response = handle_recall(
+            get_memory_graph=lambda: None,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=_normalize_timestamp,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, _query, _tokens, _context: (
+                float(result["memory"]["target_score"]),
+                {"keyword": 1.0},
+            ),
+            result_passes_filters=lambda *_args, **_kwargs: True,
+            graph_keyword_search=lambda *_args, **_kwargs: [],
+            vector_search=lambda *_args, **_kwargs: list(vector_results),
+            vector_filter_only_tag_search=lambda *_args, **_kwargs: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+
+    return response.get_json()
+
+
+def test_compute_metadata_score_uses_content_keyword_fallback_for_vector_results():
+    score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 1.0
+    assert score > config.SEARCH_WEIGHT_VECTOR * 0.7
+
+
+def test_compute_metadata_score_uses_partial_content_keyword_fallback():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "AutoJack debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.5
+
+
+def test_compute_metadata_score_leaves_keyword_zero_without_content_hits():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {"content": "Unrelated debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.0
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_keyword_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "keyword",
+            "match_score": 0.42,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.42
+
+
+def test_compute_metadata_score_preserves_keyword_match_score_for_trending_results():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "trending",
+            "match_score": 0.33,
+            "memory": {"content": "AutoJack recall debugging notes"},
+        },
+        "AutoJack recall",
+        ["autojack", "recall"],
+    )
+
+    assert components["keyword"] == 0.33
+
+
 def test_recall_with_query(client, mock_state, auth_headers):
     """Test memory recall with text query."""
     # Store a memory first
@@ -383,7 +505,14 @@ def test_recall_with_high_limit(client, mock_state, auth_headers):
 
 
 def _store_memory(
-    mock_state, memory_id, content, tags, importance, mem_type="Context", timestamp=None
+    mock_state,
+    memory_id,
+    content,
+    tags,
+    importance,
+    mem_type="Context",
+    timestamp=None,
+    **extra,
 ):
     mock_state.memory_graph.memories[memory_id] = {
         "id": memory_id,
@@ -392,7 +521,537 @@ def _store_memory(
         "importance": importance,
         "type": mem_type,
         "timestamp": timestamp or utc_now(),
+        **extra,
     }
+
+
+def test_recall_current_only_filters_temporal_state(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    active_id = "cc000000-0000-0000-0000-000000000001"
+    expired_id = "cc000000-0000-0000-0000-000000000002"
+    future_id = "cc000000-0000-0000-0000-000000000003"
+
+    _store_memory(mock_state, active_id, "Active current state", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_id,
+        "Expired stale state",
+        ["state"],
+        0.95,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+    _store_memory(
+        mock_state,
+        future_id,
+        "Future state",
+        ["state"],
+        0.98,
+        t_valid=(now + timedelta(days=1)).isoformat(),
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=10&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    ids = [result["id"] for result in data["results"]]
+    assert ids == [active_id]
+    assert data["state_filter"]["suppressed_count"] == 2
+    reasons = {item["reason"] for item in data["state_filter"]["suppressed"]}
+    assert reasons == {"expired", "not_yet_valid"}
+
+    response = client.get(
+        "/recall?tags=state&limit=10&current_only=false",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    ids = {result["id"] for result in data["results"]}
+    assert {active_id, expired_id, future_id}.issubset(ids)
+    assert "state_filter" not in data
+
+
+def test_recall_state_mode_defaults_to_current_and_echoes_mode(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    active_id = "cc000000-0000-0000-0000-000000000032"
+    expired_id = "cc000000-0000-0000-0000-000000000033"
+
+    _store_memory(mock_state, active_id, "Active state mode current", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_id,
+        "Expired state mode current",
+        ["state"],
+        0.95,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+
+    response = client.get("/recall?tags=state&limit=10", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["state_mode"] == "current"
+    assert [result["id"] for result in data["results"]] == [active_id]
+    assert data["state_filter"]["suppressed_count"] == 1
+
+
+def test_recall_state_mode_history_preserves_state_history(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    active_id = "cc000000-0000-0000-0000-000000000034"
+    expired_id = "cc000000-0000-0000-0000-000000000035"
+    future_id = "cc000000-0000-0000-0000-000000000036"
+
+    _store_memory(mock_state, active_id, "Active state mode history", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_id,
+        "Expired state mode history",
+        ["state"],
+        0.95,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+    _store_memory(
+        mock_state,
+        future_id,
+        "Future state mode history",
+        ["state"],
+        0.98,
+        t_valid=(now + timedelta(days=1)).isoformat(),
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=10&state_mode=history&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["state_mode"] == "history"
+    ids = {result["id"] for result in data["results"]}
+    assert {active_id, expired_id, future_id}.issubset(ids)
+    assert "state_filter" not in data
+
+
+@pytest.mark.parametrize(
+    ("state_mode", "current_only", "expected_mode", "expects_current"),
+    [
+        ("history", "true", "current", True),
+        ("current", "false", "history", False),
+    ],
+)
+def test_recall_current_only_takes_precedence_over_state_mode(
+    client,
+    mock_state,
+    auth_headers,
+    state_mode,
+    current_only,
+    expected_mode,
+    expects_current,
+):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    active_id = "cc000000-0000-0000-0000-000000000037"
+    expired_id = "cc000000-0000-0000-0000-000000000038"
+
+    _store_memory(mock_state, active_id, "Active precedence state", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_id,
+        "Expired precedence state",
+        ["state"],
+        0.95,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+
+    response = client.get(
+        f"/recall?tags=state&limit=10&state_mode={state_mode}&current_only={current_only}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["state_mode"] == expected_mode
+    ids = {result["id"] for result in data["results"]}
+    if expects_current:
+        assert ids == {active_id}
+        assert data["state_filter"]["suppressed_count"] == 1
+    else:
+        assert {active_id, expired_id}.issubset(ids)
+        assert "state_filter" not in data
+
+
+def test_recall_state_mode_rejects_unknown_value(client, auth_headers):
+    response = client.get("/recall?state_mode=latest", headers=auth_headers)
+
+    assert response.status_code == 400
+    assert "state_mode" in response.get_data(as_text=True)
+
+
+def test_recall_current_only_filters_archived_state(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    active_id = "cc000000-0000-0000-0000-000000000004"
+    archived_id = "cc000000-0000-0000-0000-000000000005"
+
+    _store_memory(mock_state, active_id, "Active retained state", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        archived_id,
+        "Archived stale state",
+        ["state"],
+        0.95,
+        archived=True,
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=10&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [active_id]
+    assert data["state_filter"]["suppressed_count"] == 1
+    assert data["state_filter"]["suppressed"][0]["id"] == archived_id
+    assert data["state_filter"]["suppressed"][0]["reason"] == "archived"
+
+
+@pytest.mark.parametrize("relation_type", ["INVALIDATED_BY", "EVOLVED_INTO"])
+def test_recall_current_only_injects_active_replacement(
+    client, mock_state, auth_headers, relation_type
+):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    old_id = "cc000000-0000-0000-0000-000000000010"
+    replacement_id = "cc000000-0000-0000-0000-000000000011"
+
+    _store_memory(mock_state, old_id, "Legacy favorite editor was Vim", ["state"], 1.0)
+    _store_memory(
+        mock_state,
+        replacement_id,
+        "Current favorite editor is Zed",
+        ["replacement"],
+        0.1,
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": replacement_id, "type": relation_type, "strength": 0.9}
+    )
+
+    response = client.get("/recall?limit=1&state_debug=true", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [replacement_id]
+    assert data["results"][0]["match_type"] == "state_replacement"
+    assert data["state_filter"]["suppressed_count"] == 1
+    assert data["state_filter"]["replacement_count"] == 1
+    assert data["state_filter"]["suppressed"][0]["replacement_id"] == replacement_id
+
+
+def test_recall_current_only_batch_loads_relation_replacements(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+
+    old_ids = [
+        "cc000000-0000-0000-0000-000000000016",
+        "cc000000-0000-0000-0000-000000000017",
+        "cc000000-0000-0000-0000-000000000018",
+    ]
+    replacement_ids = [
+        "cc000000-0000-0000-0000-000000000116",
+        "cc000000-0000-0000-0000-000000000117",
+        "cc000000-0000-0000-0000-000000000118",
+    ]
+    for idx, (old_id, replacement_id) in enumerate(zip(old_ids, replacement_ids)):
+        _store_memory(mock_state, old_id, f"Legacy state {idx}", ["state"], 1.0 - idx / 10)
+        _store_memory(mock_state, replacement_id, f"Current state {idx}", ["state"], 0.1)
+        mock_state.memory_graph.relationships.append(
+            {
+                "id1": old_id,
+                "id2": replacement_id,
+                "type": "INVALIDATED_BY",
+                "strength": 0.9,
+            }
+        )
+
+    response = client.get(
+        "/recall?tags=state&limit=3&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == replacement_ids
+    assert data["state_filter"]["suppressed_count"] == 3
+    replacement_queries = [
+        query
+        for query, params in mock_state.memory_graph.queries
+        if "RETURN source_id" in query and set(params.get("ids") or []) == set(old_ids)
+    ]
+    assert len(replacement_queries) == 1
+
+
+def test_recall_current_only_keeps_replacement_score_order(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    old_id = "cc000000-0000-0000-0000-000000000019"
+    active_id = "cc000000-0000-0000-0000-000000000119"
+    replacement_id = "cc000000-0000-0000-0000-000000000219"
+
+    _store_memory(mock_state, old_id, "Highest scoring legacy state", ["state"], 1.0)
+    _store_memory(mock_state, active_id, "Lower scoring active state", ["state"], 0.9)
+    _store_memory(mock_state, replacement_id, "Current replacement state", ["state"], 0.1)
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": replacement_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=2&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [replacement_id, active_id]
+
+
+def test_recall_current_only_replacement_respects_tag_filter(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    old_id = "cc000000-0000-0000-0000-000000000012"
+    replacement_id = "cc000000-0000-0000-0000-000000000013"
+
+    _store_memory(mock_state, old_id, "Legacy gated billing plan was Basic", ["gated-old"], 1.0)
+    _store_memory(
+        mock_state,
+        replacement_id,
+        "Current gated billing plan is Pro",
+        ["gated-current"],
+        0.1,
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": replacement_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+
+    response = client.get(
+        "/recall?tags=gated-old&tag_match=exact&limit=1&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["results"] == []
+    assert data["state_filter"]["suppressed_count"] == 1
+    assert data["state_filter"]["replacement_count"] == 0
+    assert data["state_filter"]["suppressed"][0]["id"] == old_id
+    assert data["state_filter"]["suppressed"][0]["replacement_id"] == replacement_id
+    assert data["state_filter"]["replacements"] == []
+
+
+@pytest.mark.parametrize("relation_type", ["INVALIDATED_BY", "EVOLVED_INTO"])
+def test_recall_current_only_false_keeps_relation_history(
+    client, mock_state, auth_headers, relation_type
+):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    old_id = "cc000000-0000-0000-0000-000000000014"
+    replacement_id = "cc000000-0000-0000-0000-000000000015"
+
+    _store_memory(mock_state, old_id, "Historical tracker was Jira", ["state"], 1.0)
+    _store_memory(mock_state, replacement_id, "Current tracker is Linear", ["state"], 0.9)
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": replacement_id, "type": relation_type, "strength": 0.9}
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=2&current_only=false&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [old_id, replacement_id]
+    assert "state_filter" not in data
+
+
+def test_recall_current_only_does_not_suppress_contradictions(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    old_id = "cc000000-0000-0000-0000-000000000020"
+    conflicting_id = "cc000000-0000-0000-0000-000000000021"
+
+    _store_memory(mock_state, old_id, "Legacy plan used SQLite", ["state"], 1.0)
+    _store_memory(mock_state, conflicting_id, "Conflicting plan used Postgres", ["state"], 0.1)
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": conflicting_id, "type": "CONTRADICTS", "strength": 0.9}
+    )
+
+    response = client.get("/recall?limit=2&state_debug=true", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [old_id, conflicting_id]
+    assert data["state_filter"]["suppressed_count"] == 0
+
+
+def test_recall_current_only_injects_replacement_for_expired_memory(
+    client, mock_state, auth_headers
+):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    now = datetime.now(timezone.utc)
+    old_id = "cc000000-0000-0000-0000-000000000025"
+    replacement_id = "cc000000-0000-0000-0000-000000000026"
+
+    _store_memory(
+        mock_state,
+        old_id,
+        "Expired favorite editor was Vim",
+        ["state"],
+        1.0,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+    _store_memory(mock_state, replacement_id, "Current favorite editor is Zed", ["state"], 0.1)
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": replacement_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+
+    response = client.get("/recall?limit=1&state_debug=true", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [replacement_id]
+    assert data["state_filter"]["suppressed"][0]["reason"] == "expired"
+    assert data["state_filter"]["replacements"][0]["replaces_id"] == old_id
+
+
+def test_recall_current_only_filters_vector_results(client, mock_state, auth_headers):
+    now = datetime.now(timezone.utc)
+
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors, query_filter
+        return [
+            SimpleNamespace(
+                id="vec-active",
+                score=0.75,
+                payload={
+                    "id": "vec-active",
+                    "content": "Active vector state",
+                    "tags": ["state"],
+                    "importance": 0.5,
+                    "timestamp": utc_now(),
+                },
+            ),
+            SimpleNamespace(
+                id="vec-expired",
+                score=0.74,
+                payload={
+                    "id": "vec-expired",
+                    "content": "Expired vector state",
+                    "tags": ["state"],
+                    "importance": 0.5,
+                    "timestamp": utc_now(),
+                    "t_invalid": (now - timedelta(days=1)).isoformat(),
+                },
+            ),
+        ]
+
+    mock_state.qdrant.search = custom_search
+
+    response = client.get("/recall?query=state&limit=2", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == ["vec-active"]
+    assert data["state_filter"]["suppressed_count"] == 1
+
+    response = client.get(
+        "/recall?query=state&limit=2&current_only=false",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert {result["id"] for result in data["results"]} == {"vec-active", "vec-expired"}
+
+
+def test_recall_current_only_filters_tag_only_results(client, mock_state, auth_headers):
+    now = datetime.now(timezone.utc)
+    mock_state.memory_graph = None
+    mock_state.qdrant.points = {
+        "tag-active": {
+            "vector": [0.1] * 3,
+            "payload": {
+                "id": "tag-active",
+                "content": "Active tag state",
+                "tags": ["state"],
+                "importance": 0.5,
+                "timestamp": utc_now(),
+            },
+        },
+        "tag-expired": {
+            "vector": [0.1] * 3,
+            "payload": {
+                "id": "tag-expired",
+                "content": "Expired tag state",
+                "tags": ["state"],
+                "importance": 0.6,
+                "timestamp": utc_now(),
+                "t_invalid": (now - timedelta(days=1)).isoformat(),
+            },
+        },
+    }
+
+    response = client.get("/recall?tags=state&tag_match=exact&limit=10", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == ["tag-active"]
+    assert data["state_filter"]["suppressed_count"] == 1
+
+
+def test_recall_current_only_filters_relation_expansion(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    now = datetime.now(timezone.utc)
+    seed_id = "cc000000-0000-0000-0000-000000000030"
+    expired_related_id = "cc000000-0000-0000-0000-000000000031"
+
+    _store_memory(mock_state, seed_id, "Seed state", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_related_id,
+        "Expired related state",
+        ["related"],
+        0.8,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": seed_id, "id2": expired_related_id, "type": "RELATES_TO", "strength": 0.9}
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=1&expand_relations=true&relation_limit=5",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [seed_id]
+    assert data["state_filter"]["suppressed_count"] == 1
 
 
 def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
@@ -525,6 +1184,71 @@ def test_recall_priority_ids_are_guaranteed_with_small_limit(client, mock_state,
     assert data["results"][0]["id"] == target_id
 
 
+def test_recall_vector_results_include_keyword_score_from_content(client, mock_state, auth_headers):
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors, query_filter
+        return [
+            SimpleNamespace(
+                id="vec-1",
+                score=0.71,
+                payload={
+                    "id": "vec-1",
+                    "content": "AutoJack recall investigation memory",
+                    "tags": ["debugging"],
+                    "importance": 0.3,
+                    "timestamp": utc_now(),
+                },
+            )
+        ]
+
+    mock_state.qdrant.search = custom_search
+    response = client.get("/recall?query=AutoJack recall&limit=1", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["count"] == 1
+    assert data["results"][0]["score_components"]["keyword"] == 1.0
+
+
+def test_recall_adaptive_floor_keeps_clustered_relevant_tail():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [0.76, 0.75, 0.73, 0.55, 0.54, 0.53, 0.52, 0.51],
+    )
+
+    assert data["count"] == 8
+    assert "score_filter" not in data
+
+
+def test_recall_adaptive_floor_applies_on_large_drop_when_half_remain():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.98, 0.4, 0.39, 0.38, 0.37, 0.36],
+    )
+
+    assert data["count"] == 4
+    assert data["score_filter"]["adaptive_floor"] == 0.4
+    assert data["score_filter"]["filtered_count"] == 4
+
+
+def test_recall_adaptive_floor_skips_cut_that_would_remove_more_than_half():
+    data = _call_handle_recall_for_scores(
+        "AutoJack",
+        [1.0, 0.99, 0.3, 0.29, 0.28, 0.27, 0.26],
+    )
+
+    assert data["count"] == 7
+    assert "score_filter" not in data
+
+
 # ==================== Test Memory Update ====================
 
 
@@ -611,6 +1335,49 @@ def test_update_memory_success(client, mock_state, auth_headers):
     data = response.get_json()
     assert data["status"] == "success"
     assert data["memory_id"] == memory_id
+
+
+def test_update_memory_preserves_temporal_validity_in_graph_and_qdrant(
+    client, mock_state, auth_headers
+):
+    memory_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeef"
+    original_valid = "2026-01-01T00:00:00+00:00"
+    original_invalid = "2026-06-01T00:00:00+00:00"
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": "Temporal memory",
+        "tags": ["test"],
+        "importance": 0.5,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "metadata": "{}",
+        "t_valid": original_valid,
+        "t_invalid": original_invalid,
+    }
+    mock_state.qdrant.points[memory_id] = {
+        "vector": [0.1] * 768,
+        "payload": {
+            "content": "Temporal memory",
+            "tags": ["test"],
+            "importance": 0.5,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "t_valid": original_valid,
+            "t_invalid": original_invalid,
+        },
+    }
+
+    response = client.patch(
+        f"/memory/{memory_id}",
+        json={"content": "Temporal memory updated"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    memory = mock_state.memory_graph.memories[memory_id]
+    assert memory["t_valid"] == original_valid
+    assert memory["t_invalid"] == original_invalid
+    payload = mock_state.qdrant.points[memory_id]["payload"]
+    assert payload["t_valid"] == original_valid
+    assert payload["t_invalid"] == original_invalid
 
 
 @pytest.mark.usefixtures("mock_state")
@@ -720,6 +1487,9 @@ def test_memory_by_tag_single(client, mock_state, auth_headers):
     data = response.get_json()
     assert data["status"] == "success"
     assert "memories" in data  # API returns 'memories' not 'results'
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert data["has_more"] is False
 
 
 def test_memory_by_tag_multiple(client, mock_state, auth_headers):
@@ -734,6 +1504,101 @@ def test_memory_by_tag_no_tags(client, mock_state, auth_headers):
     """Test error when no tags provided."""
     response = client.get("/memory/by-tag", headers=auth_headers)
     assert response.status_code == 400
+
+
+def test_memory_by_tag_pagination(client, mock_state, auth_headers):
+    """Test offset pagination for /memory/by-tag."""
+    tag = "paged-tag"
+    timestamp = utc_now()
+    for i in range(205):
+        memory_id = f"00000000-0000-0000-0000-{i:012d}"
+        memory = {
+            "id": memory_id,
+            "content": f"Paged memory {i}",
+            "tags": [tag],
+            "importance": 0.5,
+            "timestamp": timestamp,
+        }
+        mock_state.memory_graph.memories[memory_id] = memory
+
+    first = client.get("/memory/by-tag?tags=paged-tag&limit=200", headers=auth_headers)
+    assert first.status_code == 200
+    first_data = first.get_json()
+    assert first_data["count"] == 200
+    assert first_data["limit"] == 200
+    assert first_data["offset"] == 0
+    assert first_data["has_more"] is True
+
+    second = client.get("/memory/by-tag?tags=paged-tag&limit=200&offset=200", headers=auth_headers)
+    assert second.status_code == 200
+    second_data = second.get_json()
+    assert second_data["count"] == 5
+    assert second_data["limit"] == 200
+    assert second_data["offset"] == 200
+    assert second_data["has_more"] is False
+
+    first_ids = {memory["id"] for memory in first_data["memories"]}
+    second_ids = {memory["id"] for memory in second_data["memories"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_memory_by_tag_invalid_offset_normalized(client, mock_state, auth_headers):
+    """Test invalid or negative offset normalizes to zero."""
+    mock_state.memory_graph.memories["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab"] = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab",
+        "content": "Offset memory",
+        "tags": ["offset-tag"],
+        "importance": 0.8,
+        "timestamp": utc_now(),
+    }
+
+    invalid = client.get("/memory/by-tag?tags=offset-tag&offset=nope", headers=auth_headers)
+    assert invalid.status_code == 200
+    invalid_data = invalid.get_json()
+    assert invalid_data["offset"] == 0
+    assert invalid_data["count"] == 1
+
+    negative = client.get("/memory/by-tag?tags=offset-tag&offset=-10", headers=auth_headers)
+    assert negative.status_code == 200
+    negative_data = negative.get_json()
+    assert negative_data["offset"] == 0
+    assert negative_data["count"] == 1
+
+
+def test_delete_memory_by_tag_bulk(client, mock_state, auth_headers):
+    """Test bulk delete by tag removes graph and vector entries."""
+    tag = "bulk-delete-tag"
+    for i in range(3):
+        memory_id = f"00000000-0000-0000-0000-0000000001{i:02d}"
+        payload = {
+            "content": f"Bulk delete memory {i}",
+            "tags": [tag],
+            "importance": 0.7,
+            "timestamp": utc_now(),
+        }
+        mock_state.memory_graph.memories[memory_id] = {"id": memory_id, **payload}
+        mock_state.qdrant.points[memory_id] = {"vector": [0.1] * 3, "payload": payload}
+
+    response = client.delete("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": [tag], "deleted_count": 3}
+
+    follow_up = client.get("/memory/by-tag?tags=bulk-delete-tag", headers=auth_headers)
+    assert follow_up.status_code == 200
+    follow_up_data = follow_up.get_json()
+    assert follow_up_data["count"] == 0
+    assert follow_up_data["has_more"] is False
+    deleted_ids = [f"00000000-0000-0000-0000-0000000001{i:02d}" for i in range(3)]
+    assert all(point_id not in mock_state.qdrant.points for point_id in deleted_ids)
+
+
+def test_delete_memory_by_tag_no_matches(client, mock_state, auth_headers):
+    """Test bulk delete by tag succeeds with zero matches."""
+    response = client.delete("/memory/by-tag?tags=missing-tag", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"status": "success", "tags": ["missing-tag"], "deleted_count": 0}
 
 
 # ==================== Test Admin Reembed ====================
@@ -1234,6 +2099,209 @@ def test_expand_related_memories_normalizes_legacy_discovered_relations():
     assert relation_info["kind"] == "explains"
 
 
+def test_expand_related_memories_bypasses_tag_filter_by_default():
+    seed_id = "33333333-0000-0000-0000-000000000001"
+    related_id = "33333333-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["rate", "limiter"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][3] is None
+
+
+def test_expand_related_memories_respects_tags_when_opted_in():
+    seed_id = "44444444-0000-0000-0000-000000000001"
+    related_id = "44444444-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "DERIVED_FROM",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        return args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="auth generic pattern",
+        query_tokens=["auth", "pattern"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"DERIVED_FROM"},
+        logger=Mock(),
+        expand_respect_tags=True,
+    )
+
+    assert results == []
+
+
+def test_expand_related_memories_still_honors_exclude_tags():
+    seed_id = "55555555-0000-0000-0000-000000000001"
+    related_id = "55555555-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "REINFORCES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return args[6] == ["archived"] and args[3] is None
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="cross project logging",
+        query_tokens=["logging"],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"REINFORCES"},
+        logger=Mock(),
+        exclude_tags=["archived"],
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][6] == ["archived"]
+
+
+def test_expand_related_memories_still_honors_time_window():
+    seed_id = "66666666-0000-0000-0000-000000000001"
+    related_id = "66666666-0000-0000-0000-000000000002"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+    seen_filter_args = []
+
+    class _Node(SimpleNamespace):
+        pass
+
+    class Graph:
+        def query(self, _query: str, _params: dict) -> SimpleNamespace:
+            return SimpleNamespace(
+                result_set=[
+                    (
+                        "EXEMPLIFIES",
+                        0.8,
+                        _Node(properties={"id": related_id, "importance": 0.9}),
+                    )
+                ]
+            )
+
+    def _passes(*args):
+        seen_filter_args.append(args)
+        return (
+            args[1] == "2026-01-01T00:00:00Z"
+            and args[2] == "2026-12-31T23:59:59Z"
+            and args[3] is None
+        )
+
+    results = _expand_related_memories(
+        graph=Graph(),
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=_passes,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="rate limiter redis scan",
+        query_tokens=["redis"],
+        context_profile=None,
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-12-31T23:59:59Z",
+        tag_filters=["tensor-pipeline"],
+        tag_mode="any",
+        tag_match="exact",
+        per_seed_limit=5,
+        expansion_limit=10,
+        allowed_relations={"EXEMPLIFIES"},
+        logger=Mock(),
+        expand_respect_tags=False,
+    )
+
+    assert [res["id"] for res in results] == [related_id]
+    assert seen_filter_args[0][1] == "2026-01-01T00:00:00Z"
+    assert seen_filter_args[0][2] == "2026-12-31T23:59:59Z"
+
+
 def test_relation_taxonomy_sets_are_consistent():
     assert config.AUTHORABLE_RELATIONS == {
         "RELATES_TO",
@@ -1310,6 +2378,37 @@ def test_related_memories_supports_explicit_system_relation_opt_ins(
     assert "EXPLAINS" in query
     assert "SHARES_THEME" in query
     assert "PARALLEL_CONTEXT" in query
+
+
+def test_related_memories_fallback_inlines_sanitized_depth(client, mock_state, auth_headers):
+    class Graph:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self, query: str, params: dict[str, Any] | None = None) -> SimpleNamespace:
+            self.calls.append((query, params or {}))
+            if len(self.calls) == 1:
+                raise RuntimeError("apoc unavailable")
+            if "$max_depth" in query:
+                raise RuntimeError("FalkorDB rejects parameterized variable-length ranges")
+            return SimpleNamespace(result_set=[])
+
+    graph = Graph()
+    mock_state.memory_graph = graph
+
+    response = client.get(
+        "/memories/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/related?max_depth=2",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert len(graph.calls) == 2
+    fallback_query, fallback_params = graph.calls[1]
+    assert "*1..2" in fallback_query
+    assert "$max_depth" not in fallback_query
+    assert "max_depth" not in fallback_params
+    assert fallback_params["id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    assert fallback_params["limit"] == 5
 
 
 # ==================== Test Rate Limiting (if implemented) ====================

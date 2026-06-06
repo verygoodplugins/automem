@@ -1,0 +1,33 @@
+name: Semantic PR Title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  semantic-pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            test
+            ci
+            build
+            chore
+            perf
+            revert
+          requireScope: false
+          subjectPattern: ^(?!\[).+
+          subjectPatternError: |
+            PR titles must not start with bracketed agent/status prefixes like [codex], [claude], [copilot], or [wip].
+            Use a Conventional Commit title such as "feat(api): add memory-by-tag pagination" and put agent/status context in the PR body.

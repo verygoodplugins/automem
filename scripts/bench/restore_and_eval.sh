@@ -99,9 +99,9 @@ if [[ "$BENCH_NAME" == locomo* ]]; then
         --api-token "$AUTOMEM_TEST_API_TOKEN" \
         ${EVAL_ARGS}
 elif [[ "$BENCH_NAME" == longmemeval* ]]; then
-    LONGMEM_ARGS=(--config "$CONFIG" --no-cleanup --output "${OUTPUT}")
+    LONGMEM_ARGS=(--config "$CONFIG" --no-cleanup --output "${OUTPUT%.json}")
     if [[ "$BENCH_NAME" == "longmemeval-mini" ]]; then
-        LONGMEM_ARGS+=(--max-questions 20)
+        LONGMEM_ARGS+=(--per-type 5)
     fi
     "$PYTHON_BIN" tests/benchmarks/longmemeval/test_longmemeval.py \
         --base-url "$AUTOMEM_TEST_BASE_URL" \

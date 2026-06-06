@@ -123,11 +123,11 @@ If you deployed before the MCP bridge was included, add it manually:
 
    ```bash
    PORT=8080
-   AUTOMEM_API_URL=http://memory-service.railway.internal:8001
-   AUTOMEM_API_TOKEN=<copy from memory-service>
+   AUTOMEM_API_URL=http://automem.railway.internal:8001
+   AUTOMEM_API_TOKEN=<copy from automem>
    ```
 
-   > **Important**: Replace `memory-service` with your actual service name if different. Check with: `railway variables --service <your-api-service> | grep RAILWAY_PRIVATE_DOMAIN`
+   > **Important**: Replace `automem` with your actual AutoMem API service name if different. Check with: `railway variables --service <your-api-service> | grep RAILWAY_PRIVATE_DOMAIN`
 
 4. **Configure Health Check**
 
@@ -186,7 +186,7 @@ Example:
 sequenceDiagram
     participant Client as AI Platform<br/>(ChatGPT/Claude)
     participant MCP as MCP Bridge<br/>Streamable HTTP
-    participant API as AutoMem API<br/>memory-service
+    participant API as AutoMem API<br/>automem
     participant DB as FalkorDB/Qdrant
 
     Note over Client,DB: Connection Establishment
@@ -322,18 +322,18 @@ retrieve relevant context before answering questions.
 
 ### "fetch failed" or Connection Refused
 
-1. **Check memory-service has `PORT=8001`**
+1. **Check the AutoMem API service has `PORT=8001`**
 
    - Most common cause. Without it, Flask defaults to port 5000.
-   - Fix: Add `PORT=8001` to memory-service environment variables.
+   - Fix: Add `PORT=8001` to the AutoMem API service environment variables.
 
 2. **Verify AUTOMEM_API_URL**
 
-   - Should match your memory service's internal domain:
+   - Should match your AutoMem API service's internal domain:
      ```bash
-     AUTOMEM_API_URL=http://memory-service.railway.internal:8001
+     AUTOMEM_API_URL=http://automem.railway.internal:8001
      ```
-   - Check actual domain: `railway variables --service memory-service | grep RAILWAY_PRIVATE_DOMAIN`
+   - Check actual domain: `railway variables --service automem | grep RAILWAY_PRIVATE_DOMAIN`
 
 3. **Check SSE service logs**
 
@@ -344,7 +344,7 @@ retrieve relevant context before answering questions.
 4. **Fallback: Use public URL**
    - If internal networking fails, use the public URL (slower but works):
      ```bash
-     AUTOMEM_API_URL=https://your-memory-service.up.railway.app
+     AUTOMEM_API_URL=https://your-automem.up.railway.app
      ```
 
 ### Connection Drops
@@ -363,7 +363,7 @@ retrieve relevant context before answering questions.
 
 ### Authentication Errors
 
-- **401 Unauthorized**: Check token matches `AUTOMEM_API_TOKEN` in memory-service
+- **401 Unauthorized**: Check token matches `AUTOMEM_API_TOKEN` in the AutoMem API service
 - **URL tokens in logs**: Normal for URL-based auth; use header auth if security is critical
 
 ---

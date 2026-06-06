@@ -40,6 +40,14 @@ CONSOLIDATION_CLUSTER_INTERVAL_SECONDS = int(
 CONSOLIDATION_FORGET_INTERVAL_SECONDS = int(
     os.getenv("CONSOLIDATION_FORGET_INTERVAL_SECONDS", str(0))
 )
+
+# Clustering tuning is deployment-specific and depends on embedding geometry,
+# corpus shape, and acceptable merge risk. Defaults preserve existing behavior;
+# operators can lower thresholds or min cluster size after measuring local data.
+CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD = float(
+    os.getenv("CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD", "0.75")
+)
+CONSOLIDATION_MIN_CLUSTER_SIZE = int(os.getenv("CONSOLIDATION_MIN_CLUSTER_SIZE", "3"))
 _DECAY_THRESHOLD_RAW = os.getenv("CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD", "0.3").strip()
 CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD = (
     float(_DECAY_THRESHOLD_RAW) if _DECAY_THRESHOLD_RAW else None
