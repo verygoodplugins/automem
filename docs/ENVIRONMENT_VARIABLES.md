@@ -219,6 +219,8 @@ Controls memory merging, pattern detection, and decay.
 | `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Decay check interval | `86400` | seconds |
 | `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Pattern detection interval | `604800` | seconds |
 | `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `2592000` | seconds |
+| `CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD` | Min similarity for cluster membership | `0.75` | 0-1 |
+| `CONSOLIDATION_MIN_CLUSTER_SIZE` | Min memories required to form a cluster | `3` | count |
 | `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forget interval (`0` disables) | `0` | seconds |
 | `CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD` | Min importance to keep | `0.3` | 0-1 |
 | `CONSOLIDATION_HISTORY_LIMIT` | Max consolidation history | `20` | count |
