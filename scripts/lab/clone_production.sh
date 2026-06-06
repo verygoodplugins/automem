@@ -197,7 +197,7 @@ resolve_restore_source() {
 wait_for_falkordb() {
     for i in $(seq 1 30); do
         if [ -n "$LOCAL_FALKORDB_PASSWORD" ]; then
-            if compose exec -T falkordb redis-cli -a "$LOCAL_FALKORDB_PASSWORD" ping 2>/dev/null | grep -q PONG; then
+            if compose exec -T falkordb env REDISCLI_AUTH="$LOCAL_FALKORDB_PASSWORD" redis-cli ping 2>/dev/null | grep -q PONG; then
                 return 0
             fi
         elif compose exec -T falkordb redis-cli ping 2>/dev/null | grep -q PONG; then
