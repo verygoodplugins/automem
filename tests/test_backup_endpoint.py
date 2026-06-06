@@ -109,6 +109,16 @@ def test_backup_requires_admin_token_not_api_token(client: Any) -> None:
     assert response.status_code == 401
 
 
+def test_backup_trailing_slash_uses_admin_auth(client: Any) -> None:
+    response = client.get("/backup/", headers={"Authorization": "Bearer test-token"})
+
+    assert response.status_code == 401
+
+    response = client.get("/backup/", headers=_admin_headers())
+
+    assert response.status_code == 200
+
+
 def test_backup_missing_admin_token_returns_401(client: Any) -> None:
     response = client.get("/backup")
 
@@ -212,3 +222,17 @@ def test_restore_accepts_downloaded_tar_gz_backup(tmp_path: Path) -> None:
 
     assert result["falkordb"]["nodes"] == 0
     assert result["falkordb"]["relationships"] == 0
+
+
+def test_restore_rejects_unsafe_tar_member(tmp_path: Path) -> None:
+    archive_path = tmp_path / "snapshot.tar.gz"
+
+    with tarfile.open(archive_path, mode="w:gz") as archive:
+        payload = b"unsafe"
+        info = tarfile.TarInfo("../escape.txt")
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+
+    with pytest.raises(ValueError, match="unsafe backup path"):
+        with resolve_backup_dir(archive_path):
+            pass

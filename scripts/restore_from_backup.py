@@ -25,6 +25,7 @@ import gzip
 import json
 import logging
 import os
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -72,10 +73,20 @@ def _safe_extract_tar_gz(archive_path: Path, target_dir: Path) -> None:
         for member in archive.getmembers():
             if member.issym() or member.islnk():
                 raise ValueError(f"Refusing to extract link from backup archive: {member.name}")
+            if not (member.isdir() or member.isfile()):
+                raise ValueError(f"Refusing to extract special file from backup archive: {member.name}")
             destination = (target_root / member.name).resolve()
             if not destination.is_relative_to(target_root):
                 raise ValueError(f"Refusing to extract unsafe backup path: {member.name}")
-        archive.extractall(target_root, filter="data")
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                raise ValueError(f"Unable to read backup archive member: {member.name}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with source, destination.open("wb") as target:
+                shutil.copyfileobj(source, target)
 
 
 @contextmanager

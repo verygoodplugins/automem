@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional
 
 VALID_BACKUP_INCLUDES = ("falkordb", "qdrant")
+STREAM_QUEUE_MAX_CHUNKS = 8
 
 
 class BackupError(RuntimeError):
@@ -381,7 +382,7 @@ def stream_backup_tar_gz(
     on_complete: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> Iterator[bytes]:
     """Stream a tar.gz archive containing restore-compatible backup files."""
-    output_queue: "queue.Queue[Any]" = queue.Queue()
+    output_queue: "queue.Queue[Any]" = queue.Queue(maxsize=STREAM_QUEUE_MAX_CHUNKS)
 
     def worker() -> None:
         writer = _QueueWriter(output_queue)

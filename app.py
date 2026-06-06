@@ -267,7 +267,7 @@ def require_api_token() -> None:
     if request.path.startswith("/viewer"):
         return
 
-    if request.path == "/backup":
+    if request.path in ("/backup", "/backup/"):
         return
 
     _require_api_token_helper(

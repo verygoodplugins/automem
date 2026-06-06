@@ -36,7 +36,7 @@ def create_backup_blueprint(
 ) -> Blueprint:
     bp = Blueprint("backup", __name__)
 
-    @bp.route("/backup", methods=["GET"])
+    @bp.route("/backup", methods=["GET"], strict_slashes=False)
     def backup() -> Response:
         require_admin_token()
 
