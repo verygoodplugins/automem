@@ -1500,7 +1500,20 @@ def handle_recall(
         request.args.get("expand_respect_tags"),
         False,
     )
-    current_only = _parse_bool_param(request.args.get("current_only"), True)
+    state_mode_param = (request.args.get("state_mode") or "").strip().lower()
+    if state_mode_param and state_mode_param not in {"current", "history"}:
+        abort(400, description="'state_mode' must be 'current' or 'history'")
+
+    current_only_param = request.args.get("current_only")
+    if current_only_param is not None:
+        current_only = _parse_bool_param(current_only_param, True)
+        resolved_state_mode = "current" if current_only else "history"
+    elif state_mode_param:
+        resolved_state_mode = state_mode_param
+        current_only = resolved_state_mode == "current"
+    else:
+        current_only = True
+        resolved_state_mode = "current"
     state_debug = _parse_bool_param(request.args.get("state_debug"), False)
 
     # Entity expansion for multi-hop reasoning
@@ -1941,6 +1954,7 @@ def handle_recall(
         "count": len(results),
         "dedup_removed": dedup_removed,
         "sort": sort_param,
+        "state_mode": resolved_state_mode,
         "vector_search": {
             "enabled": qdrant_client is not None,
             "matched": bool(total_vector_matches),

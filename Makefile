@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev stop test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-health
+.PHONY: help install dev stop test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-current-state bench-health
 
 VENV_DIR := $(if $(wildcard .venv/bin/python),.venv,venv)
 VENV_BIN := $(VENV_DIR)/bin
@@ -29,6 +29,7 @@ help:
 	@echo "  make bench-ingest BENCH=locomo - Ingest + snapshot (run once)"
 	@echo "  make bench-eval BENCH=locomo CONFIG=baseline - Eval from snapshot (~2 min)"
 	@echo "  make bench-compare BENCH=locomo CONFIG=bm25 BASELINE=baseline - A/B compare"
+	@echo "  make bench-current-state    - No-LLM current-state recall smoke"
 	@echo "  make bench-health             - Recall health check (score dist, entities, latency)"
 	@echo "  make test-locomo          - Full LoCoMo benchmark (local)"
 	@echo "  make test-locomo-live     - Full LoCoMo benchmark (Railway)"
@@ -159,6 +160,9 @@ bench-compare:
 
 bench-compare-branch:
 	@scripts/bench/compare_branch.sh $(BRANCH) $(or $(CONFIG),baseline) $(or $(BENCH),locomo)
+
+bench-current-state:
+	@PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest tests/test_api_endpoints.py -k 'recall_state_mode or recall_current_only' -q
 
 bench-health:
 	@$(or $(VENV_BIN),.venv/bin)/python scripts/bench/health_check.py --base-url $(or $(BASE_URL),http://localhost:8001)

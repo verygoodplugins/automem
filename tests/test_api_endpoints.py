@@ -575,6 +575,128 @@ def test_recall_current_only_filters_temporal_state(client, mock_state, auth_hea
     assert "state_filter" not in data
 
 
+def test_recall_state_mode_defaults_to_current_and_echoes_mode(
+    client, mock_state, auth_headers
+):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    active_id = "cc000000-0000-0000-0000-000000000032"
+    expired_id = "cc000000-0000-0000-0000-000000000033"
+
+    _store_memory(mock_state, active_id, "Active state mode current", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_id,
+        "Expired state mode current",
+        ["state"],
+        0.95,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+
+    response = client.get("/recall?tags=state&limit=10", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["state_mode"] == "current"
+    assert [result["id"] for result in data["results"]] == [active_id]
+    assert data["state_filter"]["suppressed_count"] == 1
+
+
+def test_recall_state_mode_history_preserves_state_history(
+    client, mock_state, auth_headers
+):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    active_id = "cc000000-0000-0000-0000-000000000034"
+    expired_id = "cc000000-0000-0000-0000-000000000035"
+    future_id = "cc000000-0000-0000-0000-000000000036"
+
+    _store_memory(mock_state, active_id, "Active state mode history", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_id,
+        "Expired state mode history",
+        ["state"],
+        0.95,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+    _store_memory(
+        mock_state,
+        future_id,
+        "Future state mode history",
+        ["state"],
+        0.98,
+        t_valid=(now + timedelta(days=1)).isoformat(),
+    )
+
+    response = client.get(
+        "/recall?tags=state&limit=10&state_mode=history&state_debug=true",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["state_mode"] == "history"
+    ids = {result["id"] for result in data["results"]}
+    assert {active_id, expired_id, future_id}.issubset(ids)
+    assert "state_filter" not in data
+
+
+@pytest.mark.parametrize(
+    ("state_mode", "current_only", "expected_mode", "expects_current"),
+    [
+        ("history", "true", "current", True),
+        ("current", "false", "history", False),
+    ],
+)
+def test_recall_current_only_takes_precedence_over_state_mode(
+    client,
+    mock_state,
+    auth_headers,
+    state_mode,
+    current_only,
+    expected_mode,
+    expects_current,
+):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    active_id = "cc000000-0000-0000-0000-000000000037"
+    expired_id = "cc000000-0000-0000-0000-000000000038"
+
+    _store_memory(mock_state, active_id, "Active precedence state", ["state"], 0.9)
+    _store_memory(
+        mock_state,
+        expired_id,
+        "Expired precedence state",
+        ["state"],
+        0.95,
+        t_invalid=(now - timedelta(days=1)).isoformat(),
+    )
+
+    response = client.get(
+        f"/recall?tags=state&limit=10&state_mode={state_mode}&current_only={current_only}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["state_mode"] == expected_mode
+    ids = {result["id"] for result in data["results"]}
+    if expects_current:
+        assert ids == {active_id}
+        assert data["state_filter"]["suppressed_count"] == 1
+    else:
+        assert {active_id, expired_id}.issubset(ids)
+        assert "state_filter" not in data
+
+
+def test_recall_state_mode_rejects_unknown_value(client, auth_headers):
+    response = client.get("/recall?state_mode=latest", headers=auth_headers)
+
+    assert response.status_code == 400
+    assert "state_mode" in response.get_data(as_text=True)
+
+
 def test_recall_current_only_filters_archived_state(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     active_id = "cc000000-0000-0000-0000-000000000004"

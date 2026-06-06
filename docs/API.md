@@ -53,6 +53,12 @@ Recall
     - `score` (default) - hybrid relevance/importance ranking
     - `time_desc` / `time_asc` - chronological ordering by `updated_at`/`timestamp` within the filter window (use for "what happened since X")
     - `updated_desc` / `updated_asc` - explicit alias (same ordering key as time\_\*)
+  - **State filtering**:
+    - `state_mode=current|history` controls whether recall returns only currently valid state or full state history. Default: `current`.
+    - `current` is equivalent to `current_only=true`: suppresses memories that are expired, not yet valid, archived, or invalidated/evolved by active replacements.
+    - `history` is equivalent to `current_only=false`: returns stale and future state when it matches the query/filter.
+    - `current_only` remains supported for backward compatibility and wins over `state_mode` when both resolve to a value. A malformed `state_mode` is still rejected with `400` even when `current_only` is supplied — the value is validated before precedence is applied.
+    - `state_debug=true` includes suppression/replacement details in `state_filter`.
   - **Context hints**: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`
   - **Graph expansion**:
     - `expand_relations` - Follow graph edges from seed results to related memories
@@ -62,8 +68,9 @@ Recall
   - **Expansion filtering** (reduce noise in expanded results):
     - `expand_min_importance` - Minimum importance (0-1) for expanded memories. Seed results are never filtered, only expanded ones. Recommended: 0.3-0.5 for broad context, 0.6+ for focused results.
     - `expand_min_strength` - Minimum relation strength (0-1) to traverse during graph expansion. Only edges above this threshold are followed. Recommended: 0.3 for exploratory, 0.6+ for high-confidence connections.
-  - Response: `{ "status": "success", "results": [...], "count": M, "context_priority": {...} }`
+  - Response: `{ "status": "success", "results": [...], "count": M, "state_mode": "current", "context_priority": {...} }`
   - Echoed filters (for debugging): `tags`, `exclude_tags`, `tag_mode`, `tag_match`
+  - Echoed state: `state_mode` always reflects the resolved mode after `current_only` precedence. When current-state filtering runs, `state_filter` may include suppressed and replacement IDs, including `INVALIDATED_BY`, `EVOLVED_INTO`, and `CONTRADICTS` handling details when `state_debug=true`.
   - When `expand_entities=true`: includes `entity_expansion: { enabled, expanded_count, entities_found }`
   - When `expand_relations=true`: includes `expansion: { enabled, seed_count, expanded_count, relation_limit }`
 
@@ -85,6 +92,16 @@ GET /recall?tags=user_1&exclude_tags=conversation_5,conversation_6&limit=5
 
 # Exclude temporary/draft memories
 GET /recall?query=project%20plan&exclude_tags=temp,draft&limit=10
+```
+
+**Current-State Recall Examples:**
+
+```bash
+# Default: return active/current state only
+GET /recall?query=current%20project%20plan
+
+# Historical audit: include expired, future, invalidated, and evolved facts
+GET /recall?query=project%20plan&state_mode=history
 ```
 
 - GET `/memories/{id}/related`

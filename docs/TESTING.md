@@ -319,6 +319,17 @@ See `benchmarks/EXPERIMENT_LOG.md` for the full per-category table. If you run w
 
 Current baselines and methodology notes live in `benchmarks/EXPERIMENT_LOG.md`.
 
+## Current-State Recall Smoke
+
+Use `make bench-current-state` as the no-LLM regression gate for recall state
+semantics. It covers active, expired, future, archived, invalidated, evolved,
+contradictory, replacement, and tag-gated replacement cases, plus the public
+`state_mode=current|history` contract.
+
+The smoke target is deterministic and runs against unit fixtures, so it is
+appropriate for every recall contract change. Use LongMemEval or LoCoMo only
+when the change affects ranking, scoring, entity expansion, or answer quality.
+
 ## LongMemEval Benchmark
 
 AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat prefix slices as smoke tests only; cite the canonical full run or the stratified representative mini for current results.
