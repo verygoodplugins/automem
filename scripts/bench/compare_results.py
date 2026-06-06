@@ -114,6 +114,8 @@ def compare_longmemeval(baseline: dict, test: dict) -> dict:
 
     b_total = baseline.get("total_questions", baseline.get("overall", {}).get("total", "?"))
     t_total = test.get("total_questions", test.get("overall", {}).get("total", "?"))
+    b_retrieval = baseline.get("retrieval", {}).get("recall_any_at_5")
+    t_retrieval = test.get("retrieval", {}).get("recall_any_at_5")
 
     print("\n" + "=" * 65)
     print(f"  {'Metric':<25} {'Baseline':>10} {'Test':>10} {'Delta':>10}")
@@ -121,10 +123,24 @@ def compare_longmemeval(baseline: dict, test: dict) -> dict:
     print(
         f"  {'Accuracy':<25} {format_pct(b_acc):>10} {format_pct(t_acc):>10} {format_delta(delta):>10}"
     )
+    retrieval_delta = None
+    if b_retrieval is not None and t_retrieval is not None:
+        retrieval_delta = t_retrieval - b_retrieval
+        print(
+            "  "
+            f"{'Recall@5':<25} {format_pct(b_retrieval):>10} {format_pct(t_retrieval):>10} {format_delta(retrieval_delta):>10}"
+        )
     print(f"  {'Questions':<25} {b_total!s:>10} {t_total!s:>10}")
     print("=" * 65)
 
-    return {"baseline_accuracy": b_acc, "test_accuracy": t_acc, "delta": delta}
+    return {
+        "baseline_accuracy": b_acc,
+        "test_accuracy": t_acc,
+        "delta": delta,
+        "baseline_recall_at_5": b_retrieval,
+        "test_recall_at_5": t_retrieval,
+        "recall_at_5_delta": retrieval_delta,
+    }
 
 
 def main() -> None:

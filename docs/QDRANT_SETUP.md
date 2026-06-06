@@ -31,7 +31,7 @@ Run Qdrant inside your Railway project for the lowest latency and simplest setup
 
    > **⚠️ `QDRANT__SERVICE__HOST=::` is critical.** Railway's internal networking uses IPv6. Qdrant defaults to `0.0.0.0` (IPv4 only), which silently refuses all internal connections. `::` enables dual-stack (IPv6 + IPv4).
 
-5. **Set on memory-service**:
+5. **Set on the AutoMem API service**:
 
    ```bash
    QDRANT_HOST=qdrant
@@ -60,7 +60,7 @@ curl https://your-automem.up.railway.app/health
 If health shows `qdrant: "disconnected"` with "Connection refused" in logs:
 
 1. **Check `QDRANT__SERVICE__HOST=::`** on the Qdrant service — this is the #1 cause
-2. Verify `QDRANT_HOST=qdrant` on memory-service (not `QDRANT_URL`)
+2. Verify `QDRANT_HOST=qdrant` on the AutoMem API service (not `QDRANT_URL`)
 3. Confirm both services are in the same Railway project/environment
 4. Check Qdrant service is running (Railway dashboard → service status)
 

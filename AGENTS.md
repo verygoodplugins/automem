@@ -13,8 +13,8 @@
 
 ## Build, Test, and Development
 
-- `make install`: Create `venv` and install dev deps.
-- `source venv/bin/activate`: Activate the virtualenv.
+- `make install`: Create `.venv` (and symlink `venv -> .venv`) and install dev deps. Prefers Python 3.12 and fails fast on incompatible `python3`.
+- `source .venv/bin/activate`: Activate the virtualenv.
 - `make dev`: Start local stack via Docker (FalkorDB, Qdrant, API).
 - `make test`: Run unit tests (fast, no services).
 - `make test-integration`: Start Docker and run full integration tests.
@@ -41,6 +41,8 @@
 The benchmark system uses **snapshot-based evaluation**: ingest once, eval many times from the same snapshot. This keeps runs deterministic and fast.
 
 **Source of truth**: `benchmarks/EXPERIMENT_LOG.md` — contains current baselines, all experiment results, and the tiered benchmark table.
+
+`automem` is the canonical home for official benchmark harnesses and published benchmark numbers. Use the separate `automem-evals` repo for exploratory ruleset work, seeded corpora, scenario authoring, cross-agent or cross-backend comparisons, and bulky timestamped result artifacts. External eval repos should treat AutoMem as a black-box service and follow `docs/EVALS_CONTRACT.md`.
 
 ### Tiered System
 
@@ -79,7 +81,9 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 
 ## Commit & Pull Requests
 
-- Use Conventional Commits style: `feat`, `fix`, `docs`, `refactor`, `test`, `chore` (e.g., `feat(api): add /analyze endpoint`).
+- PR titles must use Conventional Commit format because squash merges use the PR title as the release commit title. Do not prefix titles with `[codex]`, `[claude]`, `[copilot]`, `[wip]`, or similar labels; put agent/status context in the PR body.
+- Use Conventional Commit types: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `build`, `chore`, `perf`, `revert` (e.g., `feat(api): add /analyze endpoint`).
+- For public API changes, use `feat(api): ...` unless the change is strictly a bug fix with no new public surface. For docs-only changes, use `docs: ...`; for release automation, use `ci(release): ...` or `chore(release): ...`.
 - PRs must include: clear description and scope, linked issues, test plan/output, and notes on API or config changes. Update relevant docs under `docs/`.
 - CI must pass; formatting/lint clean.
 

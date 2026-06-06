@@ -1,4 +1,4 @@
-# Docker Build for MCP SSE Server - Build and push image to GitHub Container Registry
+# Docker Build for MCP AutoMem - Build and push image to GitHub Container Registry
 #
 # This workflow validates Docker builds for container-related changes and
 # publishes release/manual images to GitHub Container Registry (ghcr.io).
@@ -6,7 +6,7 @@
 # Required secrets:
 # - GITHUB_TOKEN (auto-provided): Used to authenticate with GHCR
 
-name: Docker Build (MCP SSE Server)
+name: Docker Build (MCP AutoMem)
 
 on:
     push:
@@ -16,14 +16,14 @@ on:
             - "mcp-sse-server/Dockerfile"
             - "mcp-sse-server/package.json"
             - "mcp-sse-server/package-lock.json"
-            - ".github/workflows/docker-build-mcp-sse-server.yml"
+            - ".github/workflows/docker-build-mcp-automem.yml"
     pull_request:
         branches: [main]
         paths:
             - "mcp-sse-server/Dockerfile"
             - "mcp-sse-server/package.json"
             - "mcp-sse-server/package-lock.json"
-            - ".github/workflows/docker-build-mcp-sse-server.yml"
+            - ".github/workflows/docker-build-mcp-automem.yml"
     workflow_dispatch:
         inputs:
             tag:
@@ -33,7 +33,7 @@ on:
 
 env:
     REGISTRY: ghcr.io
-    IMAGE_NAME: ${{ github.repository }}/mcp-sse-server
+    IMAGE_NAME: ${{ github.repository_owner }}/mcp-automem
 
 jobs:
     build:
@@ -63,7 +63,9 @@ jobs:
               id: meta
               uses: docker/metadata-action@v5
               with:
-                  images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                  images: |
+                      ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                      ${{ env.REGISTRY }}/${{ github.repository }}/mcp-sse-server
                   tags: |
                       type=ref,event=branch
                       type=ref,event=pr
@@ -72,6 +74,7 @@ jobs:
                       type=semver,pattern={{major}}
                       type=sha,prefix=sha-,suffix=,format=short
                       type=raw,value=latest,enable={{is_default_branch}}
+                      type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
                       type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
 
             - name: Build and optionally push Docker image
@@ -97,7 +100,7 @@ jobs:
             - name: Print image digest
               if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
               run: |
-                  echo "MCP SSE Server image pushed successfully!"
+                  echo "MCP AutoMem image pushed successfully!"
                   echo "Digest: ${{ steps.push.outputs.digest }}"
                   echo "Tags:"
                   echo "${{ steps.meta.outputs.tags }}"

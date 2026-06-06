@@ -1,18 +1,22 @@
 # Makefile - Development commands
-.PHONY: help install dev test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy bench-health
+.PHONY: help install dev stop test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-current-state bench-health
+
+VENV_DIR := $(if $(wildcard .venv/bin/python),.venv,venv)
+VENV_BIN := $(VENV_DIR)/bin
 
 # Default target
 help:
 	@echo "🧠 FalkorDB Memory System - Development Commands"
 	@echo ""
 	@echo "Setup:"
-	@echo "  make install    - Set up virtual environment and dependencies"
+	@echo "  make install    - Set up .venv and install dependencies"
 	@echo "  make dev        - Start local development environment"
 	@echo ""
 	@echo "Development:"
 	@echo "  make test       - Run unit tests only"
 	@echo "  make fmt        - Format code (black + isort)"
 	@echo "  make lint       - Lint code (flake8)"
+	@echo "  make stop       - Stop local containers (keep volumes)"
 	@echo "  make test-integration - Run all tests including integration tests"
 	@echo "  make test-live  - Run integration tests against live Railway server"
 	@echo "  make logs       - Show development logs"
@@ -20,11 +24,12 @@ help:
 	@echo ""
 	@echo "Benchmarks:"
 	@echo "  make bench-mini-locomo    - Mini LoCoMo (2 conversations, <5 min)"
-	@echo "  make bench-mini-longmemeval - Mini LongMemEval (20 questions)"
+	@echo "  make bench-mini-longmemeval - Mini LongMemEval (stratified 30 questions)"
 	@echo "  make bench-mini           - Both mini benchmarks"
 	@echo "  make bench-ingest BENCH=locomo - Ingest + snapshot (run once)"
 	@echo "  make bench-eval BENCH=locomo CONFIG=baseline - Eval from snapshot (~2 min)"
 	@echo "  make bench-compare BENCH=locomo CONFIG=bm25 BASELINE=baseline - A/B compare"
+	@echo "  make bench-current-state    - No-LLM current-state recall smoke"
 	@echo "  make bench-health             - Recall health check (score dist, entities, latency)"
 	@echo "  make test-locomo          - Full LoCoMo benchmark (local)"
 	@echo "  make test-locomo-live     - Full LoCoMo benchmark (Railway)"
@@ -33,42 +38,46 @@ help:
 	@echo "  make test-longmemeval-watch - Full LongMemEval with notifications"
 	@echo ""
 	@echo "Deployment:"
-	@echo "  make deploy     - Deploy to Railway"
-	@echo "  make status     - Check deployment status"
+	@echo "  make deploy       - Deploy to Railway"
+	@echo "  make status       - Check deployment status"
+	@echo "  make deploy-check - Compare deployed vs main (maintainers only, needs Railway CLI and gh)"
 
 # Set up development environment
 install:
 	@echo "🔧 Setting up development environment..."
-	python3 -m venv venv
-	./venv/bin/pip install --upgrade pip
-	./venv/bin/pip install -r requirements-dev.txt
+	@bash scripts/bootstrap_dev.sh
 	@echo "✅ Virtual environment ready!"
-	@echo "💡 Run 'source venv/bin/activate' to activate"
+	@echo "💡 Run 'source .venv/bin/activate' to activate"
 
 # Start local development
 dev:
 	@echo "🚀 Starting local development environment..."
 	docker compose up --build
 
+# Stop local development containers (preserve volumes)
+stop:
+	@echo "⏹️  Stopping local development environment..."
+	docker compose down
+
 # Run tests
 test:
 	@echo "🧪 Running unit tests..."
-	@if [ ! -x "./venv/bin/pytest" ]; then \
-		echo "🔧 ./venv/bin/pytest not found; bootstrapping with 'make install'..."; \
+	@if [ ! -x "$(VENV_BIN)/pytest" ]; then \
+		echo "🔧 $(VENV_BIN)/pytest not found; bootstrapping with 'make install'..."; \
 		$(MAKE) install; \
 	fi
-	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m unit
+	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest -rs -m unit
 
 # Format code
 fmt:
 	@echo "✨ Formatting code (black + isort) ..."
-	./venv/bin/black .
-	./venv/bin/isort .
+	$(VENV_BIN)/black .
+	$(VENV_BIN)/isort .
 
 # Lint code
 lint:
 	@echo "🔍 Linting (flake8) ..."
-	./venv/bin/flake8 .
+	$(VENV_BIN)/flake8 .
 
 # Run integration tests (requires Docker services)
 test-integration:
@@ -78,7 +87,7 @@ test-integration:
 	@echo "⏳ Waiting for services to be ready..."
 	@sleep 5
 	@echo "🧪 Running tests..."
-	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ./venv/bin/pytest -rs -m integration
+	@AUTOMEM_RUN_INTEGRATION_TESTS=1 AUTOMEM_TEST_API_TOKEN=test-token AUTOMEM_TEST_ADMIN_TOKEN=test-admin-token PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest -rs -m integration
 
 # Run integration tests against live Railway server
 test-live:
@@ -102,6 +111,13 @@ deploy:
 status:
 	@echo "📊 Checking deployment status..."
 	railway status || railway logs
+
+# Compare deployed commit vs origin/main HEAD (detect stale deploys)
+deploy-check:
+	@rc=0; \
+	./scripts/deploy_check.sh automem      || rc=1; \
+	./scripts/deploy_check.sh mcp-automem  || rc=1; \
+	exit $$rc
 
 # Run LoCoMo benchmark (local)
 test-locomo:
@@ -128,7 +144,7 @@ bench-mini-locomo:
 	@./test-locomo-benchmark.sh --conversations 0,1
 
 bench-mini-longmemeval:
-	@./test-longmemeval-benchmark.sh --max-questions 20
+	@./test-longmemeval-benchmark.sh --llm-eval --per-type 5 --llm-model gpt-5-mini
 
 bench-mini: bench-mini-locomo bench-mini-longmemeval
 
@@ -145,8 +161,11 @@ bench-compare:
 bench-compare-branch:
 	@scripts/bench/compare_branch.sh $(BRANCH) $(or $(CONFIG),baseline) $(or $(BENCH),locomo)
 
+bench-current-state:
+	@PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest tests/test_api_endpoints.py -k 'recall_state_mode or recall_current_only' -q
+
 bench-health:
-	@python3 scripts/bench/health_check.py --base-url $(or $(BASE_URL),http://localhost:8001)
+	@$(or $(VENV_BIN),.venv/bin)/python scripts/bench/health_check.py --base-url $(or $(BASE_URL),http://localhost:8001)
 
 bench-snapshots:
 	@ls -la benchmarks/snapshots/ 2>/dev/null || echo "No snapshots yet. Run: make bench-ingest BENCH=locomo"

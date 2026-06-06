@@ -6,7 +6,9 @@ automation_hub_dashboard/.env
 automation_hub_dashboard/.venv/
 reports/
 venv/
+/venv
 /.cursor
+/.worktrees/
 
 # Local backups (use S3 for persistent backups)
 backups/
@@ -40,5 +42,7 @@ node_modules/
 .env.bench
 /benchmarks/snapshots/
 /benchmarks/results/
+/benchmarks/public_comparison/
+/scripts/bench/sweep_*.json
 benchmarks/baselines/locomo_baseline.json
 data/

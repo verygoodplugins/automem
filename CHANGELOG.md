@@ -2,6 +2,38 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.15.2](https://github.com/verygoodplugins/automem/compare/v0.15.1...v0.15.2) (2026-04-23)
+
+
+### Bug Fixes
+
+* **benchmarks:** make LoCoMo judge runs reliable ([#149](https://github.com/verygoodplugins/automem/issues/149)) ([c22f2c9](https://github.com/verygoodplugins/automem/commit/c22f2c9db57f45e30525ce0d0c7f523aaeee721d))
+* **recall:** bypass tag filter on expansion candidates ([#142](https://github.com/verygoodplugins/automem/issues/142)) ([#146](https://github.com/verygoodplugins/automem/issues/146)) ([4f0fcf8](https://github.com/verygoodplugins/automem/commit/4f0fcf8d1c7cb30c24a4bfb572504bcf6c36e62e))
+* **recall:** keyword scoring for vector results + softer adaptive floor ([#150](https://github.com/verygoodplugins/automem/issues/150)) ([591b2c7](https://github.com/verygoodplugins/automem/commit/591b2c7a4e65af90922a7f286b1c16e67761aea5))
+
+## [0.15.1](https://github.com/verygoodplugins/automem/compare/v0.15.0...v0.15.1) (2026-03-25)
+
+
+### Bug Fixes
+
+* **consolidation:** fetch cluster/creative embeddings from Qdrant ([#131](https://github.com/verygoodplugins/automem/issues/131)) ([96d0660](https://github.com/verygoodplugins/automem/commit/96d06607b2274323b3c8dee69866aa37d817de88))
+* **embedding:** validate provider dimension compatibility before init ([#134](https://github.com/verygoodplugins/automem/issues/134)) ([9ac2fb2](https://github.com/verygoodplugins/automem/commit/9ac2fb29ea081c617b748c0cf0d733627770b689))
+* **runtime:** support OPENAI_BASE_URL for classification client ([#135](https://github.com/verygoodplugins/automem/issues/135)) ([95a58c9](https://github.com/verygoodplugins/automem/commit/95a58c99d1cb53e14fbf086ba65b66d67ad1ffbe))
+
+## [0.15.0](https://github.com/verygoodplugins/automem/compare/v0.14.0...v0.15.0) (2026-03-12)
+
+
+### Features
+
+* **bench:** add opt-in LoCoMo cat5 judge ([#119](https://github.com/verygoodplugins/automem/issues/119)) ([8b7915c](https://github.com/verygoodplugins/automem/commit/8b7915cb954bcd38773f1f5fe71fc4201fae99bb))
+* **memory:** optimize relationship taxonomy ([#121](https://github.com/verygoodplugins/automem/issues/121)) ([605633e](https://github.com/verygoodplugins/automem/commit/605633ea6ff27784a11775660f01d0ad4a4c04ca))
+
+
+### Bug Fixes
+
+* **benchmarks:** correct evaluator bugs, add agent guidelines, establish honest baseline ([#117](https://github.com/verygoodplugins/automem/issues/117)) ([d9cbecb](https://github.com/verygoodplugins/automem/commit/d9cbecbb0289660e746475884067d76bdc949b5d))
+* **recall:** priority_ids parameter only boosts relevance ([#79](https://github.com/verygoodplugins/automem/issues/79)) ([#125](https://github.com/verygoodplugins/automem/issues/125)) ([5d3708c](https://github.com/verygoodplugins/automem/commit/5d3708c665fa96f2d23e1740f122f20f974bde73))
+
 ## [0.14.0](https://github.com/verygoodplugins/automem/compare/v0.13.0...v0.14.0) (2026-03-07)
 
 

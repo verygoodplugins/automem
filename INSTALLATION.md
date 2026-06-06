@@ -20,9 +20,9 @@ Complete setup instructions for AutoMem across all environments.
 
 ## Prerequisites
 
-- **Python 3.10+**
+- **Python 3.10+** (the codebase supports 3.10 and newer; local bootstrap is standardized on 3.12)
 - **Docker & Docker Compose** (for bundled stack)
-- **Railway CLI** (for Railway deployment): `npm i -g @railway/cli`
+- **Railway CLI** (optional, only needed if you prefer the terminal over the dashboard): `npm i -g @railway/cli`
 
 ---
 
@@ -35,22 +35,24 @@ Complete setup instructions for AutoMem across all environments.
 git clone https://github.com/verygoodplugins/automem.git
 cd automem
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements-dev.txt
+# Create virtual environment (standardized on Python 3.12 for local dev)
+make install
+source .venv/bin/activate  # On Windows (WSL or Git Bash): same command; native cmd: .venv\Scripts\activate.bat; PowerShell: .venv\Scripts\Activate.ps1
 
 # Start all services (FalkorDB + Qdrant + API)
 make dev
 ```
+
+`make install` looks for `python3.12` first (and a few common install locations), then falls back to `python3` if it is already 3.12. It exits with an error only when no Python 3.12 interpreter can be found. Override the interpreter with the `AUTOMEM_PYTHON` environment variable (accepts a bare command name or an absolute path).
 
 **Services:**
 
 - API: `http://localhost:8001`
 - FalkorDB: `localhost:6379`
 - Qdrant: `localhost:6333`
+- FalkorDB Browser (official local graph UI): `http://localhost:3000`
+
+`/viewer` is not the local FalkorDB browser. It redirects/bootstraps to a standalone graph viewer only when `GRAPH_VIEWER_URL` is configured.
 
 **Optional Enhancement:**
 
@@ -74,6 +76,7 @@ python -m spacy download en_core_web_sm
 - ✅ **$5 free credits** for 30-day trial (no credit card required)
 - ✅ **~$0.50/month** typical AutoMem usage after trial
 - ✅ **$1/month minimum** if you use less than that
+- ✅ **No image-build cost** — services pull pre-built Docker images from GitHub Container Registry, so you only pay Railway compute
 
 ---
 
@@ -95,17 +98,22 @@ python -m spacy download en_core_web_sm
 - **Prefer zero cost** - No cloud bills, just local compute
 - **Developing/testing** - Local is faster for iteration
 
-- ![Very Good Plugins  Brave Browser+automem  Railway  2025-10-06 at 00 27 17@2x](https://github.com/user-attachments/assets/02e36c5b-515c-4675-993f-ead2fc022842)
+<!-- Screenshot placeholder: docs/img/railway-services.png — Railway dashboard showing the four deployed services (automem, mcp-automem, qdrant, falkordb). Capture once and host in-repo so this stops depending on a fragile GitHub user-attachment URL. -->
+_Screenshot pending: Railway services dashboard image will be added at `docs/img/railway-services.png` once captured._
 
 ---
 
 #### Option A: One-Click Deploy ⭐ (Fastest)
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=template&utm_campaign=generic)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic)
 
 **What this does:**
 
-- Creates AutoMem API + Remote MCP server + FalkorDB services automatically
+- Creates four Railway services from pre-built Docker images:
+  - `automem` ← `ghcr.io/verygoodplugins/automem:stable`
+  - `mcp-automem` ← `ghcr.io/verygoodplugins/mcp-automem:stable`
+  - `qdrant` ← `qdrant/qdrant:latest`
+  - `falkordb` ← `falkordb/falkordb:latest`
 - Sets up persistent storage and volumes
 - Generates secure API tokens (`AUTOMEM_API_TOKEN`, `ADMIN_API_TOKEN`)
 - Configures internal networking (`FALKORDB_HOST`, `FALKORDB_PORT`)
@@ -120,6 +128,27 @@ python -m spacy download en_core_web_sm
 5. Wait ~60 seconds for deployment to complete ✅
 
 **Next:** Skip to [Get Your AutoMem URL](#get-your-automem-url) below to get your endpoint.
+
+---
+
+#### How Updates Work
+
+Once deployed, your Railway services pull updates automatically — no `git push`, no rebuild on every commit:
+
+| Service | Image | Update cadence |
+|---|---|---|
+| `automem` | `ghcr.io/verygoodplugins/automem:stable` | Auto-redeploy nightly |
+| `mcp-automem` | `ghcr.io/verygoodplugins/mcp-automem:stable` | Auto-redeploy nightly |
+| `qdrant` | `qdrant/qdrant:latest` | Auto-redeploy nightly |
+| `falkordb` | `falkordb/falkordb:latest` | Auto-redeploy nightly |
+
+The `:stable` tag always points at the most recent `vX.Y.Z` release tag. New releases ship through [release-please](https://github.com/googleapis/release-please) — when a release PR is merged to `main`, GitHub Actions builds the image, publishes the new version (`v0.15.2`, `v0.15`, `v0`), and re-points `:stable`. See [`CHANGELOG.md`](CHANGELOG.md) for the release history.
+
+**Want to ship faster than nightly?** In Railway, click the service → **Deployments** → **Deploy latest** to pull `:stable` immediately.
+
+**Want to pin a specific version?** Edit the service's image (Settings → Source → Image) from `:stable` to `:v0.15.2` (or any published `vX.Y.Z`). Roll back the same way.
+
+**Using the legacy MCP image path?** `ghcr.io/verygoodplugins/automem/mcp-sse-server:stable` is dual-published from the same workflow and tracks the same release tags — existing deployments keep working without changes.
 
 ---
 
@@ -160,15 +189,14 @@ Railway automatically exposes:
 
 Reference these in AutoMem config via `${{service.<name>.internalHost}}`
 
-#### Step 3: Deploy AutoMem
+#### Step 3: Deploy AutoMem from the published Docker image
 
-1. Deploy from repo:
+1. **Create a new Railway service from the AutoMem image:**
 
-   ```bash
-   railway up
-   ```
-
-   Or connect repo in Railway UI for auto-deploys.
+   - In Railway → **+ New** → **Deploy from Docker image**
+   - Image: `ghcr.io/verygoodplugins/automem:stable`
+   - (Optional) pin a specific version with `:v0.15.2` instead of `:stable`
+   - Add a public domain: **Settings → Networking → Generate Domain**
 
 2. Configure environment variables:
 
@@ -192,9 +220,16 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
    Expected: `{"status": "healthy"}`
    `503` = FalkorDB connection issue (check host/port/password)
 
+4. (Optional) Add the MCP bridge service the same way:
+
+   - Image: `ghcr.io/verygoodplugins/mcp-automem:stable`
+   - Set `AUTOMEM_API_URL` to the internal URL of `automem` (e.g. `http://automem.railway.internal:8001`)
+   - Set `AUTOMEM_API_TOKEN` to the same token as the API service
+   - Generate a public domain so cloud AI clients (ChatGPT, Claude.ai, ElevenLabs) can reach it
+
 #### Get Your AutoMem URL
 
-1. Click on your **automem-api** service (the API, not FalkorDB)
+1. Click on your **automem** service (the API, not FalkorDB)
 2. Go to **"Settings"** tab
 3. Scroll to **"Networking"** → **"Public Networking"**
 4. Click **"Generate Domain"** (if not already generated)
@@ -299,8 +334,8 @@ Run complete stack locally:
 # Start all services
 make dev
 
-# Or manually with docker-compose
-docker-compose up -d
+# Or manually with docker compose
+docker compose up -d
 ```
 
 **docker-compose.yml** includes:
@@ -308,12 +343,13 @@ docker-compose up -d
 - AutoMem Flask API (port 8001)
 - FalkorDB (port 6379)
 - Qdrant (port 6333)
+- FalkorDB Browser via FalkorDB built-in UI (port 3000)
 
 Stop services:
 
 ```bash
 make stop
-# Or: docker-compose down
+# Or: docker compose down
 ```
 
 ---
@@ -324,7 +360,7 @@ Run API without Docker (requires external FalkorDB):
 
 ```bash
 # Activate virtual environment
-source venv/bin/activate
+source .venv/bin/activate
 
 # Set connection details
 export FALKORDB_HOST=localhost
@@ -678,15 +714,35 @@ Filter memories by tags.
 **Query Parameters:**
 
 - `tags` - One or more tags (multiple `tags` params or comma-separated)
-- `limit` - Max results (default 50)
+- `limit` - Max results per page (default 20, max 200)
+- `offset` - Zero-based page offset (default 0)
 
 **Example:**
 
 ```bash
-GET /memory/by-tag?tags=deployment&tags=success&limit=20
+GET /memory/by-tag?tags=deployment&tags=success&limit=20&offset=0
 ```
 
-Returns most recent/important memories matching any requested tag.
+Returns the current page of most important/recent memories matching any requested tag, plus
+pagination metadata (`limit`, `offset`, `has_more`).
+
+---
+
+#### `DELETE /memory/by-tag`
+
+Delete all memories matching any requested tag.
+
+**Query Parameters:**
+
+- `tags` - One or more tags (multiple `tags` params or comma-separated)
+
+**Example:**
+
+```bash
+DELETE /memory/by-tag?tags=deployment&tags=success
+```
+
+Returns a success payload with `deleted_count`.
 
 ---
 

@@ -32,19 +32,50 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from dateutil import parser as date_parser
+from dotenv import load_dotenv
 from openai import OpenAI
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# Match the app/script env loading behavior so standalone benchmark runs pick up
+# local secrets from either the repo root or ~/.config/automem/.env.
+load_dotenv()
+load_dotenv(Path.home() / ".config" / "automem" / ".env")
+
+from tests.benchmarks.backends import MemoryRecord, SearchRequest, create_backend
+from tests.benchmarks.judge_policy import (
+    CANONICAL_BENCHMARK_JUDGE_MODEL,
+    DEFAULT_JUDGE_PROVIDER,
+    is_gpt5_family,
+    judge_metadata,
+)
+
+DEFAULT_CAT5_JUDGE_MODEL = CANONICAL_BENCHMARK_JUDGE_MODEL
+JUDGE_API_SURFACE = "chat.completions"
+LOCOMO_CAT5_JUDGE_PROMPT_VERSION = "locomo-cat5-v1"
+LOCOMO_CAT5_JUDGE_SCHEMA_VERSION = "locomo-cat5-json-v1"
+JUDGE_PRICING_USD_PER_1M = {
+    "gpt-5.4": {"input": 2.50, "output": 15.00},
+    "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
+    "gpt-5.4-nano": {"input": 0.20, "output": 1.25},
+    "gpt-5.4-pro": {"input": 30.00, "output": 180.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4.1": {"input": 2.0, "output": 8.0},
+    "gpt-5.1": {"input": 1.25, "output": 10.0},
+}
 
 
 @dataclass
 class LoCoMoConfig:
     """Configuration for LoCoMo benchmark evaluation"""
 
-    # AutoMem API settings
+    # Backend settings
+    backend: str = "automem"
     base_url: str = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
     api_token: str = os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token")
+    work_dir: Optional[str] = None
+    scope_prefix: Optional[str] = None
 
     # LoCoMo dataset paths
     data_file: str = str(Path(__file__).parent / "locomo" / "data" / "locomo10.json")
@@ -72,19 +103,43 @@ class LoCoMoConfig:
     def __post_init__(self) -> None:
         if self.judge_model is not None:
             self.judge_model = self.judge_model.strip() or None
+        if self.scope_prefix is not None:
+            self.scope_prefix = self.scope_prefix.strip() or None
+
+
+def _default_scope_prefix(backend: str, data_file: str) -> str:
+    seed = f"locomo:{backend}:{Path(data_file).resolve()}"
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
+    return f"locomo-{backend}-{digest}"
+
+
+def _pricing_model_key(model_name: Optional[str]) -> Optional[str]:
+    if not model_name:
+        return None
+    normalized = model_name.strip()
+    if re.match(r".+-\d{4}-\d{2}-\d{2}$", normalized):
+        return re.sub(r"-\d{4}-\d{2}-\d{2}$", "", normalized)
+    return normalized
 
 
 class LoCoMoEvaluator:
     """Evaluates AutoMem against the LoCoMo benchmark"""
 
     OPENAI_REQUEST_TIMEOUT_SECONDS = 90.0
+    GPT5_JUDGE_MAX_COMPLETION_TOKENS = (250, 400, 600)
 
     def __init__(self, config: LoCoMoConfig):
         self.config = config
-        self.headers = {
-            "Authorization": f"Bearer {config.api_token}",
-            "Content-Type": "application/json",
-        }
+        scope_prefix = config.scope_prefix or _default_scope_prefix(
+            config.backend, config.data_file
+        )
+        self.backend = create_backend(
+            config.backend,
+            base_url=config.base_url,
+            api_token=config.api_token,
+            scope_prefix=scope_prefix,
+            work_dir=config.work_dir,
+        )
         # memory_map is returned per-conversation by _load_batch/_load_individual
         self.results = defaultdict(list)  # Category -> [True/False scores]
         self.local_conversation_memories = {}  # sample_id -> dialog_id -> prepared memory
@@ -102,15 +157,34 @@ class LoCoMoEvaluator:
         # Embedding-based answer checking (fast, handles semantic similarity)
         self.use_embedding_similarity = self.has_openai_api_key
         self.embedding_cache = {}  # text -> embedding vector
+        self.judge_stats = {
+            "questions_requiring_judge": 0,
+            "api_calls": 0,
+            "cache_hits": 0,
+            "errors": 0,
+            "skipped": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        self._judge_api_latencies_ms: List[float] = []
+        self._judge_estimated_cost_usd = 0.0
+        self._judge_cost_estimate_available = True
 
     def health_check(self) -> bool:
-        """Verify AutoMem API is accessible"""
-        try:
-            response = requests.get(f"{self.config.base_url}/health", timeout=5)
-            return response.status_code == 200
-        except Exception as e:
-            print(f"Health check failed: {e}")
-            return False
+        """Verify the configured backend is accessible."""
+        return self.backend.health_check()
+
+    @staticmethod
+    def _record_to_memory(record: MemoryRecord) -> Dict[str, Any]:
+        return {
+            "id": record.id,
+            "content": record.content,
+            "metadata": dict(record.metadata),
+            "tags": list(record.tags),
+            "score": record.score,
+            "match_type": record.match_type,
+        }
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
         """Get embedding for text, with caching."""
@@ -163,65 +237,56 @@ class LoCoMoEvaluator:
         """Build a stable, operation-scoped cache key for LLM calls."""
         return tuple([operation] + [self._cache_value(part) for part in parts])
 
-    def cleanup_test_data(self, tag_prefix: str = "locomo-test", max_iterations: int = 200) -> bool:
-        """Remove all test memories from AutoMem"""
-        print(f"\nCleaning up test memories with tag: {tag_prefix}")
+    def _manifest_path(self) -> Path:
+        return Path(self.config.data_file).parent / "manifest.json"
+
+    def _load_manifest(self) -> Tuple[Optional[str], Dict[str, Dict[str, str]]]:
+        manifest_path = self._manifest_path()
+        if not manifest_path.exists():
+            return None, {}
+
+        with open(manifest_path) as f:
+            raw_manifest = json.load(f)
+
+        if not isinstance(raw_manifest, dict):
+            return None, {}
+
+        if "conversations" in raw_manifest and isinstance(raw_manifest["conversations"], dict):
+            scope_prefix = raw_manifest.get("scope_prefix")
+            normalized_scope_prefix = None
+            if isinstance(scope_prefix, str) and scope_prefix.strip():
+                normalized_scope_prefix = scope_prefix.strip()
+            return normalized_scope_prefix, raw_manifest["conversations"]
+
+        legacy_manifest = {
+            str(sample_id): memory_map
+            for sample_id, memory_map in raw_manifest.items()
+            if isinstance(memory_map, dict)
+        }
+        return None, legacy_manifest
+
+    def _save_manifest(self, manifest: Dict[str, Dict[str, str]]) -> Path:
+        manifest_path = self._manifest_path()
+        with open(manifest_path, "w") as f:
+            json.dump(
+                {
+                    "scope_prefix": self.backend.scope_prefix,
+                    "conversations": manifest,
+                },
+                f,
+                indent=2,
+            )
+        return manifest_path
+
+    def cleanup_test_data(self, sample_ids: Optional[List[str]] = None) -> bool:
+        """Remove benchmark memories using the same logical scopes used for ingest/search."""
+        if self.config.backend != "automem" or not sample_ids:
+            return True
+        print(f"\nCleaning up test memories for {len(sample_ids)} conversations")
         try:
             total_deleted = 0
-            iteration = 0
-            while iteration < max_iterations:
-                iteration += 1
-                response = requests.get(
-                    f"{self.config.base_url}/recall",
-                    headers=self.headers,
-                    params={"tags": tag_prefix, "tag_match": "prefix", "limit": 100},
-                    timeout=10,
-                )
-
-                if response.status_code != 200:
-                    print(f"WARNING: Could not fetch test memories: {response.status_code}")
-                    break
-
-                results = response.json().get("results", [])
-                if not results:
-                    break
-
-                # Delete each memory
-                deleted_this_batch = 0
-                for r in results:
-                    memory_id = r.get("id")
-                    if memory_id:
-                        try:
-                            resp = requests.delete(
-                                f"{self.config.base_url}/memory/{memory_id}",
-                                headers=self.headers,
-                                timeout=5,
-                            )
-                            if resp.status_code in [200, 204]:
-                                deleted_this_batch += 1
-                        except Exception as e:
-                            print(f"WARNING: Failed to delete {memory_id}: {e}")
-
-                total_deleted += deleted_this_batch
-
-                if iteration % 10 == 0:
-                    print(f"  Cleanup progress: {total_deleted} deleted ({iteration} batches)...")
-
-                # No progress — break to avoid infinite loop
-                if deleted_this_batch == 0:
-                    print(f"WARNING: No deletions in batch {iteration}, stopping cleanup")
-                    break
-
-                # If fewer than 100 returned, we're done
-                if len(results) < 100:
-                    break
-
-            if iteration >= max_iterations:
-                print(
-                    f"WARNING: Hit max cleanup iterations ({max_iterations}), {total_deleted} deleted so far"
-                )
-                return False
-
+            for sample_id in sample_ids:
+                total_deleted += self.backend.cleanup_scope(sample_id)
             print(f"Cleaned up {total_deleted} test memories")
             return True
 
@@ -316,6 +381,7 @@ class LoCoMoEvaluator:
                         "importance": self.config.importance_threshold,
                         "metadata": metadata,
                         "type": "Context",
+                        "_benchmark_id": dia_id,
                         "_dia_id": dia_id,  # Internal tracking, stripped before send
                     }
                 )
@@ -335,11 +401,12 @@ class LoCoMoEvaluator:
 
         all_memories = self._prepare_conversation_memories(conversation, sample_id)
         self._cache_prepared_memories(sample_id, all_memories)
-
-        if self._has_batch_api():
-            return self._load_batch(all_memories, sample_id)
-        else:
-            return self._load_individual(all_memories, sample_id)
+        return self.backend.ingest_memories(
+            all_memories,
+            scope_id=sample_id,
+            batch_size=100,
+            pause_between_batches=self.config.pause_between_batches,
+        )
 
     def _cache_prepared_memories(self, sample_id: str, memories: List[Dict[str, Any]]) -> None:
         """Cache prepared conversation memories locally by dialog ID for evidence lookup."""
@@ -348,7 +415,7 @@ class LoCoMoEvaluator:
             dialog_id = memory.get("_dia_id")
             if not dialog_id:
                 continue
-            memory_index[dialog_id] = {k: v for k, v in memory.items() if k != "_dia_id"}
+            memory_index[dialog_id] = {k: v for k, v in memory.items() if not k.startswith("_")}
         self.local_conversation_memories[sample_id] = memory_index
 
     def _load_batch(self, memories: List[Dict[str, Any]], sample_id: str) -> Dict[str, str]:
@@ -708,17 +775,18 @@ class LoCoMoEvaluator:
                 params["auto_decompose"] = "true"
                 params["expand_entities"] = "true"  # Enable entity-to-entity expansion
 
-            response = requests.get(
-                f"{self.config.base_url}/recall", headers=self.headers, params=params
+            records = self.backend.search(
+                SearchRequest(
+                    query=query,
+                    scope_id=sample_id,
+                    limit=limit,
+                    tags=[f"conversation:{sample_id}"],
+                    tag_match="exact",
+                    auto_decompose=is_multihop,
+                    expand_entities=is_multihop,
+                )
             )
-
-            memories = []
-            if response.status_code == 200:
-                result = response.json()
-                # AutoMem returns "results" with nested "memory" objects
-                results = result.get("results", [])
-                # Extract the memory objects from each result
-                memories = [r.get("memory", {}) for r in results if "memory" in r]
+            memories = [self._record_to_memory(record) for record in records]
 
             # Multi-hop enhancement: Also fetch memories by speaker tag
             # This catches memories that semantic search misses
@@ -726,27 +794,28 @@ class LoCoMoEvaluator:
                 # Extract person names from question
                 speaker_name = self._extract_speaker_from_question(question)
                 if speaker_name:
-                    speaker_response = requests.get(
-                        f"{self.config.base_url}/recall",
-                        headers=self.headers,
-                        params=[
-                            ("tags", f"speaker:{speaker_name.lower()}"),
-                            ("tags", f"conversation:{sample_id}"),
-                            ("tag_mode", "all"),
-                            ("tag_match", "exact"),
-                            ("limit", "50"),
-                        ],
+                    speaker_records = self.backend.search(
+                        SearchRequest(
+                            query="",
+                            scope_id=sample_id,
+                            limit=50,
+                            tags=[
+                                f"speaker:{speaker_name.lower().replace(' ', '-')}",
+                                f"conversation:{sample_id}",
+                            ],
+                            tag_mode="all",
+                            tag_match="exact",
+                            speaker=speaker_name,
+                        )
                     )
-                    if speaker_response.status_code == 200:
-                        speaker_results = speaker_response.json().get("results", [])
-                        speaker_memories = [
-                            r.get("memory", {}) for r in speaker_results if "memory" in r
-                        ]
-                        # Add unique speaker memories not already in results
-                        existing_ids = {m.get("id") for m in memories if m.get("id")}
-                        for sm in speaker_memories:
-                            if sm.get("id") not in existing_ids:
-                                memories.append(sm)
+                    speaker_memories = [
+                        self._record_to_memory(record) for record in speaker_records
+                    ]
+                    # Add unique speaker memories not already in results
+                    existing_ids = {m.get("id") for m in memories if m.get("id")}
+                    for sm in speaker_memories:
+                        if sm.get("id") not in existing_ids:
+                            memories.append(sm)
 
             return memories
 
@@ -812,27 +881,21 @@ class LoCoMoEvaluator:
             return evidence_memories
 
         try:
-            response = requests.get(
-                f"{self.config.base_url}/recall",
-                headers=self.headers,
-                params={
-                    "query": "",
-                    "limit": 1000,
-                    "tags": f"conversation:{sample_id}",
-                    "tag_match": "exact",
-                },
-                timeout=10,
+            records = self.backend.search(
+                SearchRequest(
+                    query="",
+                    scope_id=sample_id,
+                    limit=1000,
+                    tags=[f"conversation:{sample_id}"],
+                    tag_match="exact",
+                )
             )
-
-            if response.status_code == 200:
-                result = response.json()
-                results = result.get("results", [])
-                all_memories = [r.get("memory", {}) for r in results if "memory" in r]
-                for memory in all_memories:
-                    metadata = memory.get("metadata", {})
-                    dialog_id = metadata.get("dialog_id", "")
-                    if dialog_id in evidence_dialog_ids:
-                        evidence_memories.append(memory)
+            for record in records:
+                memory = self._record_to_memory(record)
+                metadata = memory.get("metadata", {})
+                dialog_id = metadata.get("dialog_id", "")
+                if dialog_id in evidence_dialog_ids:
+                    evidence_memories.append(memory)
         except Exception as e:
             print(f"⚠️  Evidence fetch error: {e}")
 
@@ -878,23 +941,15 @@ class LoCoMoEvaluator:
 
             for mem_id in memory_ids:
                 try:
-                    # Query AutoMem's graph traversal endpoint
-                    response = requests.get(
-                        f"{self.config.base_url}/memories/{mem_id}/related",
-                        headers=self.headers,
-                        params={
-                            # Include enrichment + temporal + creative relations
-                            "relationship_types": "RELATES_TO,LEADS_TO,PART_OF,DERIVED_FROM,SIMILAR_TO,PRECEDED_BY,EXPLAINS,SHARES_THEME,PARALLEL_CONTEXT",
-                            "max_depth": 2,  # Two hops tends to be enough for LoCoMo
-                            "limit": 8,  # Slightly higher cap per seed
-                        },
-                        timeout=5,
+                    related_records = self.backend.related_memories(
+                        mem_id,
+                        relationship_types="RELATES_TO,LEADS_TO,PART_OF,DERIVED_FROM,SIMILAR_TO,PRECEDED_BY,EXPLAINS,SHARES_THEME,PARALLEL_CONTEXT",
+                        max_depth=2,
+                        limit=8,
                     )
-
-                    if response.status_code == 200:
-                        result = response.json()
-                        related = result.get("related_memories", [])
-                        connected_memories.extend(related)
+                    connected_memories.extend(
+                        self._record_to_memory(record) for record in related_records
+                    )
 
                 except Exception as e:
                     print(f"WARNING: Graph traversal failed for {mem_id}: {e}")
@@ -1086,56 +1141,101 @@ Respond in JSON format:
             content = fence_match.group("body").strip()
         return json.loads(content)
 
-    def judge_complex_reasoning(
-        self,
-        question: str,
-        adversarial_answer: str,
-        recalled_memories: List[Dict[str, Any]],
-        evidence_dialog_ids: List[str],
-        sample_id: str,
-    ) -> Tuple[Optional[bool], float, str, Optional[str], Optional[str]]:
-        """Judge a category-5 question using recalled memories and evidence dialogs."""
+    @staticmethod
+    def _judge_model_uses_structured_outputs(model_name: Optional[str]) -> bool:
+        """GPT-5 family models prefer strict json_schema over legacy json_object mode."""
+        return is_gpt5_family(model_name)
+
+    def _judge_metadata(self) -> Dict[str, Any]:
+        return judge_metadata(self.config.judge_model, provider=DEFAULT_JUDGE_PROVIDER)
+
+    @staticmethod
+    def _hash_payload(payload: Any) -> str:
+        if isinstance(payload, (dict, list, tuple)):
+            text = json.dumps(payload, sort_keys=True)
+        else:
+            text = str(payload)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _usage_value(usage: Any, field: str) -> int:
+        if usage is None:
+            return 0
+        value = usage.get(field, 0) if isinstance(usage, dict) else getattr(usage, field, 0)
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _percentile(values: List[float], percentile: float) -> Optional[float]:
+        if not values:
+            return None
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return ordered[0]
+        rank = (len(ordered) - 1) * percentile
+        lower = int(rank)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = rank - lower
+        return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+    def _judge_pricing(self) -> Optional[Dict[str, float]]:
+        input_override = os.getenv("BENCH_JUDGE_INPUT_COST_PER_1M")
+        output_override = os.getenv("BENCH_JUDGE_OUTPUT_COST_PER_1M")
+        if input_override and output_override:
+            try:
+                return {
+                    "input": float(input_override),
+                    "output": float(output_override),
+                }
+            except ValueError:
+                return None
         if not self.config.judge_model:
-            return None, 0.0, "Skipped: requires LLM judge", None, None
+            return None
+        return JUDGE_PRICING_USD_PER_1M.get(_pricing_model_key(self.config.judge_model))
 
-        if not self.openai_client:
-            return None, 0.0, "Skipped: OPENAI_API_KEY not set for LLM judge", None, None
+    def _estimate_judge_cost(self, prompt_tokens: int, completion_tokens: int) -> Optional[float]:
+        pricing = self._judge_pricing()
+        if not pricing:
+            return None
+        return (prompt_tokens / 1_000_000) * pricing["input"] + (
+            completion_tokens / 1_000_000
+        ) * pricing["output"]
 
-        evidence_memories = self.fetch_evidence_memories(
-            evidence_dialog_ids,
-            sample_id,
-            use_local_cache=True,
+    def _record_judge_usage(self, usage: Any) -> None:
+        prompt_tokens = self._usage_value(usage, "prompt_tokens")
+        completion_tokens = self._usage_value(usage, "completion_tokens")
+        total_tokens = self._usage_value(usage, "total_tokens")
+        if total_tokens == 0 and (prompt_tokens or completion_tokens):
+            total_tokens = prompt_tokens + completion_tokens
+
+        self.judge_stats["prompt_tokens"] += prompt_tokens
+        self.judge_stats["completion_tokens"] += completion_tokens
+        self.judge_stats["total_tokens"] += total_tokens
+
+        estimated_cost = self._estimate_judge_cost(prompt_tokens, completion_tokens)
+        if estimated_cost is None:
+            if prompt_tokens or completion_tokens:
+                self._judge_cost_estimate_available = False
+            return
+        self._judge_estimated_cost_usd += estimated_cost
+
+    def _judge_system_prompt(self) -> str:
+        return (
+            "You are a strict benchmark judge. "
+            "Use recalled memories to draft the answer and evidence dialogs "
+            "only to verify correctness."
         )
-        if len(evidence_memories) < len(set(evidence_dialog_ids)):
-            return (
-                None,
-                0.0,
-                "Skipped: no evidence memories available for LLM judge",
-                None,
-                None,
-            )
 
-        recalled_text = self._format_memories_for_llm(recalled_memories, limit=25)
-        evidence_text = self._format_memories_for_llm(evidence_memories, limit=8)
-        cache_key = self._make_llm_cache_key(
-            "judge_cat5",
-            self.config.judge_model,
-            question,
-            adversarial_answer,
-            evidence_dialog_ids,
-            recalled_text,
-            evidence_text,
-        )
-        if cache_key in self.llm_cache:
-            return self.llm_cache[cache_key]
-
-        prompt = f"""You are judging a LoCoMo category-5 complex reasoning answer.
+    def _judge_prompt_template(self) -> str:
+        return """You are judging a LoCoMo category-5 complex reasoning answer.
 
 Question:
 {question}
 
 Adversarial answer (distractor; may be wrong, incomplete, or occasionally overlap with the evidence):
-{adversarial_answer or "None"}
+{adversarial_answer}
 
 Recalled memories:
 {recalled_text}
@@ -1163,47 +1263,238 @@ Respond with ONLY a JSON object:
   "reasoning": "brief explanation grounded in the evidence dialogs"
 }}"""
 
-        try:
-            response = self.openai_client.chat.completions.create(
-                model=self.config.judge_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a strict benchmark judge. "
-                            "Use recalled memories to draft the answer and evidence dialogs "
-                            "only to verify correctness."
-                        ),
+    def _judge_response_schema(self) -> Dict[str, Any]:
+        return {
+            "name": "locomo_cat5_judge",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "generated_answer": {"type": "string"},
+                    "verdict": {
+                        "type": "string",
+                        "enum": [
+                            "supported",
+                            "abstain",
+                            "contradiction",
+                            "unsupported",
+                            "incorrect",
+                        ],
                     },
-                    {"role": "user", "content": prompt},
+                    "correct": {"type": "boolean"},
+                    "confidence": {"type": "number"},
+                    "reasoning": {"type": "string"},
+                },
+                "required": [
+                    "generated_answer",
+                    "verdict",
+                    "correct",
+                    "confidence",
+                    "reasoning",
                 ],
-                temperature=0.0,
-                max_tokens=250,
-                response_format={"type": "json_object"},
-                timeout=self.OPENAI_REQUEST_TIMEOUT_SECONDS,
-            )
-            result = self._parse_json_object_response(response.choices[0].message.content)
-            correct = result.get("correct")
-            if not isinstance(correct, bool):
-                raise ValueError("Judge response missing boolean 'correct'")
+                "additionalProperties": False,
+            },
+        }
 
-            confidence = float(result.get("confidence", 0.0))
-            generated_answer = str(result.get("generated_answer", "")).strip() or None
-            reasoning = str(result.get("reasoning", "")).strip()
-            explanation = f"LLM judge: {reasoning}" if reasoning else "LLM judge"
-            judge_result = (correct, confidence, explanation, generated_answer, reasoning or None)
-            self.llm_cache[cache_key] = judge_result
-            return judge_result
-        except Exception as e:
-            error_result = (
+    def _judge_config(self) -> Dict[str, Any]:
+        metadata = self._judge_metadata()
+        return {
+            "enabled": bool(self.config.judge_model),
+            "provider": metadata["judge_provider"],
+            "api": JUDGE_API_SURFACE if self.config.judge_model else None,
+            "model": metadata["judge_model"],
+            "profile": metadata["judge_profile"],
+            "snapshot_pinned": metadata["judge_snapshot_pinned"],
+            "prompt_version": (
+                LOCOMO_CAT5_JUDGE_PROMPT_VERSION if self.config.judge_model else None
+            ),
+            "prompt_sha256": (
+                self._hash_payload(
+                    {
+                        "system": self._judge_system_prompt(),
+                        "user_template": self._judge_prompt_template(),
+                    }
+                )
+                if self.config.judge_model
+                else None
+            ),
+            "response_schema_version": (
+                LOCOMO_CAT5_JUDGE_SCHEMA_VERSION if self.config.judge_model else None
+            ),
+            "response_schema_sha256": (
+                self._hash_payload(self._judge_response_schema())
+                if self.config.judge_model
+                else None
+            ),
+            "reasoning_effort": None,
+            "seed": None,
+            "temperature": (
+                (
+                    None
+                    if self._judge_model_uses_structured_outputs(self.config.judge_model)
+                    else 0.0
+                )
+                if self.config.judge_model
+                else None
+            ),
+            "max_completion_tokens_attempts": (
+                list(self._judge_token_attempts()) if self.config.judge_model else []
+            ),
+            "timeout_seconds": (
+                self.OPENAI_REQUEST_TIMEOUT_SECONDS if self.config.judge_model else None
+            ),
+        }
+
+    def _judge_stats_summary(self) -> Dict[str, Any]:
+        latencies = self._judge_api_latencies_ms
+        return {
+            **self.judge_stats,
+            "estimated_cost_usd": (
+                round(self._judge_estimated_cost_usd, 6)
+                if self._judge_cost_estimate_available and latencies
+                else None
+            ),
+            "latency_ms": {
+                "avg": round(sum(latencies) / len(latencies), 3) if latencies else None,
+                "p50": round(self._percentile(latencies, 0.50), 3) if latencies else None,
+                "p95": round(self._percentile(latencies, 0.95), 3) if latencies else None,
+                "max": round(max(latencies), 3) if latencies else None,
+            },
+        }
+
+    def _judge_response_format(self) -> Dict[str, Any]:
+        if self._judge_model_uses_structured_outputs(self.config.judge_model):
+            return {
+                "type": "json_schema",
+                "json_schema": self._judge_response_schema(),
+            }
+        return {"type": "json_object"}
+
+    def _judge_token_attempts(self) -> Tuple[int, ...]:
+        if self._judge_model_uses_structured_outputs(self.config.judge_model):
+            return self.GPT5_JUDGE_MAX_COMPLETION_TOKENS
+        return (250,)
+
+    def judge_complex_reasoning(
+        self,
+        question: str,
+        adversarial_answer: str,
+        recalled_memories: List[Dict[str, Any]],
+        evidence_dialog_ids: List[str],
+        sample_id: str,
+    ) -> Tuple[Optional[bool], float, str, Optional[str], Optional[str]]:
+        """Judge a category-5 question using recalled memories and evidence dialogs."""
+        if not self.config.judge_model:
+            return None, 0.0, "Skipped: requires LLM judge", None, None
+
+        if not self.openai_client:
+            return (
                 None,
                 0.0,
-                f"Skipped: LLM judge error: {e}",
+                "Skipped: OPENAI_API_KEY not set for LLM judge",
                 None,
-                f"LLM judge error: {e}",
+                None,
             )
-            self.llm_cache[cache_key] = error_result
-            return error_result
+
+        evidence_memories = self.fetch_evidence_memories(
+            evidence_dialog_ids,
+            sample_id,
+            use_local_cache=True,
+        )
+        if len(evidence_memories) < len(set(evidence_dialog_ids)):
+            return (
+                None,
+                0.0,
+                "Skipped: no evidence memories available for LLM judge",
+                None,
+                None,
+            )
+
+        recalled_text = self._format_memories_for_llm(recalled_memories, limit=25)
+        evidence_text = self._format_memories_for_llm(evidence_memories, limit=8)
+        cache_key = self._make_llm_cache_key(
+            "judge_cat5",
+            LOCOMO_CAT5_JUDGE_PROMPT_VERSION,
+            LOCOMO_CAT5_JUDGE_SCHEMA_VERSION,
+            self.config.judge_model,
+            question,
+            adversarial_answer,
+            evidence_dialog_ids,
+            recalled_text,
+            evidence_text,
+        )
+        if cache_key in self.llm_cache:
+            self.judge_stats["cache_hits"] += 1
+            return self.llm_cache[cache_key]
+
+        prompt = self._judge_prompt_template().format(
+            question=question,
+            adversarial_answer=adversarial_answer or "None",
+            recalled_text=recalled_text,
+            evidence_text=evidence_text,
+        )
+
+        last_error: Optional[Exception] = None
+        for token_budget in self._judge_token_attempts():
+            request_started = time.perf_counter()
+            self.judge_stats["api_calls"] += 1
+            try:
+                request_kwargs: Dict[str, Any] = {
+                    "model": self.config.judge_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": self._judge_system_prompt(),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "response_format": self._judge_response_format(),
+                    "timeout": self.OPENAI_REQUEST_TIMEOUT_SECONDS,
+                }
+                if self._judge_model_uses_structured_outputs(self.config.judge_model):
+                    request_kwargs["max_completion_tokens"] = token_budget
+                else:
+                    request_kwargs["max_tokens"] = token_budget
+                    request_kwargs["temperature"] = 0.0
+
+                response = self.openai_client.chat.completions.create(**request_kwargs)
+                self._judge_api_latencies_ms.append((time.perf_counter() - request_started) * 1000)
+                self._record_judge_usage(getattr(response, "usage", None))
+                result = self._parse_json_object_response(response.choices[0].message.content)
+                correct = result.get("correct")
+                if not isinstance(correct, bool):
+                    raise ValueError("Judge response missing boolean 'correct'")
+
+                confidence = float(result.get("confidence", 0.0))
+                generated_answer = str(result.get("generated_answer", "")).strip() or None
+                reasoning = str(result.get("reasoning", "")).strip()
+                explanation = f"LLM judge: {reasoning}" if reasoning else "LLM judge"
+                judge_result = (
+                    correct,
+                    confidence,
+                    explanation,
+                    generated_answer,
+                    reasoning or None,
+                )
+                self.llm_cache[cache_key] = judge_result
+                return judge_result
+            except Exception as e:
+                if len(self._judge_api_latencies_ms) < self.judge_stats["api_calls"]:
+                    self._judge_api_latencies_ms.append(
+                        (time.perf_counter() - request_started) * 1000
+                    )
+                last_error = e
+
+        self.judge_stats["errors"] += 1
+        error_result = (
+            None,
+            0.0,
+            f"Skipped: LLM judge error: {last_error}",
+            None,
+            f"LLM judge error: {last_error}",
+        )
+        self.llm_cache[cache_key] = error_result
+        return error_result
 
     def check_answer_in_memories(
         self,
@@ -1493,6 +1784,7 @@ Respond with ONLY a JSON object:
         base_result["recalled_count"] = len(recalled_memories)
 
         if category == 5 and not answer:
+            self.judge_stats["questions_requiring_judge"] += 1
             (
                 is_correct,
                 confidence,
@@ -1515,6 +1807,8 @@ Respond with ONLY a JSON object:
                     "judge_reasoning": judge_reasoning,
                 }
             )
+            if is_correct is None:
+                self.judge_stats["skipped"] += 1
             return base_result
 
         is_correct, confidence, explanation = self.check_answer_in_memories(
@@ -1659,22 +1953,17 @@ Respond with ONLY a JSON object:
         Returns comprehensive results including per-category accuracy.
         """
         print("\n" + "=" * 60)
-        print("AutoMem LoCoMo Benchmark Evaluation")
+        print(f"{self.backend.name} LoCoMo Benchmark Evaluation")
         print("=" * 60)
 
         # Health check
-        print("\nChecking AutoMem health...")
+        print(f"\nChecking {self.backend.name} health...")
         if not self.health_check():
-            raise ConnectionError("AutoMem API is not accessible")
-        print("AutoMem is healthy")
+            raise ConnectionError(f"{self.backend.name} backend is not accessible")
+        print(f"{self.backend.name} is healthy")
 
         if ingest_only and eval_only:
             raise ValueError("ingest_only and eval_only are mutually exclusive")
-
-        # Cleanup existing test data (skip if eval-only)
-        if not eval_only:
-            if not self.cleanup_test_data():
-                print("WARNING: Cleanup was incomplete; results may include stale data")
 
         # Load dataset
         print(f"\nLoading LoCoMo dataset from: {self.config.data_file}")
@@ -1703,6 +1992,18 @@ Respond with ONLY a JSON object:
         else:
             print(f"Loaded {len(conversations)} conversations")
 
+        selected_sample_ids = [
+            conversation.get("sample_id", f"sample_{i}")
+            for i, conversation in enumerate(conversations)
+        ]
+
+        if eval_only:
+            manifest_scope_prefix, _manifest = self._load_manifest()
+            if manifest_scope_prefix:
+                self.backend.scope_prefix = manifest_scope_prefix
+        elif not self.cleanup_test_data(selected_sample_ids):
+            print("WARNING: Cleanup was incomplete; results may include stale data")
+
         # Ingest-only mode: load data and exit
         if ingest_only:
             print("\nINGEST-ONLY MODE: Loading data without evaluation")
@@ -1712,9 +2013,7 @@ Respond with ONLY a JSON object:
                 memory_map = self.load_conversation_into_automem(conversation, sample_id)
                 manifest[sample_id] = memory_map
             # Save manifest for eval-only mode
-            manifest_path = Path(self.config.data_file).parent / "manifest.json"
-            with open(manifest_path, "w") as f:
-                json.dump(manifest, f, indent=2)
+            manifest_path = self._save_manifest(manifest)
             print(f"\nManifest saved to: {manifest_path}")
             print(f"Total memories ingested: {sum(len(m) for m in manifest.values())}")
             return {
@@ -1759,6 +2058,39 @@ Respond with ONLY a JSON object:
         print(f"\n🎯 Overall Accuracy: {overall_accuracy:.2%} ({total_correct}/{total_questions})")
         print(f"⏱️  Total Time: {elapsed_time:.1f}s")
         print(f"💾 Total Memories Stored: {sum(r['memory_count'] for r in conversation_results)}")
+        if self.config.judge_model:
+            judge_config = self._judge_config()
+            judge_stats = self._judge_stats_summary()
+            print("\n🧑‍⚖️ Judge Summary:")
+            print(f"  Model: {judge_config['model']}")
+            print(f"  Profile: {judge_config['profile']}")
+            print(
+                "  Questions/API calls/cache hits/skipped: "
+                f"{judge_stats['questions_requiring_judge']}/"
+                f"{judge_stats['api_calls']}/"
+                f"{judge_stats['cache_hits']}/"
+                f"{judge_stats['skipped']}"
+            )
+            if judge_stats["api_calls"]:
+                print(
+                    "  Tokens (prompt/completion/total): "
+                    f"{judge_stats['prompt_tokens']}/"
+                    f"{judge_stats['completion_tokens']}/"
+                    f"{judge_stats['total_tokens']}"
+                )
+                latency = judge_stats["latency_ms"]
+                print(
+                    "  API latency ms (avg/p50/p95/max): "
+                    f"{latency['avg']:.1f}/"
+                    f"{latency['p50']:.1f}/"
+                    f"{latency['p95']:.1f}/"
+                    f"{latency['max']:.1f}"
+                )
+                cost = judge_stats["estimated_cost_usd"]
+                if cost is None:
+                    print("  Estimated API cost: n/a")
+                else:
+                    print(f"  Estimated API cost: ${cost:.4f}")
 
         # Category breakdown
         print("\n📈 Category Breakdown:")
@@ -1819,14 +2151,8 @@ Respond with ONLY a JSON object:
                     f"  {cat5_name:25s}: {accuracy:6.2%} ({correct:3d}/{total:3d}, {cat5_skipped:3d} skipped)"
                 )
 
-        # Comparison with the published CORE reference.
-        # Treat 88.24% as a useful external reference point, not a strict
-        # apples-to-apples leaderboard, because public LoCoMo setups differ.
         core_sota = 0.8824
         improvement = overall_accuracy - core_sota
-        print("\n📊 Comparison with published CORE reference:")
-        print(f"  CORE: {core_sota:.2%}")
-        print(f"  AutoMem: {overall_accuracy:.2%}")
         if cat5_skipped:
             if self.config.judge_model:
                 print(
@@ -1836,16 +2162,10 @@ Respond with ONLY a JSON object:
                 print(
                     f"  ⚠️  AutoMem excludes {cat5_skipped} cat-5 Qs (needs LLM judge); treat comparison as directional only"
                 )
-        if improvement > 0:
-            print(f"  📈 AutoMem is {improvement:.2%} above that reference")
-        elif improvement < 0:
-            print(f"  📉 AutoMem is {abs(improvement):.2%} behind that reference")
-        else:
-            print("  🤝 AutoMem matches that reference")
 
         # Cleanup
         if cleanup_after:
-            if not self.cleanup_test_data():
+            if not self.cleanup_test_data(selected_sample_ids):
                 print("WARNING: Post-evaluation cleanup was incomplete")
 
         # Return comprehensive results
@@ -1856,9 +2176,12 @@ Respond with ONLY a JSON object:
                 "total": total_questions,
                 "elapsed_time": elapsed_time,
             },
+            "backend": self.backend.name,
             "judge_requested": bool(self.config.judge_model),
             "judge_available": bool(self.config.judge_model and self.openai_client),
-            "judge_model": self.config.judge_model,
+            **self._judge_metadata(),
+            "judge_config": self._judge_config(),
+            "judge_stats": self._judge_stats_summary(),
             "categories": category_results,
             "conversations": conversation_results,
             "comparison": {
@@ -1883,12 +2206,23 @@ def main():
     parser.add_argument(
         "--base-url",
         default=os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001"),
-        help="AutoMem API base URL",
+        help="Backend API base URL",
     )
     parser.add_argument(
         "--api-token",
         default=os.getenv("AUTOMEM_TEST_API_TOKEN", "test-token"),
-        help="AutoMem API token",
+        help="Backend API token",
+    )
+    parser.add_argument(
+        "--backend",
+        default="automem",
+        choices=["automem"],
+        help="Memory backend to benchmark (cross-backend runs live in automem-evals)",
+    )
+    parser.add_argument(
+        "--work-dir",
+        default=None,
+        help="Optional working directory for local backends like mempalace",
     )
     parser.add_argument("--data-file", default=None, help="Path to locomo10.json")
     parser.add_argument(
@@ -1926,25 +2260,38 @@ def main():
     parser.add_argument(
         "--judge",
         action="store_true",
-        help="Enable category-5 LLM judging (defaults to gpt-4o unless BENCH_JUDGE_MODEL is set).",
+        help=(
+            "Enable category-5 LLM judging "
+            f"(defaults to {DEFAULT_CAT5_JUDGE_MODEL} unless BENCH_JUDGE_MODEL is set)."
+        ),
     )
     parser.add_argument(
         "--judge-model",
         default=None,
         help="LLM model for category-5 judging (also enables judge mode).",
     )
+    parser.add_argument(
+        "--scope-prefix",
+        default=None,
+        help="Override the synthetic scope prefix used for benchmark ingest/search/cleanup.",
+    )
 
     args = parser.parse_args()
 
     # Build config
     config = LoCoMoConfig(
-        base_url=args.base_url, api_token=args.api_token, recall_limit=args.recall_limit
+        backend=args.backend,
+        base_url=args.base_url,
+        api_token=args.api_token,
+        scope_prefix=args.scope_prefix,
+        recall_limit=args.recall_limit,
+        work_dir=args.work_dir,
     )
 
     if args.data_file:
         config.data_file = args.data_file
     if args.judge or args.judge_model:
-        config.judge_model = args.judge_model or config.judge_model or "gpt-4o"
+        config.judge_model = args.judge_model or config.judge_model or DEFAULT_CAT5_JUDGE_MODEL
 
     # Run evaluation
     evaluator = LoCoMoEvaluator(config)

@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
 
 from automem.config import (
+    COLLECTION_NAME,
     DEFAULT_EXPAND_RELATIONS,
     FILTERABLE_RELATIONS,
     RECALL_ADAPTIVE_FLOOR,
@@ -20,6 +22,7 @@ from automem.config import (
     normalize_relation_type,
 )
 from automem.utils.graph import _serialize_node
+from automem.utils.time import _parse_iso_datetime
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
     "coding-style",
@@ -68,6 +71,8 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
     ".cxx": "cpp",
     ".swift": "swift",
 }
+
+STATE_SUPPRESSING_RELATIONS: Set[str] = {"INVALIDATED_BY", "EVOLVED_INTO"}
 
 # Words to skip when extracting entities from queries
 ENTITY_STOPWORDS: Set[str] = {
@@ -372,6 +377,233 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
     return deduped, removed
 
 
+def _result_memory_id(result: Dict[str, Any]) -> str:
+    memory = result.get("memory") or {}
+    return str(
+        result.get("id") or memory.get("id") or memory.get("memory_id") or memory.get("uuid") or ""
+    ).strip()
+
+
+def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[str]:
+    if memory.get("archived") is True:
+        return "archived"
+
+    t_valid = _parse_iso_datetime(memory.get("t_valid"))
+    if t_valid is not None and t_valid > now:
+        return "not_yet_valid"
+
+    t_invalid = _parse_iso_datetime(memory.get("t_invalid"))
+    if t_invalid is not None and t_invalid <= now:
+        return "expired"
+
+    return None
+
+
+def _active_replacements_for_memories(
+    graph: Any,
+    memory_ids: List[str],
+    now: datetime,
+    logger: Any,
+) -> Dict[str, Dict[str, Any]]:
+    ordered_ids = list(dict.fromkeys(memory_id for memory_id in memory_ids if memory_id))
+    if graph is None or not ordered_ids:
+        return {}
+
+    try:
+        records = graph.query(
+            """
+            UNWIND $ids AS source_id
+            MATCH (m:Memory {id: source_id})-[r]->(related:Memory)
+            WHERE type(r) IN $types
+            RETURN source_id,
+                   type(r) as relation_type,
+                   coalesce(
+                       r.strength,
+                       r.score,
+                       r.confidence,
+                       r.similarity,
+                       toFloat(r.count),
+                       0.0
+                   ) as strength,
+                   r.kind as relation_kind,
+                   related
+            ORDER BY source_id, coalesce(r.updated_at, related.timestamp) DESC
+            """,
+            {"ids": ordered_ids, "types": sorted(STATE_SUPPRESSING_RELATIONS)},
+        )
+    except Exception:
+        logger.exception(
+            "Failed to load current-state replacements for %d memories", len(ordered_ids)
+        )
+        return {}
+
+    replacements: Dict[str, Dict[str, Any]] = {}
+    for row in getattr(records, "result_set", []) or []:
+        if len(row) >= 5:
+            source_id, relation_type, strength, relation_kind, related = row[:5]
+        elif len(row) >= 4:
+            source_id, relation_type, strength, related = row[:4]
+            relation_kind = None
+        else:  # pragma: no cover - defensive for malformed graph rows
+            continue
+
+        source_id = str(source_id or "")
+        if not source_id or source_id in replacements:
+            continue
+
+        replacement = _serialize_node(related)
+        replacement_id = str(replacement.get("id") or "")
+        if not replacement_id:
+            continue
+        if _state_reason_for_memory(replacement, now) is not None:
+            continue
+
+        normalized_type, normalized_props = normalize_relation_type(
+            relation_type,
+            {"kind": relation_kind} if relation_kind else {},
+        )
+        replacement["_state_relation"] = {
+            "type": normalized_type,
+            "strength": float(strength or 0.0),
+        }
+        kind = normalized_props.get("kind")
+        if kind:
+            replacement["_state_relation"]["kind"] = kind
+        replacements[source_id] = replacement
+
+    return replacements
+
+
+def _apply_current_state_filter(
+    *,
+    results: List[Dict[str, Any]],
+    graph: Any,
+    result_passes_filters: Callable[
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
+    ],
+    start_time: Optional[str],
+    end_time: Optional[str],
+    tag_filters: Optional[List[str]],
+    tag_mode: str,
+    tag_match: str,
+    exclude_tags: Optional[List[str]],
+    logger: Any,
+    state_debug: bool = False,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    filtered_results: List[Dict[str, Any]] = []
+    seen_ids = {_result_memory_id(result) for result in results if _result_memory_id(result)}
+    replacements_by_id = _active_replacements_for_memories(
+        graph,
+        [_result_memory_id(result) for result in results],
+        now,
+        logger,
+    )
+    suppressed_debug: List[Dict[str, Any]] = []
+    replacements_debug: List[Dict[str, Any]] = []
+    suppressed_count = 0
+    replacement_count = 0
+
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = _result_memory_id(result)
+        reason = _state_reason_for_memory(memory, now)
+        replacement = None
+        relation_type = None
+
+        if memory_id:
+            replacement = replacements_by_id.get(memory_id)
+            if replacement is not None:
+                relation = replacement.get("_state_relation") or {}
+                relation_type = str(relation.get("type") or "").strip() or None
+                if reason is None:
+                    reason = "superseded"
+
+        if reason is None:
+            filtered_results.append(result)
+            continue
+
+        suppressed_count += 1
+        debug_item: Dict[str, Any] = {"id": memory_id, "reason": reason}
+
+        if replacement is not None:
+            replacement_id = str(replacement.get("id") or "")
+            debug_item["replacement_id"] = replacement_id
+            if relation_type:
+                debug_item["relation_type"] = relation_type
+
+            candidate_memory = dict(replacement)
+            relation = candidate_memory.pop("_state_relation", {})
+            candidate = {
+                "id": replacement_id,
+                "score": float(result.get("score") or result.get("final_score") or 0.0),
+                "match_score": float(result.get("match_score") or result.get("score") or 0.0),
+                "match_type": "state_replacement",
+                "source": "graph",
+                "memory": candidate_memory,
+                "relations": [
+                    {
+                        "type": relation.get("type", relation_type or "INVALIDATED_BY"),
+                        "strength": float(relation.get("strength") or 0.0),
+                        "from": memory_id,
+                    }
+                ],
+                "state_replaces": memory_id,
+                "final_score": float(result.get("final_score") or result.get("score") or 0.0),
+                "score_components": dict(result.get("score_components") or {}),
+            }
+            if relation.get("kind"):
+                candidate["relations"][0]["kind"] = relation["kind"]
+
+            if (
+                replacement_id
+                and replacement_id not in seen_ids
+                and result_passes_filters(
+                    candidate,
+                    start_time,
+                    end_time,
+                    tag_filters,
+                    tag_mode,
+                    tag_match,
+                    exclude_tags,
+                )
+            ):
+                filtered_results.append(candidate)
+                seen_ids.add(replacement_id)
+                replacement_count += 1
+                if state_debug:
+                    replacements_debug.append(
+                        {
+                            "id": replacement_id,
+                            "replaces_id": memory_id,
+                            "relation_type": relation_type,
+                        }
+                    )
+
+        if state_debug:
+            suppressed_debug.append(debug_item)
+
+    state_filter: Dict[str, Any] = {
+        "current_only": True,
+        "suppressed_count": suppressed_count,
+        "replacement_count": replacement_count,
+    }
+    if state_debug:
+        state_filter["suppressed"] = suppressed_debug
+        state_filter["replacements"] = replacements_debug
+
+    return filtered_results, state_filter
+
+
 def _split_multi_value(raw: Any) -> List[str]:
     if raw is None:
         return []
@@ -463,7 +695,14 @@ def _build_context_profile(
 ) -> Optional[Dict[str, Any]]:
     priority_tags: Set[str] = {tag.strip().lower() for tag in manual_tags if tag and tag.strip()}
     priority_types: Set[str] = {typ.strip().title() for typ in manual_types if typ and typ.strip()}
-    priority_ids: Set[str] = {value.strip() for value in manual_ids if value and value.strip()}
+    priority_id_order: List[str] = []
+    priority_ids: Set[str] = set()
+    for value in manual_ids:
+        normalized = value.strip()
+        if not normalized or normalized in priority_ids:
+            continue
+        priority_ids.add(normalized)
+        priority_id_order.append(normalized)
     priority_keywords: Set[str] = set()
 
     style_focus = False
@@ -499,6 +738,7 @@ def _build_context_profile(
         "priority_tags": priority_tags,
         "priority_types": priority_types,
         "priority_ids": priority_ids,
+        "priority_id_order": priority_id_order,
         "priority_keywords": priority_keywords,
         "weights": {
             "tag": 0.45,
@@ -566,11 +806,94 @@ def _inject_priority_memories(
     tag_mode: str,
     tag_match: str,
     limit: int,
+    logger: Any,
     exclude_tags: Optional[List[str]] = None,
 ) -> bool:
+    injected = False
+    priority_id_order: List[str] = context_profile.get("priority_id_order") or []
     priority_tags: Set[str] = context_profile.get("priority_tags") or set()
+
+    if priority_id_order:
+        fetched_ids: Set[str] = set()
+        if graph is not None:
+            for memory_id in priority_id_order:
+                if memory_id in seen_ids or memory_id in fetched_ids:
+                    continue
+                try:
+                    record = graph.query(
+                        "MATCH (m:Memory {id: $id}) RETURN m",
+                        {"id": memory_id},
+                    )
+                except Exception:
+                    logger.exception("Failed to fetch priority memory %s from graph", memory_id)
+                    continue
+                if not getattr(record, "result_set", None):
+                    continue
+                data = _serialize_node(record.result_set[0][0])
+                priority_result = {
+                    "id": memory_id,
+                    "memory": data,
+                    "source": "graph",
+                    "match_type": "priority_id",
+                    "match_score": 0.0,
+                }
+                results.append(priority_result)
+                seen_ids.add(memory_id)
+                fetched_ids.add(memory_id)
+                injected = True
+
+        if qdrant_client is not None:
+            remaining_ids = [
+                memory_id
+                for memory_id in priority_id_order
+                if memory_id not in seen_ids and memory_id not in fetched_ids
+            ]
+            if remaining_ids:
+                try:
+                    points = qdrant_client.retrieve(
+                        collection_name=COLLECTION_NAME,
+                        ids=remaining_ids,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                except Exception:
+                    logger.exception("Failed to fetch priority memories from qdrant")
+                    points = []
+
+                points_by_id = {
+                    str(getattr(point, "id", "") or "").strip(): point for point in points if point
+                }
+                for memory_id in remaining_ids:
+                    point = points_by_id.get(memory_id)
+                    if point is None:
+                        continue
+                    payload = getattr(point, "payload", None) or {}
+                    priority_result = {
+                        "id": memory_id,
+                        "memory": {
+                            "id": memory_id,
+                            "content": payload.get("content", ""),
+                            "tags": payload.get("tags", []),
+                            "tag_prefixes": payload.get("tag_prefixes", []),
+                            "importance": payload.get("importance", 0.5),
+                            "timestamp": payload.get("timestamp"),
+                            "type": payload.get("type", "Context"),
+                            "confidence": payload.get("confidence", 0.0),
+                            "updated_at": payload.get("updated_at"),
+                            "last_accessed": payload.get("last_accessed"),
+                            "metadata": payload.get("metadata", {}),
+                        },
+                        "source": "qdrant",
+                        "match_type": "priority_id",
+                        "match_score": 0.0,
+                    }
+                    results.append(priority_result)
+                    seen_ids.add(memory_id)
+                    fetched_ids.add(memory_id)
+                    injected = True
+
     if not priority_tags:
-        return False
+        return injected
 
     effective_tag_mode = tag_mode if tag_mode in {"any", "all"} else "any"
     effective_tag_match = tag_match if tag_match in {"exact", "prefix"} else "prefix"
@@ -605,7 +928,7 @@ def _inject_priority_memories(
             ]
             if filtered_priority:
                 results.extend(filtered_priority)
-                return True
+                injected = True
 
     if qdrant_client is not None:
         tag_results = vector_filter_only_tag_search(
@@ -632,9 +955,51 @@ def _inject_priority_memories(
             ]
             if filtered_results:
                 results.extend(filtered_results)
-                return True
+                injected = True
 
-    return False
+    return injected
+
+
+def _guarantee_priority_results(
+    results: List[Dict[str, Any]],
+    context_profile: Optional[Dict[str, Any]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    if not context_profile:
+        return results[:limit]
+
+    priority_id_order: List[str] = context_profile.get("priority_id_order") or []
+    if not priority_id_order:
+        return results[:limit]
+
+    by_id: Dict[str, Dict[str, Any]] = {}
+    ordered_results: List[Dict[str, Any]] = []
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id not in by_id:
+            by_id[memory_id] = result
+        ordered_results.append(result)
+
+    guaranteed = [by_id[memory_id] for memory_id in priority_id_order if memory_id in by_id]
+    if len(guaranteed) >= limit:
+        return guaranteed[:limit]
+
+    selected_ids = {
+        str(item.get("id") or (item.get("memory") or {}).get("id") or "").strip()
+        for item in guaranteed
+    }
+    combined = list(guaranteed)
+    for result in ordered_results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id in selected_ids:
+            continue
+        combined.append(result)
+        if len(combined) >= limit:
+            break
+
+    return combined[:limit]
 
 
 def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
@@ -642,6 +1007,21 @@ def _results_have_priority(results: List[Dict[str, Any]], profile: Dict[str, Any
         if _result_matches_context_priority(result, profile):
             return True
     return False
+
+
+def _results_have_priority_ids(results: List[Dict[str, Any]], profile: Dict[str, Any]) -> bool:
+    priority_ids: Set[str] = profile.get("priority_ids") or set()
+    if not priority_ids:
+        return True
+
+    seen_priority_ids: Set[str] = set()
+    for result in results:
+        memory = result.get("memory") or {}
+        memory_id = str(result.get("id") or memory.get("id") or "").strip()
+        if memory_id and memory_id in priority_ids:
+            seen_priority_ids.add(memory_id)
+
+    return priority_ids.issubset(seen_priority_ids)
 
 
 def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
@@ -821,6 +1201,7 @@ def _expand_related_memories(
     expand_min_strength: Optional[float] = None,
     expand_min_importance: Optional[float] = None,
     exclude_tags: Optional[List[str]] = None,
+    expand_respect_tags: bool = False,
 ) -> List[Dict[str, Any]]:
     if graph is None or not seed_results or expansion_limit <= 0:
         return []
@@ -913,8 +1294,17 @@ def _expand_related_memories(
                         continue
                 except (TypeError, ValueError):
                     continue
+            candidate_tag_filters = tag_filters if expand_respect_tags else None
+            candidate_tag_mode = tag_mode if expand_respect_tags else "any"
+            candidate_tag_match = tag_match if expand_respect_tags else "exact"
             if not result_passes_filters(
-                candidate, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                candidate,
+                start_time,
+                end_time,
+                candidate_tag_filters,
+                candidate_tag_mode,
+                candidate_tag_match,
+                exclude_tags,
             ):
                 continue
 
@@ -1106,6 +1496,25 @@ def handle_recall(
         or request.args.get("expand"),
         False,
     )
+    expand_respect_tags = _parse_bool_param(
+        request.args.get("expand_respect_tags"),
+        False,
+    )
+    state_mode_param = (request.args.get("state_mode") or "").strip().lower()
+    if state_mode_param and state_mode_param not in {"current", "history"}:
+        abort(400, description="'state_mode' must be 'current' or 'history'")
+
+    current_only_param = request.args.get("current_only")
+    if current_only_param is not None:
+        current_only = _parse_bool_param(current_only_param, True)
+        resolved_state_mode = "current" if current_only else "history"
+    elif state_mode_param:
+        resolved_state_mode = state_mode_param
+        current_only = resolved_state_mode == "current"
+    else:
+        current_only = True
+        resolved_state_mode = "current"
+    state_debug = _parse_bool_param(request.args.get("state_debug"), False)
 
     # Entity expansion for multi-hop reasoning
     expand_entities = _parse_bool_param(
@@ -1253,7 +1662,9 @@ def handle_recall(
 
         context_injected = False
         if context_profile:
-            if not _results_have_priority(local_results, context_profile):
+            priority_ids_missing = not _results_have_priority_ids(local_results, context_profile)
+            needs_context_injection = not _results_have_priority(local_results, context_profile)
+            if priority_ids_missing or needs_context_injection:
                 context_injected = _inject_priority_memories(
                     local_results,
                     graph,
@@ -1268,6 +1679,7 @@ def handle_recall(
                     tag_mode,
                     tag_match,
                     per_query_limit,
+                    logger,
                     exclude_tags,
                 )
 
@@ -1312,8 +1724,7 @@ def handle_recall(
         elif sort_param in {"updated_desc", "updated_asc"}:
             # Same key, but favor updated_at (already primary) and keep the name explicit for callers
             local_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
-        if len(local_results) > per_query_limit:
-            local_results = local_results[:per_query_limit]
+        local_results = _guarantee_priority_results(local_results, context_profile, per_query_limit)
 
         # Track originating query for debugging/clients
         for res in local_results:
@@ -1400,8 +1811,7 @@ def handle_recall(
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
     elif sort_param in {"updated_desc", "updated_asc"}:
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
-    if len(deduped_results) > limit:
-        deduped_results = deduped_results[:limit]
+    deduped_results = _guarantee_priority_results(deduped_results, any_context_profile, limit)
 
     # Graph expansion feature (from upstream branch)
     seed_results = list(deduped_results)
@@ -1439,6 +1849,7 @@ def handle_recall(
             expand_min_strength=expand_min_strength,
             expand_min_importance=expand_min_importance,
             exclude_tags=exclude_tags,
+            expand_respect_tags=expand_respect_tags,
         )
         results = seed_results + expansion_results
 
@@ -1456,21 +1867,46 @@ def handle_recall(
             limit_per_entity=5,
             total_limit=expansion_limit,
             logger=logger,
-            additional_tag_filters=tag_filters,  # Pass conversation tag filter
+            additional_tag_filters=tag_filters if expand_respect_tags else None,
         )
-        if start_time or end_time or tag_filters or exclude_tags:
+        entity_tag_filters = tag_filters if expand_respect_tags else None
+        entity_tag_mode = tag_mode if expand_respect_tags else "any"
+        entity_tag_match = tag_match if expand_respect_tags else "exact"
+        if start_time or end_time or entity_tag_filters or exclude_tags:
             entity_expansion_results = [
                 r
                 for r in entity_expansion_results
                 if result_passes_filters(
-                    r, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                    r,
+                    start_time,
+                    end_time,
+                    entity_tag_filters,
+                    entity_tag_mode,
+                    entity_tag_match,
+                    exclude_tags,
                 )
             ]
         results = seed_results + expansion_results + entity_expansion_results
 
+    state_filter_info: Optional[Dict[str, Any]] = None
+    if current_only:
+        results, state_filter_info = _apply_current_state_filter(
+            results=results,
+            graph=graph,
+            result_passes_filters=result_passes_filters,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_filters,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            exclude_tags=exclude_tags,
+            logger=logger,
+            state_debug=state_debug,
+        )
+
     pre_filter_count = len(results)
 
-    # Apply adaptive score floor: detect steep dropoff and cut low-quality tail
+    # Apply adaptive score floor: detect a pronounced dropoff without discarding most results.
     score_floor_applied = None
     if sort_param == "score" and adaptive_floor and len(results) > 3:
         scores = sorted([float(r.get("final_score", 0.0)) for r in results], reverse=True)
@@ -1483,12 +1919,16 @@ def handle_recall(
             if gap > max_gap:
                 max_gap = gap
                 gap_idx = i
-        # If there's a steep dropoff (>15% of max score), cut below it
-        if max_gap > 0.15 * scores[0] and gap_idx > 0:
-            score_floor_applied = scores[gap_idx]
-            results = [
-                r for r in results if float(r.get("final_score", 0.0)) >= score_floor_applied
+        # Only cut on a large dropoff (>25% of top score), and only if at least half survive.
+        if max_gap > 0.25 * scores[0] and gap_idx > 0:
+            candidate_floor = scores[gap_idx]
+            filtered_results = [
+                r for r in results if float(r.get("final_score", 0.0)) >= candidate_floor
             ]
+            minimum_retained = (len(results) + 1) // 2
+            if len(filtered_results) >= minimum_retained:
+                score_floor_applied = candidate_floor
+                results = filtered_results
 
     # Apply explicit min_score on final assembled results (catches expansions)
     if min_score is not None and min_score > 0:
@@ -1569,6 +2009,7 @@ def handle_recall(
         "count": len(results),
         "dedup_removed": dedup_removed,
         "sort": sort_param,
+        "state_mode": resolved_state_mode,
         "vector_search": {
             "enabled": qdrant_client is not None,
             "matched": bool(total_vector_matches),
@@ -1581,6 +2022,7 @@ def handle_recall(
             "expanded_count": len(expansion_results),
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
+            "respect_tags": expand_respect_tags,
         }
     if expand_entities:
         response["entity_expansion"] = {
@@ -1600,6 +2042,8 @@ def handle_recall(
         response["tags"] = tag_filters
     if exclude_tags:
         response["exclude_tags"] = exclude_tags
+    if state_filter_info is not None:
+        response["state_filter"] = state_filter_info
     response["tag_mode"] = tag_mode
     response["tag_match"] = tag_match
     if jit_enriched_count:
@@ -1995,19 +2439,23 @@ def create_recall_blueprint(
             ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
             LIMIT $limit
         """
+        # FalkorDB does not accept parameters inside variable-length relationship ranges.
+        # max_depth is parsed and clamped above, so inlining it here is safe.
+        fallback_depth = max_depth
         fallback_query = f"""
-            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + '*1..$max_depth]-' if rel_pattern else '-[r*1..$max_depth]-'}(related:Memory)
+            MATCH (m:Memory {{id: $id}}){'-[r' + rel_pattern + f'*1..{fallback_depth}]-' if rel_pattern else f'-[r*1..{fallback_depth}]-'}(related:Memory)
             WHERE m.id <> related.id
             RETURN DISTINCT related
             ORDER BY coalesce(related.importance, 0.0) DESC, coalesce(related.timestamp, '') DESC
             LIMIT $limit
         """
         params = {"id": memory_id, "max_depth": max_depth, "limit": limit}
+        fallback_params = {"id": memory_id, "limit": limit}
         try:
             result = graph.query(query, params)
         except Exception:
             try:
-                result = graph.query(fallback_query, params)
+                result = graph.query(fallback_query, fallback_params)
             except Exception:
                 logger.exception("Failed to traverse related memories for %s", memory_id)
                 abort(500, description="Failed to fetch related memories")

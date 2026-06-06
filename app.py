@@ -128,6 +128,7 @@ from automem.config import (
     CONSOLIDATION_ARCHIVE_THRESHOLD,
     CONSOLIDATION_BASE_DECAY_RATE,
     CONSOLIDATION_CLUSTER_INTERVAL_SECONDS,
+    CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD,
     CONSOLIDATION_CONTROL_LABEL,
     CONSOLIDATION_CONTROL_NODE_ID,
     CONSOLIDATION_CREATIVE_INTERVAL_SECONDS,
@@ -140,6 +141,7 @@ from automem.config import (
     CONSOLIDATION_IDENTITY_INTERVAL_SECONDS,
     CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR,
     CONSOLIDATION_IMPORTANCE_PROTECTION_THRESHOLD,
+    CONSOLIDATION_MIN_CLUSTER_SIZE,
     CONSOLIDATION_PROTECTED_TYPES,
     CONSOLIDATION_RUN_LABEL,
     CONSOLIDATION_TASK_FIELDS,
@@ -268,6 +270,9 @@ def require_api_token() -> None:
     if request.path.startswith("/viewer"):
         return
 
+    if request.path in ("/backup", "/backup/"):
+        return
+
     _require_api_token_helper(
         request_obj=request,
         api_token=API_TOKEN,
@@ -368,6 +373,8 @@ _consolidation_runtime = create_consolidation_runtime(
     decay_importance_threshold=CONSOLIDATION_DECAY_IMPORTANCE_THRESHOLD,
     base_decay_rate=CONSOLIDATION_BASE_DECAY_RATE,
     importance_floor_factor=CONSOLIDATION_IMPORTANCE_FLOOR_FACTOR,
+    cluster_similarity_threshold=CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD,
+    min_cluster_size=CONSOLIDATION_MIN_CLUSTER_SIZE,
 )
 
 _load_recent_runs = _consolidation_runtime.load_recent_runs

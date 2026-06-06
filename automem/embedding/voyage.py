@@ -26,6 +26,8 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
     - voyage-4-lite: Optimized for latency/cost
     """
 
+    SUPPORTED_DIMENSIONS = {256, 512, 1024, 2048}
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -52,9 +54,10 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         if not api_key_value:
             raise ValueError("Voyage API key required (pass api_key or set VOYAGE_API_KEY)")
 
-        valid_dimensions = {256, 512, 1024, 2048}
-        if dimension not in valid_dimensions:
-            raise ValueError(f"Invalid dimension {dimension}. Must be one of: {valid_dimensions}")
+        if dimension not in self.SUPPORTED_DIMENSIONS:
+            raise ValueError(
+                f"Invalid dimension {dimension}. Must be one of: {self.SUPPORTED_DIMENSIONS}"
+            )
 
         self.model = model
         self._dimension = dimension

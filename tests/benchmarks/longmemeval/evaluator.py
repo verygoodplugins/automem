@@ -3,7 +3,7 @@ LongMemEval Evaluation Module
 
 Provides scoring utilities:
 - Quick local scoring (exact match, substring, F1 token overlap)
-- GPT-4o-based evaluation (matches LongMemEval paper's methodology)
+- LLM-based evaluation with the canonical AutoMem judge by default
 """
 
 import json
@@ -11,6 +11,8 @@ import os
 import re
 from collections import Counter
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
+
+from tests.benchmarks.judge_policy import CANONICAL_BENCHMARK_JUDGE_MODEL, is_gpt5_family
 
 try:
     from openai import OpenAI
@@ -149,11 +151,12 @@ def llm_evaluate(
     hypothesis: str,
     reference: str,
     question_id: str,
-    model: str = "gpt-4o",
+    model: str = CANONICAL_BENCHMARK_JUDGE_MODEL,
     client: Optional[Any] = None,
+    fallback_on_error: bool = True,
 ) -> Dict[str, Any]:
     """
-    GPT-4o-based evaluation matching LongMemEval paper methodology.
+    LLM-based evaluation matching the LongMemEval paper's judge style.
 
     The evaluator asks the LLM to judge whether the hypothesis correctly
     answers the question given the reference answer.
@@ -202,12 +205,35 @@ Respond with ONLY a JSON object:
 {{"correct": true/false, "confidence": 0.0-1.0, "explanation": "brief reason"}}"""
 
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            max_tokens=200,
-        )
+        request_kwargs: Dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if is_gpt5_family(model):
+            request_kwargs["max_completion_tokens"] = 200
+            request_kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "longmemeval_judge",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "correct": {"type": "boolean"},
+                            "confidence": {"type": "number"},
+                            "explanation": {"type": "string"},
+                        },
+                        "required": ["correct", "confidence", "explanation"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        else:
+            request_kwargs["temperature"] = 0
+            request_kwargs["max_tokens"] = 200
+            request_kwargs["response_format"] = {"type": "json_object"}
+
+        response = client.chat.completions.create(**request_kwargs)
         content = response.choices[0].message.content.strip()
 
         # Parse JSON response (handle fenced markdown like ```json ... ```)
@@ -223,6 +249,8 @@ Respond with ONLY a JSON object:
         }
 
     except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as e:
+        if not fallback_on_error:
+            raise
         # Fall back to quick scoring on LLM failure
         qs = quick_score(hypothesis, reference, question_id)
         return {
@@ -271,7 +299,9 @@ class LongMemEvalScorer:
         if not self.results:
             return {
                 "overall": {"accuracy": 0.0, "correct": 0, "total": 0},
+                "retrieval": {"recall_any_at_5": 0.0, "hits": 0, "total": 0},
                 "by_type": {},
+                "retrieval_by_type": {},
                 "abstention": {"total": 0, "correct": 0, "accuracy": 0.0},
             }
 
@@ -281,22 +311,33 @@ class LongMemEvalScorer:
 
         # By question type
         by_type = {}
+        retrieval_by_type = {}
         for r in self.results:
             qtype = r.get("question_type", "unknown")
             if qtype not in by_type:
                 by_type[qtype] = {"correct": 0, "total": 0}
+            if qtype not in retrieval_by_type:
+                retrieval_by_type[qtype] = {"hits": 0, "total": 0}
             by_type[qtype]["total"] += 1
+            retrieval_by_type[qtype]["total"] += 1
             if r.get("is_correct", False):
                 by_type[qtype]["correct"] += 1
+            if r.get("recall_hit_at_5", False):
+                retrieval_by_type[qtype]["hits"] += 1
 
         for qtype in by_type:
             t = by_type[qtype]
             t["accuracy"] = t["correct"] / t["total"] if t["total"] > 0 else 0.0
             t["name"] = self.TYPE_NAMES.get(qtype, qtype)
+        for qtype in retrieval_by_type:
+            t = retrieval_by_type[qtype]
+            t["recall_any_at_5"] = t["hits"] / t["total"] if t["total"] > 0 else 0.0
+            t["name"] = self.TYPE_NAMES.get(qtype, qtype)
 
         # Abstention stats
         abs_results = [r for r in self.results if r.get("is_abstention", False)]
         abs_correct = sum(1 for r in abs_results if r.get("is_correct", False))
+        retrieval_hits = sum(1 for r in self.results if r.get("recall_hit_at_5", False))
 
         return {
             "overall": {
@@ -304,7 +345,13 @@ class LongMemEvalScorer:
                 "correct": correct,
                 "total": total,
             },
+            "retrieval": {
+                "recall_any_at_5": retrieval_hits / total if total > 0 else 0.0,
+                "hits": retrieval_hits,
+                "total": total,
+            },
             "by_type": by_type,
+            "retrieval_by_type": retrieval_by_type,
             "abstention": {
                 "total": len(abs_results),
                 "correct": abs_correct,
@@ -318,6 +365,7 @@ class LongMemEvalScorer:
         """Print a formatted benchmark report."""
         scores = self.compute_scores()
         overall = scores["overall"]
+        retrieval = scores["retrieval"]
 
         print(f"\n{'='*60}")
         print("LongMemEval Benchmark Results")
@@ -329,6 +377,9 @@ class LongMemEvalScorer:
         print(
             f"\nOverall Accuracy: {overall['accuracy']:.2%} ({overall['correct']}/{overall['total']})"
         )
+        print(
+            f"Retrieval Recall@5: {retrieval['recall_any_at_5']:.2%} ({retrieval['hits']}/{retrieval['total']})"
+        )
 
         print("\nAccuracy by Question Type:")
         print(f"  {'Type':<35s} {'Accuracy':>8s} {'Count':>8s}")
@@ -338,6 +389,15 @@ class LongMemEvalScorer:
             name = data.get("name", qtype)
             acc = data["accuracy"]
             count = f"{data['correct']}/{data['total']}"
+            print(f"  {name:<35s} {acc:>7.1%} {count:>8s}")
+
+        print("\nRetrieval Recall@5 by Question Type:")
+        print(f"  {'Type':<35s} {'Recall@5':>8s} {'Count':>8s}")
+        print(f"  {'-'*35} {'-'*8} {'-'*8}")
+        for qtype, data in sorted(scores["retrieval_by_type"].items()):
+            name = data.get("name", qtype)
+            acc = data["recall_any_at_5"]
+            count = f"{data['hits']}/{data['total']}"
             print(f"  {name:<35s} {acc:>7.1%} {count:>8s}")
 
         # Abstention
