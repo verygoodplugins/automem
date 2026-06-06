@@ -97,5 +97,8 @@ def init_consolidation_scheduler(
         name="consolidation-scheduler",
     )
     state.consolidation_thread.start()
-    run_consolidation_tick_fn()
+    # Skip eager first tick: FalkorDB may still be loading its RDB snapshot at
+    # startup and the "Redis is loading the dataset in memory" error poisons
+    # the day's decay/creative run. The worker loop will fire its first tick
+    # after consolidation_tick_seconds, which is plenty of warm-up time.
     logger.info("Consolidation scheduler initialized")

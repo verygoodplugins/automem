@@ -1,0 +1,32 @@
+[tool.black]
+line-length = 100
+extend-exclude = '''
+/(
+  \.bench-venv
+  | \.venv
+  | \.worktrees
+  | benchmarks/results
+  | benchmarks/snapshots
+  | node_modules
+  | packages/graph-viewer/node_modules
+  | showcase
+  | venv
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+skip = [
+  ".bench-venv",
+  ".venv",
+  ".worktrees",
+  "benchmarks/results",
+  "benchmarks/snapshots",
+  "node_modules",
+  "packages/graph-viewer/node_modules",
+  "showcase",
+  "tests/benchmarks/locomo",
+  "venv",
+]
