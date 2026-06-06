@@ -61,7 +61,12 @@ def create_graph_blueprint(
         """
         query_start = time.perf_counter()
 
-        limit_raw = int(request.args.get("limit", 500))
+        try:
+            limit_raw = int(request.args.get("limit", 500))
+        except (TypeError, ValueError):
+            limit_raw = 500
+        if limit_raw < 0:
+            abort(400, description="limit must be >= 0")
         limit = 0 if limit_raw == 0 else min(limit_raw, 50000)
         min_importance = float(request.args.get("min_importance", 0.0))
         types_filter = (
