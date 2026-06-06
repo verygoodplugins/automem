@@ -37,4 +37,5 @@ If an eval needs behavior outside those endpoints, document the dependency clear
 - Treat AutoMem as a black-box server under test.
 - Do not make published benchmark claims from experimental harnesses unless the result is also reproduced through the official `automem` benchmark flow.
 - If an experiment needs LoCoMo or LongMemEval, call the official harness here or label any adapter as experimental rather than canonical.
+- Treat Memora/FAMA, WRIT, and similar lifecycle diagnostics from `automem-evals` as diagnostic signals until their scenario, harness, and artifacts are promoted into this repo's benchmark policy.
 - Do not make `automem` depend on uncommitted files from an external eval repo.
