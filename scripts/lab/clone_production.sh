@@ -91,18 +91,34 @@ while [[ $# -gt 0 ]]; do
             ;;
         --api-port)
             AUTOMEM_API_HOST_PORT="${2:-}"
+            if [ -z "$AUTOMEM_API_HOST_PORT" ]; then
+                echo "ERROR: --api-port requires a value."
+                exit 1
+            fi
             shift 2
             ;;
         --qdrant-port)
             QDRANT_HOST_PORT="${2:-}"
+            if [ -z "$QDRANT_HOST_PORT" ]; then
+                echo "ERROR: --qdrant-port requires a value."
+                exit 1
+            fi
             shift 2
             ;;
         --falkordb-port)
             FALKORDB_HOST_PORT="${2:-}"
+            if [ -z "$FALKORDB_HOST_PORT" ]; then
+                echo "ERROR: --falkordb-port requires a value."
+                exit 1
+            fi
             shift 2
             ;;
         --falkordb-browser-port)
             FALKORDB_BROWSER_HOST_PORT="${2:-}"
+            if [ -z "$FALKORDB_BROWSER_HOST_PORT" ]; then
+                echo "ERROR: --falkordb-browser-port requires a value."
+                exit 1
+            fi
             shift 2
             ;;
         --python)
@@ -180,7 +196,11 @@ resolve_restore_source() {
 
 wait_for_falkordb() {
     for i in $(seq 1 30); do
-        if compose exec -T falkordb redis-cli ping 2>/dev/null | grep -q PONG; then
+        if [ -n "$LOCAL_FALKORDB_PASSWORD" ]; then
+            if compose exec -T falkordb redis-cli -a "$LOCAL_FALKORDB_PASSWORD" ping 2>/dev/null | grep -q PONG; then
+                return 0
+            fi
+        elif compose exec -T falkordb redis-cli ping 2>/dev/null | grep -q PONG; then
             return 0
         fi
         sleep 1
