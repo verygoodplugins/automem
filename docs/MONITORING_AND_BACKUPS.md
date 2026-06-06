@@ -146,6 +146,20 @@ python scripts/health_monitor.py \
 
 For portable backups that cover both databases, use the `backup_automem.py` script:
 
+#### API Backup Export
+
+When AutoMem itself has internal-network access to FalkorDB and Qdrant, operators can pull a full portable backup through the API without opening database proxies:
+
+```bash
+curl -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  "$AUTOMEM_API_URL/backup" \
+  -o snapshot.tar.gz
+
+python scripts/restore_from_backup.py --backup-dir snapshot.tar.gz --force
+```
+
+`GET /backup` requires the admin token because it exports the full corpus. Add `?include=falkordb` or `?include=qdrant` to export only one store.
+
 #### Local Backups (Development)
 
 The `backup_automem.py` script exports both FalkorDB and Qdrant to compressed JSON files:

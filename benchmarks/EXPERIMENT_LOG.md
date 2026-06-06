@@ -21,9 +21,14 @@ Current headline results:
 
 | Benchmark | Scope | Score | Retrieval | Notes |
 |-----------|-------|-------|-----------|-------|
-| LongMemEval full | 500 questions | **86.20% (431/500)** | recall@5 **97.20% (486/500)** | Canonical `gpt-5-mini` answerer + `gpt-5.4-mini-2026-03-17` judge; `judge_errors=0`, `memory_ingest_failures=0`. |
-| LongMemEval mini | 30 questions, stratified 5 per type | **60.0% (18/30)** | recall@5 **96.67% (29/30)** | Representative canary; do not compare to legacy prefix slices. |
-| LoCoMo full | 10 conversations, 1986 questions | **83.99% (1668/1986)** | -- | Latest recorded full judge-on run from #128; cat5 scored 92.83% with 0 skips. |
+| LongMemEval full | 500 questions | **87.00% (435/500)** | recall@5 **97.00% (485/500)** | Fresh publication verification run with `gpt-5-mini` answerer + `gpt-5.4-mini-2026-03-17` judge; `judge_errors=0`, `memory_ingest_failures=0`, harness `publishable=true`. |
+| LongMemEval mini | 30 questions, stratified 5 per type | **70.00% (21/30)** | recall@5 **96.67% (29/30)** | Representative canary from the May 2026 publication verification run; do not compare to legacy prefix slices. |
+| LoCoMo full | 10 conversations, 1986 questions | **84.74% (1683/1986)** | -- | Fresh publication verification run with pinned `gpt-5.4-mini-2026-03-17` judge; 444 judge calls, 0 skips/errors. |
+
+For arXiv and release-facing claims, use the curated publication bundle at
+[`benchmarks/publication/2026-05-arxiv/`](publication/2026-05-arxiv/). It
+separates canonical, exploratory, historical, and external-reported results so
+paper text does not accidentally over-claim from diagnostic runs.
 
 Detailed experiment history:
 
@@ -48,9 +53,10 @@ Detailed experiment history:
 | 2026-03-11 | #74 entity expansion | exp/74-entity-expansion-precision-v1 | 89.36% (+0.0) | -- | -- | -- | Hub-node detection. Zero delta — benchmark doesn't exercise graph expansion. → [postmortem](postmortems/2026-03-11_issue74_entity_expansion_precision.md) |
 | 2026-03-12 | #79 (PR #125) | exp/79-priority-ids-fetch-v1 | 89.36% (+0.0) | -- | -- | -- | Bug fix: priority_ids now fetches by ID. Merged. → [postmortem](postmortems/2026-03-12_issue79_priority_ids_fetch.md) |
 | 2026-04-23 | #128 | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | **85.53% (201/235)** | -- | -- | -- | Content keyword fallback + gentler adaptive floor. Improved **+3.40pp** vs the same-day baseline (`82.13%`, `193/235`) with no sampled question-level regressions across conv-26/conv-30. |
-| 2026-04-23 | #128 full judge | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | -- | **83.99% (1668/1986)** | -- | -- | Full judge-on rerun after harness fixes. Judge preflight passed and cat-5 scored **92.83% (414/446)** with **0 skips**. Improves **+3.93pp** vs full baseline (`80.06%`, `1590/1986`), so #128 is strong enough to move forward to broader validation. |
+| 2026-04-23 | #128 full judge | fix/128-recall-keyword-scoring-dead-for-vector-results-adaptive-floor-too-aggressive | -- | **83.99% (1668/1986)** | -- | -- | Full judge-on rerun after harness fixes; category-5 judge model was `gpt-5.1`. Judge preflight passed and cat-5 scored **92.83% (414/446)** with **0 skips**. Improves **+3.93pp** vs full baseline (`80.06%`, `1590/1986`), so #128 is strong enough to move forward to broader validation. |
 | 2026-04-23 | #142 | fix/142-expansion-tag-filter | -- | 77.30% (-0.07) | -- | -- | Expansion tag-filter bypass. Effectively flat vs pre-fix `77.37%` — canonical configs don't exercise `expand_relations`. Validated via scoped repro + helper/API tests. |
-| 2026-04-26 | LongMemEval harness | fix/longmemeval-harness-resume-and-stratified-mini | -- | -- | **60.0% (18/30)** | **86.20% (431/500)** | Representative stratified mini and full canonical run. Full recall@5 **97.20% (486/500)**; `judge_errors=0`, `memory_ingest_failures=0`. |
+| 2026-04-26 | LongMemEval harness | fix/longmemeval-harness-resume-and-stratified-mini | -- | -- | **60.0% (18/30)** | **86.20% (431/500)** | Historical canonical milestone. Full recall@5 **97.20% (486/500)**; `judge_errors=0`, `memory_ingest_failures=0`. Superseded for publication claims by the 2026-05-17 verification run. |
+| 2026-05-17 | Publication verification | feat/automem-arxiv-publication | **85.20% (259/304)** | **84.74% (1683/1986)** | **70.00% (21/30)** | **87.00% (435/500)** | Fresh local publication reruns. LoCoMo full used pinned `gpt-5.4-mini-2026-03-17` judge, 444 judge calls, 0 skips/errors, estimated judge cost `$0.7909`, artifact `benchmarks/results/locomo_baseline_20260517_193934.json`, sha256 `a75816e9a6d3302c22b34852b75ac19a9d9f5cb27d1a109e0af7e49359330716`. LongMemEval full used `gpt-5-mini` answerer + `gpt-5.4-mini-2026-03-17` judge, recall@5 **97.00% (485/500)**, `memory_ingest_failures=0`, `judge_errors=0`, `publishable=true`, artifact `benchmarks/results/longmemeval-full-publication-20260518.json`, sha256 `ed6f7cf69b7be6fa0050536ec2b0f947f5510afd8c2a374b3fafb9cde009da75`. |
 
 ### Category Breakdown (LoCoMo-mini)
 
@@ -76,20 +82,20 @@ Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-
 
 ### Category Breakdown (LongMemEval full)
 
-Canonical run: `benchmarks/results/longmemeval_full_gpt5mini_20260425_231308.json`.
+Canonical run: `benchmarks/results/longmemeval-full-publication-20260518.json`.
 Answerer `gpt-5-mini`; judge `gpt-5.4-mini-2026-03-17`.
 
 | Question type | Accuracy | Recall@5 |
 |---------------|----------|----------|
 | knowledge-update | 88.46% (69/78) | 100.00% (78/78) |
-| multi-session | 81.20% (108/133) | 98.50% (131/133) |
+| multi-session | 84.21% (112/133) | 97.74% (130/133) |
 | single-session-assistant | 98.21% (55/56) | 100.00% (56/56) |
-| single-session-preference | 60.00% (18/30) | 90.00% (27/30) |
-| single-session-user | 91.43% (64/70) | 92.86% (65/70) |
+| single-session-preference | 56.67% (17/30) | 90.00% (27/30) |
+| single-session-user | 92.86% (65/70) | 92.86% (65/70) |
 | temporal-reasoning | 87.97% (117/133) | 96.99% (129/133) |
 
-Failure split from the result-analysis helper: 58 wrong answers had the answer
-session retrieved at recall@5; 11 were retrieval misses. This is the basis for
+Failure split from the result-analysis helper: 54 wrong answers had the answer
+session retrieved at recall@5; 11 wrong answers were retrieval misses. This is the basis for
 follow-up issues #158 and #159.
 
 ## Exploratory and Historical Benchmarks

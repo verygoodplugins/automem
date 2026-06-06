@@ -1,6 +1,6 @@
 # AutoMem API Reference
 
-This document lists the primary API endpoints and examples. All JSON responses include `status` and primary payload fields for LLM-friendliness.
+This document lists the primary API endpoints and examples. JSON responses include `status` and primary payload fields for LLM-friendliness unless an endpoint explicitly returns a binary payload.
 
 Authentication
 
@@ -9,6 +9,7 @@ Authentication
   - `X-API-Key: <AUTOMEM_API_TOKEN>` header
   - `?api_key=<AUTOMEM_API_TOKEN>` query parameter
 - Admin endpoints additionally require `X-Admin-Token: <ADMIN_API_TOKEN>` header.
+- `GET /backup` is admin-only and does not accept the regular API token by itself.
 
 Health
 
@@ -108,6 +109,13 @@ Enrichment
   - Response: `{ "status": "queued", "count": N }`
 
 Admin
+
+- GET `/backup`
+  - Headers: requires `X-Admin-Token: <ADMIN_API_TOKEN>` or `X-Admin-Api-Key: <ADMIN_API_TOKEN>`.
+  - Query: optional `include=falkordb,qdrant`; defaults to both. Use `include=falkordb` or `include=qdrant` for a partial export.
+  - Response: binary `application/gzip` attachment named `automem-backup-<timestamp>.tar.gz`.
+  - Archive contents are restore-compatible: `falkordb/falkordb_<timestamp>.json.gz` and/or `qdrant/qdrant_<timestamp>.json.gz`.
+  - Example: `curl -H "X-Admin-Token: $ADMIN_API_TOKEN" "$AUTOMEM_API_URL/backup" -o snapshot.tar.gz`
 
 - POST `/admin/reembed`
   - Headers: requires both API and Admin tokens.

@@ -328,6 +328,8 @@ def store_memory(
                                 "timestamp": created_at,
                                 "type": memory_type,
                                 "confidence": type_confidence,
+                                "t_valid": t_valid or created_at,
+                                "t_invalid": t_invalid,
                                 "updated_at": updated_at,
                                 "last_accessed": last_accessed,
                                 "metadata": metadata,
@@ -456,6 +458,8 @@ def update_memory(
     memory_type = payload.get("type", current.get("type"))
     confidence = payload.get("confidence", current.get("confidence"))
     timestamp = payload.get("timestamp", current.get("timestamp"))
+    t_valid = payload.get("t_valid", current.get("t_valid"))
+    t_invalid = payload.get("t_invalid", current.get("t_invalid"))
     metadata_raw = payload.get("metadata", parse_metadata_field_fn(current.get("metadata")))
     updated_at = payload.get("updated_at", current.get("updated_at", utc_now_fn()))
     last_accessed = payload.get("last_accessed", current.get("last_accessed"))
@@ -478,6 +482,18 @@ def update_memory(
         except ValueError as exc:
             abort_fn(400, description=f"Invalid timestamp: {exc}")
 
+    if t_valid:
+        try:
+            t_valid = normalize_timestamp_fn(t_valid)
+        except ValueError as exc:
+            abort_fn(400, description=f"Invalid t_valid: {exc}")
+
+    if t_invalid:
+        try:
+            t_invalid = normalize_timestamp_fn(t_invalid)
+        except ValueError as exc:
+            abort_fn(400, description=f"Invalid t_invalid: {exc}")
+
     if updated_at:
         try:
             updated_at = normalize_timestamp_fn(updated_at)
@@ -499,6 +515,8 @@ def update_memory(
             m.type = $type,
             m.confidence = $confidence,
             m.timestamp = $timestamp,
+            m.t_valid = $t_valid,
+            m.t_invalid = $t_invalid,
             m.metadata = $metadata,
             m.updated_at = $updated_at,
             m.last_accessed = $last_accessed
@@ -516,6 +534,8 @@ def update_memory(
             "type": memory_type,
             "confidence": confidence,
             "timestamp": timestamp,
+            "t_valid": t_valid,
+            "t_invalid": t_invalid,
             "metadata": metadata_json,
             "updated_at": updated_at,
             "last_accessed": last_accessed,
@@ -549,6 +569,8 @@ def update_memory(
                 "timestamp": timestamp,
                 "type": memory_type,
                 "confidence": confidence,
+                "t_valid": t_valid,
+                "t_invalid": t_invalid,
                 "updated_at": updated_at,
                 "last_accessed": last_accessed,
                 "metadata": metadata,
