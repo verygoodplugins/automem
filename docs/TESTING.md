@@ -371,6 +371,10 @@ Use the separate `automem-evals` repo for:
 - cross-agent or cross-backend comparisons
 - bulky timestamped result artifacts and exploratory writeups
 
+Memora/FAMA and WRIT runs remain diagnostic unless their scenario, harness,
+and result artifacts are promoted into this repo's official benchmark flow and
+recorded in `benchmarks/EXPERIMENT_LOG.md`.
+
 If you are building an external eval harness against local AutoMem, use the contract in [`EVALS_CONTRACT.md`](EVALS_CONTRACT.md) and treat this repo as the system under test.
 
 ### AutoMem's Advantages

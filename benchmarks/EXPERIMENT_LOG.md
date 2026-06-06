@@ -103,6 +103,9 @@ follow-up issues #158 and #159.
 These results are useful validation signals, but they are not current headline
 claims. BEAM entries came from `automem-evals` exploratory runners. LongMemEval
 prefix entries are legacy/provisional because dataset prefixes are biased.
+Memora/FAMA and WRIT lifecycle diagnostics are also exploratory unless their
+scenario, harness, and artifacts are promoted through this repo's official
+benchmark policy.
 
 | Date | Benchmark | Scope | Score | Retrieval | Notes |
 |------|-----------|-------|-------|-----------|-------|
