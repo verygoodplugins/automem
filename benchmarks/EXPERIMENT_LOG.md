@@ -10,6 +10,7 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 | Tier | Benchmark | Runtime | Cost | When to use |
 |------|-----------|---------|------|-------------|
 | 0 | `make test` (unit) | 30s | free | Every change |
+| 0 | `make bench-current-state` (state-aware recall smoke) | <30s | free | Recall state contract changes |
 | 1 | `locomo-mini` (2 convos, 304 Qs) | 2-3 min | free / ~$0.20 with judge | Rapid iteration |
 | 2 | `locomo` (10 convos, 1986 Qs) | 5-10 min | free / ~$1-3 with judge | Before merge |
 | 3 | `longmemeval-mini` (stratified 30 Qs) | 15 min | ~$1 | Scoring/entity changes |
