@@ -74,7 +74,9 @@ def _safe_extract_tar_gz(archive_path: Path, target_dir: Path) -> None:
             if member.issym() or member.islnk():
                 raise ValueError(f"Refusing to extract link from backup archive: {member.name}")
             if not (member.isdir() or member.isfile()):
-                raise ValueError(f"Refusing to extract special file from backup archive: {member.name}")
+                raise ValueError(
+                    f"Refusing to extract special file from backup archive: {member.name}"
+                )
             destination = (target_root / member.name).resolve()
             if not destination.is_relative_to(target_root):
                 raise ValueError(f"Refusing to extract unsafe backup path: {member.name}")
