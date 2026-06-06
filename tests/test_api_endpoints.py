@@ -575,9 +575,7 @@ def test_recall_current_only_filters_temporal_state(client, mock_state, auth_hea
     assert "state_filter" not in data
 
 
-def test_recall_state_mode_defaults_to_current_and_echoes_mode(
-    client, mock_state, auth_headers
-):
+def test_recall_state_mode_defaults_to_current_and_echoes_mode(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     now = datetime.now(timezone.utc)
     active_id = "cc000000-0000-0000-0000-000000000032"
@@ -602,9 +600,7 @@ def test_recall_state_mode_defaults_to_current_and_echoes_mode(
     assert data["state_filter"]["suppressed_count"] == 1
 
 
-def test_recall_state_mode_history_preserves_state_history(
-    client, mock_state, auth_headers
-):
+def test_recall_state_mode_history_preserves_state_history(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     now = datetime.now(timezone.utc)
     active_id = "cc000000-0000-0000-0000-000000000034"
