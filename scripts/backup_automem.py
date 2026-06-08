@@ -28,6 +28,13 @@ from dotenv import load_dotenv
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient
 
+# Make the repo root importable when invoked as `python scripts/backup_automem.py`:
+# Python puts the script's own dir (scripts/) on sys.path[0], not the repo root,
+# so the `automem` package one level up would otherwise be unimportable.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from automem.backup import (
     cleanup_old_backup_files,
     write_falkordb_backup_file,
