@@ -301,10 +301,7 @@ def test_recall_with_text_and_tags_overfetches_vector_candidates():
     def _vector_search(*args, **kwargs):
         limit = args[4]
         seen_limits.append(limit)
-        return [
-            _make_floor_result(idx, 1.0 - (idx * 0.01), query="locomo")
-            for idx in range(limit)
-        ]
+        return [_make_floor_result(idx, 1.0 - (idx * 0.01), query="locomo") for idx in range(limit)]
 
     with app.app.test_request_context(
         "/recall?query=locomo&tags=automem&tags=locomo&tag_mode=all&limit=10"

@@ -77,9 +77,7 @@ def _graph_update_deadline(seconds: Optional[float], *, rows: int) -> Iterator[N
     previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
 
     def _raise_timeout(_signum: int, _frame: Any) -> None:
-        raise GraphUpdateTimedOut(
-            f"graph update timed out after {seconds:g}s for {rows} rows"
-        )
+        raise GraphUpdateTimedOut(f"graph update timed out after {seconds:g}s for {rows} rows")
 
     signal.signal(signal.SIGALRM, _raise_timeout)
     signal.setitimer(signal.ITIMER_REAL, seconds)
@@ -274,9 +272,7 @@ class RepairPlanResult:
                 1 for item in self.items if item.metadata_entities_changed
             ),
             "metadata_changes": sum(1 for item in self.items if item.metadata_changed),
-            "qdrant_payload_changes": sum(
-                1 for item in self.items if item.qdrant_payload_changed
-            ),
+            "qdrant_payload_changes": sum(1 for item in self.items if item.qdrant_payload_changed),
             "rejected_tags": len(self.rejected_tags),
             "canonicalized_tags": len(self.canonicalized_tags),
             "ambiguous_people": len(self.ambiguous_people),
@@ -311,7 +307,9 @@ def assert_local_targets(*, allow_non_local: bool, check_qdrant: bool) -> None:
         return
     falkor_host = _get_env("FALKORDB_HOST", "localhost")
     if not _is_local_host(falkor_host):
-        raise SystemExit(f"refusing non-local FalkorDB host without --allow-non-local: {falkor_host}")
+        raise SystemExit(
+            f"refusing non-local FalkorDB host without --allow-non-local: {falkor_host}"
+        )
     if check_qdrant:
         qdrant_host = _qdrant_host_from_env()
         if not _is_local_host(qdrant_host):
@@ -430,7 +428,8 @@ def _tag_set(tags: list[str], *, entity: bool) -> set[str]:
     return {
         tag
         for tag in tags
-        if isinstance(tag, str) and (tag.startswith("entity:") if entity else not tag.startswith("entity:"))
+        if isinstance(tag, str)
+        and (tag.startswith("entity:") if entity else not tag.startswith("entity:"))
     }
 
 
@@ -503,9 +502,7 @@ def _has_safe_person_name_shape(slug: str) -> bool:
     tokens = [token for token in slug.split("-") if token]
     if len(tokens) == 2:
         pass
-    elif len(tokens) == 3 and (
-        len(tokens[1]) == 1 or tokens[1] in _SAFE_PERSON_NAME_PARTICLES
-    ):
+    elif len(tokens) == 3 and (len(tokens[1]) == 1 or tokens[1] in _SAFE_PERSON_NAME_PARTICLES):
         pass
     else:
         return False
@@ -594,9 +591,7 @@ def _repair_row(
                         "candidates": candidates,
                     }
                     ambiguous.append(event)
-                    actions.append(
-                        {"action": "suppress_unsafe_single_name_people", **event}
-                    )
+                    actions.append({"action": "suppress_unsafe_single_name_people", **event})
                     continue
 
         if canonical_tag != tag:
@@ -974,7 +969,7 @@ def attach_qdrant_payloads(
                 continue
             enriched[index_by_id[memory_id]]["qdrant_payload"] = _parse_qdrant_payload(
                 _point_payload(point)
-        )
+            )
     return enriched
 
 

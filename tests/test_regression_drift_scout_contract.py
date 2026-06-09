@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = ROOT / ".agents" / "skills" / "automem-regression-drift-scout" / "SKILL.md"
 

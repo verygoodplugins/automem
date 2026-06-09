@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "lab" / "repair_entity_tags.py"
 
 
@@ -273,9 +272,7 @@ def test_iter_memory_rows_pages_memory_id_scan_without_full_graph_query() -> Non
 
     assert [row["id"] for row in rows] == ["m1", "m2", "m3"]
     id_page_params = [
-        params
-        for query, params in zip(graph.queries, graph.params)
-        if "ORDER BY m.id" in query
+        params for query, params in zip(graph.queries, graph.params) if "ORDER BY m.id" in query
     ]
     assert id_page_params == [
         {"after": "", "limit": 2},
@@ -698,9 +695,7 @@ def test_plan_rejects_non_name_people_suffix_variants_instead_of_canonicalizing(
 
     assert "entity:people:alex-beck" in item.repaired_tags
     assert all(tag not in item.repaired_tags for tag in bad_tags)
-    assert not any(
-        event["original_tag"] in bad_tags for event in result.canonicalized_tags
-    )
+    assert not any(event["original_tag"] in bad_tags for event in result.canonicalized_tags)
     assert {event["tag"] for event in result.rejected_tags} >= set(bad_tags)
 
 

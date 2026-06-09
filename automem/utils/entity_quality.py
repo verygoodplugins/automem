@@ -406,8 +406,7 @@ def _looks_like_markdown_or_code_fragment(tokens: list[str]) -> bool:
     code_token_count = sum(
         1
         for token in tokens
-        if token in _MARKDOWN_OR_CODE_SECONDARY_TOKENS
-        or re.fullmatch(r"[a-z]+\d+", token)
+        if token in _MARKDOWN_OR_CODE_SECONDARY_TOKENS or re.fullmatch(r"[a-z]+\d+", token)
     )
     return code_token_count >= 2
 
@@ -450,9 +449,7 @@ def _has_person_name_shape(tokens: list[str]) -> bool:
         return True
     if len(tokens) == 2:
         return tokens[0] != tokens[1]
-    if len(tokens) == 3 and (
-        len(tokens[1]) == 1 or tokens[1] in _PERSON_NAME_PARTICLES
-    ):
+    if len(tokens) == 3 and (len(tokens[1]) == 1 or tokens[1] in _PERSON_NAME_PARTICLES):
         return tokens[0] != tokens[-1]
     return False
 
@@ -548,16 +545,12 @@ def validate_entity_slug(
 
     if _looks_like_action_status_slug(canonical_slug):
         return reject(
-            "low_signal_people_slug"
-            if normalized_category == "people"
-            else "generic_entity_slug"
+            "low_signal_people_slug" if normalized_category == "people" else "generic_entity_slug"
         )
 
     if _looks_like_abstract_singleton_slug(canonical_slug):
         return reject(
-            "low_signal_people_slug"
-            if normalized_category == "people"
-            else "generic_entity_slug"
+            "low_signal_people_slug" if normalized_category == "people" else "generic_entity_slug"
         )
 
     if _looks_like_generated_fragment_slug(canonical_slug):
@@ -580,9 +573,7 @@ def validate_entity_slug(
         )
     ):
         return reject(
-            "low_signal_people_slug"
-            if normalized_category == "people"
-            else "generic_entity_slug"
+            "low_signal_people_slug" if normalized_category == "people" else "generic_entity_slug"
         )
 
     if normalized_category == "people":
