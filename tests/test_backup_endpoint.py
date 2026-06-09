@@ -425,15 +425,60 @@ def test_restore_falkordb_queries_use_timeout_and_retry(
     ]
 
 
+def test_restore_falkordb_timeout_fallback_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LegacyFlakyGraph:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any], int | None]] = []
+            self.fallback_calls = 0
+
+        def query(
+            self,
+            query: str,
+            params: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> Any:
+            timeout = kwargs.get("timeout")
+            self.calls.append((query, params or {}, timeout))
+            if "timeout" in kwargs:
+                raise TypeError("query() got an unexpected keyword argument 'timeout'")
+            self.fallback_calls += 1
+            if self.fallback_calls == 1:
+                raise RuntimeError("Query timed out")
+            return SimpleNamespace(result_set=[[9]])
+
+    graph = LegacyFlakyGraph()
+    monkeypatch.setattr(restore_module, "FALKORDB_RESTORE_QUERY_TIMEOUT_MS", 1234)
+    monkeypatch.setattr(restore_module, "FALKORDB_RESTORE_RETRIES", 2)
+    monkeypatch.setattr(restore_module, "FALKORDB_RESTORE_RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr(restore_module.time, "sleep", lambda _seconds: None)
+
+    result = restore_module._query_falkordb(graph, "MATCH (n) RETURN count(n)", {"x": 1})
+
+    assert result.result_set == [[9]]
+    assert graph.calls == [
+        ("MATCH (n) RETURN count(n)", {"x": 1}, 1234),
+        ("MATCH (n) RETURN count(n)", {"x": 1}, None),
+        ("MATCH (n) RETURN count(n)", {"x": 1}, 1234),
+        ("MATCH (n) RETURN count(n)", {"x": 1}, None),
+    ]
+
+
+def test_restore_float_env_treats_empty_values_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("QDRANT_TIMEOUT_SECONDS", "  ")
+
+    assert restore_module._float_env("QDRANT_TIMEOUT_SECONDS", 60) == 60
+
+
 def test_lab_clone_uses_paced_qdrant_restore_defaults() -> None:
     script = Path("scripts/lab/clone_production.sh").read_text()
 
     assert 'QDRANT_RESTORE_BATCH_SIZE="${QDRANT_RESTORE_BATCH_SIZE:-250}"' in script
     assert 'QDRANT_RESTORE_WAIT="${QDRANT_RESTORE_WAIT:-true}"' in script
-    assert (
-        'QDRANT_RESTORE_BATCH_DELAY_SECONDS="${QDRANT_RESTORE_BATCH_DELAY_SECONDS:-0}"'
-        in script
-    )
+    assert 'QDRANT_RESTORE_BATCH_DELAY_SECONDS="${QDRANT_RESTORE_BATCH_DELAY_SECONDS:-0}"' in script
     assert restore_module.QDRANT_RESTORE_BATCH_SIZE == 250
     assert restore_module.QDRANT_RESTORE_BATCH_DELAY_SECONDS == 0
     assert restore_module.QDRANT_RESTORE_WAIT is True
@@ -457,13 +502,11 @@ def test_lab_clone_disables_falkordb_persistence_during_restore() -> None:
     script = Path("scripts/lab/clone_production.sh").read_text()
 
     assert (
-        "REDIS_ARGS=${FALKORDB_REDIS_ARGS:---save 60 1 --appendonly yes "
-        "--appendfsync everysec}"
+        "REDIS_ARGS=${FALKORDB_REDIS_ARGS:---save 60 1 --appendonly yes " "--appendfsync everysec}"
     ) in compose
     assert 'FALKORDB_REDIS_ARGS="${FALKORDB_REDIS_ARGS:---save \\"\\" --appendonly no}"' in script
     assert (
-        'FALKORDB_RESTORE_QUERY_TIMEOUT_MS="${FALKORDB_RESTORE_QUERY_TIMEOUT_MS:-300000}"'
-        in script
+        'FALKORDB_RESTORE_QUERY_TIMEOUT_MS="${FALKORDB_RESTORE_QUERY_TIMEOUT_MS:-300000}"' in script
     )
 
 
@@ -531,9 +574,7 @@ def test_restore_qdrant_retries_transient_batch_disconnect(
     monkeypatch.setattr(restore_module, "QdrantClient", FlakyQdrantClient)
     monkeypatch.setattr(restore_module, "QDRANT_RESTORE_BATCH_SIZE", 1, raising=False)
     monkeypatch.setattr(restore_module, "QDRANT_RESTORE_RETRIES", 2, raising=False)
-    monkeypatch.setattr(
-        restore_module, "QDRANT_RESTORE_RETRY_DELAY_SECONDS", 0, raising=False
-    )
+    monkeypatch.setattr(restore_module, "QDRANT_RESTORE_RETRY_DELAY_SECONDS", 0, raising=False)
     monkeypatch.setattr(restore_module.time, "sleep", lambda _seconds: None)
 
     restore = AutoMemRestore(backup_dir=backup_dir, dry_run=False, force=True)

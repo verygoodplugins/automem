@@ -48,16 +48,23 @@ load_dotenv(Path.home() / ".config" / "automem" / ".env")
 
 def _optional_int_env(name: str) -> int | None:
     value = os.getenv(name)
-    if value is None or value == "":
+    if value is None or value.strip() == "":
         return None
     return int(value)
 
 
 def _optional_bool_env(name: str) -> bool | None:
     value = os.getenv(name)
-    if value is None or value == "":
+    if value is None or value.strip() == "":
         return None
-    return value.lower() in {"1", "true", "yes", "on"}
+    return value.lower().strip() in {"1", "true", "yes", "on"}
+
+
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return float(value)
 
 
 logging.basicConfig(
@@ -73,19 +80,15 @@ FALKORDB_HOST = os.getenv("FALKORDB_HOST", "localhost")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 FALKORDB_PASSWORD = os.getenv("FALKORDB_PASSWORD")
 FALKORDB_GRAPH = os.getenv("FALKORDB_GRAPH", "memories")
-FALKORDB_RESTORE_QUERY_TIMEOUT_MS = int(
-    os.getenv("FALKORDB_RESTORE_QUERY_TIMEOUT_MS", "300000")
-)
+FALKORDB_RESTORE_QUERY_TIMEOUT_MS = int(os.getenv("FALKORDB_RESTORE_QUERY_TIMEOUT_MS", "300000"))
 FALKORDB_RESTORE_RETRIES = int(os.getenv("FALKORDB_RESTORE_RETRIES", "3"))
-FALKORDB_RESTORE_RETRY_DELAY_SECONDS = float(
-    os.getenv("FALKORDB_RESTORE_RETRY_DELAY_SECONDS", "2")
-)
+FALKORDB_RESTORE_RETRY_DELAY_SECONDS = float(os.getenv("FALKORDB_RESTORE_RETRY_DELAY_SECONDS", "2"))
 FALKORDB_RESTORE_NODE_BATCH_SIZE = int(os.getenv("FALKORDB_RESTORE_NODE_BATCH_SIZE", "250"))
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "memories")
-QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "60"))
+QDRANT_TIMEOUT_SECONDS = _float_env("QDRANT_TIMEOUT_SECONDS", 60)
 QDRANT_GRPC_PORT = _optional_int_env("QDRANT_GRPC_PORT")
 QDRANT_PREFER_GRPC = os.getenv("QDRANT_PREFER_GRPC", "false").lower() in {
     "1",
@@ -95,12 +98,8 @@ QDRANT_PREFER_GRPC = os.getenv("QDRANT_PREFER_GRPC", "false").lower() in {
 }
 QDRANT_RESTORE_BATCH_SIZE = int(os.getenv("QDRANT_RESTORE_BATCH_SIZE", "250"))
 QDRANT_RESTORE_RETRIES = int(os.getenv("QDRANT_RESTORE_RETRIES", "5"))
-QDRANT_RESTORE_RETRY_DELAY_SECONDS = float(
-    os.getenv("QDRANT_RESTORE_RETRY_DELAY_SECONDS", "2")
-)
-QDRANT_RESTORE_BATCH_DELAY_SECONDS = float(
-    os.getenv("QDRANT_RESTORE_BATCH_DELAY_SECONDS", "0")
-)
+QDRANT_RESTORE_RETRY_DELAY_SECONDS = float(os.getenv("QDRANT_RESTORE_RETRY_DELAY_SECONDS", "2"))
+QDRANT_RESTORE_BATCH_DELAY_SECONDS = float(os.getenv("QDRANT_RESTORE_BATCH_DELAY_SECONDS", "0"))
 QDRANT_RESTORE_WAIT = os.getenv("QDRANT_RESTORE_WAIT", "true").lower() in {
     "1",
     "true",
@@ -108,9 +107,7 @@ QDRANT_RESTORE_WAIT = os.getenv("QDRANT_RESTORE_WAIT", "true").lower() in {
     "on",
 }
 QDRANT_RESTORE_INDEXING_THRESHOLD = _optional_int_env("QDRANT_RESTORE_INDEXING_THRESHOLD")
-QDRANT_RESTORE_DEFAULT_SEGMENT_NUMBER = _optional_int_env(
-    "QDRANT_RESTORE_DEFAULT_SEGMENT_NUMBER"
-)
+QDRANT_RESTORE_DEFAULT_SEGMENT_NUMBER = _optional_int_env("QDRANT_RESTORE_DEFAULT_SEGMENT_NUMBER")
 QDRANT_RESTORE_MEMMAP_THRESHOLD = _optional_int_env("QDRANT_RESTORE_MEMMAP_THRESHOLD")
 QDRANT_RESTORE_HNSW_M = _optional_int_env("QDRANT_RESTORE_HNSW_M")
 QDRANT_RESTORE_VECTOR_ON_DISK = _optional_bool_env("QDRANT_RESTORE_VECTOR_ON_DISK")
@@ -172,11 +169,12 @@ def _query_falkordb(
     timeout_ms = max(1, FALKORDB_RESTORE_QUERY_TIMEOUT_MS)
     for attempt in range(0, retries + 1):
         try:
-            return graph.query(query, params, timeout=timeout_ms)
-        except TypeError as exc:
-            if "timeout" not in str(exc).lower():
-                raise
-            return graph.query(query, params)
+            try:
+                return graph.query(query, params, timeout=timeout_ms)
+            except TypeError as exc:
+                if "timeout" not in str(exc).lower():
+                    raise
+                return graph.query(query, params)
         except Exception as exc:
             if attempt >= retries or not _is_timeout_error(exc):
                 raise
@@ -528,8 +526,7 @@ class AutoMemRestore:
                 if attempt >= retries:
                     raise
                 logger.warning(
-                    "      Qdrant upsert failed at %s/%s "
-                    "(attempt %s/%s): %s; waiting to retry",
+                    "      Qdrant upsert failed at %s/%s " "(attempt %s/%s): %s; waiting to retry",
                     offset,
                     total,
                     attempt + 1,
@@ -647,8 +644,7 @@ class AutoMemRestore:
         existing_uuids = set()
         if self.merge:
             existing_nodes_result = _query_falkordb(
-                graph,
-                "MATCH (n) WHERE n.id IS NOT NULL RETURN n.id as id"
+                graph, "MATCH (n) WHERE n.id IS NOT NULL RETURN n.id as id"
             )
             if existing_nodes_result.result_set:
                 existing_uuids = {row[0] for row in existing_nodes_result.result_set}
@@ -684,7 +680,7 @@ class AutoMemRestore:
                 MATCH (a)-[r]->(b)
                 WHERE a.id IS NOT NULL AND b.id IS NOT NULL
                 RETURN type(r) as rel_type, a.id as source_id, b.id as target_id
-            """
+            """,
             )
             if existing_rels_result.result_set:
                 existing_rels = {
@@ -791,9 +787,8 @@ class AutoMemRestore:
                 offset=i,
                 total=len(backup_data["points"]),
             )
-            if (
-                QDRANT_RESTORE_BATCH_DELAY_SECONDS > 0
-                and i + batch_size < len(backup_data["points"])
+            if QDRANT_RESTORE_BATCH_DELAY_SECONDS > 0 and i + batch_size < len(
+                backup_data["points"]
             ):
                 time.sleep(QDRANT_RESTORE_BATCH_DELAY_SECONDS)
 

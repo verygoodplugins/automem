@@ -204,6 +204,8 @@ def create_entity_blueprint(
             limit = min(int(request.args.get("limit", 100)), 500)
         except (ValueError, TypeError):
             abort(400, description="Invalid limit parameter — must be an integer")
+        if limit < 1:
+            abort(400, description="Invalid limit parameter — must be between 1 and 500")
 
         if category:
             result = graph.query(
@@ -325,9 +327,11 @@ def create_entity_blueprint(
             from automem.consolidation.entity_dedup import find_merge_candidates
 
             summary = request.args.get("summary", "").lower() in {"1", "true", "yes"}
-            include_merge_candidates = request.args.get(
-                "include_merge_candidates", ""
-            ).lower() in {"1", "true", "yes"}
+            include_merge_candidates = request.args.get("include_merge_candidates", "").lower() in {
+                "1",
+                "true",
+                "yes",
+            }
             try:
                 limit = min(int(request.args.get("limit", 100)), 500)
                 offset = max(int(request.args.get("offset", 0)), 0)

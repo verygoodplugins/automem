@@ -177,7 +177,7 @@ class MemoryConsolidator:
             if not api_key:
                 logger.warning("OPENAI_API_KEY not set; identity synthesis unavailable")
                 return None
-            base_url = os.environ.get("OPENAI_BASE_URL")
+            base_url = (os.environ.get("OPENAI_BASE_URL") or "").strip() or None
             return openai.OpenAI(api_key=api_key, **({"base_url": base_url} if base_url else {}))
         except Exception:
             logger.exception("Failed to create OpenAI client")

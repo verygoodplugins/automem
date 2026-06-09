@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Set
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask import Flask
 
 from tests.support.fake_graph import FakeGraph, FakeNode, FakeResult
 
@@ -419,7 +420,7 @@ class TestEntityMigration:
                 "slug": "completed",
                 "reason": "low_signal_people_slug",
                 "references": 1,
-            }
+            },
         ]
         assert len(graph.entities) == 0
         assert len(graph.entity_edges) == 0
@@ -523,6 +524,26 @@ class TestEntityMigration:
 
         assert audit["accepted"] == []
         assert [item["tag"] for item in audit["rejected_entities"]] == ["entity:tools:them"]
+
+
+# ---------------------------------------------------------------------------
+# Test: Entity API
+# ---------------------------------------------------------------------------
+
+
+class TestEntityAPI:
+    @pytest.mark.parametrize("limit", ["0", "-1"])
+    def test_list_entities_rejects_non_positive_limit(self, limit: str) -> None:
+        from automem.api.entity import create_entity_blueprint
+
+        graph = EntityFakeGraph()
+        app = Flask(__name__)
+        app.register_blueprint(create_entity_blueprint(lambda: graph, MagicMock()))
+        client = app.test_client()
+
+        response = client.get(f"/entities?limit={limit}")
+
+        assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------

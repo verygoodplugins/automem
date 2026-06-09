@@ -107,6 +107,27 @@ def tasks_for_mode(mode: str, task_fields: Dict[str, str]) -> List[str]:
     return [mode]
 
 
+def _completed_tasks_for_result(
+    mode: str,
+    result: Dict[str, Any],
+    task_fields: Dict[str, str],
+) -> List[str]:
+    """Return tasks whose scheduler timestamps should advance."""
+    steps = result.get("steps") if isinstance(result.get("steps"), dict) else {}
+    completed: List[str] = []
+    for task in tasks_for_mode(mode, task_fields):
+        if task == "identity":
+            identity_step = steps.get("identity")
+            if mode == "full" and identity_step is None:
+                continue
+            if isinstance(identity_step, dict) and (
+                identity_step.get("skipped") or identity_step.get("error")
+            ):
+                continue
+        completed.append(task)
+    return completed
+
+
 def persist_consolidation_run(
     graph: Any,
     result: Dict[str, Any],
@@ -154,7 +175,7 @@ def persist_consolidation_run(
     except Exception:
         logger.exception("Failed to record consolidation run history")
 
-    for task in tasks_for_mode(mode, task_fields):
+    for task in _completed_tasks_for_result(mode, result, task_fields):
         field = task_fields.get(task)
         if not field:
             continue
