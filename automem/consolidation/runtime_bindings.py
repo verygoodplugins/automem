@@ -61,7 +61,7 @@ def create_consolidation_runtime(
     creative_interval_seconds: int,
     cluster_interval_seconds: int,
     forget_interval_seconds: int,
-    identity_interval_seconds: int = 604800,
+    identity_interval_seconds: int = 0,
     delete_threshold: float,
     archive_threshold: float,
     grace_period_days: int,

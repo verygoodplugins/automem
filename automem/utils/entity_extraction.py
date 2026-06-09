@@ -5,6 +5,8 @@ import re
 from threading import Lock
 from typing import Any, Dict, List, Optional, Set
 
+from automem.utils.entity_quality import validate_entity_value
+
 try:
     import spacy  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
@@ -226,7 +228,18 @@ def extract_entities(content: str) -> Dict[str, List[str]]:
         if _is_valid_entity(cleaned, allow_lower=True):
             result["projects"].add(cleaned)
 
-    result["tools"].difference_update(result["people"])
+    cleaned_sets: Dict[str, Set[str]] = {key: set() for key in result}
+    for category, values in result.items():
+        for value in values:
+            validation = validate_entity_value(category, value, context=text)
+            if not validation.accepted:
+                continue
+            display_value = validation.name or value
+            cleaned_sets[validation.category].add(display_value)
 
-    cleaned = {key: sorted({value for value in values if value}) for key, values in result.items()}
+    cleaned_sets["tools"].difference_update(cleaned_sets["people"])
+
+    cleaned = {
+        key: sorted({value for value in values if value}) for key, values in cleaned_sets.items()
+    }
     return cleaned

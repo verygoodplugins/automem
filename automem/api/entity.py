@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter, defaultdict
 from typing import Any, Callable, Dict, List, Optional
 
 from flask import Blueprint, abort, jsonify, request
+
+from automem.utils.entity_quality import validate_entity_tag
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,127 @@ def _serialize_entity_row(row: list) -> Dict[str, Any]:
         "reference_count": int(row[9] or 0),
         "created_at": row[10] if len(row) > 10 else None,
         "last_referenced_at": row[11] if len(row) > 11 else None,
+    }
+
+
+def _audit_memory_entity_tags(
+    graph: Any,
+    *,
+    summary: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+    category: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    result = graph.query("MATCH (m:Memory) WHERE m.tags IS NOT NULL RETURN m.id, m.tags")
+    accepted: Dict[str, Dict[str, Any]] = {}
+    rejected: List[Dict[str, Any]] = []
+    counts_by_reason: Counter[str] = Counter()
+    counts_by_category: Dict[str, Counter[str]] = defaultdict(Counter)
+
+    for row in getattr(result, "result_set", []) or []:
+        memory_id = row[0]
+        tags = row[1]
+        if not isinstance(tags, list):
+            continue
+        for tag in tags:
+            if not isinstance(tag, str) or not tag.startswith("entity:"):
+                continue
+            validation = validate_entity_tag(tag)
+            if not validation.accepted:
+                counts_by_reason[validation.reason] += 1
+                counts_by_category[validation.category]["rejected"] += 1
+                rejected.append(
+                    {
+                        "tag": tag,
+                        "memory_id": memory_id,
+                        "category": validation.category,
+                        "slug": validation.slug,
+                        "reason": validation.reason,
+                    }
+                )
+                continue
+            item = accepted.setdefault(
+                validation.canonical_tag,
+                {
+                    "id": validation.canonical_tag,
+                    "category": validation.category,
+                    "slug": validation.canonical_slug,
+                    "name": validation.name,
+                    "source_tags": set(),
+                    "memory_ids": set(),
+                    "confidence": validation.confidence,
+                },
+            )
+            item["source_tags"].add(tag)
+            item["memory_ids"].add(memory_id)
+
+    accepted_list = []
+    for item in accepted.values():
+        accepted_list.append(
+            {
+                "id": item["id"],
+                "category": item["category"],
+                "slug": item["slug"],
+                "name": item["name"],
+                "source_tags": sorted(item["source_tags"]),
+                "references": len(item["memory_ids"]),
+                "confidence": item["confidence"],
+            }
+        )
+    accepted_list.sort(key=lambda item: item["id"])
+    rejected.sort(key=lambda item: (item["reason"], item["tag"], str(item["memory_id"])))
+
+    accepted_counts_by_category = Counter(item["category"] for item in accepted_list)
+    for accepted_category, accepted_count in accepted_counts_by_category.items():
+        counts_by_category[accepted_category]["accepted"] = accepted_count
+
+    if category:
+        accepted_list = [item for item in accepted_list if item["category"] == category]
+        rejected = [item for item in rejected if item["category"] == category]
+    if reason:
+        accepted_list = []
+        rejected = [item for item in rejected if item["reason"] == reason]
+
+    safe_limit = max(0, min(int(limit), 500))
+    safe_offset = max(0, int(offset))
+    accepted_page = accepted_list[safe_offset : safe_offset + safe_limit]
+    rejected_page = rejected[safe_offset : safe_offset + safe_limit]
+    counts_by_category_payload = {
+        key: {
+            "accepted": value.get("accepted", 0),
+            "rejected": value.get("rejected", 0),
+        }
+        for key, value in sorted(counts_by_category.items())
+    }
+    counts = {
+        "accepted_entities": len(accepted_list),
+        "rejected_entities": len(rejected),
+        "accepted_total_unfiltered": len(accepted),
+        "rejected_total_unfiltered": sum(counts_by_reason.values()),
+    }
+
+    if summary:
+        return {
+            "accepted_sample": accepted_page,
+            "rejected_sample": rejected_page,
+            "counts": counts,
+            "counts_by_reason": dict(sorted(counts_by_reason.items())),
+            "counts_by_category": counts_by_category_payload,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "summary": True,
+        }
+
+    return {
+        "accepted": accepted_page,
+        "rejected_entities": rejected_page,
+        "counts": counts,
+        "counts_by_reason": dict(sorted(counts_by_reason.items())),
+        "counts_by_category": counts_by_category_payload,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "summary": False,
     }
 
 
@@ -186,6 +310,88 @@ def create_entity_blueprint(
                 jsonify({"error": "Failed to find merge candidates", "details": str(exc)}),
                 500,
             )
+
+    @bp.route("/entities/audit", methods=["GET"])
+    def audit_entities() -> Any:
+        """Dry-run entity cleanup audit (admin-only)."""
+        if require_admin_token_fn is not None:
+            require_admin_token_fn()
+
+        graph = get_memory_graph()
+        if graph is None:
+            abort(503, description="FalkorDB is unavailable")
+
+        try:
+            from automem.consolidation.entity_dedup import find_merge_candidates
+
+            summary = request.args.get("summary", "").lower() in {"1", "true", "yes"}
+            include_merge_candidates = request.args.get(
+                "include_merge_candidates", ""
+            ).lower() in {"1", "true", "yes"}
+            try:
+                limit = min(int(request.args.get("limit", 100)), 500)
+                offset = max(int(request.args.get("offset", 0)), 0)
+            except (ValueError, TypeError):
+                abort(400, description="Invalid limit/offset parameter")
+            tag_audit = _audit_memory_entity_tags(
+                graph,
+                summary=summary,
+                limit=limit,
+                offset=offset,
+                category=request.args.get("category"),
+                reason=request.args.get("reason"),
+            )
+            if summary and not include_merge_candidates:
+                auto_merge, review = [], []
+            else:
+                auto_merge, review = find_merge_candidates(graph)
+            merge_candidates_payload = [
+                {
+                    "entity_a": candidate.entity_a_id,
+                    "entity_b": candidate.entity_b_id,
+                    "canonical": candidate.canonical_id,
+                    "alias": candidate.alias_id,
+                    "confidence": candidate.confidence,
+                    "reason": candidate.reason,
+                    "auto_merge": auto,
+                }
+                for auto, candidates in ((True, auto_merge), (False, review))
+                for candidate in candidates
+            ]
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "dry_run": True,
+                    **(
+                        {
+                            "accepted_sample": tag_audit["accepted_sample"],
+                            "rejected_sample": tag_audit["rejected_sample"],
+                        }
+                        if tag_audit.get("summary")
+                        else {
+                            "accepted": tag_audit["accepted"],
+                            "rejected_entities": tag_audit["rejected_entities"],
+                        }
+                    ),
+                    "merge_candidates": merge_candidates_payload,
+                    "counts": {
+                        **tag_audit["counts"],
+                        "merge_candidates": len(merge_candidates_payload),
+                        "auto_merge_candidates": len(auto_merge),
+                        "review_merge_candidates": len(review),
+                    },
+                    "counts_by_reason": tag_audit.get("counts_by_reason", {}),
+                    "counts_by_category": tag_audit.get("counts_by_category", {}),
+                    "limit": tag_audit.get("limit"),
+                    "offset": tag_audit.get("offset"),
+                    "summary": tag_audit.get("summary", False),
+                    "merge_candidates_skipped": summary and not include_merge_candidates,
+                }
+            )
+        except Exception as exc:
+            logger.exception("Failed to audit entities")
+            return jsonify({"error": "Failed to audit entities", "details": str(exc)}), 500
 
     @bp.route("/entity/<slug>/merge", methods=["POST"])
     def merge_entity(slug: str) -> Any:

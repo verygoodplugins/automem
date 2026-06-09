@@ -82,7 +82,7 @@ def apply_scheduler_overrides(
     creative_interval_seconds: int,
     cluster_interval_seconds: int,
     forget_interval_seconds: int,
-    identity_interval_seconds: int = 604800,
+    identity_interval_seconds: int = 0,
 ) -> None:
     """Override default scheduler intervals using configuration."""
     overrides = {

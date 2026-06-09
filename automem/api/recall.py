@@ -1062,6 +1062,25 @@ def _extract_entities_from_results(results: List[Dict[str, Any]]) -> Set[str]:
     return entities
 
 
+def _serialize_entity_identity_row(row: List[Any]) -> Dict[str, Any]:
+    aliases = row[4] or []
+    if isinstance(aliases, str):
+        try:
+            aliases = json.loads(aliases)
+        except Exception:
+            aliases = []
+    return {
+        "id": row[0],
+        "slug": row[1],
+        "category": row[2],
+        "name": row[3],
+        "aliases": aliases,
+        "identity": row[5],
+        "identity_source_count": int(row[6] or 0),
+        "identity_updated_at": row[7],
+    }
+
+
 def _expand_entity_memories(
     seed_results: List[Dict[str, Any]],
     seen_ids: Set[str],
@@ -1608,12 +1627,15 @@ def handle_recall(
         vector_matches: List[Dict[str, Any]] = []
 
         if qdrant_client is not None:
+            vector_fetch_limit = per_query_limit
+            if tag_filters and (query_str or embedding_param):
+                vector_fetch_limit = max(per_query_limit, recall_max_limit)
             vector_matches = vector_search(
                 qdrant_client,
                 graph,
                 query_str,
                 embedding_param,
-                per_query_limit,
+                vector_fetch_limit,
                 local_seen,
                 tag_filters,
                 tag_mode,
@@ -1627,7 +1649,7 @@ def handle_recall(
                         res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
                     )
                 ]
-        local_results.extend(vector_matches[:per_query_limit])
+        local_results.extend(vector_matches)
 
         remaining_slots = max(0, per_query_limit - len(local_results))
         if remaining_slots and graph is not None:
@@ -1980,23 +2002,7 @@ def handle_recall(
                     {"slugs": slug_list},
                 )
                 for row in getattr(ent_result, "result_set", []) or []:
-                    aliases = row[4] or []
-                    if isinstance(aliases, str):
-                        try:
-                            aliases = json.loads(aliases)
-                        except Exception:
-                            aliases = []
-                    entity_identities.append(
-                        {
-                            "id": row[0],
-                            "name": row[3],
-                            "category": row[2],
-                            "aliases": aliases,
-                            "identity": row[5],
-                            "identity_source_count": int(row[6] or 0),
-                            "identity_updated_at": row[7],
-                        }
-                    )
+                    entity_identities.append(_serialize_entity_identity_row(row))
             except Exception:
                 logger.debug("Entity identity batch lookup failed for slugs %s", slug_list)
         except Exception:

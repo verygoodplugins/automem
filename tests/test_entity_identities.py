@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Set
 from unittest.mock import MagicMock, patch
@@ -227,15 +227,22 @@ class EntityFakeGraph(FakeGraph):
                 for mid in mem_ids:
                     mem = self.memories.get(mid)
                     if mem:
-                        rows.append(
-                            [
-                                mem.get("id"),
-                                mem.get("content", ""),
-                                mem.get("importance", 0.5),
-                                mem.get("timestamp"),
-                                mem.get("type"),
-                            ]
-                        )
+                        row = [
+                            mem.get("id"),
+                            mem.get("content", ""),
+                            mem.get("importance", 0.5),
+                            mem.get("timestamp"),
+                            mem.get("type"),
+                        ]
+                        if "m.t_valid" in query:
+                            row.extend(
+                                [
+                                    mem.get("t_valid"),
+                                    mem.get("t_invalid"),
+                                    mem.get("archived"),
+                                ]
+                            )
+                        rows.append(row)
                 return FakeResult(rows)
 
             if "RETURN e.name, e.category, e.identity, e.identity_version" in query:
@@ -277,6 +284,28 @@ class EntityFakeGraph(FakeGraph):
                 return FakeResult([[ent.get("aliases", [])]])
 
             return FakeResult([[FakeNode(ent)]])
+
+        if "UNWIND $ids AS source_id" in query and "related.archived" in query:
+            source_ids = {str(memory_id) for memory_id in (params.get("ids") or [])}
+            requested_types = {str(rel_type) for rel_type in (params.get("types") or [])}
+            rows = []
+            for rel in self.relationships:
+                if str(rel.get("id1") or "") not in source_ids:
+                    continue
+                if requested_types and str(rel.get("type") or "") not in requested_types:
+                    continue
+                related = self.memories.get(str(rel.get("id2") or ""))
+                if related is None:
+                    continue
+                rows.append(
+                    [
+                        rel.get("id1"),
+                        related.get("archived"),
+                        related.get("t_valid"),
+                        related.get("t_invalid"),
+                    ]
+                )
+            return FakeResult(rows)
 
         # Memory tags query for migration
         if "MATCH (m:Memory)" in query and "RETURN m.id, m.tags" in query:
@@ -360,6 +389,141 @@ class TestEntityMigration:
         assert len(graph.entities) == 0
         assert len(graph.entity_edges) == 0
 
+    def test_migration_dry_run_reports_rejected_historical_tags(self) -> None:
+        """Dry run audits low-quality historical tags before creating Entity nodes."""
+        from scripts.migrate_entity_nodes import run_migration
+
+        graph = EntityFakeGraph()
+        entity_map = {
+            "entity:people:completed": ["m1"],
+            "entity:people:alex-beck-s": ["m2"],
+            "entity:people:alex": ["m3"],
+        }
+
+        stats = run_migration(graph, entity_map, dry_run=True)
+
+        assert stats["accepted_entities"] == 1
+        assert stats["accepted"][0]["id"] == "entity:people:alex-beck"
+        assert stats["accepted"][0]["source_tags"] == ["entity:people:alex-beck-s"]
+        assert stats["rejected_entities"] == [
+            {
+                "tag": "entity:people:alex",
+                "category": "people",
+                "slug": "alex",
+                "reason": "migration_low_confidence",
+                "references": 1,
+            },
+            {
+                "tag": "entity:people:completed",
+                "category": "people",
+                "slug": "completed",
+                "reason": "low_signal_people_slug",
+                "references": 1,
+            }
+        ]
+        assert len(graph.entities) == 0
+        assert len(graph.entity_edges) == 0
+
+    def test_migration_omits_structural_review_only_entities(self) -> None:
+        """Migration uses structural review gates instead of corpus-specific blockers."""
+        from scripts.migrate_entity_nodes import run_migration
+
+        graph = EntityFakeGraph()
+        entity_map = {
+            "entity:tools:vectorstorex": ["m1"],
+            "entity:concepts:source-hygiene": ["m2"],
+            "entity:tools:atlas-db": ["m3"],
+            "entity:people:alice-smith": ["m4"],
+            "entity:tools:three-nights": ["m5"],
+            "entity:tools:tracking-codes": ["m6"],
+        }
+
+        stats = run_migration(graph, entity_map, dry_run=False)
+
+        assert set(graph.entities) == {
+            "entity:people:alice-smith",
+            "entity:tools:atlas-db",
+        }
+        assert {item["tag"] for item in stats["rejected_entities"]} == {
+            "entity:concepts:source-hygiene",
+            "entity:tools:vectorstorex",
+            "entity:tools:three-nights",
+            "entity:tools:tracking-codes",
+        }
+        assert {item["reason"] for item in stats["rejected_entities"]} == {
+            "migration_review_low_signal_phrase",
+            "migration_review_single_token_nonperson",
+        }
+
+    def test_migration_has_no_corpus_specific_blocker_table(self) -> None:
+        """Public migration readiness must be rule-based, not a failed-run token list."""
+        import scripts.migrate_entity_nodes as migration
+
+        assert not hasattr(migration, "MIGRATION_READINESS_BLOCKERS")
+
+    def test_entity_audit_summary_counts_reasons_and_samples(self) -> None:
+        """Summary audit returns compact counts and samples instead of full arrays."""
+        from automem.api.entity import _audit_memory_entity_tags
+
+        graph = EntityFakeGraph()
+        graph.memories["m1"] = {
+            "id": "m1",
+            "tags": [
+                "entity:tools:qdrant",
+                "entity:tools:them",
+                "entity:concepts:400ms",
+            ],
+        }
+        graph.memories["m2"] = {
+            "id": "m2",
+            "tags": [
+                "entity:people:alex-beck-s",
+                "entity:tools:qdrant",
+                "entity:tools:ud83d-udea7-active-projects",
+            ],
+        }
+
+        audit = _audit_memory_entity_tags(graph, summary=True, limit=2)
+
+        assert audit["counts"]["accepted_entities"] == 2
+        assert audit["counts"]["rejected_entities"] == 3
+        assert audit["counts_by_reason"]["generic_entity_slug"] == 1
+        assert audit["counts_by_reason"]["duration_or_count_slug"] == 1
+        assert audit["counts_by_reason"]["unicode_escape_slug"] == 1
+        assert audit["counts_by_category"]["tools"]["accepted"] == 1
+        assert audit["counts_by_category"]["tools"]["rejected"] == 2
+        assert audit["accepted_sample"][0]["id"] == "entity:people:alex-beck"
+        assert len(audit["accepted_sample"]) <= 2
+        assert len(audit["rejected_sample"]) <= 2
+        assert "accepted" not in audit
+        assert "rejected_entities" not in audit
+
+    def test_entity_audit_filters_reason_and_category(self) -> None:
+        """Full audit can page/filter accepted and rejected rows."""
+        from automem.api.entity import _audit_memory_entity_tags
+
+        graph = EntityFakeGraph()
+        graph.memories["m1"] = {
+            "id": "m1",
+            "tags": [
+                "entity:tools:qdrant",
+                "entity:tools:them",
+                "entity:concepts:400ms",
+            ],
+        }
+
+        audit = _audit_memory_entity_tags(
+            graph,
+            summary=False,
+            category="tools",
+            reason="generic_entity_slug",
+            limit=10,
+            offset=0,
+        )
+
+        assert audit["accepted"] == []
+        assert [item["tag"] for item in audit["rejected_entities"]] == ["entity:tools:them"]
+
 
 # ---------------------------------------------------------------------------
 # Test: Entity dedup
@@ -439,6 +603,35 @@ class TestEntityDedup:
         assert auto_merge[0].canonical_id == "entity:people:alice-smith"
         assert auto_merge[0].alias_id == "entity:people:alice"
 
+    def test_plain_first_name_with_multiple_targets_requires_review(self) -> None:
+        """Ambiguous generic first names are not auto-merged."""
+        from automem.consolidation.entity_dedup import find_merge_candidates
+
+        graph = EntityFakeGraph()
+        for eid, slug in [
+            ("entity:people:alex", "alex"),
+            ("entity:people:alex-beck", "alex-beck"),
+            ("entity:people:alex-panagis", "alex-panagis"),
+        ]:
+            graph.entities[eid] = {
+                "id": eid,
+                "slug": slug,
+                "category": "people",
+                "aliases": [],
+                "merged_into": None,
+            }
+
+        for mid in ["m1", "m2"]:
+            graph.memories[mid] = {"id": mid, "content": f"Memory {mid}", "tags": []}
+            graph.entity_edges.append({"entity_id": "entity:people:alex", "memory_id": mid})
+            graph.entity_edges.append({"entity_id": "entity:people:alex-beck", "memory_id": mid})
+            graph.entity_edges.append({"entity_id": "entity:people:alex-panagis", "memory_id": mid})
+
+        auto_merge, review = find_merge_candidates(graph)
+
+        assert all(candidate.alias_id != "entity:people:alex" for candidate in auto_merge)
+        assert any(candidate.alias_id == "entity:people:alex" for candidate in review)
+
     def test_different_categories_not_merged(self) -> None:
         """Entities in different categories are not candidates."""
         from automem.consolidation.entity_dedup import find_merge_candidates
@@ -491,6 +684,36 @@ class TestEntityDedup:
         assert result.edges_moved == 1
         assert graph.entities["entity:people:alice"]["merged_into"] == "entity:people:alice-smith"
         assert "alice" in graph.entities["entity:people:alice-smith"]["aliases"]
+
+    def test_merge_entities_deletes_only_copied_edges(self) -> None:
+        """Alias edge cleanup is scoped to the edges copied in this merge."""
+        from automem.consolidation.entity_dedup import merge_entities
+
+        graph = EntityFakeGraph()
+        graph.entities["entity:people:alice-smith"] = {
+            "id": "entity:people:alice-smith",
+            "slug": "alice-smith",
+            "category": "people",
+            "aliases": [],
+            "merged_into": None,
+        }
+        graph.entities["entity:people:alice"] = {
+            "id": "entity:people:alice",
+            "slug": "alice",
+            "category": "people",
+            "aliases": [],
+            "merged_into": None,
+        }
+        graph.memories["m1"] = {"id": "m1", "content": "test", "tags": []}
+        graph.entity_edges.append({"entity_id": "entity:people:alice", "memory_id": "m1"})
+
+        merge_entities(graph, "entity:people:alice-smith", "entity:people:alice")
+
+        delete_queries = [(query, params) for query, params in graph.queries if "DELETE r" in query]
+        assert delete_queries, "merge should remove copied alias REFERENCED_IN edges"
+        delete_query, delete_params = delete_queries[-1]
+        assert "m.id IN $mem_ids" in delete_query
+        assert delete_params["mem_ids"] == ["m1"]
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +899,58 @@ class TestIdentitySynthesis:
         assert result["identities_synthesized"] == 0
         mock_client.chat.completions.create.assert_not_called()
 
+    def test_synthesize_identity_uses_only_current_memories(self) -> None:
+        """Expired memories do not affect identity prompt or source count."""
+        from automem.consolidation.identity_synthesis import synthesize_identity
+
+        now = datetime.now(timezone.utc)
+        graph = EntityFakeGraph()
+        graph.entities["entity:people:alice-smith"] = {
+            "id": "entity:people:alice-smith",
+            "slug": "alice-smith",
+            "category": "people",
+            "name": "Alice Smith",
+            "aliases": [],
+            "identity": None,
+            "identity_version": 0,
+            "identity_updated_at": None,
+            "identity_source_count": 0,
+            "merged_into": None,
+        }
+        graph.memories["active"] = {
+            "id": "active",
+            "content": "Alice is the current finance lead at Acme.",
+            "importance": 0.9,
+            "timestamp": now.isoformat(),
+            "type": "Context",
+            "tags": ["entity:people:alice-smith"],
+        }
+        graph.memories["expired"] = {
+            "id": "expired",
+            "content": "Alice was previously described as a designer.",
+            "importance": 1.0,
+            "timestamp": (now - timedelta(days=90)).isoformat(),
+            "t_invalid": (now - timedelta(days=1)).isoformat(),
+            "type": "Context",
+            "tags": ["entity:people:alice-smith"],
+        }
+        graph.entity_edges.append({"entity_id": "entity:people:alice-smith", "memory_id": "active"})
+        graph.entity_edges.append(
+            {"entity_id": "entity:people:alice-smith", "memory_id": "expired"}
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Alice is finance lead."))]
+        )
+
+        synthesize_identity(graph, "entity:people:alice-smith", mock_client, model="test-model")
+
+        prompt = mock_client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        assert "current finance lead" in prompt
+        assert "previously described as a designer" not in prompt
+        assert graph.entities["entity:people:alice-smith"]["identity_source_count"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Test: Recall with entity injection
@@ -707,3 +982,23 @@ class TestRecallEntityInjection:
         ]
         entities = _extract_entities_from_results(results)
         assert "alice smith" in entities or "alice-smith" in {e.replace(" ", "-") for e in entities}
+
+    def test_entity_identity_payload_includes_slug(self) -> None:
+        """Recall entity identity serialization includes canonical slug."""
+        from automem.api.recall import _serialize_entity_identity_row
+
+        payload = _serialize_entity_identity_row(
+            [
+                "entity:people:alice-smith",
+                "alice-smith",
+                "people",
+                "Alice Smith",
+                ["alice"],
+                "Alice Smith is a finance lead.",
+                4,
+                "2026-01-15T12:00:00Z",
+            ]
+        )
+
+        assert payload["id"] == "entity:people:alice-smith"
+        assert payload["slug"] == "alice-smith"

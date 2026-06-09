@@ -1,8 +1,14 @@
 venv
+.venv
 .git
 __pycache__
 .pytest_cache
 backups
+lab
+benchmarks/snapshots
+benchmarks/results
+data/sweep_runs
+data/results
 .cursor
 .claude
 .vscode

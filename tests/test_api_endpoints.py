@@ -295,6 +295,44 @@ def _call_handle_recall_for_scores(query: str, scores: list[float]):
     return response.get_json()
 
 
+def test_recall_with_text_and_tags_overfetches_vector_candidates():
+    seen_limits: list[int] = []
+
+    def _vector_search(*args, **kwargs):
+        limit = args[4]
+        seen_limits.append(limit)
+        return [
+            _make_floor_result(idx, 1.0 - (idx * 0.01), query="locomo")
+            for idx in range(limit)
+        ]
+
+    with app.app.test_request_context(
+        "/recall?query=locomo&tags=automem&tags=locomo&tag_mode=all&limit=10"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: None,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=_normalize_timestamp,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, _query, _tokens, _context: (
+                float(result["memory"]["target_score"]),
+                {"keyword": 1.0},
+            ),
+            result_passes_filters=lambda *_args, **_kwargs: True,
+            graph_keyword_search=lambda *_args, **_kwargs: [],
+            vector_search=_vector_search,
+            vector_filter_only_tag_search=lambda *_args, **_kwargs: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+
+    data = response.get_json()
+    assert seen_limits == [50]
+    assert len(data["results"]) == 10
+
+
 def test_compute_metadata_score_uses_content_keyword_fallback_for_vector_results():
     score, components = _compute_metadata_score(
         {
@@ -364,6 +402,30 @@ def test_compute_metadata_score_preserves_keyword_match_score_for_trending_resul
     )
 
     assert components["keyword"] == 0.33
+
+
+def test_compute_metadata_score_ignores_generated_entities_for_generic_tag_score():
+    _score, components = _compute_metadata_score(
+        {
+            "match_type": "vector",
+            "match_score": 0.7,
+            "memory": {
+                "content": "Benchmark notes",
+                "tags": ["automem"],
+                "metadata": {
+                    "entities": {
+                        "people": ["Result Json"],
+                        "organizations": ["Root Cause"],
+                    },
+                    "source": "locomo",
+                },
+            },
+        },
+        "result json locomo",
+        ["result", "json", "locomo"],
+    )
+
+    assert components["tag"] == 1 / 3
 
 
 def test_recall_with_query(client, mock_state, auth_headers):

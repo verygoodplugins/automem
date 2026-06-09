@@ -49,7 +49,9 @@ def _collect_metadata_terms(metadata: Dict[str, Any]) -> Set[str]:
             for sub in item:
                 visit(sub)
         elif isinstance(item, dict):
-            for sub in item.values():
+            for key, sub in item.items():
+                if key == "entities":
+                    continue
                 visit(sub)
 
     visit(metadata)

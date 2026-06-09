@@ -184,6 +184,8 @@ When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_
 - AutoMem no longer serves built viewer assets in-process.
 - `/viewer` now redirects/bootstraps to `GRAPH_VIEWER_URL` and forwards `server=<automem-origin>`.
 - URL hash tokens (for example `#token=...`) stay client-side and are preserved during redirect.
+- In production, set `VIEWER_ALLOWED_ORIGINS` explicitly to the standalone viewer domain instead of relying on the unset `*` default.
+- The standalone viewer Railway service normally needs no variables; do not set dev-only `VITE_API_TARGET`, unsupported `VITE_BASE`, or obsolete `VITE_ENABLE_HAND_CONTROLS`.
 - Local Docker graph inspection uses FalkorDB's built-in browser at `http://localhost:3000` (not `/viewer`).
 
 ### Scripts Only
@@ -219,6 +221,9 @@ Controls memory merging, pattern detection, and decay.
 | `CONSOLIDATION_DECAY_INTERVAL_SECONDS` | Decay check interval | `86400` | seconds |
 | `CONSOLIDATION_CREATIVE_INTERVAL_SECONDS` | Pattern detection interval | `604800` | seconds |
 | `CONSOLIDATION_CLUSTER_INTERVAL_SECONDS` | Clustering interval | `2592000` | seconds |
+| `IDENTITY_SYNTHESIS_ENABLED` | Enable scheduled identity synthesis | `false` | boolean |
+| `CONSOLIDATION_IDENTITY_INTERVAL_SECONDS` | Identity synthesis interval (`0` disables) | `0` (`604800` when enabled) | seconds |
+| `IDENTITY_SYNTHESIS_MODEL` | LLM for entity identity synthesis | `CLASSIFICATION_MODEL` | model |
 | `CONSOLIDATION_CLUSTER_SIMILARITY_THRESHOLD` | Min similarity for cluster membership | `0.75` | 0-1 |
 | `CONSOLIDATION_MIN_CLUSTER_SIZE` | Min memories required to form a cluster | `3` | count |
 | `CONSOLIDATION_FORGET_INTERVAL_SECONDS` | Forget interval (`0` disables) | `0` | seconds |

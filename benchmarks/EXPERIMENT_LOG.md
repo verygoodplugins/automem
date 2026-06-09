@@ -58,6 +58,8 @@ Detailed experiment history:
 | 2026-04-23 | #142 | fix/142-expansion-tag-filter | -- | 77.30% (-0.07) | -- | -- | Expansion tag-filter bypass. Effectively flat vs pre-fix `77.37%` — canonical configs don't exercise `expand_relations`. Validated via scoped repro + helper/API tests. |
 | 2026-04-26 | LongMemEval harness | fix/longmemeval-harness-resume-and-stratified-mini | -- | -- | **60.0% (18/30)** | **86.20% (431/500)** | Historical canonical milestone. Full recall@5 **97.20% (486/500)**; `judge_errors=0`, `memory_ingest_failures=0`. Superseded for publication claims by the 2026-05-17 verification run. |
 | 2026-05-17 | Publication verification | feat/automem-arxiv-publication | **85.20% (259/304)** | **84.74% (1683/1986)** | **70.00% (21/30)** | **87.00% (435/500)** | Fresh local publication reruns. LoCoMo full used pinned `gpt-5.4-mini-2026-03-17` judge, 444 judge calls, 0 skips/errors, estimated judge cost `$0.7909`, artifact `benchmarks/results/locomo_baseline_20260517_193934.json`, sha256 `a75816e9a6d3302c22b34852b75ac19a9d9f5cb27d1a109e0af7e49359330716`. LongMemEval full used `gpt-5-mini` answerer + `gpt-5.4-mini-2026-03-17` judge, recall@5 **97.00% (485/500)**, `memory_ingest_failures=0`, `judge_errors=0`, `publishable=true`, artifact `benchmarks/results/longmemeval-full-publication-20260518.json`, sha256 `ed6f7cf69b7be6fa0050536ec2b0f947f5510afd8c2a374b3fafb9cde009da75`. |
+| 2026-06-06 | main-refresh (no judge) | main @ b1df86c | **83.40% (196/235)** | -- | -- | -- | Same local `.env`, snapshot eval after #173. Comparison anchor for PR #124/#72 hardening; cat-5 judge disabled, so 69 complex questions are skipped and the result is directional. |
+| 2026-06-06 | PR #124 + #72 hardening | feat/entity-identity-hardening | **83.40% (+0.0)** | **81.71% (1260/1542)** | -- | -- | Entity quality gates, safe Entity-node migration/dedup, current-state identity synthesis, and disabled scheduled synthesis. Flat vs same-env main on LoCoMo-mini; full run is judge-off with 444 cat-5 questions skipped, so focused graph/entity regressions carry the entity-pollution risk. |
 
 ### Category Breakdown (LoCoMo-mini)
 
@@ -77,6 +79,8 @@ Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-
 | 2026-03-11 | #74 entity expansion | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A | 89.36% |
 | 2026-03-12 | #79 (PR #125) | 79.1% (34/43) | 92.1% (58/63) | 46.2% (6/13) | 96.5% (110/114) | N/A | 89.36% |
 | 2026-04-23 | #128 | **65.1% (28/43)** | 92.1% (58/63) | **38.5% (5/13)** | **94.7% (108/114)** | 100.0% (2/2, 69 skipped) | **85.53% (201/235)** |
+| 2026-06-06 | main @ b1df86c (no judge) | 51.2% (22/43) | 92.1% (58/63) | 53.8% (7/13) | 93.9% (107/114) | 100.0% (2/2, 69 skipped) | **83.40% (196/235)** |
+| 2026-06-06 | PR #124 + #72 hardening (no judge) | 51.2% (22/43) | 92.1% (58/63) | 53.8% (7/13) | 93.9% (107/114) | 100.0% (2/2, 69 skipped) | **83.40% (196/235)** |
 
 \* Temporal was artificially low: evaluator compared question dates (empty) vs memory dates instead of answer dates.
 \*\* Complex was artificially 100%: dataset has no `answer` field for cat5 → empty string → `"" in content` always True.

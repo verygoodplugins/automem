@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from automem.config import IDENTITY_SYNTHESIS_MODEL
+from automem.utils.time import _parse_iso_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ Memories:
 {previous_section}
 Identity (2-5 sentences):"""
 
+STATE_SUPPRESSING_RELATIONS: Set[str] = {"INVALIDATED_BY", "EVOLVED_INTO"}
+
 
 def _build_previous_section(previous_identity: Optional[str], version: int) -> str:
     """Build the previous identity section for the prompt.
@@ -49,20 +52,79 @@ def _build_previous_section(previous_identity: Optional[str], version: int) -> s
     return f"Previous identity (refine, don't replace unless contradicted):\n{previous_identity}"
 
 
+def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[str]:
+    if memory.get("archived") is True:
+        return "archived"
+
+    t_valid = _parse_iso_datetime(memory.get("t_valid"))
+    if t_valid is not None and t_valid > now:
+        return "not_yet_valid"
+
+    t_invalid = _parse_iso_datetime(memory.get("t_invalid"))
+    if t_invalid is not None and t_invalid <= now:
+        return "expired"
+
+    return None
+
+
+def _active_suppressed_memory_ids(graph: Any, memory_ids: List[str], now: datetime) -> Set[str]:
+    ordered_ids = list(dict.fromkeys(memory_id for memory_id in memory_ids if memory_id))
+    if not ordered_ids:
+        return set()
+
+    try:
+        records = graph.query(
+            """
+            UNWIND $ids AS source_id
+            MATCH (m:Memory {id: source_id})-[r]->(related:Memory)
+            WHERE type(r) IN $types
+            RETURN source_id, related.archived, related.t_valid, related.t_invalid
+            """,
+            {"ids": ordered_ids, "types": sorted(STATE_SUPPRESSING_RELATIONS)},
+        )
+    except Exception:
+        logger.exception("Failed to load identity current-state suppressions")
+        return set()
+
+    suppressed: Set[str] = set()
+    for row in getattr(records, "result_set", []) or []:
+        if not row:
+            continue
+        source_id = str(row[0] or "")
+        if not source_id:
+            continue
+        replacement = {
+            "archived": row[1] if len(row) > 1 else None,
+            "t_valid": row[2] if len(row) > 2 else None,
+            "t_invalid": row[3] if len(row) > 3 else None,
+        }
+        if _state_reason_for_memory(replacement, now) is None:
+            suppressed.add(source_id)
+    return suppressed
+
+
 def _gather_entity_memories(
     graph: Any,
     entity_id: str,
-    limit: int = 50,
-) -> List[Dict[str, Any]]:
+    limit: Optional[int] = 50,
+    *,
+    current_only: bool = True,
+) -> Tuple[List[Dict[str, Any]], int]:
     """Fetch memories linked to an entity, ordered by importance desc."""
+    limit_clause = "LIMIT $limit" if limit is not None else ""
+    params: Dict[str, Any] = {"id": entity_id}
+    if limit is not None:
+        params["limit"] = limit
+
     result = graph.query(
-        """
-        MATCH (e:Entity {id: $id})-[:REFERENCED_IN]->(m:Memory)
-        RETURN m.id, m.content, m.importance, m.timestamp, m.type
+        f"""
+        MATCH (e:Entity {{id: $id}})-[:REFERENCED_IN]->(m:Memory)
+        RETURN m.id, m.content, m.importance, m.timestamp, m.type,
+               m.t_valid, m.t_invalid, m.archived
         ORDER BY coalesce(m.importance, 0.0) DESC
-        LIMIT $limit
+        {limit_clause}
         """,
-        {"id": entity_id, "limit": limit},
+        params,
     )
     memories: List[Dict[str, Any]] = []
     for row in getattr(result, "result_set", []) or []:
@@ -73,9 +135,39 @@ def _gather_entity_memories(
                 "importance": row[2],
                 "timestamp": row[3],
                 "type": row[4],
+                "t_valid": row[5] if len(row) > 5 else None,
+                "t_invalid": row[6] if len(row) > 6 else None,
+                "archived": row[7] if len(row) > 7 else None,
             }
         )
-    return memories
+
+    if not current_only:
+        return memories, len(memories)
+
+    now = datetime.now(timezone.utc)
+    current_memories = [
+        memory for memory in memories if _state_reason_for_memory(memory, now) is None
+    ]
+    suppressed_ids = _active_suppressed_memory_ids(
+        graph,
+        [str(memory.get("id") or "") for memory in current_memories],
+        now,
+    )
+    if suppressed_ids:
+        current_memories = [
+            memory
+            for memory in current_memories
+            if str(memory.get("id") or "") not in suppressed_ids
+        ]
+
+    if limit is not None:
+        return current_memories[:limit], len(current_memories)
+    return current_memories, len(current_memories)
+
+
+def _count_current_entity_references(graph: Any, entity_id: str) -> int:
+    _memories, total_count = _gather_entity_memories(graph, entity_id, limit=None)
+    return total_count
 
 
 def _format_memories_for_prompt(memories: List[Dict[str, Any]]) -> str:
@@ -130,8 +222,13 @@ def synthesize_identity(
     previous_identity = ent_rows[0][2]
     current_version = int(ent_rows[0][3] or 0)
 
-    # Gather memories
-    memories = _gather_entity_memories(graph, entity_id, limit=memory_limit)
+    # Gather all current references for the source count, then sample for the prompt.
+    all_current_memories, total_ref_count = _gather_entity_memories(
+        graph,
+        entity_id,
+        limit=None,
+    )
+    memories = all_current_memories[:memory_limit]
     if not memories:
         logger.info("No memories for entity %s, skipping synthesis", entity_id)
         return None
@@ -184,17 +281,6 @@ def synthesize_identity(
         logger.exception("LLM call failed for entity %s", entity_id)
         return None
 
-    # Get the true total reference count (not truncated by memory_limit)
-    ref_count_result = graph.query(
-        "MATCH (e:Entity {id: $id})-[:REFERENCED_IN]->(m:Memory) RETURN count(m)",
-        {"id": entity_id},
-    )
-    ref_rows = getattr(ref_count_result, "result_set", []) or []
-    try:
-        total_ref_count = int(ref_rows[0][0]) if ref_rows else len(memories)
-    except (ValueError, TypeError, IndexError):
-        total_ref_count = len(memories)
-
     # Store on entity node
     now = datetime.now(timezone.utc).isoformat()
     graph.query(
@@ -215,10 +301,10 @@ def synthesize_identity(
     )
 
     logger.info(
-        "Synthesized identity for %s (v%d, %d sources, %d chars)",
+        "Synthesized identity for %s (v%d, %d current sources, %d chars)",
         entity_id,
         current_version + 1,
-        len(memories),
+        int(total_ref_count),
         len(identity_text),
     )
     return identity_text
@@ -301,7 +387,7 @@ def run_identity_consolidation(
         entity_id = row[0]
         stored_source_count = int(row[1] or 0)
         existing_identity = row[2]
-        actual_ref_count = int(row[3] or 0)
+        actual_ref_count = _count_current_entity_references(graph, entity_id)
         result["entities_examined"] += 1
 
         if actual_ref_count < min_references:

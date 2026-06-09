@@ -60,9 +60,20 @@ def _install_qdrant_stub() -> None:
         COSINE = "Cosine"
 
     class VectorParams:
-        def __init__(self, size: int, distance: str):
+        def __init__(self, size: int, distance: str, on_disk=None):
             self.size = size
             self.distance = distance
+            self.on_disk = on_disk
+
+    class OptimizersConfigDiff:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    class HnswConfigDiff:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
     class PointStruct:
         def __init__(self, id, vector, payload):
@@ -95,6 +106,8 @@ def _install_qdrant_stub() -> None:
 
     models_module.Distance = Distance
     models_module.VectorParams = VectorParams
+    models_module.OptimizersConfigDiff = OptimizersConfigDiff
+    models_module.HnswConfigDiff = HnswConfigDiff
     models_module.PointStruct = PointStruct
     models_module.MatchAny = MatchAny
     models_module.MatchValue = MatchValue

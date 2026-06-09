@@ -13,6 +13,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from automem.utils.entity_quality import validate_entity_slug
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,6 +87,10 @@ def _memory_overlap(memories_a: Set[str], memories_b: Set[str]) -> float:
     return overlap / len(smaller)
 
 
+def _is_generic_people_slug(category: str, slug: str) -> bool:
+    return category == "people" and "-" not in slug and len(slug) >= 3
+
+
 def find_merge_candidates(
     graph: Any,
     *,
@@ -110,12 +116,22 @@ def find_merge_candidates(
                 aliases = json.loads(aliases)
             except Exception:
                 aliases = []
+        validation = validate_entity_slug(str(row[2] or ""), str(row[1] or ""))
+        if not validation.accepted:
+            logger.debug(
+                "Skipping low-quality entity dedup candidate %s: %s",
+                row[0],
+                validation.reason,
+            )
+            continue
         entities.append(
             {
                 "id": row[0],
                 "slug": row[1],
-                "category": row[2],
+                "canonical_slug": validation.canonical_slug,
+                "category": validation.category,
                 "aliases": aliases,
+                "confidence": validation.confidence,
             }
         )
 
@@ -133,6 +149,13 @@ def find_merge_candidates(
 
     auto_merge: List[MergeCandidate] = []
     review: List[MergeCandidate] = []
+    extension_targets: Dict[tuple[str, str], Set[str]] = defaultdict(set)
+    for entity in entities:
+        slug = entity["canonical_slug"]
+        if "-" not in slug:
+            continue
+        first_token = slug.split("-", 1)[0]
+        extension_targets[(entity["category"], first_token)].add(entity["id"])
 
     # Compare pairs within the same category
     for i, ea in enumerate(entities):
@@ -140,7 +163,10 @@ def find_merge_candidates(
             if ea["category"] != eb["category"]:
                 continue
 
-            slug_sim = _slug_similarity(ea["slug"], eb["slug"])
+            slug_a = ea["canonical_slug"]
+            slug_b = eb["canonical_slug"]
+
+            slug_sim = _slug_similarity(slug_a, slug_b)
             if slug_sim < min_slug_similarity:
                 continue
 
@@ -150,13 +176,19 @@ def find_merge_candidates(
             )
 
             # Determine canonical: longer slug wins
-            if len(ea["slug"]) >= len(eb["slug"]):
+            if len(slug_a) >= len(slug_b):
                 canonical_id, alias_id = ea["id"], eb["id"]
+                canonical_slug, alias_slug = slug_a, slug_b
             else:
                 canonical_id, alias_id = eb["id"], ea["id"]
+                canonical_slug, alias_slug = slug_b, slug_a
 
-            is_substring = ea["slug"] in eb["slug"] or eb["slug"] in ea["slug"]
+            is_substring = slug_a in slug_b or slug_b in slug_a
             confidence = min(1.0, slug_sim * 0.4 + overlap * 0.6)
+            ambiguous_generic_alias = (
+                _is_generic_people_slug(ea["category"], alias_slug)
+                and len(extension_targets.get((ea["category"], alias_slug), set())) > 1
+            )
 
             candidate = MergeCandidate(
                 entity_a_id=ea["id"],
@@ -164,12 +196,21 @@ def find_merge_candidates(
                 canonical_id=canonical_id,
                 alias_id=alias_id,
                 confidence=confidence,
-                reason=f"slug_sim={slug_sim:.2f}, overlap={overlap:.2f}, substring={is_substring}",
+                reason=(
+                    f"slug_sim={slug_sim:.2f}, overlap={overlap:.2f}, "
+                    f"substring={is_substring}, canonical_slug={canonical_slug}"
+                    + (", ambiguous_generic_alias=true" if ambiguous_generic_alias else "")
+                ),
             )
 
-            if is_substring and overlap > min_overlap_for_auto:
+            if (
+                is_substring
+                and overlap > min_overlap_for_auto
+                and confidence >= 0.8
+                and not ambiguous_generic_alias
+            ):
                 auto_merge.append(candidate)
-            elif confidence >= 0.5:
+            elif confidence >= 0.5 or ambiguous_generic_alias:
                 review.append(candidate)
 
     return auto_merge, review
@@ -223,8 +264,12 @@ def merge_entities(graph: Any, canonical_id: str, alias_id: str) -> MergeResult:
         )
         # Remove old edges from alias
         graph.query(
-            "MATCH (e:Entity {id: $alias_id})-[r:REFERENCED_IN]->() DELETE r",
-            {"alias_id": alias_id},
+            """
+            MATCH (e:Entity {id: $alias_id})-[r:REFERENCED_IN]->(m:Memory)
+            WHERE m.id IN $mem_ids
+            DELETE r
+            """,
+            {"alias_id": alias_id, "mem_ids": mem_ids},
         )
 
     # Update canonical aliases (deduplicated)

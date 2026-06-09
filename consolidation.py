@@ -25,7 +25,7 @@ try:  # pragma: no cover - optional dependency in tests
 except ImportError:  # pragma: no cover - degraded mode when qdrant is absent
     qdrant_models = None
 
-from automem.config import FILTERABLE_RELATIONS, normalize_relation_type
+from automem.config import FILTERABLE_RELATIONS, IDENTITY_SYNTHESIS_ENABLED, normalize_relation_type
 from automem.utils.time import _parse_iso_datetime
 
 logger = logging.getLogger(__name__)
@@ -976,7 +976,7 @@ class MemoryConsolidator:
                 }
 
             # Step 4: Identity consolidation (entity dedup + identity synthesis)
-            if mode in ["full", "identity"]:
+            if mode == "identity" or (mode == "full" and IDENTITY_SYNTHESIS_ENABLED):
                 logger.info("Running identity consolidation...")
                 try:
                     from automem.consolidation.identity_synthesis import run_identity_consolidation
@@ -998,6 +998,11 @@ class MemoryConsolidator:
                 except Exception as exc:
                     logger.exception("Identity consolidation failed")
                     results["steps"]["identity"] = {"error": str(exc)}
+            elif mode == "full":
+                results["steps"]["identity"] = {
+                    "skipped": True,
+                    "reason": "Identity synthesis is disabled",
+                }
 
             # Step 5: Controlled forgetting
             if mode in ["full", "forget"]:

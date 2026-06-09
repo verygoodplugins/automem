@@ -136,7 +136,7 @@ Full writeups, findings, and how AutoMem implements each → [`docs/RESEARCH.md`
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic)
 
-Deploys four services from pre-built Docker images: `automem` (the API), `falkordb` (graph), `qdrant` (vectors), and `mcp-automem` (the MCP bridge for ChatGPT, Claude.ai, and ElevenLabs). Auto-redeploys nightly on `:stable`. Roughly **$0.50/month** after the $5 free trial.
+Recommended Railway projects run AutoMem as a small service group: `automem` (the API), `automem-graph-viewer` (the standalone UI), `falkordb` (graph), `qdrant` (vectors), and `mcp-automem` (the MCP bridge for ChatGPT, Claude.ai, and ElevenLabs). Services use pre-built Docker images and auto-redeploy on `:stable`, so Railway does not spend compute rebuilding source.
 
 → Full setup: [INSTALLATION.md](INSTALLATION.md#deployment)
 
@@ -201,7 +201,7 @@ requests.post(
 <!-- CAPTURE CHECKLIST — replace each placeholder image once captured:
 1. docs/img/graph-recall.png — FalkorDB browser at http://localhost:3000 showing a memory node with multiple typed edges visible (PREFERS_OVER, EXEMPLIFIES, RELATES_TO). Proves the graph is real.
 2. docs/img/claude-recall.png — Claude Desktop conversation where the assistant cites a recalled memory inline, with the AutoMem MCP tool call visible in the trace.
-3. docs/img/railway-services.png — Railway dashboard showing the four deployed services (automem, mcp-automem, qdrant, falkordb). A version exists as a GitHub user-attachment in INSTALLATION.md; capture a clean version and host it in-repo.
+3. docs/img/railway-services.png — Railway dashboard showing the production service group (automem, automem-graph-viewer, mcp-automem, qdrant, falkordb). A version exists as a GitHub user-attachment in INSTALLATION.md; capture a clean version and host it in-repo.
 
 Until each PNG exists, the table cells will render as broken-image icons on GitHub. -->
 

@@ -14,7 +14,7 @@ services:
       # Note: --dir is NOT set here because FalkorDB's run.sh always appends
       # --dir $FALKORDB_DATA_PATH after REDIS_ARGS, so any --dir in REDIS_ARGS
       # is silently overridden. We set FALKORDB_DATA_PATH=/data instead.
-      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec
+      - REDIS_ARGS=${FALKORDB_REDIS_ARGS:---save 60 1 --appendonly yes --appendfsync everysec}
       - FALKORDB_DATA_PATH=/data
       - REDIS_PASSWORD=${FALKORDB_PASSWORD:-}
     healthcheck:
@@ -28,6 +28,7 @@ services:
     image: qdrant/qdrant:v1.11.3
     ports:
       - "${QDRANT_HOST_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_HOST_PORT:-6334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
       - ./backups/qdrant:/backups
@@ -46,6 +47,8 @@ services:
       FALKORDB_PASSWORD: ${FALKORDB_PASSWORD:-}
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_TIMEOUT_SECONDS: ${QDRANT_TIMEOUT_SECONDS:-}
+      QDRANT_ENSURE_PAYLOAD_INDEXES: ${QDRANT_ENSURE_PAYLOAD_INDEXES:-true}
       AUTOMEM_API_TOKEN: ${AUTOMEM_API_TOKEN:-test-token}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-test-admin-token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

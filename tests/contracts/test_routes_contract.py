@@ -33,6 +33,7 @@ EXPECTED_ROUTE_METHODS = {
     ("GET", "/stream"),
     ("GET", "/stream/status"),
     ("GET", "/entities"),
+    ("GET", "/entities/audit"),
     ("GET", "/entities/merge-candidates"),
     ("GET", "/entity/<slug>"),
     ("POST", "/entity/<slug>/merge"),
