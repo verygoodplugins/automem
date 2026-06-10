@@ -16,7 +16,8 @@ import app
 from app import _normalize_timestamp, utc_now
 from automem import config
 from automem.api.recall import _expand_related_memories, handle_recall
-from automem.utils.scoring import _compute_metadata_score
+from automem.utils import scoring
+from automem.utils.scoring import _compute_metadata_score, _compute_recency_score
 from automem.utils.text import _extract_keywords
 from tests.support.fake_graph import FakeGraph
 
@@ -423,6 +424,59 @@ def test_compute_metadata_score_ignores_generated_entities_for_generic_tag_score
     )
 
     assert components["tag"] == 1 / 3
+
+
+def _timestamp_days_ago(days: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def test_compute_recency_score_age_zero_scores_one():
+    assert _compute_recency_score(_timestamp_days_ago(0)) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_compute_recency_score_future_timestamp_scores_one():
+    assert _compute_recency_score(_timestamp_days_ago(-5)) == 1.0
+
+
+def test_compute_recency_score_linear_half_window_scores_half():
+    assert _compute_recency_score(_timestamp_days_ago(90)) == pytest.approx(0.5, abs=1e-6)
+
+
+def test_compute_recency_score_linear_beyond_window_scores_zero():
+    assert _compute_recency_score(_timestamp_days_ago(180)) == pytest.approx(0.0, abs=1e-6)
+    assert _compute_recency_score(_timestamp_days_ago(400)) == 0.0
+
+
+def test_compute_recency_score_exp_window_is_half_life(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_CURVE", "exp")
+
+    assert _compute_recency_score(_timestamp_days_ago(180)) == pytest.approx(0.5, abs=1e-6)
+    assert _compute_recency_score(_timestamp_days_ago(360)) == pytest.approx(0.25, abs=1e-6)
+
+
+def test_compute_recency_score_missing_timestamp_scores_zero():
+    assert _compute_recency_score(None) == 0.0
+    assert _compute_recency_score("") == 0.0
+
+
+def test_compute_recency_score_unparseable_timestamp_scores_zero():
+    assert _compute_recency_score("not-a-timestamp") == 0.0
+
+
+def test_compute_recency_score_respects_configured_window(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_WINDOW_DAYS", 90.0)
+
+    assert _compute_recency_score(_timestamp_days_ago(45)) == pytest.approx(0.5, abs=1e-6)
+    assert _compute_recency_score(_timestamp_days_ago(90)) == pytest.approx(0.0, abs=1e-6)
+    assert _compute_recency_score(_timestamp_days_ago(120)) == 0.0
+
+
+def test_compute_recency_score_defaults_match_legacy_behavior():
+    # No monkeypatching: defaults must reproduce the historical
+    # linear-decay-over-180-days behavior exactly.
+    assert scoring.SEARCH_RECENCY_WINDOW_DAYS == 180.0
+    assert scoring.SEARCH_RECENCY_CURVE == "linear"
+    assert _compute_recency_score(_timestamp_days_ago(90)) == pytest.approx(0.5, abs=1e-6)
 
 
 def test_recall_with_query(client, mock_state, auth_headers):
