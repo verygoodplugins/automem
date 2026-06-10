@@ -468,7 +468,7 @@ def _looks_tool_or_org_like(value: str, slug: str, context: Optional[str]) -> bo
     # Context hints are too weak to condemn a multi-token person-shaped name:
     # in a technical corpus nearly every memory mentions data/projects/tools,
     # which would reject virtually every real person discussed at work.
-    if len(parts) >= 2 and _has_person_name_shape(parts):
+    if " " in (value or "").strip() and len(parts) >= 2 and _has_person_name_shape(parts):
         return False
 
     lowered_context = (context or "").lower()
