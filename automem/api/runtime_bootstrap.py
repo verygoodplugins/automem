@@ -6,6 +6,7 @@ from automem.api.admin import create_admin_blueprint_full
 from automem.api.backup import create_backup_blueprint
 from automem.api.consolidation import create_consolidation_blueprint_full
 from automem.api.enrichment import create_enrichment_blueprint
+from automem.api.entity import create_entity_blueprint
 from automem.api.graph import create_graph_blueprint
 from automem.api.health import create_health_blueprint
 from automem.api.memory import create_memory_blueprint_full
@@ -182,6 +183,12 @@ def register_blueprints(
         require_api_token=require_api_token_fn,
     )
 
+    entity_bp = create_entity_blueprint(
+        get_memory_graph_fn,
+        logger,
+        require_admin_token_fn=require_admin_token_fn,
+    )
+
     app.register_blueprint(health_bp)
     app.register_blueprint(enrichment_bp)
     app.register_blueprint(memory_bp)
@@ -191,6 +198,7 @@ def register_blueprints(
     app.register_blueprint(consolidation_bp)
     app.register_blueprint(graph_bp)
     app.register_blueprint(stream_bp)
+    app.register_blueprint(entity_bp)
 
     if is_viewer_enabled():
         viewer_bp = create_viewer_blueprint()

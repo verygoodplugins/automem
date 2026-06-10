@@ -3,9 +3,29 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from automem.utils.entity_quality import validate_entity_value
+
 
 class FalkorDBUnavailableError(RuntimeError):
     """Raised when enrichment requires FalkorDB but no graph client is available."""
+
+
+def _validated_entities(entities: Dict[str, List[str]], content: str) -> Dict[str, List[str]]:
+    validated: Dict[str, Set[str]] = {
+        "tools": set(),
+        "projects": set(),
+        "people": set(),
+        "concepts": set(),
+        "organizations": set(),
+    }
+    for category, values in (entities or {}).items():
+        for value in values or []:
+            result = validate_entity_value(category, value, context=content)
+            if result.accepted and result.name:
+                validated[result.category].add(result.name)
+
+    validated["tools"].difference_update(validated["people"])
+    return {category: sorted(values) for category, values in validated.items()}
 
 
 def jit_enrich_lightweight(
@@ -47,7 +67,7 @@ def jit_enrich_lightweight(
     if not content:
         return None
 
-    entities = extract_entities_fn(content)
+    entities = _validated_entities(extract_entities_fn(content), content)
 
     tags = list(dict.fromkeys(normalize_tag_list_fn(properties.get("tags"))))
     entity_tags: Set[str] = set()
@@ -189,7 +209,7 @@ def enrich_memory(
         return False
 
     content = properties.get("content", "") or ""
-    entities = extract_entities_fn(content)
+    entities = _validated_entities(extract_entities_fn(content), content)
 
     tags = list(dict.fromkeys(normalize_tag_list_fn(properties.get("tags"))))
     entity_tags: Set[str] = set()

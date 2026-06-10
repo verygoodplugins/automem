@@ -61,6 +61,7 @@ def create_consolidation_runtime(
     creative_interval_seconds: int,
     cluster_interval_seconds: int,
     forget_interval_seconds: int,
+    identity_interval_seconds: int = 0,
     delete_threshold: float,
     archive_threshold: float,
     grace_period_days: int,
@@ -97,6 +98,7 @@ def create_consolidation_runtime(
             creative_interval_seconds=creative_interval_seconds,
             cluster_interval_seconds=cluster_interval_seconds,
             forget_interval_seconds=forget_interval_seconds,
+            identity_interval_seconds=identity_interval_seconds,
         )
 
     def persist_consolidation_run(graph: Any, result: Dict[str, Any]) -> None:

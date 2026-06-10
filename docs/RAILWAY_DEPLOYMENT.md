@@ -482,6 +482,36 @@ python scripts/recover_from_qdrant.py
 
 ---
 
+## Standalone Graph Viewer (Public UI)
+
+The production graph UI should be a separate Railway service in the same project, not bundled into the AutoMem API container. AutoMem core owns API/auth/data and keeps `/viewer/*` as the canonical entrypoint; that route bootstraps users into the standalone viewer, preserves hash tokens, and passes `server=<automem-origin>`.
+
+1. **Create the viewer service**:
+
+   - Image: `ghcr.io/verygoodplugins/automem-graph-viewer:stable`
+   - Public domain: enabled
+   - No database credentials, no `RAILWAY_PRIVATE_DOMAIN`, no FalkorDB/Qdrant variables
+   - No `VITE_API_TARGET`, `VITE_BASE`, or `VITE_ENABLE_HAND_CONTROLS` in production
+
+2. **Configure the AutoMem API service**:
+
+   ```bash
+   GRAPH_VIEWER_URL=https://your-viewer.up.railway.app
+   VIEWER_ALLOWED_ORIGINS=https://your-viewer.up.railway.app
+   ```
+
+3. **Use `/viewer` on the API domain as the user-facing link**:
+
+   ```text
+   https://your-automem.up.railway.app/viewer/#token=<AUTOMEM_API_TOKEN>
+   ```
+
+Browser traffic must use public domains. Railway private networking is only for service-to-service traffic, so the viewer cannot call `automem.railway.internal` from the user's browser.
+
+The standalone viewer should be served at `/`. Only use `VITE_BASE_PATH=/viewer/` for a different deployment model where the built viewer assets are actually hosted under `/viewer/` on the API origin.
+
+---
+
 ## Optional: FalkorDB Browser (Admin / Debug)
 
 For low-level graph debugging by operators (separate from the public standalone graph-viewer):
@@ -693,7 +723,7 @@ REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru
 - [ ] Set up monitoring alerts (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
 - [ ] Configure automated backups (see [MONITORING_AND_BACKUPS.md](MONITORING_AND_BACKUPS.md))
 - [x] Add Remote MCP server integration — see docs/MCP_SSE.md
-- [ ] Deploy standalone graph-viewer (public UI) if needed
+- [x] Add standalone graph-viewer companion-service setup
 - [ ] Deploy FalkorDB Browser only for admin/debug workflows
 - [ ] Set up staging environment
 

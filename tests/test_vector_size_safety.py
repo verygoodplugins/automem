@@ -180,6 +180,30 @@ class TestExceptionHierarchy:
 class TestInitQdrantPropagation:
     """init_qdrant must let VectorDimensionMismatchError propagate (fatal)."""
 
+    @patch.dict("os.environ", {"QDRANT_TIMEOUT_SECONDS": "45"}, clear=False)
+    def test_qdrant_timeout_env_is_passed_to_client(self):
+        from automem.stores.runtime_clients import init_qdrant
+
+        state = SimpleNamespace(qdrant=None)
+        logger = MagicMock()
+        qdrant_client_cls = MagicMock()
+
+        with patch("automem.config.QDRANT_URL", "http://localhost:6333"), patch(
+            "automem.config.QDRANT_API_KEY", None
+        ):
+            init_qdrant(
+                state=state,
+                logger=logger,
+                qdrant_client_cls=qdrant_client_cls,
+                ensure_collection_fn=lambda: None,
+            )
+
+        qdrant_client_cls.assert_called_once_with(
+            url="http://localhost:6333",
+            api_key=None,
+            timeout=45.0,
+        )
+
     def test_dimension_mismatch_propagates(self):
         from automem.stores.runtime_clients import init_qdrant
 
@@ -224,6 +248,36 @@ class TestInitQdrantPropagation:
 
         assert state.qdrant is None
         logger.exception.assert_called_once()
+
+
+class TestEnsureQdrantCollectionPayloadIndexes:
+    @patch.dict("os.environ", {"QDRANT_ENSURE_PAYLOAD_INDEXES": "false"}, clear=False)
+    def test_can_skip_payload_indexes_for_restore_tuned_lab_collection(self):
+        from automem.stores.runtime_clients import ensure_qdrant_collection
+
+        qdrant = MagicMock()
+        qdrant.get_collections.return_value = SimpleNamespace(
+            collections=[SimpleNamespace(name="memories")]
+        )
+        state = SimpleNamespace(qdrant=qdrant, effective_vector_size=None)
+        logger = MagicMock()
+
+        ensure_qdrant_collection(
+            state=state,
+            logger=logger,
+            collection_name="memories",
+            vector_size_config=1024,
+            get_effective_vector_size_fn=lambda _client: (1024, "collection"),
+            vector_params_cls=MagicMock(),
+            distance_enum=SimpleNamespace(COSINE="Cosine"),
+            payload_schema_type_enum=SimpleNamespace(KEYWORD="keyword"),
+        )
+
+        assert state.qdrant is qdrant
+        qdrant.create_payload_index.assert_not_called()
+        logger.info.assert_any_call(
+            "Skipping Qdrant payload indexes for collection '%s'", "memories"
+        )
 
 
 # ---------------------------------------------------------------------------

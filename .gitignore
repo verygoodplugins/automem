@@ -46,3 +46,4 @@ node_modules/
 /scripts/bench/sweep_*.json
 benchmarks/baselines/locomo_baseline.json
 data/bm25_index.db
+data/

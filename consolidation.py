@@ -12,6 +12,7 @@ Implements biological memory consolidation patterns:
 import json
 import logging
 import math
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -24,7 +25,7 @@ try:  # pragma: no cover - optional dependency in tests
 except ImportError:  # pragma: no cover - degraded mode when qdrant is absent
     qdrant_models = None
 
-from automem.config import FILTERABLE_RELATIONS, normalize_relation_type
+from automem.config import FILTERABLE_RELATIONS, IDENTITY_SYNTHESIS_ENABLED, normalize_relation_type
 from automem.utils.time import _parse_iso_datetime
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,21 @@ class MemoryConsolidator:
             frozenset(protected_types) if protected_types is not None else self.PROTECTED_TYPES
         )
 
+    def _get_openai_client(self) -> Optional[Any]:
+        """Obtain an OpenAI-compatible client for LLM calls."""
+        try:
+            import openai
+
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                logger.warning("OPENAI_API_KEY not set; identity synthesis unavailable")
+                return None
+            base_url = (os.environ.get("OPENAI_BASE_URL") or "").strip() or None
+            return openai.OpenAI(api_key=api_key, **({"base_url": base_url} if base_url else {}))
+        except Exception:
+            logger.exception("Failed to create OpenAI client")
+            return None
+
     def _query_graph(
         self, query: str, params: Optional[Dict[str, Any]] = None
     ) -> List[Sequence[Any]]:
@@ -273,7 +289,12 @@ class MemoryConsolidator:
         """Return whether a memory should be protected from archiving/deletion."""
         protected_flag = memory.get("protected")
         if isinstance(protected_flag, str):
-            protected_flag = protected_flag.strip().lower() not in {"", "0", "false", "no"}
+            protected_flag = protected_flag.strip().lower() not in {
+                "",
+                "0",
+                "false",
+                "no",
+            }
         if protected_flag:
             reason = memory.get("protected_reason") or "explicitly protected"
             return True, str(reason)
@@ -299,7 +320,10 @@ class MemoryConsolidator:
             if created_at:
                 age_days = (current_time - created_at).days
                 if age_days < self.grace_period_days:
-                    return True, f"within grace period ({age_days} < {self.grace_period_days} days)"
+                    return (
+                        True,
+                        f"within grace period ({age_days} < {self.grace_period_days} days)",
+                    )
 
         memory_type = memory.get("type")
         if memory_type and str(memory_type) in self.protected_types:
@@ -395,7 +419,10 @@ class MemoryConsolidator:
                     if similarity < 0.3:
                         connection_type = "CONTRASTS_WITH"
                         confidence = 0.6
-                elif {mem1.type, mem2.type} == {"Insight", "Pattern"} and similarity > 0.5:
+                elif {mem1.type, mem2.type} == {
+                    "Insight",
+                    "Pattern",
+                } and similarity > 0.5:
                     connection_type = "DISCOVERED"
                     connection_kind = "explains"
                     confidence = 0.7
@@ -595,7 +622,13 @@ class MemoryConsolidator:
 
         Returns statistics about what was archived/deleted.
         """
-        stats = {"examined": 0, "archived": [], "deleted": [], "preserved": 0, "protected": []}
+        stats = {
+            "examined": 0,
+            "archived": [],
+            "deleted": [],
+            "preserved": 0,
+            "protected": [],
+        }
 
         # Get all memories with scores
         all_memories_query = """
@@ -785,7 +818,10 @@ class MemoryConsolidator:
         return stats
 
     def consolidate(
-        self, mode: str = "full", dry_run: bool = True, decay_threshold: Optional[float] = None
+        self,
+        mode: str = "full",
+        dry_run: bool = True,
+        decay_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Run full consolidation cycle.
@@ -922,7 +958,11 @@ class MemoryConsolidator:
                             """
                             try:
                                 self.graph.query(
-                                    link_query, {"meta_id": cluster["cluster_id"], "mem_id": mem_id}
+                                    link_query,
+                                    {
+                                        "meta_id": cluster["cluster_id"],
+                                        "mem_id": mem_id,
+                                    },
                                 )
                             except:
                                 pass
@@ -935,7 +975,36 @@ class MemoryConsolidator:
                     "sample_clusters": clusters[:2] if clusters else [],
                 }
 
-            # Step 4: Controlled forgetting
+            # Step 4: Identity consolidation (entity dedup + identity synthesis)
+            if mode == "identity" or (mode == "full" and IDENTITY_SYNTHESIS_ENABLED):
+                logger.info("Running identity consolidation...")
+                try:
+                    from automem.consolidation.identity_synthesis import run_identity_consolidation
+
+                    # Get OpenAI client from environment
+                    openai_client = self._get_openai_client()
+                    if openai_client is not None:
+                        identity_result = run_identity_consolidation(
+                            self.graph,
+                            openai_client,
+                            dry_run=dry_run,
+                        )
+                        results["steps"]["identity"] = identity_result
+                    else:
+                        results["steps"]["identity"] = {
+                            "skipped": True,
+                            "reason": "No OpenAI client available",
+                        }
+                except Exception as exc:
+                    logger.exception("Identity consolidation failed")
+                    results["steps"]["identity"] = {"error": str(exc)}
+            elif mode == "full":
+                results["steps"]["identity"] = {
+                    "skipped": True,
+                    "reason": "Identity synthesis is disabled",
+                }
+
+            # Step 5: Controlled forgetting
             if mode in ["full", "forget"]:
                 logger.info("Applying controlled forgetting...")
                 forget_stats = self.apply_controlled_forgetting(dry_run=dry_run)
@@ -1064,6 +1133,7 @@ class ConsolidationScheduler:
             "creative": {"interval": timedelta(days=7), "last_run": None},
             "cluster": {"interval": timedelta(days=30), "last_run": None},
             "forget": {"interval": timedelta(days=90), "last_run": None},
+            "identity": {"interval": timedelta(days=7), "last_run": None},
         }
         self.history = []
 
@@ -1112,8 +1182,17 @@ class ConsolidationScheduler:
             else:
                 result = self.consolidator.consolidate(mode=task_type, dry_run=False)
 
-            # Update schedule
-            self.schedules[task_type]["last_run"] = datetime.now(timezone.utc)
+            # Don't advance schedule if the identity task was skipped or failed
+            identity_not_completed = (
+                task_type == "identity"
+                and isinstance(result, dict)
+                and (
+                    result.get("steps", {}).get("identity", {}).get("skipped")
+                    or result.get("steps", {}).get("identity", {}).get("error")
+                )
+            )
+            if not identity_not_completed:
+                self.schedules[task_type]["last_run"] = datetime.now(timezone.utc)
 
             # Record in history
             self.history.append(

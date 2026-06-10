@@ -98,7 +98,7 @@ python -m spacy download en_core_web_sm
 - **Prefer zero cost** - No cloud bills, just local compute
 - **Developing/testing** - Local is faster for iteration
 
-<!-- Screenshot placeholder: docs/img/railway-services.png — Railway dashboard showing the four deployed services (automem, mcp-automem, qdrant, falkordb). Capture once and host in-repo so this stops depending on a fragile GitHub user-attachment URL. -->
+<!-- Screenshot placeholder: docs/img/railway-services.png — Railway dashboard showing the production service group (automem, automem-graph-viewer, mcp-automem, qdrant, falkordb). Capture once and host in-repo so this stops depending on a fragile GitHub user-attachment URL. -->
 _Screenshot pending: Railway services dashboard image will be added at `docs/img/railway-services.png` once captured._
 
 ---
@@ -109,11 +109,13 @@ _Screenshot pending: Railway services dashboard image will be added at `docs/img
 
 **What this does:**
 
-- Creates four Railway services from pre-built Docker images:
+- Creates the core Railway services from pre-built Docker images:
   - `automem` ← `ghcr.io/verygoodplugins/automem:stable`
   - `mcp-automem` ← `ghcr.io/verygoodplugins/mcp-automem:stable`
   - `qdrant` ← `qdrant/qdrant:latest`
   - `falkordb` ← `falkordb/falkordb:latest`
+- The standalone graph viewer is a companion service to add after the core deploy:
+  - `automem-graph-viewer` ← `ghcr.io/verygoodplugins/automem-graph-viewer:stable`
 - Sets up persistent storage and volumes
 - Generates secure API tokens (`AUTOMEM_API_TOKEN`, `ADMIN_API_TOKEN`)
 - Configures internal networking (`FALKORDB_HOST`, `FALKORDB_PORT`)
@@ -138,6 +140,7 @@ Once deployed, your Railway services pull updates automatically — no `git push
 | Service | Image | Update cadence |
 |---|---|---|
 | `automem` | `ghcr.io/verygoodplugins/automem:stable` | Auto-redeploy nightly |
+| `automem-graph-viewer` | `ghcr.io/verygoodplugins/automem-graph-viewer:stable` | Auto-redeploy nightly |
 | `mcp-automem` | `ghcr.io/verygoodplugins/mcp-automem:stable` | Auto-redeploy nightly |
 | `qdrant` | `qdrant/qdrant:latest` | Auto-redeploy nightly |
 | `falkordb` | `falkordb/falkordb:latest` | Auto-redeploy nightly |
@@ -227,6 +230,29 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
    - Set `AUTOMEM_API_TOKEN` to the same token as the API service
    - Generate a public domain so cloud AI clients (ChatGPT, Claude.ai, ElevenLabs) can reach it
 
+#### Step 4: Add the Graph Viewer companion service
+
+1. **Create a new Railway service from the Graph Viewer image:**
+
+   - In Railway → **+ New** → **Deploy from Docker image**
+   - Image: `ghcr.io/verygoodplugins/automem-graph-viewer:stable`
+   - Add a public domain: **Settings → Networking → Generate Domain**
+
+2. **Wire the API service to the viewer domain:**
+
+   Set these on the `automem` API service, then redeploy/restart the API:
+
+   ```bash
+   GRAPH_VIEWER_URL=https://your-viewer.up.railway.app
+   VIEWER_ALLOWED_ORIGINS=https://your-viewer.up.railway.app
+   ```
+
+3. **Leave database and private-network credentials off the viewer service.**
+
+   The viewer is browser-side UI. It calls the public AutoMem API URL supplied by `/viewer` bootstrap (`?server=<automem-origin>`) or by the token prompt. Railway private domains such as `*.railway.internal` only work for service-to-service traffic and cannot be reached by a user's browser.
+
+   The standalone viewer service normally needs no Railway variables. Do not set `VITE_API_TARGET`, `VITE_BASE`, or `VITE_ENABLE_HAND_CONTROLS` in production. `VITE_API_TARGET` is only for the local Vite dev proxy, `VITE_BASE` is not a supported variable, and hand controls are controlled by the UI at runtime.
+
 #### Get Your AutoMem URL
 
 1. Click on your **automem** service (the API, not FalkorDB)
@@ -256,15 +282,24 @@ flowchart TB
         direction TB
 
         Domain[Public Domain<br/>your-url.up.railway.app<br/>HTTPS Port 443]
+        ViewerDomain[Viewer Public Domain<br/>viewer-url.up.railway.app<br/>HTTPS Port 443]
 
         subgraph services [Services]
             API[AutoMem API<br/>Flask Service<br/>Internal Port 8001]
+            Viewer[Graph Viewer<br/>React/Three.js<br/>Static Service]
+            MCP[MCP Bridge<br/>Remote Clients]
             FalkorDB[(FalkorDB<br/>Graph Database<br/>Port 6379)]
+            Qdrant[(Qdrant<br/>Vector Store<br/>Port 6333)]
             Volume[Persistent Volume<br/>Data Storage]
         end
 
         Domain -->|Routes to| API
+        ViewerDomain -->|Routes to| Viewer
+        API -->|/viewer bootstrap| ViewerDomain
+        Viewer -->|Browser API calls public domain| Domain
+        MCP -->|Internal API calls| API
         API -->|Internal networking| FalkorDB
+        API -->|Internal networking| Qdrant
         FalkorDB -->|Mounts| Volume
     end
 

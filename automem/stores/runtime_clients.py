@@ -82,10 +82,14 @@ def init_qdrant(
             parsed.port or "default",
             parsed.scheme == "https",
         )
-        state.qdrant = qdrant_client_cls(
-            url=QDRANT_URL,
-            api_key=QDRANT_API_KEY,
-        )
+        qdrant_kwargs: dict[str, Any] = {
+            "url": QDRANT_URL,
+            "api_key": QDRANT_API_KEY,
+        }
+        timeout_seconds = os.getenv("QDRANT_TIMEOUT_SECONDS")
+        if timeout_seconds:
+            qdrant_kwargs["timeout"] = float(timeout_seconds)
+        state.qdrant = qdrant_client_cls(**qdrant_kwargs)
         ensure_collection_fn()
         logger.info("Qdrant connection established")
     except VectorDimensionMismatchError as e:
@@ -141,6 +145,16 @@ def ensure_qdrant_collection(
                 collection_name=collection_name,
                 vectors_config=vector_params_cls(size=effective_dim, distance=distance_enum.COSINE),
             )
+
+        ensure_payload_indexes = os.getenv("QDRANT_ENSURE_PAYLOAD_INDEXES", "true").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not ensure_payload_indexes:
+            logger.info("Skipping Qdrant payload indexes for collection '%s'", collection_name)
+            return
 
         logger.info("Ensuring Qdrant payload indexes for collection '%s'", collection_name)
         if payload_schema_type_enum:
