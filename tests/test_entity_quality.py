@@ -311,8 +311,9 @@ def test_people_tags_survive_technical_context_on_slug_path(slug: str) -> None:
     """
     from automem.utils.entity_quality import validate_entity_tag
 
+    display = slug.replace("-", " ").title()
     context = (
-        "Met about the data pipeline project; the platform tooling and "
+        f"Met with {display} about the data pipeline project; the platform tooling and "
         "database service migration are on track."
     )
     result = validate_entity_tag(f"entity:people:{slug}", context=context)
