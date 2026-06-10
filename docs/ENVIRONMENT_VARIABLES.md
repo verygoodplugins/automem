@@ -316,6 +316,7 @@ Controls how different factors are weighted in memory recall scoring.
 | `SEARCH_WEIGHT_METADATA` | Metadata sidecar match | `0.35` | Candidates admitted via the metadata sidecar channel (see `RECALL_METADATA_SEARCH_ENABLED`) |
 | `SEARCH_WEIGHT_RELATION` | Graph relationship boost | `0.25` | Memories connected via edges |
 | `SEARCH_WEIGHT_TAG` | Tag matching | `0.20` | Tag overlap scoring |
+| `SEARCH_TAG_SCORE_TOKEN_CAP` | Tag-score denominator cap | `3` | Tag score divides token hits by `min(query tokens, cap)` so long queries aren't penalized; `0` restores the legacy full-query-length denominator. Not a weight |
 | `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.20` | Full query in metadata |
 | `SEARCH_WEIGHT_IMPORTANCE` | Memory importance | `0.10` | User/system defined |
 | `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Decay shaped by `SEARCH_RECENCY_WINDOW_DAYS` and `SEARCH_RECENCY_CURVE` |
