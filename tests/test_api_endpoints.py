@@ -15,10 +15,12 @@ from qdrant_client import models as qdrant_models
 import app
 from app import _normalize_timestamp, utc_now
 from automem import config
+from automem.api import recall as recall_module
 from automem.api.recall import _expand_related_memories, handle_recall
 from automem.utils import scoring
 from automem.utils.scoring import _compute_metadata_score, _compute_recency_score
 from automem.utils.text import _extract_keywords
+from automem.utils.time import query_has_temporal_intent
 from tests.support.fake_graph import FakeGraph
 
 
@@ -3862,3 +3864,460 @@ def test_recall_exclude_tags_with_no_results(client, auth_headers):
     data = response.get_json()
     assert data["status"] == "success"
     assert len(data.get("results", [])) == 0
+
+
+# ==================== Score-sort timestamp tiebreak (issue #159 part 1) ====================
+
+
+def _sortable_result(final_score, timestamp, importance=0.5, source="graph"):
+    return {
+        "final_score": final_score,
+        "original_score": final_score,
+        "source": source,
+        "memory": {"importance": importance, "timestamp": timestamp},
+    }
+
+
+def test_score_sort_key_breaks_exact_ties_newest_first():
+    """Exact score ties order newest-first deterministically."""
+    older = _sortable_result(0.5, "2025-01-01T00:00:00+00:00")
+    newer = _sortable_result(0.5, "2025-06-01T00:00:00+00:00")
+
+    ordered = sorted([older, newer], key=recall_module._score_sort_key)
+
+    assert ordered[0] is newer
+    assert ordered[1] is older
+
+
+def test_score_sort_key_score_still_dominates_timestamp():
+    """A higher-scored older result still beats a lower-scored newer one."""
+    older_high = _sortable_result(0.9, "2024-01-01T00:00:00+00:00")
+    newer_low = _sortable_result(0.5, "2025-06-01T00:00:00+00:00")
+
+    ordered = sorted([newer_low, older_high], key=recall_module._score_sort_key)
+
+    assert ordered[0] is older_high
+
+
+def test_score_sort_key_importance_breaks_ties_before_timestamp():
+    """Existing keys (importance) are preserved ahead of the timestamp tiebreak."""
+    older_important = _sortable_result(0.5, "2024-01-01T00:00:00+00:00", importance=0.9)
+    newer_plain = _sortable_result(0.5, "2025-06-01T00:00:00+00:00", importance=0.1)
+
+    ordered = sorted([newer_plain, older_important], key=recall_module._score_sort_key)
+
+    assert ordered[0] is older_important
+
+
+def test_score_sort_key_unparseable_timestamp_falls_back_to_epoch():
+    """Unparseable timestamps sort as epoch (oldest) among exact ties, without raising."""
+    garbage = _sortable_result(0.5, "not-a-timestamp")
+    missing = _sortable_result(0.5, None)
+    dated = _sortable_result(0.5, "2025-06-01T00:00:00+00:00")
+
+    ordered = sorted([garbage, missing, dated], key=recall_module._score_sort_key)
+
+    assert ordered[0] is dated
+
+
+# ==================== Temporal-intent detection (issue #158/#159 part 2) ====================
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What is my current favorite editor?",
+        "what's the latest deployment status",
+        "Most Recent decision on auth",
+        "which framework do I prefer now",
+        "what changed today",
+        "what was updated in the schema",
+        "what happened last time we deployed",
+        "the newest API version",
+        "Currently using which database?",
+    ],
+)
+def test_query_has_temporal_intent_positive(query):
+    assert query_has_temporal_intent(query) is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "favorite editor preferences",
+        "nowhere plans for the trip",
+        "currency exchange rates",
+        "the lasting impact of the refactor",
+        "",
+        None,
+    ],
+)
+def test_query_has_temporal_intent_negative(query):
+    assert query_has_temporal_intent(query) is False
+
+
+# ==================== recency_bias re-rank (issues #158/#159 part 2) ====================
+
+
+def test_recall_recency_bias_off_by_default_keeps_importance_order(
+    client, mock_state, auth_headers
+):
+    """Default (env off, no param): older high-importance fact stays first; no echo."""
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    old_id = "dd000000-0000-0000-0000-000000000001"
+    new_id = "dd000000-0000-0000-0000-000000000002"
+
+    _store_memory(
+        mock_state,
+        old_id,
+        "Favorite color is blue",
+        ["fact"],
+        0.65,
+        timestamp=(now - timedelta(days=10)).isoformat(),
+    )
+    _store_memory(mock_state, new_id, "Favorite color is green", ["fact"], 0.5)
+
+    response = client.get("/recall?tags=fact&limit=10", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [old_id, new_id]
+    assert "recency_bias" not in data
+    for result in data["results"]:
+        assert "temporal" not in (result.get("score_components") or {})
+
+
+def test_recall_recency_bias_on_promotes_newer_conflicting_fact(client, mock_state, auth_headers):
+    """recency_bias=on: the newer fact outranks the older higher-importance one.
+
+    Importance gap is 0.15: tag-only recall weights importance via both the
+    keyword (trending match_score) and importance components (~0.45 combined),
+    so the default 0.1 temporal weight flips moderate gaps, not arbitrary ones.
+    """
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    old_id = "dd000000-0000-0000-0000-000000000003"
+    new_id = "dd000000-0000-0000-0000-000000000004"
+
+    _store_memory(
+        mock_state,
+        old_id,
+        "Favorite color is blue",
+        ["fact"],
+        0.65,
+        timestamp=(now - timedelta(days=10)).isoformat(),
+    )
+    _store_memory(mock_state, new_id, "Favorite color is green", ["fact"], 0.5)
+
+    response = client.get("/recall?tags=fact&limit=10&recency_bias=on", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data.get("recency_bias") == "on"
+    assert [result["id"] for result in data["results"]] == [new_id, old_id]
+    components = {result["id"]: result["score_components"] for result in data["results"]}
+    assert components[new_id]["temporal"] == pytest.approx(1.0)
+    assert components[old_id]["temporal"] == pytest.approx(0.0)
+
+
+def test_recall_recency_bias_auto_fires_on_temporal_query(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    old_id = "dd000000-0000-0000-0000-000000000005"
+    new_id = "dd000000-0000-0000-0000-000000000006"
+
+    _store_memory(
+        mock_state,
+        old_id,
+        "Favorite editor is Vim",
+        ["fact"],
+        0.9,
+        timestamp=(now - timedelta(days=10)).isoformat(),
+    )
+    _store_memory(mock_state, new_id, "Favorite editor is Zed", ["fact"], 0.1)
+
+    response = client.get(
+        "/recall?query=what is my current favorite editor&tags=fact&limit=10&recency_bias=auto",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data.get("recency_bias") == "on"
+    assert any("temporal" in (result.get("score_components") or {}) for result in data["results"])
+
+
+def test_recall_recency_bias_auto_skips_non_temporal_query(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    old_id = "dd000000-0000-0000-0000-000000000007"
+    new_id = "dd000000-0000-0000-0000-000000000008"
+
+    _store_memory(
+        mock_state,
+        old_id,
+        "Favorite editor is Vim",
+        ["fact"],
+        0.9,
+        timestamp=(now - timedelta(days=10)).isoformat(),
+    )
+    _store_memory(mock_state, new_id, "Favorite editor is Zed", ["fact"], 0.1)
+
+    response = client.get(
+        "/recall?query=favorite editor preference history&tags=fact&limit=10&recency_bias=auto",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "recency_bias" not in data
+    for result in data["results"]:
+        assert "temporal" not in (result.get("score_components") or {})
+
+
+def test_recall_recency_bias_all_same_timestamp_is_safe(client, mock_state, auth_headers):
+    """Degenerate spread (all candidates share a timestamp) contributes nothing, no crash."""
+    mock_state.memory_graph.memories.clear()
+    shared_ts = datetime.now(timezone.utc).isoformat()
+    first_id = "dd000000-0000-0000-0000-000000000009"
+    second_id = "dd000000-0000-0000-0000-000000000010"
+
+    _store_memory(mock_state, first_id, "Same-time fact A", ["fact"], 0.9, timestamp=shared_ts)
+    _store_memory(mock_state, second_id, "Same-time fact B", ["fact"], 0.1, timestamp=shared_ts)
+
+    response = client.get("/recall?tags=fact&limit=10&recency_bias=on", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data.get("recency_bias") == "on"
+    assert [result["id"] for result in data["results"]] == [first_id, second_id]
+    for result in data["results"]:
+        assert "temporal" not in (result.get("score_components") or {})
+
+
+def test_recall_recency_bias_invalid_param_falls_back_to_default(client, mock_state, auth_headers):
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    old_id = "dd000000-0000-0000-0000-000000000011"
+    new_id = "dd000000-0000-0000-0000-000000000012"
+
+    _store_memory(
+        mock_state,
+        old_id,
+        "Favorite color is blue",
+        ["fact"],
+        0.9,
+        timestamp=(now - timedelta(days=10)).isoformat(),
+    )
+    _store_memory(mock_state, new_id, "Favorite color is green", ["fact"], 0.1)
+
+    response = client.get("/recall?tags=fact&limit=10&recency_bias=bogus", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "recency_bias" not in data
+    assert [result["id"] for result in data["results"]] == [old_id, new_id]
+
+
+# ==================== Supersession chain-walk (issue #159 part 3) ====================
+
+
+def test_recall_current_only_resolves_supersession_chain_to_head(client, mock_state, auth_headers):
+    """A→INVALIDATED_BY→B→EVOLVED_INTO→C surfaces C with provenance pointing at A."""
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    a_id = "ee000000-0000-0000-0000-00000000000a"
+    b_id = "ee000000-0000-0000-0000-00000000000b"
+    c_id = "ee000000-0000-0000-0000-00000000000c"
+
+    _store_memory(mock_state, a_id, "Editor was Vim", ["state"], 1.0)
+    _store_memory(mock_state, b_id, "Editor became VS Code", ["middle"], 0.1)
+    _store_memory(mock_state, c_id, "Editor is now Zed", ["head"], 0.1)
+    mock_state.memory_graph.relationships.append(
+        {"id1": a_id, "id2": b_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": b_id, "id2": c_id, "type": "EVOLVED_INTO", "strength": 0.8}
+    )
+
+    response = client.get("/recall?limit=1&state_debug=true", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [c_id]
+    head = data["results"][0]
+    assert head["match_type"] == "state_replacement"
+    assert head["state_replaces"] == a_id
+    assert head["relations"][0]["from"] == a_id
+    assert data["state_filter"]["suppressed"][0]["replacement_id"] == c_id
+    assert data["state_filter"]["replacements"][0] == {
+        "id": c_id,
+        "replaces_id": a_id,
+        "relation_type": "INVALIDATED_BY",
+    }
+
+
+def test_recall_current_only_supersession_cycle_terminates(client, mock_state, auth_headers):
+    """A→B→A cycles terminate and surface the first replacement."""
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    a_id = "ee000000-0000-0000-0000-000000000010"
+    b_id = "ee000000-0000-0000-0000-000000000011"
+
+    _store_memory(mock_state, a_id, "Cyclic fact A", ["state"], 1.0)
+    _store_memory(mock_state, b_id, "Cyclic fact B", ["cycle"], 0.1)
+    mock_state.memory_graph.relationships.append(
+        {"id1": a_id, "id2": b_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": b_id, "id2": a_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+
+    response = client.get("/recall?limit=1&state_debug=true", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [b_id]
+    assert data["results"][0]["state_replaces"] == a_id
+
+
+def test_recall_current_only_supersession_chain_depth_bounded(client, mock_state, auth_headers):
+    """A 7-hop chain stops at STATE_REPLACEMENT_MAX_DEPTH hops without error."""
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+
+    source_id = "ee000000-0000-0000-0000-000000000020"
+    chain_ids = [f"ee000000-0000-0000-0000-0000000000{30 + idx}" for idx in range(7)]
+
+    _store_memory(mock_state, source_id, "Deep chain source", ["state"], 1.0)
+    previous = source_id
+    for idx, chain_id in enumerate(chain_ids):
+        _store_memory(mock_state, chain_id, f"Deep chain hop {idx + 1}", ["deep-chain"], 0.1)
+        mock_state.memory_graph.relationships.append(
+            {"id1": previous, "id2": chain_id, "type": "INVALIDATED_BY", "strength": 0.9}
+        )
+        previous = chain_id
+
+    response = client.get("/recall?limit=1&state_debug=true", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    expected_head = chain_ids[recall_module.STATE_REPLACEMENT_MAX_DEPTH - 1]
+    assert [result["id"] for result in data["results"]] == [expected_head]
+    assert data["results"][0]["state_replaces"] == source_id
+
+
+def test_recall_current_only_single_hop_fires_no_extra_chain_queries(
+    client, mock_state, auth_headers
+):
+    """Chain re-queries fire only while replacements keep resolving deeper."""
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    old_id = "ee000000-0000-0000-0000-000000000040"
+    replacement_id = "ee000000-0000-0000-0000-000000000041"
+
+    _store_memory(mock_state, old_id, "Single hop legacy", ["state"], 1.0)
+    _store_memory(mock_state, replacement_id, "Single hop current", ["hop"], 0.1)
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_id, "id2": replacement_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+
+    response = client.get("/recall?limit=1", headers=auth_headers)
+
+    assert response.status_code == 200
+    replacement_queries = [
+        query for query, _params in mock_state.memory_graph.queries if "RETURN source_id" in query
+    ]
+    # one first-hop batch + one (empty) chain round for the replacement head
+    assert len(replacement_queries) == 2
+
+
+def test_recall_current_only_no_replacements_fires_single_query(client, mock_state, auth_headers):
+    """Without any supersession edges, only the first-hop batch query runs."""
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    only_id = "ee000000-0000-0000-0000-000000000050"
+    _store_memory(mock_state, only_id, "Standalone fact", ["state"], 0.9)
+
+    response = client.get("/recall?limit=1", headers=auth_headers)
+
+    assert response.status_code == 200
+    replacement_queries = [
+        query for query, _params in mock_state.memory_graph.queries if "RETURN source_id" in query
+    ]
+    assert len(replacement_queries) == 1
+
+
+# ==================== Preference latest-wins acceptance (issue #158) ====================
+
+
+def test_recall_preference_latest_wins_with_recency_bias(client, mock_state, auth_headers):
+    """Two conflicting Preference memories: recency_bias=on surfaces the latest first."""
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    old_pref = "ff000000-0000-0000-0000-000000000001"
+    new_pref = "ff000000-0000-0000-0000-000000000002"
+
+    _store_memory(
+        mock_state,
+        old_pref,
+        "Prefers tabs for indentation",
+        ["preference"],
+        0.65,
+        mem_type="Preference",
+        timestamp=(now - timedelta(days=30)).isoformat(),
+    )
+    _store_memory(
+        mock_state,
+        new_pref,
+        "Prefers spaces for indentation",
+        ["preference"],
+        0.5,
+        mem_type="Preference",
+    )
+
+    response = client.get("/recall?tags=preference&limit=10&recency_bias=on", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [new_pref, old_pref]
+
+
+def test_recall_preference_explicit_invalidation_returns_replacement_only(
+    client, mock_state, auth_headers
+):
+    """An INVALIDATED_BY edge suppresses the old preference entirely (no recency_bias needed)."""
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    now = datetime.now(timezone.utc)
+    old_pref = "ff000000-0000-0000-0000-000000000003"
+    new_pref = "ff000000-0000-0000-0000-000000000004"
+
+    _store_memory(
+        mock_state,
+        old_pref,
+        "Prefers tabs for indentation",
+        ["preference"],
+        0.9,
+        mem_type="Preference",
+        timestamp=(now - timedelta(days=30)).isoformat(),
+    )
+    _store_memory(
+        mock_state,
+        new_pref,
+        "Prefers spaces for indentation",
+        ["preference"],
+        0.1,
+        mem_type="Preference",
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": old_pref, "id2": new_pref, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+
+    response = client.get("/recall?tags=preference&limit=10&state_debug=true", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == [new_pref]
+    assert data["state_filter"]["suppressed_count"] == 1

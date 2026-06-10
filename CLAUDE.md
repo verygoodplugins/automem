@@ -271,6 +271,8 @@ SEARCH_WEIGHT_IMPORTANCE=0.10      # Memory importance score
 SEARCH_WEIGHT_RECENCY=0.10         # Decay per SEARCH_RECENCY_* (default: linear over 180 days)
 SEARCH_WEIGHT_CONFIDENCE=0.05      # Memory confidence score
 SEARCH_WEIGHT_RELEVANCE=0.0        # Consolidation decay relevance (disabled by default)
+SEARCH_WEIGHT_TEMPORAL=0.1         # Relative-recency bonus, only when recency_bias re-rank runs
+RECALL_RECENCY_BIAS=off            # Recency re-rank default: off|on|auto (per-request recency_bias param overrides)
 
 # Memory content limits
 MEMORY_CONTENT_SOFT_LIMIT=500      # Auto-summarization trigger (chars)

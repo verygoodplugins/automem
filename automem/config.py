@@ -541,6 +541,35 @@ def _clamped_unit_interval(raw: str) -> float:
 # `context_tags` remains the explicit soft-boost channel.
 RECALL_RELEVANCE_GATE = _clamped_unit_interval(os.getenv("RECALL_RELEVANCE_GATE", "0.0"))
 
+
+def _non_negative_or_zero(raw: str) -> float:
+    """Parse a float env value, clamping negatives to 0.0 (the no-op value).
+
+    Unparseable values raise ValueError, matching the neighboring float()
+    parses. Unlike ``_positive_or_default``, 0.0 is a meaningful caller
+    choice here (weight disabled), so negatives clamp instead of falling
+    back to the default.
+    """
+    value = float(raw)
+    return value if value > 0.0 else 0.0
+
+
+# Relative-recency re-rank weight (issues #158/#159). When a recall request
+# activates recency_bias, candidate timestamps are min-max normalized across
+# the current candidate set and this weight times that relative recency is
+# added to each final score. Inert unless the re-rank runs (RECALL_RECENCY_BIAS
+# env or the per-request recency_bias param), so the default changes nothing.
+SEARCH_WEIGHT_TEMPORAL = _non_negative_or_zero(os.getenv("SEARCH_WEIGHT_TEMPORAL", "0.1"))
+
+# Default recency-bias mode for /recall: "off" (never re-rank), "on" (always),
+# "auto" (only when the query expresses temporal intent — "latest", "current",
+# ...). Per-request override via the recency_bias query param. Invalid values
+# fall back to "off" so a typo cannot silently enable re-ranking.
+_RECALL_RECENCY_BIAS_RAW = os.getenv("RECALL_RECENCY_BIAS", "off").strip().lower()
+RECALL_RECENCY_BIAS = (
+    _RECALL_RECENCY_BIAS_RAW if _RECALL_RECENCY_BIAS_RAW in {"auto", "on", "off"} else "off"
+)
+
 # API tokens
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
