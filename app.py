@@ -317,6 +317,7 @@ memory_classifier = MemoryClassifier(
     get_openai_client=get_openai_client,
     classification_model=CLASSIFICATION_MODEL,
     logger=logger,
+    stats=state.classification_stats,
 )
 
 

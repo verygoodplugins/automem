@@ -2970,6 +2970,57 @@ def test_enrichment_status(client, mock_state, auth_headers):
     assert "stats" in data
 
 
+def test_enrichment_status_includes_classification_metrics(client, monkeypatch, auth_headers):
+    """/enrichment/status exposes classification fallback metrics."""
+    monkeypatch.setattr(app, "API_TOKEN", "test-token")
+
+    # The enrichment blueprint captured the module-level service state at
+    # import time, so drive the classifier against that same stats object.
+    stats = app.state.classification_stats
+    baseline = stats.to_dict()
+
+    def _build_classifier(create_fn):
+        completions = SimpleNamespace(create=create_fn)
+        client_stub = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        return app.MemoryClassifier(
+            normalize_memory_type=lambda raw: (raw, False),
+            ensure_openai_client=lambda: None,
+            get_openai_client=lambda: client_stub,
+            classification_model="gpt-4o-mini",
+            logger=app.logger,
+            stats=stats,
+        )
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("429 insufficient_quota")
+
+    def _succeed(*args, **kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"type": "Insight", "confidence": 0.9}')
+                )
+            ]
+        )
+
+    # Content matches no regex pattern, forcing the LLM path.
+    assert _build_classifier(_raise).classify("qwxz flibber jabberwock") == ("Memory", 0.3)
+    assert _build_classifier(_succeed).classify("qwxz flibber jabberwock") == ("Insight", 0.9)
+
+    response = client.get("/enrichment/status", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "classification" in data
+
+    block = data["classification"]
+    assert block["llm_attempts"] == baseline["llm_attempts"] + 2
+    assert block["llm_successes"] == baseline["llm_successes"] + 1
+    assert block["fallbacks"] == baseline["fallbacks"] + 1
+    assert block["pattern_classifications"] == baseline["pattern_classifications"]
+    assert "429" in (block["last_error"] or "")
+    assert block["last_error_at"]
+
+
 def test_enrichment_reprocess(client, mock_state, admin_headers):
     """Test reprocessing memories for enrichment."""
     response = client.post(

@@ -96,12 +96,15 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         get_openai_client: Callable[[], Any],
         classification_model: str,
         logger: Any,
+        stats: Any = None,
     ) -> None:
         self._normalize_memory_type = normalize_memory_type
         self._ensure_openai_client = ensure_openai_client
         self._get_openai_client = get_openai_client
         self._classification_model = classification_model
         self._logger = logger
+        self._stats = stats
+        self._last_llm_error: Optional[str] = None
 
     def classify(self, content: str, *, use_llm: bool = True) -> tuple[str, float]:
         """Classify memory type and return confidence score."""
@@ -114,15 +117,25 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
                     matches = sum(1 for p in patterns if re.search(p, content_lower))
                     if matches > 1:
                         confidence = min(0.95, confidence + (matches * 0.1))
+                    if self._stats is not None:
+                        self._stats.record_pattern()
                     return memory_type, confidence
 
         if use_llm:
+            self._last_llm_error = None
+            if self._stats is not None:
+                self._stats.record_llm_attempt()
             try:
                 result = self._classify_with_llm(content)
                 if result:
+                    if self._stats is not None:
+                        self._stats.record_llm_success()
                     return result
-            except Exception:
+            except Exception as exc:
                 self._logger.exception("LLM classification failed, using fallback")
+                self._last_llm_error = str(exc)
+            if self._stats is not None:
+                self._stats.record_fallback(self._last_llm_error)
 
         return "Memory", 0.3
 
@@ -180,5 +193,6 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             self._logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
             return memory_type, confidence
         except Exception as exc:
+            self._last_llm_error = str(exc)
             self._logger.warning("LLM classification failed: %s", exc)
             return None
