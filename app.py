@@ -179,6 +179,7 @@ from automem.config import (
 from automem.search.runtime_keywords import load_keyword_runtime
 from automem.search.runtime_recall_helpers import (
     _graph_keyword_search,
+    _metadata_keyword_search,
     _result_passes_filters,
     _vector_filter_only_tag_search,
     _vector_search,

@@ -15,6 +15,7 @@ from automem.config import (
     FILTERABLE_RELATIONS,
     RECALL_ADAPTIVE_FLOOR,
     RECALL_EXPANSION_LIMIT,
+    RECALL_METADATA_SEARCH_ENABLED,
     RECALL_MIN_SCORE,
     RECALL_RELATION_LIMIT,
     canonicalize_relation_type,
@@ -1417,6 +1418,7 @@ def handle_recall(
     expansion_limit_default: Optional[int] = None,
     on_access: Optional[Callable[[List[str]], None]] = None,
     jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
+    metadata_keyword_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -1665,6 +1667,27 @@ def handle_recall(
                 tag_match=tag_match,
             )
             local_results.extend(graph_matches[:remaining_slots])
+
+        if (
+            graph is not None
+            and metadata_keyword_search is not None
+            and query_str
+            and RECALL_METADATA_SEARCH_ENABLED
+        ):
+            metadata_slots = max(1, min(per_query_limit, 10))
+            metadata_matches = metadata_keyword_search(
+                graph,
+                query_str,
+                metadata_slots,
+                local_seen,
+                start_time=start_time,
+                end_time=end_time,
+                tag_filters=tag_filters,
+                tag_mode=tag_mode,
+                tag_match=tag_match,
+                exclude_tags=exclude_tags,
+            )
+            local_results.extend(metadata_matches)
 
         tags_only_request = (
             not query_str
@@ -2139,6 +2162,7 @@ def create_recall_blueprint(
     summarize_relation_node: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
     on_access: Optional[Callable[[List[str]], None]] = None,
     jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
+    metadata_keyword_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
 ) -> Blueprint:
     bp = Blueprint("recall", __name__)
 
@@ -2170,6 +2194,7 @@ def create_recall_blueprint(
             expansion_limit_default=RECALL_EXPANSION_LIMIT,
             on_access=on_access,
             jit_enrich_fn=jit_enrich_fn,
+            metadata_keyword_search=metadata_keyword_search,
         )
 
     @bp.route("/startup-recall", methods=["GET"])

@@ -68,6 +68,7 @@ def register_blueprints(
     consolidation_tick_seconds: int,
     consolidation_history_limit: int,
     require_api_token_fn: Callable[[], None],
+    metadata_keyword_search_fn: Optional[Callable[..., list[dict[str, Any]]]] = None,
 ) -> None:
     health_bp = create_health_blueprint(
         get_memory_graph_fn,
@@ -106,6 +107,7 @@ def register_blueprints(
         summarize_relation_node_fn,
         update_last_accessed_fn,
         jit_enrich_fn=jit_enrich_fn,
+        metadata_keyword_search=metadata_keyword_search_fn,
     )
 
     memory_bp = create_memory_blueprint_full(

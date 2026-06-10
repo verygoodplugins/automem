@@ -28,6 +28,7 @@ def recall_memories(
     emit_event_fn: Any,
     utc_now_fn: Any,
     abort_fn: Any,  # noqa: ARG001 - kept for DI compatibility
+    metadata_keyword_search_fn: Any = None,
 ) -> Any:
     query_start = perf_counter_fn()
     query_text = (request_obj.args.get("query") or "").strip()
@@ -66,6 +67,7 @@ def recall_memories(
         default_expand_relations=default_expand_relations,
         relation_limit=recall_relation_limit,
         expansion_limit_default=recall_expansion_limit,
+        metadata_keyword_search=metadata_keyword_search_fn,
     )
 
     elapsed_ms = int((perf_counter_fn() - query_start) * 1000)

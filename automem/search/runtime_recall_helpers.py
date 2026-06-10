@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+import json
+import re
+import unicodedata
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from flask import abort, request
 from qdrant_client import QdrantClient
@@ -17,9 +20,322 @@ _generate_real_embedding: Optional[Callable[[str], List[float]]] = None
 _logger: Any = None
 _collection_name: str = ""
 
+METADATA_SEARCH_FIELDS = (
+    "source",
+    "source_agent",
+    "source_agents",
+    "repo",
+    "project",
+    "tool",
+    "surface",
+    "applies_to",
+    "trigger",
+    "provider",
+    "model",
+    "entities",
+)
+# Safety guard: these must never become searchable even if a future edit adds
+# them to METADATA_SEARCH_FIELDS. None of them are in the whitelist today.
+METADATA_SKIP_FIELDS = {
+    "original_content",
+    "enrichment",
+    "semantic_neighbors",
+    "patterns_detected",
+}
+METADATA_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "source": ("source",),
+    "source_agent": ("source agent", "source agents"),
+    "source_agents": ("source agents", "source agent"),
+    "repo": ("repo", "repository"),
+    "project": ("project",),
+    "tool": ("tool",),
+    "surface": ("surface",),
+    "applies_to": ("applies to", "apply to"),
+    "trigger": ("trigger",),
+    "provider": ("provider",),
+    "model": ("model",),
+    "entities": ("entity", "entities"),
+}
+METADATA_QUERY_STOPWORDS = {
+    "all",
+    "any",
+    "about",
+    "by",
+    "find",
+    "for",
+    "from",
+    "in",
+    "me",
+    "memory",
+    "memories",
+    "of",
+    "on",
+    "please",
+    "show",
+    "that",
+    "the",
+    "to",
+    "with",
+}
+METADATA_FIELD_TOKENS = {
+    "source",
+    "agent",
+    "agents",
+    "repo",
+    "repository",
+    "project",
+    "tool",
+    "surface",
+    "applies",
+    "apply",
+    "trigger",
+    "provider",
+    "model",
+    "entity",
+    "entities",
+    "metadata",
+}
+METADATA_PREFILTER_MAX_TERMS = 12
+METADATA_SCAN_LIMIT_MIN = 200
+METADATA_SCAN_LIMIT_MAX = 1000
+MAX_METADATA_STRING_LENGTH = 96
+MAX_METADATA_ARRAY_LENGTH = 12
+
 
 def _normalize_tags(tags: List[Any]) -> List[str]:
     return [str(tag).strip().lower() for tag in tags if isinstance(tag, str) and str(tag).strip()]
+
+
+def _parse_metadata_for_search(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _ascii_search_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^A-Za-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _search_tokens(value: Any) -> set[str]:
+    normalized = _ascii_search_text(value)
+    return {token for token in re.findall(r"[a-z0-9]+", normalized) if len(token) >= 2}
+
+
+def _ordered_search_tokens(value: Any) -> list[str]:
+    normalized = _ascii_search_text(value)
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for token in re.findall(r"[a-z0-9]+", normalized):
+        if len(token) < 2 or token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
+
+
+def _iter_scalar_metadata_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped and len(stripped) <= MAX_METADATA_STRING_LENGTH:
+            yield stripped
+        return
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        yield str(value)
+        return
+    if isinstance(value, (list, tuple, set)):
+        values = list(value)
+        if len(values) > MAX_METADATA_ARRAY_LENGTH:
+            return
+        for item in values:
+            yield from _iter_scalar_metadata_values(item)
+
+
+def _iter_metadata_search_values(metadata: Dict[str, Any]) -> Iterable[tuple[str, str]]:
+    for field in METADATA_SEARCH_FIELDS:
+        if field in METADATA_SKIP_FIELDS or field not in metadata:
+            continue
+        raw = metadata.get(field)
+        if field == "entities":
+            if not isinstance(raw, dict):
+                continue
+            for category, values in raw.items():
+                category_text = str(category).strip().lower()
+                if not category_text:
+                    continue
+                # Entity people are content-derived and noisy personal names;
+                # they are always excluded from sidecar matching.
+                if category_text == "people":
+                    continue
+                if isinstance(values, dict):
+                    continue
+                for item in _iter_scalar_metadata_values(values):
+                    yield f"entities.{category_text}", item
+            continue
+        if isinstance(raw, dict):
+            continue
+        for item in _iter_scalar_metadata_values(raw):
+            yield field, item
+
+
+def _metadata_prefilter_terms(query_text: str) -> list[str]:
+    terms = _ordered_search_tokens(query_text)
+    value_terms = [
+        term
+        for term in terms
+        if term not in METADATA_FIELD_TOKENS and term not in METADATA_QUERY_STOPWORDS
+    ]
+    return value_terms[:METADATA_PREFILTER_MAX_TERMS]
+
+
+def _requested_metadata_fields(query_text: str) -> set[str]:
+    normalized = _ascii_search_text(query_text)
+    if not normalized:
+        return set()
+
+    padded = f" {normalized} "
+    requested: set[str] = set()
+    phrase_fields: set[str] = set()
+    for field, aliases in METADATA_FIELD_ALIASES.items():
+        for alias in aliases:
+            alias_text = _ascii_search_text(alias)
+            if " " in alias_text and f" {alias_text} " in padded:
+                requested.add(field)
+                phrase_fields.add(field)
+
+    tokens = set(normalized.split())
+    for field, aliases in METADATA_FIELD_ALIASES.items():
+        if field in phrase_fields:
+            continue
+        for alias in aliases:
+            alias_text = _ascii_search_text(alias)
+            if " " in alias_text:
+                continue
+            if alias_text in tokens:
+                if alias_text == "source" and (
+                    "source_agent" in requested or "source_agents" in requested
+                ):
+                    continue
+                requested.add(field)
+
+    return requested
+
+
+def _metadata_field_requested(field: str, requested_fields: set[str]) -> bool:
+    if not requested_fields:
+        return True
+    base = field.split(".", 1)[0]
+    if base in {"source_agent", "source_agents"}:
+        return bool({"source_agent", "source_agents"} & requested_fields)
+    if base == "entities":
+        return "entities" in requested_fields
+    return base in requested_fields
+
+
+def _metadata_value_has_strong_evidence(
+    *,
+    value_hits: set[str],
+    value_tokens: set[str],
+    query_value_tokens: set[str],
+    exact_hit: bool,
+    field_requested: bool,
+    requested_fields: set[str],
+) -> bool:
+    if len(value_tokens) > 1 and len(value_hits) >= min(2, len(value_tokens)):
+        return True
+
+    if len(value_hits) != 1:
+        return False
+
+    hit = next(iter(value_hits))
+    if field_requested and requested_fields and exact_hit and len(hit) >= 3:
+        return True
+    if len(hit) < 5:
+        return False
+    if field_requested and requested_fields:
+        return True
+    return exact_hit and len(query_value_tokens) <= 3
+
+
+def _metadata_match_score(query_text: str, metadata: Dict[str, Any]) -> tuple[float, list[str]]:
+    query_tokens = _search_tokens(query_text)
+    if not query_tokens:
+        return 0.0, []
+    query_value_tokens = {
+        token
+        for token in query_tokens
+        if token not in METADATA_FIELD_TOKENS
+        and token not in METADATA_QUERY_STOPWORDS
+        and len(token) >= 3
+    }
+    if not query_value_tokens:
+        return 0.0, []
+
+    requested_fields = _requested_metadata_fields(query_text)
+    normalized_query = _ascii_search_text(query_text)
+    matched_values: list[str] = []
+    best_score = 0.0
+
+    for field, value in _iter_metadata_search_values(metadata):
+        value_text = _ascii_search_text(value)
+        value_tokens = _search_tokens(value)
+        if not value_text or not value_tokens:
+            continue
+
+        value_hits = query_value_tokens & value_tokens
+        exact_hit = value_text in normalized_query
+        if not value_hits:
+            continue
+
+        field_requested = _metadata_field_requested(field, requested_fields)
+        # Generated entities are frequently content-derived; keep them out of the
+        # general sidecar path unless the query explicitly asks for entity metadata.
+        if field.startswith("entities.") and "entities" not in requested_fields:
+            continue
+        # Repo queries are high-cardinality and often share owner/suffix tokens
+        # like "verygoodplugins" and "mcp"; require the value to cover the
+        # requested repo terms unless the full normalized value is present.
+        if field == "repo" and "repo" in requested_fields and not exact_hit:
+            repo_query_tokens = query_value_tokens - value_tokens
+            if repo_query_tokens:
+                continue
+        if requested_fields and not field_requested and len(value_hits) < 2:
+            continue
+        if not _metadata_value_has_strong_evidence(
+            value_hits=value_hits,
+            value_tokens=value_tokens,
+            query_value_tokens=query_value_tokens,
+            exact_hit=exact_hit,
+            field_requested=field_requested,
+            requested_fields=requested_fields,
+        ):
+            continue
+
+        value_ratio = len(value_hits) / max(len(value_tokens), 1)
+        query_ratio = len(value_hits) / max(len(query_value_tokens), 1)
+        score = min(
+            1.0,
+            0.15
+            + (0.45 * value_ratio)
+            + (0.20 * query_ratio)
+            + (0.15 if exact_hit else 0.0)
+            + (0.20 if requested_fields and field_requested else 0.0),
+        )
+        if requested_fields and not field_requested:
+            score *= 0.6
+        if score > best_score:
+            best_score = score
+        matched_values.append(f"{field}: {value}")
+
+    return best_score, matched_values
 
 
 def configure_recall_helpers(
@@ -378,6 +694,135 @@ def _graph_keyword_search(
         if record is None:
             continue
         matches.append(record)
+
+    return matches
+
+
+def _metadata_keyword_search(
+    graph: Any,
+    query_text: str,
+    limit: int,
+    seen_ids: set[str],
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    tag_filters: Optional[List[str]] = None,
+    tag_mode: str = "any",
+    tag_match: str = "prefix",
+    exclude_tags: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    prepare_tag_filters = _prepare_tag_filters
+    build_graph_tag_predicate = _build_graph_tag_predicate
+    serialize_node = _serialize_node
+    fetch_relations = _fetch_relations
+    logger = _logger
+    if (
+        prepare_tag_filters is None
+        or build_graph_tag_predicate is None
+        or serialize_node is None
+        or fetch_relations is None
+        or logger is None
+    ):
+        raise RuntimeError("recall helpers are not configured")
+
+    normalized = query_text.strip().lower()
+    if not normalized or normalized == "*" or limit <= 0:
+        return []
+
+    keywords = _metadata_prefilter_terms(normalized)
+    if not keywords:
+        return []
+
+    try:
+        base_where = ["m.metadata IS NOT NULL", "coalesce(m.archived, false) = false"]
+        scan_limit = min(max(limit * 25, METADATA_SCAN_LIMIT_MIN), METADATA_SCAN_LIMIT_MAX)
+        params: Dict[str, Any] = {"limit": scan_limit, "keywords": keywords}
+        if start_time:
+            base_where.append("m.timestamp >= $start_time")
+            params["start_time"] = start_time
+        if end_time:
+            base_where.append("m.timestamp <= $end_time")
+            params["end_time"] = end_time
+        if tag_filters:
+            normalized_filters = prepare_tag_filters(tag_filters)
+            if normalized_filters:
+                base_where.append(build_graph_tag_predicate(tag_mode, tag_match))
+                params["tag_filters"] = normalized_filters
+
+        query = f"""
+            MATCH (m:Memory)
+            WHERE {' AND '.join(base_where)}
+            WITH m, toLower(m.metadata) AS metadata_text
+            UNWIND $keywords AS kw
+            WITH m, metadata_text, kw,
+                 CASE WHEN metadata_text CONTAINS kw THEN 1 ELSE 0 END AS kw_score
+            WITH m, SUM(kw_score) AS score
+            WHERE score > 0
+            RETURN m, score
+            ORDER BY score DESC, m.importance DESC, m.timestamp DESC
+            LIMIT $limit
+        """
+        result = graph.query(query, params)
+    except Exception:
+        logger.exception("Graph metadata keyword search failed")
+        return []
+
+    candidates: List[Dict[str, Any]] = []
+    for row in getattr(result, "result_set", []) or []:
+        node = row[0]
+        data = serialize_node(node)
+        memory_id = str(data.get("id")) if data.get("id") is not None else None
+        if not memory_id or memory_id in seen_ids:
+            continue
+        if data.get("archived"):
+            continue
+        metadata = _parse_metadata_for_search(data.get("metadata"))
+        match_score, _ = _metadata_match_score(query_text, metadata)
+        if match_score <= 0:
+            continue
+
+        record: Dict[str, Any] = {
+            "id": memory_id,
+            "score": match_score,
+            "match_score": match_score,
+            "match_type": "metadata",
+            "source": "graph",
+            "memory": data,
+            "relations": [],
+            "score_components": {"metadata": match_score},
+        }
+        if not _result_passes_filters(
+            record,
+            start_time,
+            end_time,
+            tag_filters,
+            tag_mode,
+            tag_match,
+            exclude_tags,
+        ):
+            continue
+        candidates.append(record)
+
+    candidates.sort(
+        key=lambda record: (
+            float(record.get("match_score") or 0.0),
+            float((record.get("memory") or {}).get("importance") or 0.0),
+            str((record.get("memory") or {}).get("timestamp") or ""),
+        ),
+        reverse=True,
+    )
+
+    matches: List[Dict[str, Any]] = []
+    for record in candidates:
+        memory_id = str(record.get("id") or "")
+        if not memory_id or memory_id in seen_ids:
+            continue
+        seen_ids.add(memory_id)
+        # Relations are fetched only for kept records — candidates can number in
+        # the hundreds while the trimmed result is at most `limit`.
+        record["relations"] = fetch_relations(graph, memory_id)
+        matches.append(record)
+        if len(matches) >= limit:
+            break
 
     return matches
 

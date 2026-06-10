@@ -9,6 +9,7 @@ from automem.config import (
     SEARCH_WEIGHT_EXACT,
     SEARCH_WEIGHT_IMPORTANCE,
     SEARCH_WEIGHT_KEYWORD,
+    SEARCH_WEIGHT_METADATA,
     SEARCH_WEIGHT_RECENCY,
     SEARCH_WEIGHT_RELATION,
     SEARCH_WEIGHT_RELEVANCE,
@@ -167,6 +168,12 @@ def _compute_metadata_score(
                 content_hits = sum(1 for token in tokens if token in content_tokens)
                 keyword_component = content_hits / len(tokens)
 
+    metadata_component = (
+        float(result.get("match_score", 0.0) or 0.0)
+        if result.get("match_type") == "metadata"
+        else 0.0
+    )
+
     relation_component = 0.0
     if result.get("match_type") == "relation":
         relation_component = float(
@@ -187,6 +194,7 @@ def _compute_metadata_score(
     final = (
         SEARCH_WEIGHT_VECTOR * vector_component
         + SEARCH_WEIGHT_KEYWORD * keyword_component
+        + SEARCH_WEIGHT_METADATA * metadata_component
         + SEARCH_WEIGHT_RELATION * relation_component
         + SEARCH_WEIGHT_TAG * tag_score
         + SEARCH_WEIGHT_IMPORTANCE * importance_score
@@ -200,6 +208,7 @@ def _compute_metadata_score(
     components = {
         "vector": vector_component,
         "keyword": keyword_component,
+        "metadata": metadata_component,
         "relation": relation_component,
         "tag": tag_score,
         "importance": importance_score,
