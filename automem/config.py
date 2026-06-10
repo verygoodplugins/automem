@@ -510,6 +510,37 @@ SEARCH_TAG_SCORE_TOKEN_CAP = _non_negative_int_or_default(
     os.getenv("SEARCH_TAG_SCORE_TOKEN_CAP", "0"), 0
 )
 
+
+def _clamped_unit_interval(raw: str) -> float:
+    """Parse a float env value and clamp it into [0.0, 1.0].
+
+    Unparseable values raise ValueError, matching the neighboring float()
+    parses. Negative values clamp to 0.0 (the gate-disabled sentinel).
+    Values above 1.0 clamp to 1.0 rather than falling back: the evidence
+    components the gate compares against are themselves bounded at ~1.0, so
+    a gate above 1.0 can never be exceeded and would only act as a uniform
+    score dampener — clamping preserves the strongest gate the caller could
+    have meant.
+    """
+    value = float(raw)
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+# Within-pool relevance gate (issue #130). When a query has tokens and a
+# result's best query-topical evidence (max of the vector, keyword, metadata,
+# and exact-match components) falls below this threshold, the
+# query-independent components (importance, confidence, recency, tag overlap)
+# are scaled by evidence / gate — a linear ramp, not a cliff — so
+# high-importance but off-topic memories cannot ride query-independent score
+# to the top of a tag-scoped pool. 0.0 (default) disables the gate and
+# preserves legacy scoring exactly. The context bonus is never gated:
+# `context_tags` remains the explicit soft-boost channel.
+RECALL_RELEVANCE_GATE = _clamped_unit_interval(os.getenv("RECALL_RELEVANCE_GATE", "0.0"))
+
 # API tokens
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")

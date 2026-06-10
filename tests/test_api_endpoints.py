@@ -430,7 +430,7 @@ def test_compute_metadata_score_ignores_generated_entities_for_generic_tag_score
     assert components["tag"] == 1 / 3
 
 
-def _tag_score_result(tags: list[str]) -> dict[str, Any]:
+def _tag_score_result(tags: list) -> dict:
     return {
         "match_type": "vector",
         "match_score": 0.7,
@@ -513,50 +513,301 @@ def test_tag_score_token_cap_config_falls_back_on_negative_values():
         config._non_negative_int_or_default("not-an-int", 3)
 
 
+# ==================== Relevance Gate (issue #130) ====================
+
+
+def _pin_default_scoring(monkeypatch, gate: float = 0.0) -> None:
+    """Pin scoring config to documented defaults.
+
+    config.py runs load_dotenv() at import, so a tuned .env could otherwise
+    leak into these tests.
+    """
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_VECTOR", 0.35)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_KEYWORD", 0.35)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_METADATA", 0.35)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_RELATION", 0.25)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_TAG", 0.2)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_IMPORTANCE", 0.1)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_CONFIDENCE", 0.05)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_RECENCY", 0.1)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_EXACT", 0.2)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_RELEVANCE", 0.0)
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_WINDOW_DAYS", 180.0)
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_CURVE", "linear")
+    monkeypatch.setattr(scoring, "SEARCH_TAG_SCORE_TOKEN_CAP", 3)
+    monkeypatch.setattr(scoring, "RECALL_RELEVANCE_GATE", gate)
+
+
+def test_compute_metadata_score_gate_zero_default_matches_legacy(monkeypatch):
+    """Gate disabled (default 0.0): scores must match the pre-gate formula exactly."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+
+    cases = [
+        # Importance-heavy, zero topical evidence (the issue #130 shape)
+        {
+            "match_type": "vector",
+            "match_score": 0.0,
+            "memory": {
+                "content": "Entirely unrelated lessons learned",
+                "tags": ["automem"],
+                "importance": 0.9,
+                "confidence": 0.8,
+                "timestamp": _timestamp_days_ago(90),
+            },
+        },
+        # Vector-heavy, low importance
+        {
+            "match_type": "vector",
+            "match_score": 0.8,
+            "memory": {
+                "content": "Entirely unrelated lessons learned",
+                "tags": [],
+                "importance": 0.1,
+                "timestamp": _timestamp_days_ago(90),
+            },
+        },
+        # Keyword result with tag crumbs
+        {
+            "match_type": "keyword",
+            "match_score": 0.4,
+            "memory": {
+                "content": "automem recall notes",
+                "tags": ["automem", "recall"],
+                "importance": 0.5,
+                "timestamp": _timestamp_days_ago(90),
+            },
+        },
+    ]
+
+    for result in cases:
+        score, components = _compute_metadata_score(result, "automem recall", ["automem", "recall"])
+        expected = (
+            0.35 * components["vector"]
+            + 0.35 * components["keyword"]
+            + 0.35 * components["metadata"]
+            + 0.25 * components["relation"]
+            + 0.2 * components["tag"]
+            + 0.1 * components["importance"]
+            + 0.05 * components["confidence"]
+            + 0.1 * components["recency"]
+            + 0.2 * components["exact"]
+        )
+        assert score == pytest.approx(expected, abs=1e-12)
+        # Gate-off must never scale the query-independent components
+        memory = result["memory"]
+        assert components["importance"] == memory.get("importance", 0.0)
+        assert components["confidence"] == memory.get("confidence", 0.0)
+        assert components["recency"] == pytest.approx(0.5, abs=1e-6)
+        assert components["relevance_gated"] is False
+        assert "evidence" in components
+
+
+def test_compute_metadata_score_gate_demotes_zero_evidence_high_importance(monkeypatch):
+    """With the gate on, off-topic high-importance loses to on-topic low-importance."""
+    _pin_default_scoring(monkeypatch, gate=0.2)
+
+    off_topic_high_importance = {
+        "match_type": "vector",
+        "match_score": 0.0,
+        "memory": {
+            "content": "Entirely unrelated critical lessons",
+            "tags": [],
+            "importance": 1.0,
+            "confidence": 1.0,
+            "timestamp": _timestamp_days_ago(0),
+        },
+    }
+    on_topic_low_importance = {
+        "match_type": "vector",
+        "match_score": 0.5,
+        "memory": {
+            "content": "Different words about other things",
+            "tags": [],
+            "importance": 0.0,
+            "timestamp": _timestamp_days_ago(400),
+        },
+    }
+
+    off_score, off_components = _compute_metadata_score(
+        off_topic_high_importance,
+        "quarterly metrics dashboard",
+        ["quarterly", "metrics", "dashboard"],
+    )
+    on_score, on_components = _compute_metadata_score(
+        on_topic_low_importance,
+        "quarterly metrics dashboard",
+        ["quarterly", "metrics", "dashboard"],
+    )
+
+    assert off_score < on_score
+    assert off_components["relevance_gated"] is True
+    assert off_components["evidence"] == 0.0
+    # evidence 0 -> scale 0 -> query-independent components zeroed
+    assert off_components["importance"] == 0.0
+    assert off_components["confidence"] == 0.0
+    assert off_components["recency"] == 0.0
+    assert on_components["relevance_gated"] is False
+    assert on_components["evidence"] == 0.5
+
+
+def test_compute_metadata_score_gate_ramp_is_linear(monkeypatch):
+    """Evidence at half the gate scales query-independent components by half."""
+    _pin_default_scoring(monkeypatch, gate=0.2)
+
+    result = {
+        "match_type": "vector",
+        "match_score": 0.1,  # evidence = half of the 0.2 gate
+        "memory": {
+            "content": "Different words about other things",
+            "tags": ["quarterly"],  # one tag crumb out of three tokens
+            "importance": 0.8,
+            "confidence": 0.4,
+            "timestamp": _timestamp_days_ago(90),  # recency 0.5 at 180d window
+        },
+    }
+
+    _score, components = _compute_metadata_score(
+        result, "quarterly metrics dashboard", ["quarterly", "metrics", "dashboard"]
+    )
+
+    assert components["relevance_gated"] is True
+    assert components["evidence"] == pytest.approx(0.1, abs=1e-9)
+    assert components["importance"] == pytest.approx(0.4, abs=1e-9)  # 0.8 * 0.5
+    assert components["confidence"] == pytest.approx(0.2, abs=1e-9)  # 0.4 * 0.5
+    assert components["recency"] == pytest.approx(0.25, abs=1e-6)  # 0.5 * 0.5
+    assert components["tag"] == pytest.approx((1 / 3) * 0.5, abs=1e-9)
+
+
+def test_compute_metadata_score_gate_leaves_evidence_at_threshold_untouched(monkeypatch):
+    _pin_default_scoring(monkeypatch, gate=0.2)
+
+    result = {
+        "match_type": "vector",
+        "match_score": 0.2,  # exactly at the gate
+        "memory": {
+            "content": "Different words about other things",
+            "tags": [],
+            "importance": 0.8,
+            "confidence": 0.4,
+            "timestamp": _timestamp_days_ago(90),
+        },
+    }
+
+    _score, components = _compute_metadata_score(
+        result, "quarterly metrics dashboard", ["quarterly", "metrics", "dashboard"]
+    )
+
+    assert components["relevance_gated"] is False
+    assert components["importance"] == 0.8
+    assert components["confidence"] == 0.4
+    assert components["recency"] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_compute_metadata_score_gate_inactive_without_query_tokens(monkeypatch):
+    """No query tokens (tag-only / time-only recall): gate must not apply."""
+    _pin_default_scoring(monkeypatch, gate=0.2)
+
+    result = {
+        "match_type": "tag",
+        "match_score": 0.9,
+        "memory": {
+            "content": "Tag-only recall result",
+            "tags": ["automem"],
+            "importance": 0.9,
+            "confidence": 0.7,
+            "timestamp": _timestamp_days_ago(0),
+        },
+    }
+
+    _score, components = _compute_metadata_score(result, "", [])
+
+    assert components["relevance_gated"] is False
+    assert components["importance"] == 0.9
+    assert components["confidence"] == 0.7
+
+
+def test_compute_metadata_score_gate_does_not_touch_context_bonus(monkeypatch):
+    """The context bonus is the explicit soft channel and must never be gated."""
+    _pin_default_scoring(monkeypatch, gate=0.2)
+
+    profile = {
+        "weights": {"tag": 0.45},
+        "priority_tags": {"automem"},
+        "priority_types": set(),
+        "priority_ids": set(),
+        "priority_keywords": set(),
+    }
+    result = {
+        "match_type": "vector",
+        "match_score": 0.0,
+        "memory": {
+            "content": "Entirely unrelated note",
+            "tags": ["automem"],
+            "importance": 1.0,
+            "timestamp": _timestamp_days_ago(0),
+        },
+    }
+
+    _score, components = _compute_metadata_score(
+        result, "quarterly metrics dashboard", ["quarterly", "metrics", "dashboard"], profile
+    )
+
+    assert components["relevance_gated"] is True
+    assert components["context"] == pytest.approx(0.45, abs=1e-9)
+
+
+def test_relevance_gate_config_clamps_to_unit_interval():
+    # Negatives clamp to 0.0 (gate disabled); values above 1.0 clamp to 1.0
+    # because evidence components are bounded at ~1.0, so a larger gate would
+    # only dampen every result uniformly. Unparseable values raise like the
+    # neighboring float() env parses.
+    assert config._clamped_unit_interval("-0.5") == 0.0
+    assert config._clamped_unit_interval("0.0") == 0.0
+    assert config._clamped_unit_interval("0.2") == 0.2
+    assert config._clamped_unit_interval("1.0") == 1.0
+    assert config._clamped_unit_interval("1.5") == 1.0
+    with pytest.raises(ValueError):
+        config._clamped_unit_interval("not-a-float")
+
+
 def _timestamp_days_ago(days: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
-@pytest.fixture
-def legacy_recency_config(monkeypatch):
-    monkeypatch.setattr(scoring, "SEARCH_RECENCY_WINDOW_DAYS", 180.0)
-    monkeypatch.setattr(scoring, "SEARCH_RECENCY_CURVE", "linear")
-
-
-def test_compute_recency_score_age_zero_scores_one(legacy_recency_config):
+def test_compute_recency_score_age_zero_scores_one():
     assert _compute_recency_score(_timestamp_days_ago(0)) == pytest.approx(1.0, abs=1e-6)
 
 
-def test_compute_recency_score_future_timestamp_scores_one(legacy_recency_config):
+def test_compute_recency_score_future_timestamp_scores_one():
     assert _compute_recency_score(_timestamp_days_ago(-5)) == 1.0
 
 
-def test_compute_recency_score_linear_half_window_scores_half(legacy_recency_config):
+def test_compute_recency_score_linear_half_window_scores_half():
     assert _compute_recency_score(_timestamp_days_ago(90)) == pytest.approx(0.5, abs=1e-6)
 
 
-def test_compute_recency_score_linear_beyond_window_scores_zero(legacy_recency_config):
+def test_compute_recency_score_linear_beyond_window_scores_zero():
     assert _compute_recency_score(_timestamp_days_ago(180)) == pytest.approx(0.0, abs=1e-6)
     assert _compute_recency_score(_timestamp_days_ago(400)) == 0.0
 
 
-def test_compute_recency_score_exp_window_is_half_life(monkeypatch, legacy_recency_config):
+def test_compute_recency_score_exp_window_is_half_life(monkeypatch):
     monkeypatch.setattr(scoring, "SEARCH_RECENCY_CURVE", "exp")
 
     assert _compute_recency_score(_timestamp_days_ago(180)) == pytest.approx(0.5, abs=1e-6)
     assert _compute_recency_score(_timestamp_days_ago(360)) == pytest.approx(0.25, abs=1e-6)
 
 
-def test_compute_recency_score_missing_timestamp_scores_zero(legacy_recency_config):
+def test_compute_recency_score_missing_timestamp_scores_zero():
     assert _compute_recency_score(None) == 0.0
     assert _compute_recency_score("") == 0.0
 
 
-def test_compute_recency_score_unparseable_timestamp_scores_zero(legacy_recency_config):
+def test_compute_recency_score_unparseable_timestamp_scores_zero():
     assert _compute_recency_score("not-a-timestamp") == 0.0
 
 
-def test_compute_recency_score_respects_configured_window(monkeypatch, legacy_recency_config):
+def test_compute_recency_score_respects_configured_window(monkeypatch):
     monkeypatch.setattr(scoring, "SEARCH_RECENCY_WINDOW_DAYS", 90.0)
 
     assert _compute_recency_score(_timestamp_days_ago(45)) == pytest.approx(0.5, abs=1e-6)
@@ -1519,6 +1770,257 @@ def test_recall_semantic_query_hydrates_summary_from_graph(mock_state):
 
     assert results_by_id[memory_with_summary_id]["summary"] == "Stored graph summary for issue 180."
     assert "summary" not in results_by_id[memory_without_summary_id]
+
+
+
+# ==================== Tag Scope Diagnostics + Relevance Gate (issue #130) ====
+
+
+def _scoped_pool_search(hits: list[dict]) -> Any:
+    """Build a qdrant search stub returning the given (id, score, payload) hits."""
+
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors, query_filter
+        return [
+            SimpleNamespace(id=hit["id"], score=hit["score"], payload=hit["payload"])
+            for hit in hits
+        ]
+
+    return custom_search
+
+
+def _issue130_pool(mock_state) -> None:
+    """Two flint-tagged memories surviving the tag gate: one off-topic but
+    high-importance, one on-topic. Contents avoid the query tokens so the
+    keyword fallback contributes no evidence."""
+    mock_state.qdrant.search = _scoped_pool_search(
+        [
+            {
+                "id": "off-topic-important",
+                "score": 0.04,
+                "payload": {
+                    "id": "off-topic-important",
+                    "content": "Critical lessons learned the hard way",
+                    "tags": ["flint"],
+                    "importance": 1.0,
+                    "confidence": 1.0,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                "id": "on-topic",
+                "score": 0.6,
+                "payload": {
+                    "id": "on-topic",
+                    "content": "Semantically close result content",
+                    "tags": ["flint"],
+                    "importance": 0.0,
+                    "timestamp": _timestamp_days_ago(200),
+                },
+            },
+        ]
+    )
+
+
+def test_recall_tag_scope_gate_off_keeps_legacy_ranking(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """Default gate (0.0): off-topic high-importance wins; tag_scope echoes zero gated."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    _issue130_pool(mock_state)
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "flint",
+            "tag_match": "exact",
+            "limit": 5,
+            "min_score": 0,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [r["id"] for r in data["results"]] == ["off-topic-important", "on-topic"]
+    assert data["tag_scope"] == {
+        "filtered": True,
+        "pool_size_hint": 2,
+        "gated_low_evidence": 0,
+    }
+
+
+def test_recall_tag_scope_gate_reranks_off_topic_high_importance(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """Gate on: on-topic ranks first and the gated result is counted in tag_scope."""
+    _pin_default_scoring(monkeypatch, gate=0.2)
+    _issue130_pool(mock_state)
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "flint",
+            "tag_match": "exact",
+            "limit": 5,
+            "min_score": 0,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [r["id"] for r in data["results"]] == ["on-topic", "off-topic-important"]
+    assert data["tag_scope"]["filtered"] is True
+    assert data["tag_scope"]["gated_low_evidence"] >= 1
+    gated = next(r for r in data["results"] if r["id"] == "off-topic-important")
+    assert gated["score_components"]["relevance_gated"] is True
+    assert "evidence" in gated["score_components"]
+
+
+def test_recall_tag_scope_absent_without_tags(client, mock_state, auth_headers, monkeypatch):
+    """Backward compat: no tags passed -> no tag_scope (or scope_fallback) echo."""
+    _pin_default_scoring(monkeypatch, gate=0.2)
+    _issue130_pool(mock_state)
+
+    response = client.get(
+        "/recall",
+        query_string={"query": "quarterly metrics dashboard", "limit": 5, "min_score": 0},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "tag_scope" not in data
+    assert "scope_fallback" not in data
+
+
+def _scope_fallback_pool(mock_state) -> None:
+    """One scoped memory plus two outside the tag scope, all vector matches."""
+    mock_state.qdrant.search = _scoped_pool_search(
+        [
+            {
+                "id": "fill-strong",
+                "score": 0.9,
+                "payload": {
+                    "id": "fill-strong",
+                    "content": "Strong unscoped vector match",
+                    "tags": ["other"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                "id": "fill-weak",
+                "score": 0.8,
+                "payload": {
+                    "id": "fill-weak",
+                    "content": "Weaker unscoped vector match",
+                    "tags": ["other"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                "id": "scoped-1",
+                "score": 0.5,
+                "payload": {
+                    "id": "scoped-1",
+                    "content": "Scoped vector match",
+                    "tags": ["scoped"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+        ]
+    )
+
+
+def test_recall_scope_fallback_fills_after_scoped_results(
+    client, mock_state, auth_headers, monkeypatch
+):
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    _scope_fallback_pool(mock_state)
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0,
+            "scope_fallback": "true",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    # Scoped results come first regardless of score; fills are appended after.
+    assert [r["id"] for r in data["results"]] == ["scoped-1", "fill-strong", "fill-weak"]
+    assert "outside_tag_scope" not in data["results"][0]
+    assert data["results"][1]["outside_tag_scope"] is True
+    assert data["results"][2]["outside_tag_scope"] is True
+    assert data["scope_fallback"] is True
+    assert data["tag_scope"]["filtered"] is True
+
+
+def test_recall_scope_fallback_respects_exclude_tags(client, mock_state, auth_headers, monkeypatch):
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    _scope_fallback_pool(mock_state)
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0,
+            "scope_fallback": "true",
+            "exclude_tags": "other",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [r["id"] for r in data["results"]] == ["scoped-1"]
+    assert data["scope_fallback"] is True
+
+
+def test_recall_scope_fallback_defaults_off(client, mock_state, auth_headers, monkeypatch):
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    _scope_fallback_pool(mock_state)
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [r["id"] for r in data["results"]] == ["scoped-1"]
+    assert "scope_fallback" not in data
+    assert all("outside_tag_scope" not in r for r in data["results"])
 
 
 def test_recall_adaptive_floor_keeps_clustered_relevant_tail():

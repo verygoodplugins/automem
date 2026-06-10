@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from automem.config import (
+    RECALL_RELEVANCE_GATE,
     SEARCH_RECENCY_CURVE,
     SEARCH_RECENCY_WINDOW_DAYS,
     SEARCH_TAG_SCORE_TOKEN_CAP,
@@ -194,6 +195,29 @@ def _compute_metadata_score(
         else 0.0
     )
 
+    # Query-topical evidence: the strongest signal that this result is about
+    # the query itself. Relation and tag overlap are query-independent and
+    # deliberately excluded.
+    evidence = max(vector_component, keyword_component, metadata_component, exact_match)
+
+    # Within-pool relevance gate (issue #130): inside a tag-scoped pool,
+    # query-independent components (importance, confidence, recency, tag
+    # crumbs) can produce confident-looking final scores for results with
+    # near-zero topical evidence. When the gate is enabled and evidence falls
+    # short, ramp those components down linearly (evidence / gate — no cliff).
+    # Components are scaled *before* weighting so the `components` breakdown
+    # stays truthful. The context bonus is untouched: context_tags is the
+    # explicit soft-boost channel. Gate 0.0 (default) must not even enter
+    # this branch so legacy scores stay bit-identical.
+    relevance_gated = False
+    if tokens and RECALL_RELEVANCE_GATE > 0 and evidence < RECALL_RELEVANCE_GATE:
+        gate_scale = evidence / RECALL_RELEVANCE_GATE
+        importance_score *= gate_scale
+        confidence_score *= gate_scale
+        recency_score *= gate_scale
+        tag_score *= gate_scale
+        relevance_gated = True
+
     relation_component = 0.0
     if result.get("match_type") == "relation":
         relation_component = float(
@@ -237,6 +261,8 @@ def _compute_metadata_score(
         "exact": exact_match,
         "relevance": relevance_score,
         "context": context_bonus,
+        "evidence": evidence,
+        "relevance_gated": relevance_gated,
     }
 
     return final, components

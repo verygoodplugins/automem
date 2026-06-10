@@ -35,6 +35,7 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
     tags: ["automem", "cursor"],
     tag_mode: "all",
     tag_match: "prefix",
+    scope_fallback: true,
     expand_entities: true,
     expand_relations: true,
     auto_decompose: true,
@@ -56,6 +57,7 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
   assert.ok(capturedPath.includes("sort=time_desc"));
   assert.ok(capturedPath.includes("tag_mode=all"));
   assert.ok(capturedPath.includes("tag_match=prefix"));
+  assert.ok(capturedPath.includes("scope_fallback=true"));
 
   assert.ok(capturedPath.includes("expand_entities=true"));
   assert.ok(capturedPath.includes("expand_relations=true"));

@@ -356,6 +356,8 @@ Background worker that checks FalkorDB ↔ Qdrant consistency.
 | `RECALL_RELATION_LIMIT` | Max related memories per seed in graph expansion | `5` |
 | `RECALL_EXPANSION_LIMIT` | Total max expansion results (relations + entities) | `25` |
 | `RECALL_METADATA_SEARCH_ENABLED` | Enable bounded metadata sidecar recall candidates | `true` |
+| `RECALL_MIN_SCORE` | Drop results scoring below this final score (per-request `min_score` overrides) | `0.0` (disabled) |
+| `RECALL_RELEVANCE_GATE` | Within-pool relevance gate: when a query is present and a result's best topical evidence (max of vector/keyword/metadata/exact components) is below this threshold, its query-independent components (importance, confidence, recency, tag overlap) are scaled by `evidence / gate` — a linear ramp. Stops high-importance off-topic memories from dominating tag-scoped recall (issue #130). Negative values clamp to `0.0`, values above `1.0` clamp to `1.0`. | `0.0` (disabled) |
 
 ---
 
