@@ -324,7 +324,7 @@ Controls how different factors are weighted in memory recall scoring.
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
 | `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` | Decay-derived score (see below) |
 
-These act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
+The `SEARCH_WEIGHT_*` variables act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
 
 **`SEARCH_WEIGHT_RELEVANCE` (new):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
 
