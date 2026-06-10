@@ -402,7 +402,11 @@ def test_compute_metadata_score_preserves_keyword_match_score_for_trending_resul
     assert components["keyword"] == 0.33
 
 
-def test_compute_metadata_score_ignores_generated_entities_for_generic_tag_score():
+def test_compute_metadata_score_ignores_generated_entities_for_generic_tag_score(monkeypatch):
+    # Pin the cap (config.py runs load_dotenv() at import, so a tuned .env
+    # could otherwise leak in); 1 hit / min(3 tokens, cap 3) == 1/3 either way.
+    monkeypatch.setattr(scoring, "SEARCH_TAG_SCORE_TOKEN_CAP", 3)
+
     _score, components = _compute_metadata_score(
         {
             "match_type": "vector",
@@ -424,6 +428,89 @@ def test_compute_metadata_score_ignores_generated_entities_for_generic_tag_score
     )
 
     assert components["tag"] == 1 / 3
+
+
+def _tag_score_result(tags: list) -> dict:
+    return {
+        "match_type": "vector",
+        "match_score": 0.7,
+        "memory": {"content": "Benchmark notes", "tags": tags},
+    }
+
+
+def test_compute_metadata_score_tag_score_single_token_full_credit(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_TAG_SCORE_TOKEN_CAP", 3)
+
+    _score, components = _compute_metadata_score(
+        _tag_score_result(["automem"]),
+        "automem",
+        ["automem"],
+    )
+
+    assert components["tag"] == 1.0
+
+
+def test_compute_metadata_score_tag_score_caps_denominator_for_long_queries(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_TAG_SCORE_TOKEN_CAP", 3)
+
+    _score, components = _compute_metadata_score(
+        _tag_score_result(["alpha", "bravo"]),
+        "alpha bravo charlie delta echo",
+        ["alpha", "bravo", "charlie", "delta", "echo"],
+    )
+
+    # 2 hits over min(5, cap=3) instead of the legacy 2/5
+    assert components["tag"] == pytest.approx(2 / 3, abs=1e-9)
+
+
+def test_compute_metadata_score_tag_score_clips_at_one_when_hits_exceed_cap(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_TAG_SCORE_TOKEN_CAP", 3)
+
+    _score, components = _compute_metadata_score(
+        _tag_score_result(["alpha", "bravo", "charlie", "delta"]),
+        "alpha bravo charlie delta echo",
+        ["alpha", "bravo", "charlie", "delta", "echo"],
+    )
+
+    # 4 hits over a capped denominator of 3 would exceed 1.0; clip it.
+    assert components["tag"] == 1.0
+
+
+def test_compute_metadata_score_tag_score_cap_zero_restores_legacy_denominator(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_TAG_SCORE_TOKEN_CAP", 0)
+
+    _score, components = _compute_metadata_score(
+        _tag_score_result(["alpha", "bravo"]),
+        "alpha bravo charlie delta echo",
+        ["alpha", "bravo", "charlie", "delta", "echo"],
+    )
+
+    # Legacy behavior: denominator is the full query length (2/5)
+    assert components["tag"] == pytest.approx(0.4, abs=1e-9)
+
+
+def test_compute_metadata_score_tag_score_short_query_below_cap_uses_query_length(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_TAG_SCORE_TOKEN_CAP", 3)
+
+    _score, components = _compute_metadata_score(
+        _tag_score_result(["alpha"]),
+        "alpha zulu",
+        ["alpha", "zulu"],
+    )
+
+    # Below the cap, the denominator stays min(len(tokens), cap) == 2
+    assert components["tag"] == pytest.approx(0.5, abs=1e-9)
+
+
+def test_tag_score_token_cap_config_falls_back_on_negative_values():
+    # 0 is a valid sentinel (legacy full-length denominator), so only negative
+    # values fall back to the default; unparseable values raise like the
+    # neighboring int()/float() env parses.
+    assert config._non_negative_int_or_default("-1", 3) == 3
+    assert config._non_negative_int_or_default("0", 3) == 0
+    assert config._non_negative_int_or_default("5", 3) == 5
+    with pytest.raises(ValueError):
+        config._non_negative_int_or_default("not-an-int", 3)
 
 
 def _timestamp_days_ago(days: float) -> str:
