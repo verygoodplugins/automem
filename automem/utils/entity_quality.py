@@ -16,6 +16,10 @@ _CATEGORY_ALIASES = {
     "projects": "projects",
     "concept": "concepts",
     "concepts": "concepts",
+    "event": "events",
+    "events": "events",
+    "opportunity": "opportunities",
+    "opportunities": "opportunities",
 }
 
 _ALLOWED_CATEGORIES = set(_CATEGORY_ALIASES.values())
@@ -142,7 +146,6 @@ _ABSTRACT_SINGLETON_SUFFIXES = ("acy", "ment", "ness")
 
 _MARKDOWN_OR_CODE_TOKENS = {
     "bin",
-    "code",
     "config",
     "env",
     "file",
@@ -159,10 +162,13 @@ _MARKDOWN_OR_CODE_TOKENS = {
     "yml",
 }
 
+# "code" is only a weak signal: real tool names end in it (claude-code,
+# vs-code, code-server), so it must not condemn a slug on its own.
 _MARKDOWN_OR_CODE_SECONDARY_TOKENS = {
     "api",
     "bash",
     "cli",
+    "code",
     "css",
     "dockerfile",
     "html",
@@ -173,6 +179,26 @@ _MARKDOWN_OR_CODE_SECONDARY_TOKENS = {
     "ts",
     "tsx",
     "xml",
+}
+
+# Everyday non-name words that show up in generated people slugs
+# (bottom-line, deck-today, email-highlights, claude-desktop). Any one of
+# these tokens disqualifies a people slug; none are plausible name parts.
+_NON_PERSON_COMMON_TOKENS = {
+    "bottom",
+    "chrome",
+    "deck",
+    "desktop",
+    "email",
+    "emails",
+    "highlight",
+    "highlights",
+    "line",
+    "plugin",
+    "plugins",
+    "today",
+    "tomorrow",
+    "yesterday",
 }
 
 _NON_PERSON_TECH_TOKENS = {
@@ -186,6 +212,7 @@ _NON_PERSON_TECH_TOKENS = {
     "docker",
     "hub",
     "model",
+    "pipeline",
     "platform",
     "sdk",
     "service",
@@ -438,6 +465,12 @@ def _looks_tool_or_org_like(value: str, slug: str, context: Optional[str]) -> bo
     if parts and any(parts[-1].endswith(suffix) for suffix in _TOOL_OR_ORG_SUFFIXES):
         return True
 
+    # Context hints are too weak to condemn a multi-token person-shaped name:
+    # in a technical corpus nearly every memory mentions data/projects/tools,
+    # which would reject virtually every real person discussed at work.
+    if len(parts) >= 2 and _has_person_name_shape(parts):
+        return False
+
     lowered_context = (context or "").lower()
     if lowered_context and slug in lowered_context.replace(" ", "-"):
         return any(hint in lowered_context for hint in _TOOL_OR_ORG_CONTEXT_HINTS)
@@ -586,6 +619,7 @@ def validate_entity_slug(
             or token in _MARKDOWN_OR_CODE_TOKENS
             or token in _MARKDOWN_OR_CODE_SECONDARY_TOKENS
             or token in _NON_PERSON_TECH_TOKENS
+            or token in _NON_PERSON_COMMON_TOKENS
             for token in tokens
         ):
             return reject("low_signal_people_slug")

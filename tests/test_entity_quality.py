@@ -91,6 +91,7 @@ def test_structural_noise_slugs_are_rejected(
         ("concepts", "before-after"),
         ("people", "docker-compose"),
         ("people", "complete-deliverable"),
+        ("people", "youtube-pipeline"),
     ],
 )
 def test_generic_and_tooling_noise_is_rejected(category: str, slug: str) -> None:
@@ -189,3 +190,112 @@ def test_single_token_specific_entities_do_not_require_a_curated_allowlist(
 
     assert result.accepted is True
     assert result.canonical_slug == slug
+
+
+@pytest.mark.parametrize("value", ["Mara Quinn", "Tobias Lehman", "Priya J Raman"])
+def test_multi_token_person_names_survive_technical_context(value: str) -> None:
+    """A real person discussed in technical content is still a person.
+
+    The context-hint branch must not reject valid person-shaped names just
+    because the surrounding memory mentions data/projects/platform/tooling —
+    in an engineering corpus nearly every memory does.
+    """
+    from automem.utils.entity_quality import validate_entity_value
+
+    context = (
+        f"Met with {value} about the data pipeline project; the platform "
+        "tooling and database service migration are on track."
+    )
+    result = validate_entity_value("people", value, context=context)
+
+    assert result.accepted is True
+
+
+def test_single_token_brandlike_people_still_rejected_in_tool_context() -> None:
+    from automem.utils.entity_quality import validate_entity_value
+
+    context = "Deployed memvault to the platform; the data pipeline project uses it."
+    result = validate_entity_value("people", "memvault", context=context)
+
+    assert result.accepted is False
+    assert result.reason == "tool_or_organization_looking_people"
+
+
+def test_tool_or_org_suffix_people_rejected_even_with_person_shape() -> None:
+    from automem.utils.entity_quality import validate_entity_value
+
+    context = "GrowthMath specializes in B2B SaaS analytics."
+    result = validate_entity_value("people", "growthmath", context=context)
+
+    assert result.accepted is False
+    assert result.reason == "tool_or_organization_looking_people"
+
+
+@pytest.mark.parametrize(
+    ("category", "slug"),
+    [
+        ("tools", "claude-code"),
+        ("tools", "vs-code"),
+        ("tools", "code-server"),
+    ],
+)
+def test_code_suffixed_tool_names_are_accepted(category: str, slug: str) -> None:
+    from automem.utils.entity_quality import validate_entity_slug
+
+    result = validate_entity_slug(category, slug)
+
+    assert result.accepted is True
+    assert result.canonical_slug == slug
+
+
+@pytest.mark.parametrize(
+    ("category", "slug"),
+    [
+        ("people", "claude-code"),
+        ("organizations", "claude-md"),
+        ("tools", "venv-bin-python-m"),
+        ("tools", "tmp-settings"),
+    ],
+)
+def test_code_and_markdown_fragments_still_rejected(category: str, slug: str) -> None:
+    from automem.utils.entity_quality import validate_entity_slug
+
+    result = validate_entity_slug(category, slug)
+
+    assert result.accepted is False
+
+
+@pytest.mark.parametrize(
+    ("category", "normalized", "slug"),
+    [
+        ("events", "events", "launch-summit-2026"),
+        ("event", "events", "launch-summit-2026"),
+        ("opportunities", "opportunities", "hosting-partnerships"),
+        ("opportunity", "opportunities", "hosting-partnerships"),
+    ],
+)
+def test_event_and_opportunity_categories_are_supported(
+    category: str,
+    normalized: str,
+    slug: str,
+) -> None:
+    from automem.utils.entity_quality import validate_entity_slug
+
+    result = validate_entity_slug(category, slug)
+
+    assert result.accepted is True
+    assert result.category == normalized
+    assert result.canonical_tag == f"entity:{normalized}:{slug}"
+
+
+@pytest.mark.parametrize(
+    "slug",
+    ["bottom-line", "deck-today", "email-highlights", "claude-desktop"],
+)
+def test_common_word_pairs_are_not_people(slug: str) -> None:
+    from automem.utils.entity_quality import validate_entity_slug
+
+    result = validate_entity_slug("people", slug)
+
+    assert result.accepted is False
+    assert result.reason == "low_signal_people_slug"
