@@ -6,10 +6,7 @@ from unittest.mock import Mock
 import app
 import automem.api.recall as recall_api
 from automem.api.recall import handle_recall
-from automem.search.runtime_recall_helpers import (
-    _metadata_keyword_search,
-    configure_recall_helpers,
-)
+from automem.search.runtime_recall_helpers import _metadata_keyword_search, configure_recall_helpers
 from automem.utils.scoring import _compute_metadata_score
 from automem.utils.text import _extract_keywords
 from tests.support.fake_graph import FakeGraph

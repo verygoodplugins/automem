@@ -139,7 +139,9 @@ RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
 RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.0"))
 RECALL_ADAPTIVE_FLOOR = os.getenv("RECALL_ADAPTIVE_FLOOR", "true").lower() in ("true", "1", "yes")
-RECALL_METADATA_SEARCH_ENABLED = os.getenv("RECALL_METADATA_SEARCH_ENABLED", "true").lower() not in {
+RECALL_METADATA_SEARCH_ENABLED = os.getenv(
+    "RECALL_METADATA_SEARCH_ENABLED", "true"
+).lower() not in {
     "0",
     "false",
     "no",
