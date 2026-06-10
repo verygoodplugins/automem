@@ -299,3 +299,34 @@ def test_common_word_pairs_are_not_people(slug: str) -> None:
 
     assert result.accepted is False
     assert result.reason == "low_signal_people_slug"
+
+
+@pytest.mark.parametrize("slug", ["mara-quinn", "tobias-lehman"])
+def test_people_tags_survive_technical_context_on_slug_path(slug: str) -> None:
+    """Stored tags only retain the slug — no spaced display value exists.
+
+    validate_entity_tag(context=...) is the repair-script path; the
+    person-shape exemption must apply to slug-only inputs or every real
+    person mentioned alongside data/projects/tooling gets re-rejected.
+    """
+    from automem.utils.entity_quality import validate_entity_tag
+
+    context = (
+        "Met about the data pipeline project; the platform tooling and "
+        "database service migration are on track."
+    )
+    result = validate_entity_tag(f"entity:people:{slug}", context=context)
+
+    assert result.accepted is True
+
+
+def test_brandlike_token_pairs_rejected_on_slug_path_without_context() -> None:
+    """Tool brands that slug into person-shaped pairs (data-dog) must be
+    caught by token vocabulary, not context hints, so the rejection also
+    fires on the tag path."""
+    from automem.utils.entity_quality import validate_entity_tag
+
+    result = validate_entity_tag("entity:people:data-dog")
+
+    assert result.accepted is False
+    assert result.reason == "low_signal_people_slug"
