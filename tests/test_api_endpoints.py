@@ -471,12 +471,24 @@ def test_compute_recency_score_respects_configured_window(monkeypatch):
     assert _compute_recency_score(_timestamp_days_ago(120)) == 0.0
 
 
-def test_compute_recency_score_defaults_match_legacy_behavior():
-    # No monkeypatching: defaults must reproduce the historical
-    # linear-decay-over-180-days behavior exactly.
-    assert scoring.SEARCH_RECENCY_WINDOW_DAYS == 180.0
-    assert scoring.SEARCH_RECENCY_CURVE == "linear"
+def test_compute_recency_score_defaults_match_legacy_behavior(monkeypatch):
+    # Pin the default window/curve explicitly (config.py runs load_dotenv() at
+    # import, so a tuned .env would otherwise leak into this test) and verify
+    # the historical linear-decay-over-180-days behavior.
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_WINDOW_DAYS", 180.0)
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_CURVE", "linear")
+
     assert _compute_recency_score(_timestamp_days_ago(90)) == pytest.approx(0.5, abs=1e-6)
+
+
+def test_recency_window_config_rejects_non_positive_values():
+    # A window <= 0 would cause a request-time ZeroDivisionError (window == 0)
+    # or unbounded scores (window < 0); the config guard falls back to 180.
+    assert config._positive_or_default("0", 180.0) == 180.0
+    assert config._positive_or_default("-30", 180.0) == 180.0
+    assert config._positive_or_default("90", 180.0) == 90.0
+    with pytest.raises(ValueError):
+        config._positive_or_default("not-a-number", 180.0)
 
 
 def test_recall_with_query(client, mock_state, auth_headers):

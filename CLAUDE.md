@@ -268,7 +268,7 @@ SEARCH_WEIGHT_RELATION=0.25        # Graph relationship boost
 SEARCH_WEIGHT_TAG=0.20             # Tag overlap scoring
 SEARCH_WEIGHT_EXACT=0.20           # Exact phrase in metadata
 SEARCH_WEIGHT_IMPORTANCE=0.10      # Memory importance score
-SEARCH_WEIGHT_RECENCY=0.10         # Linear decay over 180 days
+SEARCH_WEIGHT_RECENCY=0.10         # Decay per SEARCH_RECENCY_* (default: linear over 180 days)
 SEARCH_WEIGHT_CONFIDENCE=0.05      # Memory confidence score
 SEARCH_WEIGHT_RELEVANCE=0.0        # Consolidation decay relevance (disabled by default)
 
@@ -382,7 +382,7 @@ Shows: total count, date range, archived count, memories by month (bar chart), t
 python scripts/browse_memories.py diagnose 2751e70e
 ```
 
-Checks: FalkorDB existence, archived status, Qdrant presence + embedding quality, recency score (180-day decay), simulated relevance score breakdown (decay factor, access factor, relationship factor, importance floor), and current search weight config. Reports issues at `[CRITICAL]`, `[WARNING]`, and `[INFO]` severity levels.
+Checks: FalkorDB existence, archived status, Qdrant presence + embedding quality, recency score (configurable decay, default 180-day), simulated relevance score breakdown (decay factor, access factor, relationship factor, importance floor), and current search weight config. Reports issues at `[CRITICAL]`, `[WARNING]`, and `[INFO]` severity levels.
 ### Recall Quality Lab (`scripts/lab/`)
 - **clone_production.sh** - Clone production FalkorDB + Qdrant data to local Docker for safe testing
 - **create_test_queries.py** - Generate test queries with expected results from local data
