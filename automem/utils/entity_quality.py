@@ -208,6 +208,7 @@ _NON_PERSON_TECH_TOKENS = {
     "cli",
     "cloud",
     "compose",
+    "data",
     "db",
     "docker",
     "hub",
@@ -467,8 +468,12 @@ def _looks_tool_or_org_like(value: str, slug: str, context: Optional[str]) -> bo
 
     # Context hints are too weak to condemn a multi-token person-shaped name:
     # in a technical corpus nearly every memory mentions data/projects/tools,
-    # which would reject virtually every real person discussed at work.
-    if " " in (value or "").strip() and len(parts) >= 2 and _has_person_name_shape(parts):
+    # which would reject virtually every real person discussed at work. This
+    # must hold for slug-only inputs too (validate_entity_tag has no display
+    # value), or stored entity:people tags get re-rejected during repair.
+    # Brand-like pairs such as data-dog are handled by the per-token
+    # vocabulary checks in validate_entity_slug, not by context hints.
+    if len(parts) >= 2 and _has_person_name_shape(parts):
         return False
 
     lowered_context = (context or "").lower()
