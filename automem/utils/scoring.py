@@ -5,6 +5,8 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from automem.config import (
+    SEARCH_RECENCY_CURVE,
+    SEARCH_RECENCY_WINDOW_DAYS,
     SEARCH_WEIGHT_CONFIDENCE,
     SEARCH_WEIGHT_EXACT,
     SEARCH_WEIGHT_IMPORTANCE,
@@ -70,8 +72,11 @@ def _compute_recency_score(timestamp: Optional[str]) -> float:
     age_days = max((datetime.now(timezone.utc) - parsed).total_seconds() / 86400.0, 0.0)
     if age_days <= 0:
         return 1.0
-    # Linear decay over 180 days
-    return max(0.0, 1.0 - (age_days / 180.0))
+    if SEARCH_RECENCY_CURVE == "exp":
+        # Exponential decay where the window acts as the half-life.
+        return 0.5 ** (age_days / SEARCH_RECENCY_WINDOW_DAYS)
+    # Linear decay reaching zero at the window boundary
+    return max(0.0, 1.0 - (age_days / SEARCH_RECENCY_WINDOW_DAYS))
 
 
 def _context_tag_hit(tags: Set[str], priority_tags: Set[str]) -> bool:

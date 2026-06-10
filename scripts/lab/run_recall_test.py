@@ -161,10 +161,8 @@ def restart_api_with_config(config: Dict[str, str], api_url: str = API_URL) -> N
     Writes overrides to .env.bench and uses --env-file to ensure Docker
     actually picks up the new values (not just the subprocess environment).
     """
-    # Check if any scoring/consolidation weights changed — these need restart
-    needs_restart = any(
-        k.startswith(("SEARCH_WEIGHT_", "CONSOLIDATION_", "RECALL_")) for k in config
-    )
+    # Check if any scoring/consolidation settings changed — these need restart
+    needs_restart = any(k.startswith(("SEARCH_", "CONSOLIDATION_", "RECALL_")) for k in config)
 
     if not needs_restart:
         return
