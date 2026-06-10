@@ -776,7 +776,7 @@ def _metadata_keyword_search(
         if data.get("archived"):
             continue
         metadata = _parse_metadata_for_search(data.get("metadata"))
-        match_score, matched_values = _metadata_match_score(query_text, metadata)
+        match_score, _ = _metadata_match_score(query_text, metadata)
         if match_score <= 0:
             continue
 
@@ -789,7 +789,6 @@ def _metadata_keyword_search(
             "memory": data,
             "relations": [],
             "score_components": {"metadata": match_score},
-            "metadata_matches": matched_values[:5],
         }
         if not _result_passes_filters(
             record,
