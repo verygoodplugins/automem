@@ -33,8 +33,20 @@ def create_backup_blueprint(
     graph_name: str,
     collection_name: str,
     logger: Any,
+    get_graph_name: Callable[[], str] | None = None,
+    get_collection_name: Callable[[], str] | None = None,
 ) -> Blueprint:
     bp = Blueprint("backup", __name__)
+
+    def _current_graph_name() -> str:
+        if get_graph_name is None:
+            return graph_name
+        return str(get_graph_name() or graph_name)
+
+    def _current_collection_name() -> str:
+        if get_collection_name is None:
+            return collection_name
+        return str(get_collection_name() or collection_name)
 
     @bp.route("/backup", methods=["GET"], strict_slashes=False)
     def backup() -> Response:
@@ -55,6 +67,8 @@ def create_backup_blueprint(
 
         started = time.perf_counter()
         timestamp = backup_timestamp()
+        current_graph_name = _current_graph_name()
+        current_collection_name = _current_collection_name()
         audit_base = {
             "event": "backup.request",
             "key_fingerprint": _admin_key_fingerprint(),
@@ -83,9 +97,9 @@ def create_backup_blueprint(
             includes=includes,
             timestamp=timestamp,
             graph=graph,
-            graph_name=graph_name,
+            graph_name=current_graph_name,
             qdrant_client=qdrant_client,
-            collection_name=collection_name,
+            collection_name=current_collection_name,
             logger=logger,
             on_complete=audit_complete,
         )

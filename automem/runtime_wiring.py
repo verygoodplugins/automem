@@ -23,12 +23,15 @@ def wire_recall_and_blueprints(
         generate_real_embedding=module._generate_real_embedding,
         logger=module.logger,
         collection_name=module.COLLECTION_NAME,
+        get_collection_name=lambda: module.get_isolation_context().collection_name,
     )
 
     register_blueprints_fn(
         app=module.app,
         get_memory_graph_fn=module.get_memory_graph,
         get_qdrant_client_fn=module.get_qdrant_client,
+        get_isolation_context_fn=module.get_isolation_context,
+        ensure_qdrant_collection_fn=module._ensure_qdrant_collection,
         state=module.state,
         graph_name=module.GRAPH_NAME,
         collection_name=module.COLLECTION_NAME,

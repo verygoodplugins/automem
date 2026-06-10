@@ -46,13 +46,20 @@ def create_enrichment_queue_runtime(
             worker_target=enrichment_worker,
         )
 
-    def enqueue_enrichment(memory_id: str, *, forced: bool = False, attempt: int = 0) -> None:
+    def enqueue_enrichment(
+        memory_id: str,
+        *,
+        forced: bool = False,
+        attempt: int = 0,
+        isolation_context: Any = None,
+    ) -> None:
         _enqueue_enrichment_runtime(
             state=get_state_fn(),
             memory_id=memory_id,
             forced=forced,
             attempt=attempt,
             enrichment_job_cls=enrichment_job_cls,
+            isolation_context=isolation_context,
         )
 
     def update_last_accessed(memory_ids: List[str]) -> None:

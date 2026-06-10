@@ -19,6 +19,7 @@ _coerce_embedding: Optional[Callable[[Any], Optional[List[float]]]] = None
 _generate_real_embedding: Optional[Callable[[str], List[float]]] = None
 _logger: Any = None
 _collection_name: str = ""
+_get_collection_name: Any = None
 
 METADATA_SEARCH_FIELDS = (
     "source",
@@ -351,6 +352,7 @@ def configure_recall_helpers(
     generate_real_embedding: Callable[[str], List[float]],
     logger: Any,
     collection_name: str,
+    get_collection_name: Callable[[], str] | None = None,
 ) -> None:
     global _parse_iso_datetime
     global _prepare_tag_filters
@@ -363,6 +365,7 @@ def configure_recall_helpers(
     global _generate_real_embedding
     global _logger
     global _collection_name
+    global _get_collection_name
 
     _parse_iso_datetime = parse_iso_datetime
     _prepare_tag_filters = prepare_tag_filters
@@ -375,6 +378,13 @@ def configure_recall_helpers(
     _generate_real_embedding = generate_real_embedding
     _logger = logger
     _collection_name = collection_name
+    _get_collection_name = get_collection_name
+
+
+def _effective_collection_name() -> str:
+    if _get_collection_name is not None:
+        return str(_get_collection_name() or "")
+    return _collection_name
 
 
 def _result_passes_filters(
@@ -837,7 +847,7 @@ def _vector_filter_only_tag_search(
 ) -> List[Dict[str, Any]]:
     build_qdrant_tag_filter = _build_qdrant_tag_filter
     logger = _logger
-    collection_name = _collection_name
+    collection_name = _effective_collection_name()
     if build_qdrant_tag_filter is None or logger is None or not collection_name:
         raise RuntimeError("recall helpers are not configured")
 
@@ -907,7 +917,7 @@ def _vector_search(
     generate_real_embedding = _generate_real_embedding
     fetch_relations = _fetch_relations
     logger = _logger
-    collection_name = _collection_name
+    collection_name = _effective_collection_name()
     if (
         build_qdrant_tag_filter is None
         or coerce_embedding is None

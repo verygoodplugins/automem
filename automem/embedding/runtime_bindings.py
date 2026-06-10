@@ -22,10 +22,10 @@ from automem.embedding.runtime_pipeline import (
 @dataclass(frozen=True)
 class EmbeddingRuntimeBindings:
     init_embedding_pipeline: Callable[[], None]
-    enqueue_embedding: Callable[[str, str], None]
+    enqueue_embedding: Callable[..., None]
     embedding_worker: Callable[[], None]
-    process_embedding_batch: Callable[[List[Tuple[str, str]]], None]
-    store_embedding_in_qdrant: Callable[[str, str, List[float]], None]
+    process_embedding_batch: Callable[[List[Tuple[str, str, Any]]], None]
+    store_embedding_in_qdrant: Callable[..., None]
     generate_and_store_embedding: Callable[[str, str], None]
 
 
@@ -47,6 +47,7 @@ def create_embedding_runtime(
     utc_now_fn: Callable[[], str],
     generate_real_embedding_fn: Callable[[str], List[float]],
     generate_real_embeddings_batch_fn: Callable[[List[str]], List[List[float]]],
+    ensure_qdrant_collection_fn: Callable[[str], None] | None = None,
 ) -> EmbeddingRuntimeBindings:
     def init_embedding_pipeline() -> None:
         _init_embedding_pipeline_runtime(
@@ -57,10 +58,26 @@ def create_embedding_runtime(
             worker_target=embedding_worker,
         )
 
-    def enqueue_embedding(memory_id: str, content: str) -> None:
-        _enqueue_embedding_runtime(state=get_state_fn(), memory_id=memory_id, content=content)
+    def enqueue_embedding(
+        memory_id: str,
+        content: str,
+        *,
+        isolation_context: Any = None,
+    ) -> None:
+        _enqueue_embedding_runtime(
+            state=get_state_fn(),
+            memory_id=memory_id,
+            content=content,
+            isolation_context=isolation_context,
+        )
 
-    def store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[float]) -> None:
+    def store_embedding_in_qdrant(
+        memory_id: str,
+        content: str,
+        embedding: List[float],
+        *,
+        isolation_context: Any = None,
+    ) -> None:
         _store_embedding_in_qdrant_runtime(
             memory_id=memory_id,
             content=content,
@@ -71,6 +88,8 @@ def create_embedding_runtime(
             point_struct_cls=point_struct_cls,
             utc_now_fn=utc_now_fn,
             logger=logger,
+            isolation_context=isolation_context,
+            ensure_qdrant_collection_fn=ensure_qdrant_collection_fn,
         )
 
     def generate_and_store_embedding(memory_id: str, content: str) -> None:
@@ -81,7 +100,7 @@ def create_embedding_runtime(
             store_embedding_in_qdrant_fn=store_embedding_in_qdrant,
         )
 
-    def process_embedding_batch(batch: List[Tuple[str, str]]) -> None:
+    def process_embedding_batch(batch: List[Tuple[str, str, Any]]) -> None:
         _process_embedding_batch_runtime(
             state=get_state_fn(),
             batch=batch,

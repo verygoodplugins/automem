@@ -44,11 +44,17 @@ def jit_enrich_lightweight(
     utc_now_fn: Callable[[], str],
     collection_name: str,
     logger: Any,
+    isolation_context: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """Run lightweight JIT enrichment inline during recall."""
-    graph = get_memory_graph_fn()
+    graph = (
+        get_memory_graph_fn(isolation_context)
+        if isolation_context is not None
+        else get_memory_graph_fn()
+    )
     if graph is None:
         return None
+    effective_collection_name = getattr(isolation_context, "collection_name", collection_name)
 
     try:
         check = graph.query(
@@ -139,7 +145,7 @@ def jit_enrich_lightweight(
     if qdrant_client is not None:
         try:
             qdrant_client.set_payload(
-                collection_name=collection_name,
+                collection_name=effective_collection_name,
                 points=[memory_id],
                 payload={
                     "tags": tags,
@@ -182,11 +188,17 @@ def enrich_memory(
     collection_name: str,
     unexpected_response_exc: Any,
     logger: Any,
+    isolation_context: Any = None,
 ) -> bool:
     """Enrich a memory with relationships, patterns, and entity extraction."""
-    graph = get_memory_graph_fn()
+    graph = (
+        get_memory_graph_fn(isolation_context)
+        if isolation_context is not None
+        else get_memory_graph_fn()
+    )
     if graph is None:
         raise FalkorDBUnavailableError
+    effective_collection_name = getattr(isolation_context, "collection_name", collection_name)
 
     result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
 
@@ -235,7 +247,7 @@ def enrich_memory(
 
     temporal_links = find_temporal_relationships_fn(graph, memory_id)
     pattern_info = detect_patterns_fn(graph, memory_id, content)
-    semantic_neighbors = link_semantic_neighbors_fn(graph, memory_id)
+    semantic_neighbors = link_semantic_neighbors_fn(graph, memory_id, effective_collection_name)
 
     if enrichment_enable_summaries:
         existing_summary = properties.get("summary")
@@ -286,7 +298,7 @@ def enrich_memory(
     if qdrant_client is not None:
         try:
             qdrant_client.set_payload(
-                collection_name=collection_name,
+                collection_name=effective_collection_name,
                 points=[memory_id],
                 payload={
                     "tags": tags,

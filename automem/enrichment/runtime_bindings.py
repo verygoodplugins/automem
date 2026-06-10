@@ -19,12 +19,12 @@ from automem.enrichment.runtime_orchestration import (
 
 @dataclass(frozen=True)
 class EnrichmentRuntimeBindings:
-    jit_enrich_lightweight: Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]
+    jit_enrich_lightweight: Callable[..., Optional[Dict[str, Any]]]
     enrich_memory: Callable[..., bool]
     temporal_cutoff: Callable[[], str]
     find_temporal_relationships: Callable[[Any, str, int], int]
     detect_patterns: Callable[[Any, str, str], List[Dict[str, Any]]]
-    link_semantic_neighbors: Callable[[Any, str], List[Tuple[str, float]]]
+    link_semantic_neighbors: Callable[..., List[Tuple[str, float]]]
 
 
 def create_enrichment_runtime(
@@ -71,12 +71,16 @@ def create_enrichment_runtime(
             logger=logger,
         )
 
-    def link_semantic_neighbors(graph: Any, memory_id: str) -> List[Tuple[str, float]]:
+    def link_semantic_neighbors(
+        graph: Any,
+        memory_id: str,
+        collection_name_override: str | None = None,
+    ) -> List[Tuple[str, float]]:
         return _link_semantic_neighbors_runtime(
             graph=graph,
             memory_id=memory_id,
             get_qdrant_client_fn=get_qdrant_client_fn,
-            collection_name=collection_name,
+            collection_name=collection_name_override or collection_name,
             similarity_limit=enrichment_similarity_limit,
             similarity_threshold=enrichment_similarity_threshold,
             utc_now_fn=utc_now_fn,
@@ -84,7 +88,10 @@ def create_enrichment_runtime(
         )
 
     def jit_enrich_lightweight(
-        memory_id: str, properties: Dict[str, Any]
+        memory_id: str,
+        properties: Dict[str, Any],
+        *,
+        isolation_context: Any = None,
     ) -> Optional[Dict[str, Any]]:
         return _jit_enrich_lightweight_runtime(
             memory_id=memory_id,
@@ -101,9 +108,15 @@ def create_enrichment_runtime(
             utc_now_fn=utc_now_fn,
             collection_name=collection_name,
             logger=logger,
+            isolation_context=isolation_context,
         )
 
-    def enrich_memory(memory_id: str, *, forced: bool = False) -> bool:
+    def enrich_memory(
+        memory_id: str,
+        *,
+        forced: bool = False,
+        isolation_context: Any = None,
+    ) -> bool:
         return _enrich_memory_runtime(
             memory_id=memory_id,
             forced=forced,
@@ -123,6 +136,7 @@ def create_enrichment_runtime(
             collection_name=collection_name,
             unexpected_response_exc=unexpected_response_exc,
             logger=logger,
+            isolation_context=isolation_context,
         )
 
     return EnrichmentRuntimeBindings(

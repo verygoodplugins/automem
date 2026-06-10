@@ -141,9 +141,16 @@ def ensure_qdrant_collection(
                 collection_name,
                 effective_dim,
             )
+            if vector_params_cls is not None and distance_enum is not None:
+                vectors_config = vector_params_cls(
+                    size=effective_dim,
+                    distance=distance_enum.COSINE,
+                )
+            else:
+                vectors_config = {"size": effective_dim, "distance": "Cosine"}
             state.qdrant.create_collection(
                 collection_name=collection_name,
-                vectors_config=vector_params_cls(size=effective_dim, distance=distance_enum.COSINE),
+                vectors_config=vectors_config,
             )
 
         ensure_payload_indexes = os.getenv("QDRANT_ENSURE_PAYLOAD_INDEXES", "true").lower() in {

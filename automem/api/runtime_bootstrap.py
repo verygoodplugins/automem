@@ -20,6 +20,8 @@ def register_blueprints(
     app: Any,
     get_memory_graph_fn: Callable[[], Any],
     get_qdrant_client_fn: Callable[[], Any],
+    get_isolation_context_fn: Callable[[], Any],
+    ensure_qdrant_collection_fn: Callable[..., None],
     state: Any,
     graph_name: str,
     collection_name: str,
@@ -70,6 +72,9 @@ def register_blueprints(
     require_api_token_fn: Callable[[], None],
     metadata_keyword_search_fn: Optional[Callable[..., list[dict[str, Any]]]] = None,
 ) -> None:
+    get_graph_name_fn = lambda: get_isolation_context_fn().graph_name
+    get_collection_name_fn = lambda: get_isolation_context_fn().collection_name
+
     health_bp = create_health_blueprint(
         get_memory_graph_fn,
         get_qdrant_client_fn,
@@ -77,6 +82,8 @@ def register_blueprints(
         graph_name,
         collection_name,
         utc_now_fn,
+        get_graph_name_fn,
+        get_collection_name_fn,
     )
 
     enrichment_bp = create_enrichment_blueprint(
@@ -108,6 +115,7 @@ def register_blueprints(
         update_last_accessed_fn,
         jit_enrich_fn=jit_enrich_fn,
         metadata_keyword_search=metadata_keyword_search_fn,
+        get_isolation_context=get_isolation_context_fn,
     )
 
     memory_bp = create_memory_blueprint_full(
@@ -135,6 +143,8 @@ def register_blueprints(
         update_last_accessed_fn,
         get_openai_client_fn,
         generate_real_embeddings_batch_fn,
+        get_isolation_context_fn,
+        ensure_qdrant_collection_fn,
     )
 
     admin_bp = create_admin_blueprint_full(
@@ -149,6 +159,7 @@ def register_blueprints(
         embedding_model,
         utc_now_fn,
         logger,
+        get_collection_name_fn,
     )
 
     backup_bp = create_backup_blueprint(
@@ -158,6 +169,8 @@ def register_blueprints(
         graph_name,
         collection_name,
         logger,
+        get_graph_name_fn,
+        get_collection_name_fn,
     )
 
     consolidation_bp = create_consolidation_blueprint_full(
@@ -179,6 +192,7 @@ def register_blueprints(
         serialize_node_fn,
         collection_name,
         logger,
+        get_collection_name_fn,
     )
 
     stream_bp = create_stream_blueprint(

@@ -12,13 +12,27 @@ def create_health_blueprint(
     graph_name: str,
     collection_name: str,
     utc_now: Callable[[], str],
+    get_graph_name: Callable[[], str] | None = None,
+    get_collection_name: Callable[[], str] | None = None,
 ) -> Blueprint:
     bp = Blueprint("health", __name__)
+
+    def _current_graph_name() -> str:
+        if get_graph_name is None:
+            return graph_name
+        return str(get_graph_name() or graph_name)
+
+    def _current_collection_name() -> str:
+        if get_collection_name is None:
+            return collection_name
+        return str(get_collection_name() or collection_name)
 
     @bp.route("/health", methods=["GET"])
     def health() -> Any:
         from automem.config import VECTOR_SIZE
 
+        current_graph_name = _current_graph_name()
+        current_collection_name = _current_collection_name()
         graph_available = get_memory_graph() is not None
         qdrant_available = get_qdrant_client() is not None
 
@@ -48,7 +62,7 @@ def create_health_blueprint(
             try:
                 qdrant = get_qdrant_client()
                 if qdrant:
-                    info = qdrant.get_collection(collection_name)
+                    info = qdrant.get_collection(current_collection_name)
                     vector_count = info.points_count
                     collection_vector_size = info.config.params.vectors.size
             except Exception:
@@ -104,7 +118,7 @@ def create_health_blueprint(
                 "failed": state.enrichment_stats.failures,
             },
             "timestamp": utc_now(),
-            "graph": graph_name,
+            "graph": current_graph_name,
         }
         return jsonify(health_data)
 

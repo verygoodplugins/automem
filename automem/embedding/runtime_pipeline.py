@@ -22,7 +22,16 @@ def init_embedding_pipeline(
     logger.info("Embedding pipeline initialized")
 
 
-def enqueue_embedding(*, state: Any, memory_id: str, content: str) -> None:
+EmbeddingQueueItem = Tuple[str, str, Any]
+
+
+def enqueue_embedding(
+    *,
+    state: Any,
+    memory_id: str,
+    content: str,
+    isolation_context: Any = None,
+) -> None:
     """Queue a memory for async embedding generation."""
     if not memory_id or not content or state.embedding_queue is None:
         return
@@ -32,7 +41,7 @@ def enqueue_embedding(*, state: Any, memory_id: str, content: str) -> None:
             return
 
         state.embedding_pending.add(memory_id)
-        state.embedding_queue.put((memory_id, content))
+        state.embedding_queue.put((memory_id, content, isolation_context))
 
 
 def embedding_worker(
@@ -42,12 +51,12 @@ def embedding_worker(
     batch_size: int,
     batch_timeout_seconds: float,
     empty_exc: Any,
-    process_batch_fn: Callable[[List[Tuple[str, str]]], None],
+    process_batch_fn: Callable[[List[EmbeddingQueueItem]], None],
     sleep_fn: Callable[[float], None],
     time_fn: Callable[[], float],
 ) -> None:
     """Background worker that generates embeddings and stores them in Qdrant with batching."""
-    batch: List[Tuple[str, str]] = []
+    batch: List[EmbeddingQueueItem] = []
     batch_deadline = time_fn() + batch_timeout_seconds
 
     while True:
@@ -59,8 +68,11 @@ def embedding_worker(
             timeout = max(0.1, batch_deadline - time_fn())
 
             try:
-                memory_id, content = state.embedding_queue.get(timeout=timeout)
-                batch.append((memory_id, content))
+                item = state.embedding_queue.get(timeout=timeout)
+                if len(item) == 2:
+                    memory_id, content = item
+                    item = (memory_id, content, None)
+                batch.append(item)
 
                 if len(batch) >= batch_size:
                     process_batch_fn(batch)
@@ -87,10 +99,10 @@ def embedding_worker(
 def process_embedding_batch(
     *,
     state: Any,
-    batch: List[Tuple[str, str]],
+    batch: List[EmbeddingQueueItem],
     logger: Any,
     generate_real_embeddings_batch_fn: Callable[[List[str]], List[List[float]]],
-    store_embedding_in_qdrant_fn: Callable[[str, str, List[float]], None],
+    store_embedding_in_qdrant_fn: Callable[..., None],
 ) -> None:
     """Process a batch of embeddings efficiently."""
     if not batch:
@@ -98,6 +110,7 @@ def process_embedding_batch(
 
     memory_ids = [item[0] for item in batch]
     contents = [item[1] for item in batch]
+    contexts = [item[2] for item in batch]
 
     with state.embedding_lock:
         for memory_id in memory_ids:
@@ -107,9 +120,20 @@ def process_embedding_batch(
     try:
         embeddings = generate_real_embeddings_batch_fn(contents)
 
-        for memory_id, content, embedding in zip(memory_ids, contents, embeddings, strict=True):
+        for memory_id, content, embedding, context in zip(
+            memory_ids,
+            contents,
+            embeddings,
+            contexts,
+            strict=True,
+        ):
             try:
-                store_embedding_in_qdrant_fn(memory_id, content, embedding)
+                store_embedding_in_qdrant_fn(
+                    memory_id,
+                    content,
+                    embedding,
+                    isolation_context=context,
+                )
                 logger.debug("Generated and stored embedding for %s", memory_id)
             except Exception:  # pragma: no cover
                 logger.exception("Failed to store embedding for %s", memory_id)
@@ -135,13 +159,19 @@ def store_embedding_in_qdrant(
     point_struct_cls: Any,
     utc_now_fn: Callable[[], str],
     logger: Any,
+    isolation_context: Any = None,
+    ensure_qdrant_collection_fn: Callable[[str], None] | None = None,
 ) -> None:
     """Store a pre-generated embedding in Qdrant with memory metadata."""
     qdrant_client = get_qdrant_client_fn()
     if qdrant_client is None:
         return
 
-    graph = get_memory_graph_fn()
+    graph = (
+        get_memory_graph_fn(isolation_context)
+        if isolation_context is not None
+        else get_memory_graph_fn()
+    )
     if graph is None:
         return
 
@@ -158,9 +188,13 @@ def store_embedding_in_qdrant(
         logger.warning("Malformed metadata JSON for %s; defaulting to empty object", memory_id)
         metadata_payload = {}
 
+    effective_collection_name = getattr(isolation_context, "collection_name", collection_name)
+
     try:
+        if ensure_qdrant_collection_fn is not None and effective_collection_name != collection_name:
+            ensure_qdrant_collection_fn(effective_collection_name)
         qdrant_client.upsert(
-            collection_name=collection_name,
+            collection_name=effective_collection_name,
             points=[
                 point_struct_cls(
                     id=memory_id,

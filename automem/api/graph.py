@@ -44,9 +44,15 @@ def create_graph_blueprint(
     serialize_node: Callable[[Any], Dict[str, Any]],
     collection_name: str,
     logger: Any,
+    get_collection_name: Callable[[], str] | None = None,
 ) -> Blueprint:
     """Create the graph visualization blueprint."""
     bp = Blueprint("graph", __name__, url_prefix="/graph")
+
+    def _current_collection_name() -> str:
+        if get_collection_name is None:
+            return collection_name
+        return str(get_collection_name() or collection_name)
 
     @bp.route("/snapshot", methods=["GET"])
     def snapshot() -> Any:
@@ -227,6 +233,7 @@ def create_graph_blueprint(
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="Graph database unavailable")
+        current_collection_name = _current_collection_name()
 
         # Get the center node
         center_query = "MATCH (m:Memory {id: $id}) RETURN m"
@@ -305,7 +312,7 @@ def create_graph_blueprint(
                 try:
                     # Get the embedding for the center node
                     points = qdrant.retrieve(
-                        collection_name=collection_name,
+                        collection_name=current_collection_name,
                         ids=[memory_id],
                         with_vectors=True,
                     )
@@ -313,7 +320,7 @@ def create_graph_blueprint(
                     if points and points[0].vector:
                         # Search for similar vectors
                         search_result = qdrant.search(
-                            collection_name=collection_name,
+                            collection_name=current_collection_name,
                             query_vector=points[0].vector,
                             limit=semantic_limit + 1,  # +1 to exclude self
                             with_payload=True,

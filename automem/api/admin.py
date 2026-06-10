@@ -70,8 +70,14 @@ def create_admin_blueprint_full(
     embedding_model: str,
     utc_now: Callable[[], str],
     logger: Any,
+    get_collection_name: Callable[[], str] | None = None,
 ) -> Blueprint:
     bp = Blueprint("admin", __name__)
+
+    def _current_collection_name() -> str:
+        if get_collection_name is None:
+            return collection_name
+        return str(get_collection_name() or collection_name)
 
     @bp.route("/admin/reembed", methods=["POST"])
     def reembed() -> Any:
@@ -87,6 +93,7 @@ def create_admin_blueprint_full(
         qdrant_client = get_qdrant_client()
         if qdrant_client is None:
             abort(503, description="Qdrant is not available - cannot store embeddings")
+        current_collection_name = _current_collection_name()
 
         payload = request.get_json(silent=True) or {}
         try:
@@ -205,7 +212,7 @@ def create_admin_blueprint_full(
                     )
 
                 if points:
-                    qdrant_client.upsert(collection_name=collection_name, points=points)
+                    qdrant_client.upsert(collection_name=current_collection_name, points=points)
                     processed += len(points)
                     logger.info(
                         f"Successfully reembedded batch of {len(points)} memories (preserving metadata)"
@@ -249,6 +256,7 @@ def create_admin_blueprint_full(
         qdrant_client = get_qdrant_client()
         if qdrant_client is None:
             abort(503, description="Qdrant is not available")
+        current_collection_name = _current_collection_name()
 
         graph = get_memory_graph()
         if graph is None:
@@ -270,7 +278,7 @@ def create_admin_blueprint_full(
                 falkor_ids.add(str(row[0]))
 
         # Get all point IDs from Qdrant
-        qdrant_ids = _get_all_qdrant_ids(qdrant_client, collection_name)
+        qdrant_ids = _get_all_qdrant_ids(qdrant_client, current_collection_name)
 
         # Find missing (in FalkorDB but not in Qdrant)
         missing_ids = falkor_ids - qdrant_ids
@@ -381,7 +389,7 @@ def create_admin_blueprint_full(
                     )
 
                 if points:
-                    qdrant_client.upsert(collection_name=collection_name, points=points)
+                    qdrant_client.upsert(collection_name=current_collection_name, points=points)
                     synced += len(points)
                     logger.info(f"Synced batch of {len(points)} missing memories to Qdrant")
 

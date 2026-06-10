@@ -2163,8 +2163,23 @@ def create_recall_blueprint(
     on_access: Optional[Callable[[List[str]], None]] = None,
     jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
     metadata_keyword_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    get_isolation_context: Optional[Callable[[], Any]] = None,
 ) -> Blueprint:
     bp = Blueprint("recall", __name__)
+
+    def _jit_enrich_with_context(
+        memory_id: str,
+        properties: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if jit_enrich_fn is None:
+            return None
+        if get_isolation_context is None:
+            return jit_enrich_fn(memory_id, properties)
+        return jit_enrich_fn(
+            memory_id,
+            properties,
+            isolation_context=get_isolation_context(),
+        )
 
     @bp.route("/recall", methods=["GET"])
     def recall_memories() -> Any:
@@ -2193,7 +2208,7 @@ def create_recall_blueprint(
             relation_limit=relation_limit,
             expansion_limit_default=RECALL_EXPANSION_LIMIT,
             on_access=on_access,
-            jit_enrich_fn=jit_enrich_fn,
+            jit_enrich_fn=_jit_enrich_with_context if jit_enrich_fn else None,
             metadata_keyword_search=metadata_keyword_search,
         )
 

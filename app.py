@@ -308,6 +308,7 @@ init_falkordb = _service_runtime.init_falkordb
 init_qdrant = _service_runtime.init_qdrant
 _ensure_qdrant_collection = _service_runtime.ensure_qdrant_collection
 get_memory_graph = _service_runtime.get_memory_graph
+get_isolation_context = _service_runtime.get_isolation_context
 get_qdrant_client = _service_runtime.get_qdrant_client
 
 
@@ -332,7 +333,11 @@ _enrichment_queue_runtime = create_enrichment_queue_runtime(
     enrichment_max_attempts=ENRICHMENT_MAX_ATTEMPTS,
     enrichment_failure_backoff_seconds=ENRICHMENT_FAILURE_BACKOFF_SECONDS,
     empty_exc=Empty,
-    enrich_memory_fn=lambda memory_id, forced=False: enrich_memory(memory_id, forced=forced),
+    enrich_memory_fn=lambda memory_id, forced=False, isolation_context=None: enrich_memory(
+        memory_id,
+        forced=forced,
+        isolation_context=isolation_context,
+    ),
     emit_event_fn=emit_event,
     perf_counter_fn=time.perf_counter,
     sleep_fn=time.sleep,
@@ -404,6 +409,7 @@ _embedding_runtime = create_embedding_runtime(
     utc_now_fn=utc_now,
     generate_real_embedding_fn=lambda content: _generate_real_embedding(content),
     generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(contents),
+    ensure_qdrant_collection_fn=lambda collection_name: _ensure_qdrant_collection(collection_name),
 )
 
 init_embedding_pipeline = _embedding_runtime.init_embedding_pipeline

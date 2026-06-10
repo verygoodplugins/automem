@@ -28,11 +28,17 @@ def enqueue_enrichment(
     forced: bool,
     attempt: int,
     enrichment_job_cls: Any,
+    isolation_context: Any = None,
 ) -> None:
     if not memory_id or state.enrichment_queue is None:
         return
 
-    job = enrichment_job_cls(memory_id=memory_id, attempt=attempt, forced=forced)
+    job = enrichment_job_cls(
+        memory_id=memory_id,
+        attempt=attempt,
+        forced=forced,
+        isolation_context=isolation_context,
+    )
 
     with state.enrichment_lock:
         if not forced and (
@@ -116,7 +122,11 @@ def enrichment_worker(
             )
 
             try:
-                processed = enrich_memory_fn(job.memory_id, forced=job.forced)
+                processed = enrich_memory_fn(
+                    job.memory_id,
+                    forced=job.forced,
+                    isolation_context=getattr(job, "isolation_context", None),
+                )
                 state.enrichment_stats.record_success(job.memory_id)
                 elapsed_ms = int((perf_counter_fn() - enrich_start) * 1000)
                 emit_event_fn(
@@ -148,7 +158,12 @@ def enrichment_worker(
                 logger.exception("Failed to enrich memory %s", job.memory_id)
                 if job.attempt + 1 < enrichment_max_attempts:
                     sleep_fn(enrichment_failure_backoff_seconds)
-                    enqueue_enrichment_fn(job.memory_id, forced=job.forced, attempt=job.attempt + 1)
+                    enqueue_enrichment_fn(
+                        job.memory_id,
+                        forced=job.forced,
+                        attempt=job.attempt + 1,
+                        isolation_context=getattr(job, "isolation_context", None),
+                    )
                 else:
                     logger.error(
                         "Giving up on enrichment for %s after %s attempts",

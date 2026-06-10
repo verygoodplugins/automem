@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from automem.isolation import IsolationContext, resolve_flask_isolation_context
+
 
 def init_openai(
     *,
@@ -35,9 +37,39 @@ def init_openai(
         state.openai_client = None
 
 
-def get_memory_graph(*, state: Any, init_falkordb_fn: Callable[[], None]) -> Any:
+def get_memory_graph(
+    *,
+    state: Any,
+    init_falkordb_fn: Callable[[], None],
+    default_graph_name: str,
+    default_collection_name: str,
+    isolation_context: IsolationContext | None = None,
+) -> Any:
     init_falkordb_fn()
-    return state.memory_graph
+    context = isolation_context or resolve_flask_isolation_context(
+        default_graph_name=default_graph_name,
+        default_collection_name=default_collection_name,
+    )
+    if not context.isolated or context.graph_name == default_graph_name:
+        return state.memory_graph
+
+    if state.falkordb is None:
+        return None
+
+    if context.graph_name not in state.graph_cache:
+        state.graph_cache[context.graph_name] = state.falkordb.select_graph(context.graph_name)
+    return state.graph_cache[context.graph_name]
+
+
+def get_isolation_context(
+    *,
+    default_graph_name: str,
+    default_collection_name: str,
+) -> IsolationContext:
+    return resolve_flask_isolation_context(
+        default_graph_name=default_graph_name,
+        default_collection_name=default_collection_name,
+    )
 
 
 def get_qdrant_client(*, state: Any, init_qdrant_fn: Callable[[], None]) -> Any:

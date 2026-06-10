@@ -33,7 +33,9 @@ class VectorDimensionMismatchError(RuntimeError):
         )
 
 
-def get_effective_vector_size(qdrant_client=None) -> tuple[int, str]:
+def get_effective_vector_size(
+    qdrant_client=None, collection_name: str | None = None
+) -> tuple[int, str]:
     """
     Get the effective vector size, preferring existing collection dimension over config.
 
@@ -58,7 +60,8 @@ def get_effective_vector_size(qdrant_client=None) -> tuple[int, str]:
         return VECTOR_SIZE, "config"
 
     try:
-        collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+        effective_collection_name = collection_name or COLLECTION_NAME
+        collection_info = qdrant_client.get_collection(effective_collection_name)
         collection_dim = collection_info.config.params.vectors.size
 
         if collection_dim != VECTOR_SIZE:

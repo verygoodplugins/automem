@@ -158,6 +158,15 @@ VECTOR_SIZE=768                                  # must match the model's output
 - To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The server will exit with a clear error message and fix instructions.
 - When creating a new collection, the configured `VECTOR_SIZE` (default 1024 for voyage-4) is used.
 
+### Trusted Per-Request Isolation
+
+These variables enable trusted federation layers to route a request to a specific FalkorDB graph and Qdrant collection with `X-Graph-Name` and `X-Collection-Name`. Both headers must be sent together, both names must match `^[A-Za-z0-9_-]{1,64}$`, and both values must be allowlisted. Requests without these headers continue to use `FALKORDB_GRAPH` and `QDRANT_COLLECTION`.
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `ALLOWED_GRAPHS` | Comma-separated graph names allowed for `X-Graph-Name` | unset | `tenant_a,tenant_b` |
+| `ALLOWED_COLLECTIONS` | Comma-separated collection names allowed for `X-Collection-Name` | unset | `tenant_a_vectors,tenant_b_vectors` |
+
 #### Self-Hosted Qdrant on Railway
 
 When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_HOST=qdrant` on the AutoMem API service. Railway's internal DNS resolves service names automatically.

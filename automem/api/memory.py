@@ -197,8 +197,29 @@ def create_memory_blueprint_full(
     on_access: Optional[Callable[[List[str]], None]] = None,
     get_openai_client: Optional[Callable[[], Any]] = None,
     generate_real_embeddings_batch: Optional[Callable[[List[str]], List[List[float]]]] = None,
+    get_isolation_context: Optional[Callable[[], Any]] = None,
+    ensure_qdrant_collection: Optional[Callable[[str], None]] = None,
 ) -> Blueprint:
     bp = Blueprint("memory", __name__)
+
+    def _current_context() -> Any:
+        return get_isolation_context() if get_isolation_context else None
+
+    def _current_collection_name(context: Any) -> str:
+        return getattr(context, "collection_name", collection_name)
+
+    def _current_graph(context: Any) -> Any:
+        if context is not None:
+            return get_memory_graph(context)
+        return get_memory_graph()
+
+    def _ensure_collection_for_write(qdrant_client: Any, selected_collection_name: str) -> None:
+        if (
+            qdrant_client is not None
+            and ensure_qdrant_collection is not None
+            and selected_collection_name != collection_name
+        ):
+            ensure_qdrant_collection(selected_collection_name)
 
     @bp.route("/memory", methods=["POST"])
     def store() -> Any:
@@ -306,7 +327,9 @@ def create_memory_blueprint_full(
         except ValueError as exc:
             abort(400, description=str(exc))
 
-        graph = get_memory_graph()
+        isolation_context = _current_context()
+        current_collection_name = _current_collection_name(isolation_context)
+        graph = _current_graph(isolation_context)
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
@@ -391,7 +414,7 @@ def create_memory_blueprint_full(
             abort(500, description="Failed to store memory in FalkorDB")
 
         # Queue enrichment
-        enqueue_enrichment(memory_id)
+        enqueue_enrichment(memory_id, isolation_context=isolation_context)
 
         # Handle embeddings
         embedding_status = "skipped"
@@ -401,8 +424,9 @@ def create_memory_blueprint_full(
             qdrant_result = None
             if qdrant_client is not None:
                 try:
+                    _ensure_collection_for_write(qdrant_client, current_collection_name)
                     qdrant_client.upsert(
-                        collection_name=collection_name,
+                        collection_name=current_collection_name,
                         points=[
                             point_struct(
                                 id=memory_id,
@@ -429,11 +453,11 @@ def create_memory_blueprint_full(
                     logger.exception(
                         "Qdrant upsert failed for memory %s in collection %s",
                         memory_id,
-                        collection_name,
+                        current_collection_name,
                     )
                     qdrant_result = "failed"
         elif qdrant_client is not None:
-            enqueue_embedding(memory_id, content)
+            enqueue_embedding(memory_id, content, isolation_context=isolation_context)
             embedding_status = "queued"
             qdrant_result = "queued"
         else:
@@ -481,7 +505,8 @@ def create_memory_blueprint_full(
     def get(memory_id: str) -> ResponseReturnValue:
         _validate_memory_id(memory_id)
 
-        graph = get_memory_graph()
+        isolation_context = _current_context()
+        graph = _current_graph(isolation_context)
         if graph is None:
             abort(503, description="Graph database unavailable")
 
@@ -517,7 +542,9 @@ def create_memory_blueprint_full(
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
 
-        graph = get_memory_graph()
+        isolation_context = _current_context()
+        current_collection_name = _current_collection_name(isolation_context)
+        graph = _current_graph(isolation_context)
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
@@ -624,7 +651,7 @@ def create_memory_blueprint_full(
             else:
                 try:
                     existing = qdrant_client.retrieve(
-                        collection_name=collection_name,
+                        collection_name=current_collection_name,
                         ids=[memory_id],
                         with_vectors=True,
                     )
@@ -650,15 +677,16 @@ def create_memory_blueprint_full(
                     "metadata": metadata,
                 }
                 try:
+                    _ensure_collection_for_write(qdrant_client, current_collection_name)
                     qdrant_client.upsert(
-                        collection_name=collection_name,
+                        collection_name=current_collection_name,
                         points=[point_struct(id=memory_id, vector=vector, payload=payload)],
                     )
                 except Exception:
                     logger.exception(
                         "Qdrant upsert failed for memory %s in collection %s",
                         memory_id,
-                        collection_name,
+                        current_collection_name,
                     )
 
         return jsonify({"status": "success", "memory_id": memory_id})
@@ -666,7 +694,9 @@ def create_memory_blueprint_full(
     @bp.route("/memory/<memory_id>", methods=["DELETE"])
     def delete(memory_id: str) -> Any:
         _validate_memory_id(memory_id)
-        graph = get_memory_graph()
+        isolation_context = _current_context()
+        current_collection_name = _current_collection_name(isolation_context)
+        graph = _current_graph(isolation_context)
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
@@ -678,7 +708,7 @@ def create_memory_blueprint_full(
 
         _delete_qdrant_points(
             qdrant_client=get_qdrant_client(),
-            collection_name=collection_name,
+            collection_name=current_collection_name,
             memory_ids=[memory_id],
             logger=logger,
         )
@@ -687,7 +717,9 @@ def create_memory_blueprint_full(
 
     @bp.route("/memory/by-tag", methods=["GET", "DELETE"])
     def by_tag() -> Any:
-        graph = get_memory_graph()
+        isolation_context = _current_context()
+        current_collection_name = _current_collection_name(isolation_context)
+        graph = _current_graph(isolation_context)
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
@@ -723,7 +755,7 @@ def create_memory_blueprint_full(
 
                 _delete_qdrant_points(
                     qdrant_client=get_qdrant_client(),
-                    collection_name=collection_name,
+                    collection_name=current_collection_name,
                     memory_ids=memory_ids,
                     logger=logger,
                 )
@@ -785,7 +817,8 @@ def create_memory_blueprint_full(
                 description=f"Relation type must be one of {sorted(authorable_relations)}",
             )
 
-        graph = get_memory_graph()
+        isolation_context = _current_context()
+        graph = _current_graph(isolation_context)
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
@@ -971,7 +1004,9 @@ def create_memory_blueprint_full(
                     logger.warning("Individual embedding failed for item %d: %s", j, e)
 
         # 3. Batch graph write via UNWIND
-        graph = get_memory_graph()
+        isolation_context = _current_context()
+        current_collection_name = _current_collection_name(isolation_context)
+        graph = _current_graph(isolation_context)
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
 
@@ -1033,12 +1068,13 @@ def create_memory_blueprint_full(
             ]
             for fid in failed_emb_ids:
                 v_match = next(v for v in validated if v["id"] == fid)
-                enqueue_embedding(fid, v_match["content"])
+                enqueue_embedding(fid, v_match["content"], isolation_context=isolation_context)
 
             if points:
                 try:
+                    _ensure_collection_for_write(qdrant_client, current_collection_name)
                     qdrant_client.upsert(
-                        collection_name=collection_name,
+                        collection_name=current_collection_name,
                         points=points,
                     )
                     if failed_emb_ids:
@@ -1049,16 +1085,20 @@ def create_memory_blueprint_full(
                     logger.exception("Batch Qdrant upsert failed")
                     # Still queue all embeddings as fallback
                     for v in validated:
-                        enqueue_embedding(v["id"], v["content"])
+                        enqueue_embedding(
+                            v["id"],
+                            v["content"],
+                            isolation_context=isolation_context,
+                        )
                     qdrant_status = "queued (fallback)"
             else:
                 # No embeddings succeeded, queue them all
                 for v in validated:
-                    enqueue_embedding(v["id"], v["content"])
+                    enqueue_embedding(v["id"], v["content"], isolation_context=isolation_context)
                 qdrant_status = "queued"
         # Queue enrichment for all
         for v in validated:
-            enqueue_enrichment(v["id"])
+            enqueue_enrichment(v["id"], isolation_context=isolation_context)
 
         elapsed_ms = round((time.perf_counter() - query_start) * 1000, 2)
         logger.info(

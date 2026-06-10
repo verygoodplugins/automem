@@ -6,6 +6,7 @@ from typing import Any, Callable
 from automem.embedding.provider_init import (
     init_embedding_provider as _init_embedding_provider_runtime,
 )
+from automem.service_runtime import get_isolation_context as _get_isolation_context_runtime
 from automem.service_runtime import get_memory_graph as _get_memory_graph_runtime
 from automem.service_runtime import get_qdrant_client as _get_qdrant_client_runtime
 from automem.service_runtime import init_openai as _init_openai_runtime
@@ -22,8 +23,9 @@ class ServiceRuntimeBindings:
     init_embedding_provider: Callable[[], None]
     init_falkordb: Callable[[], None]
     init_qdrant: Callable[[], None]
-    ensure_qdrant_collection: Callable[[], None]
-    get_memory_graph: Callable[[], Any]
+    ensure_qdrant_collection: Callable[..., None]
+    get_memory_graph: Callable[..., Any]
+    get_isolation_context: Callable[[], Any]
     get_qdrant_client: Callable[[], Any]
 
 
@@ -72,13 +74,17 @@ def create_service_runtime(
             falkordb_port=falkordb_port,
         )
 
-    def ensure_qdrant_collection() -> None:
+    def ensure_qdrant_collection(collection_name_override: str | None = None) -> None:
+        selected_collection_name = collection_name_override or collection_name
         _ensure_qdrant_collection_runtime(
             state=get_state_fn(),
             logger=logger,
-            collection_name=collection_name,
+            collection_name=selected_collection_name,
             vector_size_config=vector_size_config_fn(),
-            get_effective_vector_size_fn=get_effective_vector_size_fn,
+            get_effective_vector_size_fn=lambda qdrant_client: get_effective_vector_size_fn(
+                qdrant_client,
+                collection_name=selected_collection_name,
+            ),
             vector_params_cls=vector_params_cls,
             distance_enum=distance_enum,
             payload_schema_type_enum=payload_schema_type_enum,
@@ -92,10 +98,19 @@ def create_service_runtime(
             ensure_collection_fn=ensure_qdrant_collection,
         )
 
-    def get_memory_graph() -> Any:
+    def get_memory_graph(isolation_context: Any = None) -> Any:
         return _get_memory_graph_runtime(
             state=get_state_fn(),
             init_falkordb_fn=lambda: get_init_falkordb_fn()(),
+            default_graph_name=graph_name,
+            default_collection_name=collection_name,
+            isolation_context=isolation_context,
+        )
+
+    def get_isolation_context() -> Any:
+        return _get_isolation_context_runtime(
+            default_graph_name=graph_name,
+            default_collection_name=collection_name,
         )
 
     def get_qdrant_client() -> Any:
@@ -111,5 +126,6 @@ def create_service_runtime(
         init_qdrant=init_qdrant,
         ensure_qdrant_collection=ensure_qdrant_collection,
         get_memory_graph=get_memory_graph,
+        get_isolation_context=get_isolation_context,
         get_qdrant_client=get_qdrant_client,
     )

@@ -52,12 +52,14 @@ class EnrichmentJob:
     memory_id: str
     attempt: int = 0
     forced: bool = False
+    isolation_context: Any = None
 
 
 @dataclass
 class ServiceState:
     falkordb: Optional[FalkorDB] = None
     memory_graph: Any = None
+    graph_cache: Dict[str, Any] = field(default_factory=dict)
     qdrant: Optional[QdrantClient] = None
     openai_client: Any = None  # Keep for backward compatibility (type classification, etc.)
     embedding_provider: Optional[EmbeddingProvider] = None
