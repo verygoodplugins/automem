@@ -19,6 +19,7 @@ const DEFAULT_UPSTREAM_MAX_RETRIES = 2;
 const DEFAULT_HEALTH_TIMEOUT_MS = 5000;
 const DEFAULT_HEALTH_PROBE_INTERVAL_MS = 30000;
 const TRANSIENT_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
+const DETAILED_METADATA_MAX_CHARS = 300;
 
 function readIntEnv(name, fallback) {
   const raw = process.env[name];
@@ -371,6 +372,7 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
     if (id) lines.push(`ID: ${id}`);
     if (mem.type) lines.push(`Type: ${String(mem.type)}`);
     if (mem.timestamp) lines.push(`Timestamp: ${String(mem.timestamp)}`);
+    if (mem.updated_at) lines.push(`Updated: ${String(mem.updated_at)}`);
     if (mem.last_accessed) lines.push(`Last accessed: ${String(mem.last_accessed)}`);
     if (mem.importance !== undefined) {
       const imp = Number(mem.importance);
@@ -381,6 +383,20 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
       lines.push(`Confidence: ${Number.isFinite(conf) ? conf.toFixed(3) : String(mem.confidence)}`);
     }
     if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
+    if (mem.metadata && typeof mem.metadata === 'object' && Object.keys(mem.metadata).length) {
+      let metaJson = '';
+      try {
+        metaJson = JSON.stringify(mem.metadata);
+      } catch (_) {
+        metaJson = '';
+      }
+      if (metaJson && metaJson !== '{}') {
+        const capped = metaJson.length > DETAILED_METADATA_MAX_CHARS
+          ? `${metaJson.slice(0, DETAILED_METADATA_MAX_CHARS)}…`
+          : metaJson;
+        lines.push(`Metadata: ${capped}`);
+      }
+    }
     if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
     if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
     if (it?.source) lines.push(`Source: ${String(it.source)}`);
@@ -484,7 +500,7 @@ export function buildMcpServer(client) {
             type: 'string',
             enum: ['text', 'items', 'detailed', 'json'],
             default: 'text',
-            description: 'Output formatting: text (single block), items (one memory per content item), detailed (per-item with timestamps/relations), json (raw response JSON as text)',
+            description: 'Output formatting: text (single block), items (one memory per content item), detailed (per-item with timestamps/metadata/relations), json (raw response JSON as text)',
           }
         }
       }
