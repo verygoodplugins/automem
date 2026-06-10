@@ -60,6 +60,7 @@ Recall
     - `current_only` remains supported for backward compatibility and wins over `state_mode` when both resolve to a value. A malformed `state_mode` is still rejected with `400` even when `current_only` is supplied — the value is validated before precedence is applied.
     - `state_debug=true` includes suppression/replacement details in `state_filter`.
   - **Context hints**: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`
+  - **Metadata sidecar search**: Text queries can admit bounded metadata candidates when the query strongly matches whitelisted metadata values. This is enabled by default and controlled by `RECALL_METADATA_SEARCH_ENABLED`; no extra request parameter is required.
   - **Graph expansion**:
     - `expand_relations` - Follow graph edges from seed results to related memories
     - `expand_entities` - Multi-hop reasoning via entity tags (finds "Amanda → Rachel" then "Rachel's job")

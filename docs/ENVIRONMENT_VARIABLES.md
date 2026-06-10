@@ -351,6 +351,7 @@ Background worker that checks FalkorDB ↔ Qdrant consistency.
 |----------|-------------|---------|
 | `RECALL_RELATION_LIMIT` | Max related memories per seed in graph expansion | `5` |
 | `RECALL_EXPANSION_LIMIT` | Total max expansion results (relations + entities) | `25` |
+| `RECALL_METADATA_SEARCH_ENABLED` | Enable bounded metadata sidecar recall candidates | `true` |
 
 ---
 

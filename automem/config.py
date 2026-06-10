@@ -139,6 +139,11 @@ RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))
 RECALL_MIN_SCORE = float(os.getenv("RECALL_MIN_SCORE", "0.0"))
 RECALL_ADAPTIVE_FLOOR = os.getenv("RECALL_ADAPTIVE_FLOOR", "true").lower() in ("true", "1", "yes")
+RECALL_METADATA_SEARCH_ENABLED = os.getenv("RECALL_METADATA_SEARCH_ENABLED", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
 # Memory content size limits (governs auto-summarization on store)
 # Soft limit: Content above this triggers auto-summarization
@@ -447,6 +452,7 @@ def expand_relation_query_types(relation_types: Iterable[str]) -> list[str]:
 # Search weighting parameters (can be overridden via environment variables)
 SEARCH_WEIGHT_VECTOR = float(os.getenv("SEARCH_WEIGHT_VECTOR", "0.35"))
 SEARCH_WEIGHT_KEYWORD = float(os.getenv("SEARCH_WEIGHT_KEYWORD", "0.35"))
+SEARCH_WEIGHT_METADATA = float(os.getenv("SEARCH_WEIGHT_METADATA", "0.35"))
 SEARCH_WEIGHT_TAG = float(os.getenv("SEARCH_WEIGHT_TAG", "0.2"))
 SEARCH_WEIGHT_IMPORTANCE = float(os.getenv("SEARCH_WEIGHT_IMPORTANCE", "0.1"))
 SEARCH_WEIGHT_CONFIDENCE = float(os.getenv("SEARCH_WEIGHT_CONFIDENCE", "0.05"))
