@@ -756,6 +756,38 @@ def test_compute_metadata_score_gate_does_not_touch_context_bonus(monkeypatch):
     assert components["context"] == pytest.approx(0.45, abs=1e-9)
 
 
+def test_compute_metadata_score_gate_scales_relevance_score(monkeypatch):
+    """relevance_score (consolidation decay) is query-independent and gated
+    with the other crumbs. With the default SEARCH_WEIGHT_RELEVANCE=0.0 this
+    is a no-op today; pin a non-zero weight to observe the scaling."""
+    _pin_default_scoring(monkeypatch, gate=0.2)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_RELEVANCE", 0.3)
+
+    result = {
+        "match_type": "vector",
+        "match_score": 0.1,  # evidence = half of the 0.2 gate
+        "memory": {
+            "content": "Different words about other things",
+            "tags": [],
+            "importance": 0.0,
+            "relevance_score": 0.8,
+            "timestamp": _timestamp_days_ago(90),  # recency 0.5 at 180d window
+        },
+    }
+
+    score, components = _compute_metadata_score(
+        result, "quarterly metrics dashboard", ["quarterly", "metrics", "dashboard"]
+    )
+
+    assert components["relevance_gated"] is True
+    assert components["relevance"] == pytest.approx(0.4, abs=1e-9)  # 0.8 * 0.5
+    # The component is scaled before weighting, so the final score reflects it.
+    expected = (
+        0.35 * components["vector"] + 0.1 * components["recency"] + 0.3 * components["relevance"]
+    )
+    assert score == pytest.approx(expected, abs=1e-9)
+
+
 def test_relevance_gate_config_clamps_to_unit_interval():
     # Negatives clamp to 0.0 (gate disabled); values above 1.0 clamp to 1.0
     # because evidence components are bounded at ~1.0, so a larger gate would
@@ -1905,6 +1937,32 @@ def test_recall_tag_scope_absent_without_tags(client, mock_state, auth_headers, 
     assert "scope_fallback" not in data
 
 
+def test_recall_tag_scope_pool_size_hint_null_without_semantic_query(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """Tag-only recall (no query/embedding) has no comparable vector pool
+    count, so pool_size_hint must be null."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    _store_memory(
+        mock_state,
+        "ee000000-0000-0000-0000-000000000001",
+        "Tag-only scoped memory",
+        ["flint"],
+        0.5,
+    )
+
+    response = client.get(
+        "/recall",
+        query_string={"tags": "flint", "tag_match": "exact", "limit": 5},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["tag_scope"]["filtered"] is True
+    assert data["tag_scope"]["pool_size_hint"] is None
+
+
 def _scope_fallback_pool(mock_state) -> None:
     """One scoped memory plus two outside the tag scope, all vector matches."""
     mock_state.qdrant.search = _scoped_pool_search(
@@ -2021,6 +2079,198 @@ def test_recall_scope_fallback_defaults_off(client, mock_state, auth_headers, mo
     assert [r["id"] for r in data["results"]] == ["scoped-1"]
     assert "scope_fallback" not in data
     assert all("outside_tag_scope" not in r for r in data["results"])
+
+
+def test_recall_scope_fallback_does_not_resurrect_min_score_dropped_scoped_result(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """A scoped result dropped by min_score carries the scope tag, so it must
+    not re-enter via the unscoped fill search mislabeled outside_tag_scope."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    mock_state.qdrant.search = _scoped_pool_search(
+        [
+            {
+                "id": "scoped-strong",
+                "score": 0.9,
+                "payload": {
+                    "id": "scoped-strong",
+                    "content": "Scoped vector match",
+                    "tags": ["scoped"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                # Final score ~0.13 with pinned defaults: dropped by min_score
+                # in the scoped pass, then re-fetched by the fallback search.
+                "id": "scoped-weak",
+                "score": 0.05,
+                "payload": {
+                    "id": "scoped-weak",
+                    "content": "Weak scoped vector match",
+                    "tags": ["scoped"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                "id": "fill-ok",
+                "score": 0.8,
+                "payload": {
+                    "id": "fill-ok",
+                    "content": "Strong unscoped vector match",
+                    "tags": ["other"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+        ]
+    )
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0.2,
+            "scope_fallback": "true",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [r["id"] for r in data["results"]] == ["scoped-strong", "fill-ok"]
+    assert data["results"][1]["outside_tag_scope"] is True
+    assert data["scope_fallback"] is True
+
+
+def test_recall_scope_fallback_fill_below_min_score_excluded(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """Fills get min_score filter parity with the scoped path."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    mock_state.qdrant.search = _scoped_pool_search(
+        [
+            {
+                "id": "scoped-1",
+                "score": 0.9,
+                "payload": {
+                    "id": "scoped-1",
+                    "content": "Scoped vector match",
+                    "tags": ["scoped"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                # Final score ~0.13 with pinned defaults: below min_score, so
+                # it must not fill the open slots.
+                "id": "fill-weak",
+                "score": 0.05,
+                "payload": {
+                    "id": "fill-weak",
+                    "content": "Weak unscoped vector match",
+                    "tags": ["other"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+        ]
+    )
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0.2,
+            "scope_fallback": "true",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [r["id"] for r in data["results"]] == ["scoped-1"]
+    # The fallback ran (echoed); it just found nothing eligible.
+    assert data["scope_fallback"] is True
+
+
+def test_recall_scope_fallback_edge_superseded_fill_replaced_under_current_state(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """Filter parity for state mode: an edge-superseded memory
+    (INVALIDATED_BY) must not re-enter as a fill under current state mode;
+    its active replacement fills instead, matching the main path."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    superseded_id = "dd000000-0000-0000-0000-000000000001"
+    replacement_id = "dd000000-0000-0000-0000-000000000002"
+    _store_memory(mock_state, superseded_id, "Old unscoped fact", ["other"], 0.9)
+    _store_memory(
+        mock_state,
+        replacement_id,
+        "Current unscoped fact",
+        ["other-current"],
+        0.1,
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": superseded_id, "id2": replacement_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+    mock_state.qdrant.search = _scoped_pool_search(
+        [
+            {
+                "id": "scoped-1",
+                "score": 0.5,
+                "payload": {
+                    "id": "scoped-1",
+                    "content": "Scoped vector match",
+                    "tags": ["scoped"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                "id": superseded_id,
+                "score": 0.9,
+                "payload": {
+                    "id": superseded_id,
+                    "content": "Old unscoped fact",
+                    "tags": ["other"],
+                    "importance": 0.9,
+                    "timestamp": utc_now(),
+                },
+            },
+        ]
+    )
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0,
+            "scope_fallback": "true",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    ids = [r["id"] for r in data["results"]]
+    assert superseded_id not in ids
+    assert ids == ["scoped-1", replacement_id]
+    fill = data["results"][1]
+    assert fill["outside_tag_scope"] is True
+    assert fill["match_type"] == "state_replacement"
 
 
 def test_recall_adaptive_floor_keeps_clustered_relevant_tail():

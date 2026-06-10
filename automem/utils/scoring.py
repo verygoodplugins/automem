@@ -133,7 +133,7 @@ def _compute_metadata_score(
     query: str,
     tokens: List[str],
     context_profile: Optional[Dict[str, Any]] = None,
-) -> Tuple[float, Dict[str, float]]:
+) -> Tuple[float, Dict[str, Any]]:
     memory = result.get("memory", {})
     metadata = _parse_metadata_field(memory.get("metadata")) if memory else {}
     metadata_terms = _collect_metadata_terms(metadata) if isinstance(metadata, dict) else set()
@@ -196,17 +196,27 @@ def _compute_metadata_score(
     )
 
     # Query-topical evidence: the strongest signal that this result is about
-    # the query itself. Relation and tag overlap are query-independent and
-    # deliberately excluded.
+    # the query itself. Tag overlap is excluded even though it is computed
+    # from query-token hits: inside a tag-scoped pool the scope tag itself
+    # often matches a query token, which makes tag overlap scope-confounded
+    # crumb evidence rather than independent topical evidence. Relation
+    # strength is graph-derived and carries no query signal at all.
     evidence = max(vector_component, keyword_component, metadata_component, exact_match)
+
+    # Relevance score from consolidation decay (reflects access patterns + age).
+    # Default weight is 0.0 (disabled) — enable via SEARCH_WEIGHT_RELEVANCE env var.
+    relevance = memory.get("relevance_score")
+    relevance_score = float(relevance) if isinstance(relevance, (int, float)) else 0.0
 
     # Within-pool relevance gate (issue #130): inside a tag-scoped pool,
     # query-independent components (importance, confidence, recency, tag
-    # crumbs) can produce confident-looking final scores for results with
-    # near-zero topical evidence. When the gate is enabled and evidence falls
-    # short, ramp those components down linearly (evidence / gate — no cliff).
-    # Components are scaled *before* weighting so the `components` breakdown
-    # stays truthful. The context bonus is untouched: context_tags is the
+    # crumbs, consolidation relevance) can produce confident-looking final
+    # scores for results with near-zero topical evidence. When the gate is
+    # enabled and evidence falls short, ramp those components down linearly
+    # (evidence / gate — no cliff). Components are scaled *before* weighting
+    # so the `components` breakdown stays truthful. relevance_score is gated
+    # for completeness; with the default SEARCH_WEIGHT_RELEVANCE=0.0 that is
+    # a no-op today. The context bonus is untouched: context_tags is the
     # explicit soft-boost channel. Gate 0.0 (default) must not even enter
     # this branch so legacy scores stay bit-identical.
     relevance_gated = False
@@ -216,6 +226,7 @@ def _compute_metadata_score(
         confidence_score *= gate_scale
         recency_score *= gate_scale
         tag_score *= gate_scale
+        relevance_score *= gate_scale
         relevance_gated = True
 
     relation_component = 0.0
@@ -229,11 +240,6 @@ def _compute_metadata_score(
     context_bonus = _compute_context_bonus(
         result, memory, tag_terms, metadata_terms, context_profile
     )
-
-    # Relevance score from consolidation decay (reflects access patterns + age)
-    # Default weight is 0.0 (disabled) — enable via SEARCH_WEIGHT_RELEVANCE env var
-    relevance = memory.get("relevance_score")
-    relevance_score = float(relevance) if isinstance(relevance, (int, float)) else 0.0
 
     final = (
         SEARCH_WEIGHT_VECTOR * vector_component

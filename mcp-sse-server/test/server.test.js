@@ -120,6 +120,30 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   assert.ok(compact.includes("ID: mem-1"));
 });
 
+test("formatRecallAsItems surfaces outside_tag_scope fills in both formats", () => {
+  const results = [
+    {
+      final_score: 0.42,
+      outside_tag_scope: true,
+      memory: { id: "fill-1", content: "Unscoped fill", tags: ["other"] },
+    },
+    {
+      final_score: 0.9,
+      memory: { id: "scoped-1", content: "Scoped result", tags: ["scoped"] },
+    },
+  ];
+
+  const [fillDetailed, scopedDetailed] = formatRecallAsItems(results, { detailed: true }).map(
+    (x) => x.text,
+  );
+  assert.ok(fillDetailed.includes("Outside tag scope: true"));
+  assert.ok(!scopedDetailed.includes("Outside tag scope"));
+
+  const [fillCompact, scopedCompact] = formatRecallAsItems(results).map((x) => x.text);
+  assert.ok(fillCompact.includes("[outside tag scope]"));
+  assert.ok(!scopedCompact.includes("[outside tag scope]"));
+});
+
 test("AutoMemClient._request retries transient upstream errors", async () => {
   const originalFetch = globalThis.fetch;
   const attempts = [];

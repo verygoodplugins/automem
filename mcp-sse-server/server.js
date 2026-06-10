@@ -359,9 +359,10 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
       const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
       const scoreSuffix = score !== undefined ? ` score=${score.toFixed(3)}` : '';
       const dedupNote = dedupCount ? ` (deduped x${dedupCount})` : '';
+      const scopeNote = it?.outside_tag_scope ? ' [outside tag scope]' : '';
       return {
         type: 'text',
-        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}\nID: ${id}`,
+        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}${scopeNote}\nID: ${id}`,
       };
     }
 
@@ -383,6 +384,7 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
     if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
     if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
     if (it?.source) lines.push(`Source: ${String(it.source)}`);
+    if (it?.outside_tag_scope) lines.push('Outside tag scope: true');
 
     // Associations (only present on relation-expanded results)
     const rels = Array.isArray(it?.relations) ? it.relations : [];
