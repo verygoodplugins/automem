@@ -263,6 +263,7 @@ JIT_ENRICHMENT_ENABLED=true                   # Run entity/summary extraction in
 # Search scoring weights (all floats, see docs/ENVIRONMENT_VARIABLES.md)
 SEARCH_WEIGHT_VECTOR=0.35          # Semantic similarity via Qdrant
 SEARCH_WEIGHT_KEYWORD=0.35         # Keyword/TF-IDF matching
+SEARCH_WEIGHT_METADATA=0.35        # Metadata sidecar match score
 SEARCH_WEIGHT_RELATION=0.25        # Graph relationship boost
 SEARCH_WEIGHT_TAG=0.20             # Tag overlap scoring
 SEARCH_WEIGHT_EXACT=0.20           # Exact phrase in metadata

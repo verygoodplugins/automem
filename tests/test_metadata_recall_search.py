@@ -19,20 +19,18 @@ def _serialize_node(node):
     return dict(getattr(node, "properties", node))
 
 
-def _configure_metadata_helpers() -> None:
+def _configure_metadata_helpers(fetch_relations=None) -> None:
     configure_recall_helpers(
         parse_iso_datetime=lambda value: (
             datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
         ),
         prepare_tag_filters=lambda tags: [
-            str(tag).strip().lower()
-            for tag in (tags or [])
-            if isinstance(tag, str) and tag.strip()
+            str(tag).strip().lower() for tag in (tags or []) if isinstance(tag, str) and tag.strip()
         ],
         build_graph_tag_predicate=lambda _mode, _match: "true",
         build_qdrant_tag_filter=lambda *_args, **_kwargs: None,
         serialize_node=_serialize_node,
-        fetch_relations=lambda *_args, **_kwargs: [],
+        fetch_relations=fetch_relations or (lambda *_args, **_kwargs: []),
         extract_keywords=_extract_keywords,
         coerce_embedding=lambda _value: None,
         generate_real_embedding=lambda _text: [0.1, 0.2, 0.3],
@@ -63,9 +61,7 @@ def test_handle_recall_runs_metadata_sidecar_for_strong_non_field_queries() -> N
             }
         ]
 
-    with app.app.test_request_context(
-        "/recall?query=hub-developer%20run%20notes&limit=5"
-    ):
+    with app.app.test_request_context("/recall?query=hub-developer%20run%20notes&limit=5"):
         response = handle_recall(
             get_memory_graph=lambda: object(),
             get_qdrant_client=lambda: None,
@@ -203,6 +199,37 @@ def test_metadata_keyword_search_does_not_require_field_words() -> None:
     )
 
     assert [result["id"] for result in results] == ["meta-1"]
+
+
+def test_metadata_keyword_search_fetches_relations_only_for_returned_results() -> None:
+    relation_calls: list[str] = []
+
+    def counting_fetch_relations(_graph, memory_id, *_args, **_kwargs):
+        relation_calls.append(str(memory_id))
+        return []
+
+    _configure_metadata_helpers(fetch_relations=counting_fetch_relations)
+    graph = FakeGraph()
+    for index in range(8):
+        graph.memories[f"meta-{index}"] = {
+            "id": f"meta-{index}",
+            "content": "Recall planning note.",
+            "tags": ["automem"],
+            "metadata": {"source_agent": "hub-developer"},
+            "importance": 0.4,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    results = _metadata_keyword_search(
+        graph,
+        "hub developer",
+        3,
+        set(),
+        tag_filters=["automem"],
+    )
+
+    assert len(results) == 3
+    assert sorted(relation_calls) == sorted(result["id"] for result in results)
 
 
 def test_metadata_keyword_search_uses_field_words_as_scoring_context() -> None:

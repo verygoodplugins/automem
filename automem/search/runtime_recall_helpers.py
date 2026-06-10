@@ -34,6 +34,8 @@ METADATA_SEARCH_FIELDS = (
     "model",
     "entities",
 )
+# Safety guard: these must never become searchable even if a future edit adds
+# them to METADATA_SEARCH_FIELDS. None of them are in the whitelist today.
 METADATA_SKIP_FIELDS = {
     "original_content",
     "enrichment",
@@ -157,9 +159,7 @@ def _iter_scalar_metadata_values(value: Any) -> Iterable[str]:
             yield from _iter_scalar_metadata_values(item)
 
 
-def _iter_metadata_search_values(
-    metadata: Dict[str, Any], *, include_people: bool = False
-) -> Iterable[tuple[str, str]]:
+def _iter_metadata_search_values(metadata: Dict[str, Any]) -> Iterable[tuple[str, str]]:
     for field in METADATA_SEARCH_FIELDS:
         if field in METADATA_SKIP_FIELDS or field not in metadata:
             continue
@@ -171,7 +171,9 @@ def _iter_metadata_search_values(
                 category_text = str(category).strip().lower()
                 if not category_text:
                     continue
-                if category_text == "people" and not include_people:
+                # Entity people are content-derived and noisy personal names;
+                # they are always excluded from sidecar matching.
+                if category_text == "people":
                     continue
                 if isinstance(values, dict):
                     continue
@@ -247,8 +249,6 @@ def _metadata_value_has_strong_evidence(
     field_requested: bool,
     requested_fields: set[str],
 ) -> bool:
-    if exact_hit and len(value_tokens) > 1 and len(value_hits) >= min(2, len(value_tokens)):
-        return True
     if len(value_tokens) > 1 and len(value_hits) >= min(2, len(value_tokens)):
         return True
 
@@ -787,7 +787,7 @@ def _metadata_keyword_search(
             "match_type": "metadata",
             "source": "graph",
             "memory": data,
-            "relations": fetch_relations(graph, memory_id),
+            "relations": [],
             "score_components": {"metadata": match_score},
             "metadata_matches": matched_values[:5],
         }
@@ -818,6 +818,9 @@ def _metadata_keyword_search(
         if not memory_id or memory_id in seen_ids:
             continue
         seen_ids.add(memory_id)
+        # Relations are fetched only for kept records — candidates can number in
+        # the hundreds while the trimmed result is at most `limit`.
+        record["relations"] = fetch_relations(graph, memory_id)
         matches.append(record)
         if len(matches) >= limit:
             break

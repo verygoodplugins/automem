@@ -313,6 +313,7 @@ Controls how different factors are weighted in memory recall scoring.
 |----------|-------------|---------|-------|
 | `SEARCH_WEIGHT_VECTOR` | Semantic similarity | `0.35` | Vector search via Qdrant |
 | `SEARCH_WEIGHT_KEYWORD` | Keyword matching | `0.35` | Graph keyword hits plus content-token fallback for vector-sourced results |
+| `SEARCH_WEIGHT_METADATA` | Metadata sidecar match | `0.35` | Candidates admitted via the metadata sidecar channel (see `RECALL_METADATA_SEARCH_ENABLED`) |
 | `SEARCH_WEIGHT_RELATION` | Graph relationship boost | `0.25` | Memories connected via edges |
 | `SEARCH_WEIGHT_TAG` | Tag matching | `0.20` | Tag overlap scoring |
 | `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.20` | Full query in metadata |
