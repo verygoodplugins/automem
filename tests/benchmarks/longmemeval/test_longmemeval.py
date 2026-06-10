@@ -630,7 +630,8 @@ Answer:"""
         """All recalled memories' session ids in rank order with per-memory score.
 
         Unlike _top_unique_session_ids this keeps every memory (duplicates
-        included) so failure diagnosis can see the full ranked pool.
+        included). Recorded in result artifacts for future rank-6-10 depth
+        analysis; not yet consumed by diagnose_failures.
         """
         rows: List[Dict[str, Any]] = []
         for memory in memories:

@@ -78,6 +78,7 @@ except ImportError:  # pragma: no cover - only needed for --llm
     OpenAI = None
 
 from tests.benchmarks.judge_policy import CANONICAL_BENCHMARK_JUDGE_MODEL, is_gpt5_family
+from tests.benchmarks.longmemeval.analyze_results import _result_details
 from tests.benchmarks.longmemeval.evaluator import check_abstention_response
 
 # ---------------------------------------------------------------------------
@@ -130,6 +131,8 @@ _STOPWORDS: FrozenSet[str] = frozenset(
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SESSION_DATE_RE = re.compile(r"(\d{4})/(\d{2})/(\d{2})(?:\s*\([^)]*\))?\s*(\d{2}):(\d{2})")
+# Deliberately over-triggers on temporal-reasoning questions (broad markers
+# like \bbefore\b and \bfirst\b); stage 2 (--llm) cross-checks the labels.
 _DATE_MATH_RE = re.compile(
     r"\bhow long\b"
     r"|\bhow many\s+(?:days|weeks|months|years)\b"
@@ -322,16 +325,6 @@ def suggested_mode(question_type: str, evidence: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Stage 1 driver
 # ---------------------------------------------------------------------------
-
-
-def _result_details(results: Dict[str, Any]) -> List[Dict[str, Any]]:
-    details = results.get("details")
-    if isinstance(details, list):
-        return details
-    legacy = results.get("results")
-    if isinstance(legacy, list):
-        return legacy
-    return []
 
 
 def select_failures(
@@ -585,6 +578,8 @@ def run_stage2(
     dataset_by_id = {item.get("question_id"): item for item in dataset}
     agreement: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     matches = 0
+    scored = 0
+    llm_errors = 0
     for record in report["questions"]:
         dataset_item = dataset_by_id.get(record["question_id"])
         session_index = build_session_index(dataset_item) if dataset_item else {}
@@ -592,17 +587,24 @@ def run_stage2(
         record["llm_mode"] = verdict["mode"]
         record["llm_rationale"] = verdict["rationale"]
         record["llm_error"] = verdict["error"]
+        if verdict["error"] is not None:
+            # Transport/parse failures carry no labeling signal: keep the
+            # per-record llm_error, but exclude the record from the
+            # agreement matrix and the exact-agreement rate.
+            llm_errors += 1
+            continue
+        scored += 1
         agreement[record["suggested_mode"]][verdict["mode"]] += 1
         if record["suggested_mode"] == verdict["mode"]:
             matches += 1
 
-    total = len(report["questions"])
     report["agreement"] = {
         "llm_model": model,
+        "llm_errors": llm_errors,
         "matrix": {
             stage1: dict(sorted(stage2.items())) for stage1, stage2 in sorted(agreement.items())
         },
-        "exact_agreement": matches / total if total else None,
+        "exact_agreement": matches / scored if scored else None,
         "llm_mode_counts": dict(
             sorted(Counter(r["llm_mode"] for r in report["questions"]).items())
         ),
@@ -682,7 +684,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         for mode, count in agreement["llm_mode_counts"].items():
             print(f"  {mode:<26} {count}")
         rate = agreement["exact_agreement"]
-        print(f"  stage1/stage2 exact agreement: {rate:.1%}" if rate is not None else "")
+        if rate is not None:
+            print(f"  stage1/stage2 exact agreement: {rate:.1%}")
+        print(f"  stage-2 llm errors (excluded from agreement): {agreement.get('llm_errors', 0)}")
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

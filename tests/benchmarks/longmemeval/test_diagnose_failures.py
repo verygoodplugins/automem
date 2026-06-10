@@ -415,6 +415,7 @@ def test_run_stage2_with_mocked_client_records_labels_and_agreement():
     agreement = report["agreement"]
     assert agreement["matrix"] == {MODE_OUTDATED: {MODE_RANKING: 1}}
     assert agreement["exact_agreement"] == 0.0
+    assert agreement["llm_errors"] == 0
     assert report["metadata"]["llm_stage"] is True
     # Retrieved session content must appear in the prompt sent to the LLM.
     prompt = client.chat.completions.calls[0]["messages"][0]["content"]
@@ -433,3 +434,55 @@ def test_run_stage2_malformed_response_falls_back_to_other():
     record = report["questions"][0]
     assert record["llm_mode"] == MODE_OTHER
     assert record["llm_error"]
+    # Error records carry no labeling signal: excluded from agreement metrics.
+    agreement = report["agreement"]
+    assert agreement["llm_errors"] == 1
+    assert agreement["matrix"] == {}
+    assert agreement["exact_agreement"] is None
+
+
+class _FlakyCompletions:
+    """Raises on the call indices in ``fail_on``; succeeds otherwise."""
+
+    def __init__(self, fail_on, content):
+        self.fail_on = set(fail_on)
+        self.content = content
+        self.calls = []
+
+    def create(self, **kwargs):
+        index = len(self.calls)
+        self.calls.append(kwargs)
+        if index in self.fail_on:
+            raise RuntimeError("simulated transport failure")
+        message = SimpleNamespace(content=self.content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+class _FlakyClient:
+    def __init__(self, fail_on, content):
+        self.chat = SimpleNamespace(completions=_FlakyCompletions(fail_on=fail_on, content=content))
+
+
+def test_run_stage2_transport_errors_excluded_from_agreement():
+    results = {"details": [_result_row(), _result_row(question_id="q-synth-2")]}
+    dataset = [_dataset_item(), _dataset_item(question_id="q-synth-2")]
+    report = diagnose_stage1(results, dataset, types=None)
+    assert [r["suggested_mode"] for r in report["questions"]] == [MODE_OUTDATED, MODE_OUTDATED]
+
+    # First LLM call raises (transport failure); second returns a valid label.
+    client = _FlakyClient(fail_on={0}, content='{"mode": "ranking", "rationale": "buried"}')
+    run_stage2(report, dataset, model="gpt-5.4-mini-2026-03-17", client=client)
+
+    errored, scored = report["questions"]
+    assert errored["llm_mode"] == MODE_OTHER
+    assert errored["llm_error"].startswith("RuntimeError")
+    assert scored["llm_mode"] == MODE_RANKING
+    assert scored["llm_error"] is None
+
+    agreement = report["agreement"]
+    assert agreement["llm_errors"] == 1
+    # Only the scored record lands in the matrix and the agreement rate.
+    assert agreement["matrix"] == {MODE_OUTDATED: {MODE_RANKING: 1}}
+    assert agreement["exact_agreement"] == 0.0
+    # Per-record llm_mode counts still cover every record, errors included.
+    assert agreement["llm_mode_counts"] == {MODE_OTHER: 1, MODE_RANKING: 1}
