@@ -38,6 +38,13 @@ services:
     build: .
     ports:
       - "${AUTOMEM_API_HOST_PORT:-8001}:8001" # Flask API
+    env_file:
+      # Lab harness overrides (scripts/lab/run_recall_test.py writes this file).
+      # Required so SEARCH_*/RECALL_*/CONSOLIDATION_* config actually reaches the
+      # container: `docker compose --env-file` only affects compose-file
+      # interpolation, never container environment.
+      - path: .env.bench
+        required: false
     environment:
       FLASK_ENV: development
       FLASK_DEBUG: "1"
