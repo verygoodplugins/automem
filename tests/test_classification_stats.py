@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from threading import Thread
 from types import SimpleNamespace
 
 from automem.classification.memory_classifier import MemoryClassifier
@@ -117,6 +118,32 @@ def test_llm_failure_counts_fallback_and_records_error():
     assert stats.fallbacks == 1
     assert "429" in stats.last_error
     assert stats.last_error_at is not None
+    assert not hasattr(classifier, "_last_llm_error")
+
+
+def test_classification_stats_records_thread_safely():
+    stats = ClassificationStats()
+
+    def worker():
+        for _ in range(200):
+            stats.record_pattern()
+            stats.record_llm_attempt()
+            stats.record_llm_success()
+            stats.record_fallback("boom")
+
+    threads = [Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    snapshot = stats.to_dict()
+    assert snapshot["pattern_classifications"] == 1600
+    assert snapshot["llm_attempts"] == 1600
+    assert snapshot["llm_successes"] == 1600
+    assert snapshot["fallbacks"] == 1600
+    assert snapshot["last_error"] == "boom"
+    assert snapshot["last_error_at"] is not None
 
 
 def test_llm_success_counts_success():

@@ -55,31 +55,37 @@ class ClassificationStats:
     pattern_classifications: int = 0
     last_error: Optional[str] = None
     last_error_at: Optional[str] = None
+    _lock: Lock = field(default_factory=Lock, init=False, repr=False, compare=False)
 
     def record_pattern(self) -> None:
-        self.pattern_classifications += 1
+        with self._lock:
+            self.pattern_classifications += 1
 
     def record_llm_attempt(self) -> None:
-        self.llm_attempts += 1
+        with self._lock:
+            self.llm_attempts += 1
 
     def record_llm_success(self) -> None:
-        self.llm_successes += 1
+        with self._lock:
+            self.llm_successes += 1
 
     def record_fallback(self, error: Optional[str] = None) -> None:
-        self.fallbacks += 1
-        if error:
-            self.last_error = error
-            self.last_error_at = utc_now()
+        with self._lock:
+            self.fallbacks += 1
+            if error:
+                self.last_error = error
+                self.last_error_at = utc_now()
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "llm_attempts": self.llm_attempts,
-            "llm_successes": self.llm_successes,
-            "fallbacks": self.fallbacks,
-            "pattern_classifications": self.pattern_classifications,
-            "last_error": self.last_error,
-            "last_error_at": self.last_error_at,
-        }
+        with self._lock:
+            return {
+                "llm_attempts": self.llm_attempts,
+                "llm_successes": self.llm_successes,
+                "fallbacks": self.fallbacks,
+                "pattern_classifications": self.pattern_classifications,
+                "last_error": self.last_error,
+                "last_error_at": self.last_error_at,
+            }
 
 
 @dataclass
