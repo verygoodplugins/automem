@@ -430,7 +430,7 @@ def test_compute_metadata_score_ignores_generated_entities_for_generic_tag_score
     assert components["tag"] == 1 / 3
 
 
-def _tag_score_result(tags: list) -> dict:
+def _tag_score_result(tags: list[str]) -> dict[str, Any]:
     return {
         "match_type": "vector",
         "match_score": 0.7,
