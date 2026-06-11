@@ -634,6 +634,10 @@ def _graph_keyword_search(
 
         if keywords:
             params.update({"keywords": keywords, "phrase": phrase})
+            # Raw Cypher maximum: content (+2) and tag (+1) per keyword, plus
+            # the whole-phrase bonus (+2 content, +1 tag). Used to normalize
+            # scores into 0-1 so the keyword channel blends with the others.
+            max_raw_score = 3 * len(keywords) + (3 if phrase else 0)
             query = f"""
                 MATCH (m:Memory)
                 WHERE {where_clause}
@@ -656,6 +660,7 @@ def _graph_keyword_search(
             result = graph.query(query, params)
         elif phrase:
             params.update({"phrase": phrase})
+            max_raw_score = 3
             query = f"""
                 MATCH (m:Memory)
                 WHERE {where_clause}
@@ -690,6 +695,8 @@ def _graph_keyword_search(
     for row in getattr(result, "result_set", []) or []:
         node = row[0]
         score = row[1] if len(row) > 1 else None
+        if score is not None and max_raw_score > 0:
+            score = min(1.0, float(score) / max_raw_score)
         record = _format_graph_result(graph, node, score, "keyword", seen_ids)
         if record is None:
             continue
