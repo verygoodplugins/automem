@@ -1277,6 +1277,91 @@ def test_recall_vector_results_include_keyword_score_from_content(client, mock_s
     assert data["results"][0]["score_components"]["keyword"] == 1.0
 
 
+def test_recall_semantic_query_hydrates_summary_from_graph(mock_state):
+    memory_with_summary_id = "11111111-1111-1111-1111-111111111111"
+    memory_without_summary_id = "22222222-2222-2222-2222-222222222222"
+
+    for memory_id, summary in (
+        (memory_with_summary_id, "Stored graph summary for issue 180."),
+        (memory_without_summary_id, None),
+    ):
+        mock_state.memory_graph.memories[memory_id] = {
+            "id": memory_id,
+            "content": f"Issue 180 semantic recall memory {memory_id}",
+            "summary": summary,
+            "tags": ["issue180"],
+            "tag_prefixes": ["issue180"],
+            "importance": 0.8,
+            "timestamp": utc_now(),
+            "type": "Context",
+            "confidence": 0.9,
+            "metadata": "{}",
+        }
+        mock_state.qdrant.points[memory_id] = {
+            "vector": [0.1] * 3,
+            "payload": {
+                "id": memory_id,
+                "content": f"Issue 180 semantic recall memory {memory_id}",
+                "tags": ["issue180"],
+                "tag_prefixes": ["issue180"],
+                "importance": 0.8,
+                "timestamp": utc_now(),
+                "type": "Context",
+                "confidence": 0.9,
+                "metadata": {},
+            },
+        }
+
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors, query_filter
+        return [
+            SimpleNamespace(
+                id=memory_with_summary_id,
+                score=0.91,
+                payload=mock_state.qdrant.points[memory_with_summary_id]["payload"],
+            ),
+            SimpleNamespace(
+                id=memory_without_summary_id,
+                score=0.9,
+                payload=mock_state.qdrant.points[memory_without_summary_id]["payload"],
+            ),
+        ]
+
+    mock_state.qdrant.search = custom_search
+
+    with app.app.test_request_context("/recall?query=issue180&limit=2&current_only=false"):
+        response = handle_recall(
+            get_memory_graph=lambda: mock_state.memory_graph,
+            get_qdrant_client=lambda: mock_state.qdrant,
+            normalize_tag_list=app._normalize_tag_list,
+            normalize_timestamp=app._normalize_timestamp,
+            parse_time_expression=app._parse_time_expression,
+            extract_keywords=app._extract_keywords,
+            compute_metadata_score=app._compute_metadata_score,
+            result_passes_filters=app._result_passes_filters,
+            graph_keyword_search=app._graph_keyword_search,
+            vector_search=app._vector_search,
+            vector_filter_only_tag_search=app._vector_filter_only_tag_search,
+            recall_max_limit=50,
+            logger=Mock(),
+            jit_enrich_fn=None,
+        )
+
+    data = response.get_json()
+    results_by_id = {result["id"]: result["memory"] for result in data["results"]}
+
+    assert results_by_id[memory_with_summary_id]["summary"] == "Stored graph summary for issue 180."
+    assert "summary" not in results_by_id[memory_without_summary_id]
+
+
 def test_recall_adaptive_floor_keeps_clustered_relevant_tail():
     data = _call_handle_recall_for_scores(
         "AutoJack",

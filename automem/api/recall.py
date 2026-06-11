@@ -605,6 +605,52 @@ def _apply_current_state_filter(
     return filtered_results, state_filter
 
 
+def _hydrate_missing_summaries_from_graph(
+    results: List[Dict[str, Any]], graph: Any, logger: Any
+) -> None:
+    """Attach existing graph summaries to result payloads that came from Qdrant."""
+    if graph is None or not results:
+        return
+
+    results_by_id: Dict[str, Dict[str, Any]] = {}
+    memory_ids: List[str] = []
+    for result in results:
+        memory = result.get("memory")
+        if not isinstance(memory, dict) or memory.get("summary"):
+            continue
+        memory_id = _result_memory_id(result)
+        if not memory_id or memory_id in results_by_id:
+            continue
+        results_by_id[memory_id] = result
+        memory_ids.append(memory_id)
+
+    if not memory_ids:
+        return
+
+    try:
+        records = graph.query(
+            """
+            MATCH (m:Memory)
+            WHERE m.id IN $ids AND m.summary IS NOT NULL
+            RETURN m.id, m.summary
+            """,
+            {"ids": memory_ids},
+        )
+    except Exception:
+        logger.debug("Failed to hydrate recall summaries from graph", exc_info=True)
+        return
+
+    for row in getattr(records, "result_set", []) or []:
+        if len(row) < 2 or row[1] is None:
+            continue
+        result = results_by_id.get(str(row[0] or ""))
+        if result is None:
+            continue
+        memory = dict(result.get("memory") or {})
+        memory["summary"] = row[1]
+        result["memory"] = memory
+
+
 def _split_multi_value(raw: Any) -> List[str]:
     if raw is None:
         return []
@@ -1978,6 +2024,8 @@ def handle_recall(
     # Apply explicit min_score on final assembled results (catches expansions)
     if min_score is not None and min_score > 0:
         results = [r for r in results if float(r.get("final_score", 0.0)) >= min_score]
+
+    _hydrate_missing_summaries_from_graph(results, graph, logger)
 
     # JIT-enrich unenriched memories inline (cheap: entities + summary ~50ms each)
     jit_enriched_count = 0
