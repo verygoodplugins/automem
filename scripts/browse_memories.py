@@ -761,7 +761,7 @@ def cmd_diagnose(args, graph, qdrant_client, qdrant_collection):
     # Step 4: Recency score (decay shaped by SEARCH_RECENCY_WINDOW_DAYS / SEARCH_RECENCY_CURVE,
     # matching automem/config.py validation semantics)
     recency_window = float(os.getenv("SEARCH_RECENCY_WINDOW_DAYS", "180"))
-    if recency_window <= 0:
+    if not math.isfinite(recency_window) or recency_window <= 0:
         recency_window = 180.0
     recency_curve = os.getenv("SEARCH_RECENCY_CURVE", "linear").strip().lower()
     if recency_curve not in {"linear", "exp"}:

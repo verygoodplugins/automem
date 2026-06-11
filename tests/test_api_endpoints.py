@@ -430,40 +430,46 @@ def _timestamp_days_ago(days: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
-def test_compute_recency_score_age_zero_scores_one():
+@pytest.fixture
+def legacy_recency_config(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_WINDOW_DAYS", 180.0)
+    monkeypatch.setattr(scoring, "SEARCH_RECENCY_CURVE", "linear")
+
+
+def test_compute_recency_score_age_zero_scores_one(legacy_recency_config):
     assert _compute_recency_score(_timestamp_days_ago(0)) == pytest.approx(1.0, abs=1e-6)
 
 
-def test_compute_recency_score_future_timestamp_scores_one():
+def test_compute_recency_score_future_timestamp_scores_one(legacy_recency_config):
     assert _compute_recency_score(_timestamp_days_ago(-5)) == 1.0
 
 
-def test_compute_recency_score_linear_half_window_scores_half():
+def test_compute_recency_score_linear_half_window_scores_half(legacy_recency_config):
     assert _compute_recency_score(_timestamp_days_ago(90)) == pytest.approx(0.5, abs=1e-6)
 
 
-def test_compute_recency_score_linear_beyond_window_scores_zero():
+def test_compute_recency_score_linear_beyond_window_scores_zero(legacy_recency_config):
     assert _compute_recency_score(_timestamp_days_ago(180)) == pytest.approx(0.0, abs=1e-6)
     assert _compute_recency_score(_timestamp_days_ago(400)) == 0.0
 
 
-def test_compute_recency_score_exp_window_is_half_life(monkeypatch):
+def test_compute_recency_score_exp_window_is_half_life(monkeypatch, legacy_recency_config):
     monkeypatch.setattr(scoring, "SEARCH_RECENCY_CURVE", "exp")
 
     assert _compute_recency_score(_timestamp_days_ago(180)) == pytest.approx(0.5, abs=1e-6)
     assert _compute_recency_score(_timestamp_days_ago(360)) == pytest.approx(0.25, abs=1e-6)
 
 
-def test_compute_recency_score_missing_timestamp_scores_zero():
+def test_compute_recency_score_missing_timestamp_scores_zero(legacy_recency_config):
     assert _compute_recency_score(None) == 0.0
     assert _compute_recency_score("") == 0.0
 
 
-def test_compute_recency_score_unparseable_timestamp_scores_zero():
+def test_compute_recency_score_unparseable_timestamp_scores_zero(legacy_recency_config):
     assert _compute_recency_score("not-a-timestamp") == 0.0
 
 
-def test_compute_recency_score_respects_configured_window(monkeypatch):
+def test_compute_recency_score_respects_configured_window(monkeypatch, legacy_recency_config):
     monkeypatch.setattr(scoring, "SEARCH_RECENCY_WINDOW_DAYS", 90.0)
 
     assert _compute_recency_score(_timestamp_days_ago(45)) == pytest.approx(0.5, abs=1e-6)
