@@ -1804,7 +1804,6 @@ def test_recall_semantic_query_hydrates_summary_from_graph(mock_state):
     assert "summary" not in results_by_id[memory_without_summary_id]
 
 
-
 # ==================== Tag Scope Diagnostics + Relevance Gate (issue #130) ====
 
 
