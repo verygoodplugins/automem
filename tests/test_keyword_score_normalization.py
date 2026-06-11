@@ -13,13 +13,33 @@ from types import SimpleNamespace
 
 import pytest
 
-from automem.search.runtime_recall_helpers import (
-    _graph_keyword_search,
-    configure_recall_helpers,
-)
+import automem.search.runtime_recall_helpers as recall_helpers
+from automem.search.runtime_recall_helpers import _graph_keyword_search, configure_recall_helpers
 from automem.utils.scoring import _compute_metadata_score
 from automem.utils.text import _extract_keywords
 from tests.support.fake_graph import FakeNode, FakeResult
+
+_HELPER_STATE_ATTRS = (
+    "_parse_iso_datetime",
+    "_prepare_tag_filters",
+    "_build_graph_tag_predicate",
+    "_build_qdrant_tag_filter",
+    "_serialize_node",
+    "_fetch_relations",
+    "_extract_keywords",
+    "_coerce_embedding",
+    "_generate_real_embedding",
+    "_logger",
+    "_collection_name",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_recall_helper_state():
+    previous = {name: getattr(recall_helpers, name) for name in _HELPER_STATE_ATTRS}
+    yield
+    for name, value in previous.items():
+        setattr(recall_helpers, name, value)
 
 
 class _ScriptedGraph:
