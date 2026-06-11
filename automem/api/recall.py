@@ -17,13 +17,15 @@ from automem.config import (
     RECALL_EXPANSION_LIMIT,
     RECALL_METADATA_SEARCH_ENABLED,
     RECALL_MIN_SCORE,
+    RECALL_RECENCY_BIAS,
     RECALL_RELATION_LIMIT,
+    SEARCH_WEIGHT_TEMPORAL,
     canonicalize_relation_type,
     expand_relation_query_types,
     normalize_relation_type,
 )
 from automem.utils.graph import _serialize_node
-from automem.utils.time import _parse_iso_datetime
+from automem.utils.time import _parse_iso_datetime, query_has_temporal_intent
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
     "coding-style",
@@ -74,6 +76,11 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
 }
 
 STATE_SUPPRESSING_RELATIONS: Set[str] = {"INVALIDATED_BY", "EVOLVED_INTO"}
+
+# Maximum supersession hops walked when resolving a replacement chain to its
+# head (issue #159): A→B→C→… stops after this many edges from the original
+# memory. Bounds query fan-out and guards against pathological chains.
+STATE_REPLACEMENT_MAX_DEPTH = 5
 
 # Words to skip when extracting entities from queries
 ENTITY_STOPWORDS: Set[str] = {
@@ -385,6 +392,44 @@ def _result_memory_id(result: Dict[str, Any]) -> str:
     ).strip()
 
 
+def _timestamp_epoch_or_none(value: Any) -> Optional[float]:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return None
+    try:
+        return parsed.timestamp()
+    except (OSError, OverflowError, ValueError):  # pragma: no cover - platform date limits
+        return None
+
+
+def _timestamp_epoch_for_sort(result: Dict[str, Any]) -> float:
+    """Best-effort epoch seconds for the result's memory timestamp (0.0 fallback).
+
+    Defensive parse: unparseable or missing timestamps sort as the epoch so
+    they lose timestamp tiebreaks against dated results without raising.
+    """
+    memory = result.get("memory") or {}
+    epoch = _timestamp_epoch_or_none(memory.get("timestamp"))
+    return epoch if epoch is not None else 0.0
+
+
+def _score_sort_key(result: Dict[str, Any]) -> Tuple[float, bool, float, float, float]:
+    """Sort key for score-ordered recall results (ascending sort, descending fields negated).
+
+    Order: final score desc, qdrant-sourced first, original score desc,
+    importance desc, then memory timestamp desc — so exact ties order
+    newest-first deterministically (issue #159).
+    """
+    memory = result.get("memory") or {}
+    return (
+        -float(result.get("final_score", 0.0)),
+        result.get("source") != "qdrant",
+        -float(result.get("original_score", 0.0)),
+        -float(memory.get("importance", 0.0) or 0.0),
+        -_timestamp_epoch_for_sort(result),
+    )
+
+
 def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[str]:
     if memory.get("archived") is True:
         return "archived"
@@ -400,16 +445,13 @@ def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[
     return None
 
 
-def _active_replacements_for_memories(
+def _query_state_replacements(
     graph: Any,
-    memory_ids: List[str],
+    ordered_ids: List[str],
     now: datetime,
     logger: Any,
 ) -> Dict[str, Dict[str, Any]]:
-    ordered_ids = list(dict.fromkeys(memory_id for memory_id in memory_ids if memory_id))
-    if graph is None or not ordered_ids:
-        return {}
-
+    """Batch-load the first *active* replacement for each id via one supersession hop."""
     try:
         records = graph.query(
             """
@@ -471,6 +513,78 @@ def _active_replacements_for_memories(
         if kind:
             replacement["_state_relation"]["kind"] = kind
         replacements[source_id] = replacement
+
+    return replacements
+
+
+def _active_replacements_for_memories(
+    graph: Any,
+    memory_ids: List[str],
+    now: datetime,
+    logger: Any,
+) -> Dict[str, Dict[str, Any]]:
+    """Resolve each superseded memory to the *head* of its supersession chain.
+
+    First hop is a single batch query (unchanged from the original single-hop
+    behavior). When a replacement was found, additional batched rounds check
+    whether each replacement is itself superseded, walking
+    INVALIDATED_BY/EVOLVED_INTO chains to their head — bounded at
+    ``STATE_REPLACEMENT_MAX_DEPTH`` hops and cycle-safe via a per-source
+    visited set. The returned mapping keeps the original contract:
+    ``{source_id: head_replacement}`` where the head carries the FIRST hop's
+    ``_state_relation`` (the edge that actually superseded the source), so
+    downstream provenance (``state_replaces``, ``relations[0].from``) keeps
+    pointing at the original replaced memory.
+    """
+    ordered_ids = list(dict.fromkeys(memory_id for memory_id in memory_ids if memory_id))
+    if graph is None or not ordered_ids:
+        return {}
+
+    replacements = _query_state_replacements(graph, ordered_ids, now, logger)
+    if not replacements:
+        # No first-hop replacement found: no extra chain queries fire.
+        return replacements
+
+    visited: Dict[str, Set[str]] = {
+        source_id: {source_id, str(head.get("id") or "")}
+        for source_id, head in replacements.items()
+    }
+    # Cache per-head lookups so shared chain segments are queried once.
+    hop_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+    for _hop in range(STATE_REPLACEMENT_MAX_DEPTH - 1):
+        frontier = sorted(
+            {
+                head_id
+                for head_id in (str(head.get("id") or "") for head in replacements.values())
+                if head_id and head_id not in hop_cache
+            }
+        )
+        if frontier:
+            hop_results = _query_state_replacements(graph, frontier, now, logger)
+            for head_id in frontier:
+                hop_cache[head_id] = hop_results.get(head_id)
+
+        progressed = False
+        for source_id, head in replacements.items():
+            next_head = hop_cache.get(str(head.get("id") or ""))
+            if not next_head:
+                continue
+            next_id = str(next_head.get("id") or "")
+            if not next_id or next_id in visited[source_id]:
+                continue  # cycle: stop at the current head
+            promoted = dict(next_head)
+            # Keep the first-hop relation: it is the edge off the original
+            # memory, which is what the provenance describes.
+            promoted["_state_relation"] = head.get("_state_relation") or promoted.get(
+                "_state_relation"
+            )
+            replacements[source_id] = promoted
+            visited[source_id].add(next_id)
+            progressed = True
+
+        if not progressed:
+            break
 
     return replacements
 
@@ -1716,6 +1830,15 @@ def handle_recall(
     # query leaves the response under the requested limit, fill the remaining
     # slots from an unscoped vector search (results flagged outside_tag_scope).
     scope_fallback = _parse_bool_param(request.args.get("scope_fallback"), False)
+    # Relative-recency re-rank (issues #158/#159): "on" always re-ranks this
+    # request, "auto" only when the query expresses temporal intent ("latest",
+    # "current", ...), "off" never. Default comes from RECALL_RECENCY_BIAS
+    # (ships "off"). Unrecognized values fall back to the env default,
+    # mirroring the tag_mode/sort leniency.
+    recency_bias_param = (request.args.get("recency_bias") or "").strip().lower()
+    recency_bias_mode = (
+        recency_bias_param if recency_bias_param in {"auto", "on", "off"} else RECALL_RECENCY_BIAS
+    )
     state_mode_param = (request.args.get("state_mode") or "").strip().lower()
     if state_mode_param and state_mode_param not in {"current", "history"}:
         abort(400, description="'state_mode' must be 'current' or 'history'")
@@ -1951,14 +2074,7 @@ def handle_recall(
             ]
 
         if sort_param == "score":
-            local_results.sort(
-                key=lambda r: (
-                    -float(r.get("final_score", 0.0)),
-                    r.get("source") != "qdrant",
-                    -float(r.get("original_score", 0.0)),
-                    -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
-                )
-            )
+            local_results.sort(key=_score_sort_key)
         elif sort_param in {"time_desc", "time_asc"}:
             local_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
         elif sort_param in {"updated_desc", "updated_asc"}:
@@ -2039,14 +2155,7 @@ def handle_recall(
 
     deduped_results, dedup_removed = _dedupe_results(aggregated_results)
     if sort_param == "score":
-        deduped_results.sort(
-            key=lambda r: (
-                -float(r.get("final_score", 0.0)),
-                r.get("source") != "qdrant",
-                -float(r.get("original_score", 0.0)),
-                -float((r.get("memory") or {}).get("importance", 0.0) or 0.0),
-            )
-        )
+        deduped_results.sort(key=_score_sort_key)
     elif sort_param in {"time_desc", "time_asc"}:
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
     elif sort_param in {"updated_desc", "updated_asc"}:
@@ -2143,6 +2252,42 @@ def handle_recall(
             logger=logger,
             state_debug=state_debug,
         )
+
+    # Relative-recency re-rank (issues #158/#159): when active, min-max
+    # normalize candidate timestamps across the CURRENT candidate set and add
+    # SEARCH_WEIGHT_TEMPORAL * relative_recency to each final score, so the
+    # newest version of a conflicting fact can outrank an older-but-heavier
+    # one. Runs after dedup/expansion/state filtering and before the adaptive
+    # floor; only meaningful for score ordering (time sorts are already
+    # chronological). Single-candidate or all-same-timestamp sets contribute
+    # nothing (no div-by-zero); unparseable timestamps contribute 0.
+    if recency_bias_mode == "on":
+        recency_bias_active = True
+    elif recency_bias_mode == "auto":
+        recency_bias_active = any(query_has_temporal_intent(q) for q in queries_to_run)
+    else:
+        recency_bias_active = False
+    recency_bias_active = recency_bias_active and sort_param == "score" and bool(results)
+
+    if recency_bias_active:
+        epochs: List[Optional[float]] = []
+        for res in results:
+            epochs.append(_timestamp_epoch_or_none((res.get("memory") or {}).get("timestamp")))
+        valid_epochs = [epoch for epoch in epochs if epoch is not None]
+        spread = (max(valid_epochs) - min(valid_epochs)) if valid_epochs else 0.0
+        if spread > 0 and SEARCH_WEIGHT_TEMPORAL > 0:
+            oldest = min(valid_epochs)
+            for res, epoch in zip(results, epochs):
+                if epoch is None:
+                    continue
+                relative_recency = (epoch - oldest) / spread
+                res["final_score"] = (
+                    float(res.get("final_score", 0.0)) + SEARCH_WEIGHT_TEMPORAL * relative_recency
+                )
+                res["score"] = res["final_score"]
+                components = res.setdefault("score_components", {})
+                components["temporal"] = relative_recency
+            results.sort(key=_score_sort_key)
 
     pre_filter_count = len(results)
 
@@ -2336,6 +2481,14 @@ def handle_recall(
         }
     if scope_fallback_active:
         response["scope_fallback"] = True
+    if recency_bias_active:
+        # Echoed whenever the mode activated for this request ("on", or
+        # "auto" with temporal intent, on a score-sorted non-empty result
+        # set) — even when the re-rank was a no-op (zero timestamp spread
+        # or zero SEARCH_WEIGHT_TEMPORAL). "auto" without temporal intent
+        # stays silent. Per-result "temporal" score components only appear
+        # when scores actually changed.
+        response["recency_bias"] = "on"
     if exclude_tags:
         response["exclude_tags"] = exclude_tags
     if state_filter_info is not None:

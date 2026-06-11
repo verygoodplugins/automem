@@ -324,6 +324,7 @@ Controls how different factors are weighted in memory recall scoring.
 | `SEARCH_RECENCY_CURVE` | Recency decay curve | `linear` | `linear` (score reaches 0 at the window) or `exp` (window acts as half-life); invalid values fall back to `linear` |
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
 | `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` | Decay-derived score (see below) |
+| `SEARCH_WEIGHT_TEMPORAL` | Relative-recency re-rank bonus | `0.1` | Only applied when the `recency_bias` re-rank runs (see `RECALL_RECENCY_BIAS`); candidate timestamps are min-max normalized across the result set. Negative values clamp to `0.0`. Inert by default |
 
 The `SEARCH_WEIGHT_*` variables act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
 
@@ -358,6 +359,7 @@ Background worker that checks FalkorDB ↔ Qdrant consistency.
 | `RECALL_METADATA_SEARCH_ENABLED` | Enable bounded metadata sidecar recall candidates | `true` |
 | `RECALL_MIN_SCORE` | Drop results scoring below this final score (per-request `min_score` overrides) | `0.0` (disabled) |
 | `RECALL_RELEVANCE_GATE` | Within-pool relevance gate: when a query is present and a result's best topical evidence (max of vector/keyword/metadata/exact components) is below this threshold, its query-independent components (importance, confidence, recency, tag overlap) are scaled by `evidence / gate` — a linear ramp. Stops high-importance off-topic memories from dominating tag-scoped recall (issue #130). Negative values clamp to `0.0`, values above `1.0` clamp to `1.0`. | `0.0` (disabled) |
+| `RECALL_RECENCY_BIAS` | Default mode for the relative-recency re-rank (issues #158/#159): `off` (never), `on` (always), or `auto` (only when the query expresses temporal intent — "latest", "current", "what changed", ...). When active, `SEARCH_WEIGHT_TEMPORAL × relative_recency` is added to each candidate's final score after dedup/expansion, so the newest version of a conflicting fact can outrank an older, heavier one. Per-request override via the `recency_bias` query param; the response echoes `"recency_bias": "on"` when the re-rank ran. Invalid values fall back to `off`. | `off` |
 
 ---
 
