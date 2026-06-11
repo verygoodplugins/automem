@@ -651,6 +651,151 @@ def _hydrate_missing_summaries_from_graph(
         result["memory"] = memory
 
 
+def _apply_scope_fallback(
+    *,
+    results: List[Dict[str, Any]],
+    limit: int,
+    fallback_query: str,
+    query_text: str,
+    query_tokens: List[str],
+    embedding_param: Optional[str],
+    graph: Any,
+    qdrant_client: Any,
+    vector_search: Callable[..., List[Dict[str, Any]]],
+    result_passes_filters: Callable[
+        [
+            Dict[str, Any],
+            Optional[str],
+            Optional[str],
+            Optional[List[str]],
+            str,
+            str,
+            Optional[List[str]],
+        ],
+        bool,
+    ],
+    compute_metadata_score: Callable[
+        [Dict[str, Any], str, List[str], Optional[Dict[str, Any]]],
+        Tuple[float, Dict[str, Any]],
+    ],
+    extract_keywords: Callable[[str], List[str]],
+    context_profile: Optional[Dict[str, Any]],
+    start_time: Optional[str],
+    end_time: Optional[str],
+    tag_filters: List[str],
+    tag_mode: str,
+    tag_match: str,
+    exclude_tags: Optional[List[str]],
+    min_score: Optional[float],
+    current_only: bool,
+    recall_max_limit: int,
+    logger: Any,
+) -> List[Dict[str, Any]]:
+    """Top up under-limit tag-scoped results from an unscoped vector search.
+
+    Returns the fill results to append after the scoped results (never
+    interleaved with them), each flagged ``outside_tag_scope``. Fills get
+    filter parity with the scoped path: time, ``exclude_tags``, ``min_score``,
+    and current-state filtering (payload-level reasons plus graph-edge
+    supersession via ``_apply_current_state_filter``) all still apply — only
+    the tags scope is lifted. A candidate whose tags match ``tag_filters`` is
+    never a valid fill: it is in-scope by definition (already returned, or
+    dropped by a score filter) and must not be resurrected mislabeled as
+    outside the scope.
+    """
+    fill_slots = limit - len(results)
+    if fill_slots <= 0:
+        return []
+
+    scoped_ids = {_result_memory_id(res) for res in results}
+    scoped_ids.discard("")
+    try:
+        fallback_matches = vector_search(
+            qdrant_client,
+            graph,
+            fallback_query,
+            embedding_param,
+            min(limit * 2, recall_max_limit),
+            set(scoped_ids),  # copy: vector_search mutates its seen set
+            None,  # lifting the tag scope is the point of the fallback
+            tag_mode,
+            tag_match,
+        )
+    except Exception:
+        logger.exception("Scope-fallback vector search failed")
+        return []
+
+    fallback_tokens = (
+        query_tokens
+        if fallback_query == query_text
+        else (extract_keywords(fallback_query.lower()) if fallback_query else [])
+    )
+
+    def _in_tag_scope(res: Dict[str, Any]) -> bool:
+        return bool(tag_filters) and result_passes_filters(
+            res, None, None, tag_filters, tag_mode, tag_match, None
+        )
+
+    now_utc = datetime.now(timezone.utc)
+    fills: List[Dict[str, Any]] = []
+    for res in fallback_matches:
+        if not result_passes_filters(
+            res, start_time, end_time, None, tag_mode, tag_match, exclude_tags
+        ):
+            continue
+        # In-scope candidates were either already returned or dropped by a
+        # score filter; refusing them here keeps min_score/adaptive-floor
+        # decisions final and the outside_tag_scope label truthful.
+        if _in_tag_scope(res):
+            continue
+        # Cheap payload-level state check before scoring; edge-based
+        # supersession runs on the survivors below.
+        if current_only and _state_reason_for_memory(res.get("memory") or {}, now_utc):
+            continue
+        fill_score, fill_components = compute_metadata_score(
+            res, fallback_query, fallback_tokens, context_profile
+        )
+        res.setdefault("score_components", fill_components)
+        res["score_components"].update(fill_components)
+        res["final_score"] = fill_score
+        res["original_score"] = res.get("score", 0.0)
+        res["score"] = fill_score
+        fills.append(res)
+
+    # Filter parity with the scoped path: the request's min_score applies to
+    # fills too.
+    if min_score is not None and min_score > 0:
+        fills = [f for f in fills if float(f.get("final_score", 0.0)) >= min_score]
+
+    # Filter parity for current state mode: the main path also suppresses
+    # results superseded by graph edges (INVALIDATED_BY / EVOLVED_INTO) and
+    # injects their active replacements; fills go through the same pass.
+    # Replacement rows it injects are deduped against the scoped results and
+    # rejected when in-scope, same as direct fills above.
+    if current_only and fills:
+        fills, _fill_state_info = _apply_current_state_filter(
+            results=fills,
+            graph=graph,
+            result_passes_filters=result_passes_filters,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=None,  # fills are unscoped by design
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            exclude_tags=exclude_tags,
+            logger=logger,
+        )
+        fills = [
+            f for f in fills if _result_memory_id(f) not in scoped_ids and not _in_tag_scope(f)
+        ]
+
+    for fill in fills:
+        fill["outside_tag_scope"] = True
+
+    fills.sort(key=lambda r: -float(r.get("final_score", 0.0)))
+    return fills[:fill_slots]
+
+
 def _split_multi_value(raw: Any) -> List[str]:
     if raw is None:
         return []
@@ -1567,6 +1712,10 @@ def handle_recall(
         request.args.get("expand_respect_tags"),
         False,
     )
+    # Opt-in scope fallback (issue #130): when tag scoping plus a semantic
+    # query leaves the response under the requested limit, fill the remaining
+    # slots from an unscoped vector search (results flagged outside_tag_scope).
+    scope_fallback = _parse_bool_param(request.args.get("scope_fallback"), False)
     state_mode_param = (request.args.get("state_mode") or "").strip().lower()
     if state_mode_param and state_mode_param not in {"current", "history"}:
         abort(400, description="'state_mode' must be 'current' or 'history'")
@@ -2025,6 +2174,60 @@ def handle_recall(
     if min_score is not None and min_score > 0:
         results = [r for r in results if float(r.get("final_score", 0.0)) >= min_score]
 
+    # Capture score-filter accounting before scope-fallback fills are appended
+    # so `score_filter.filtered_count` keeps describing the score filters only.
+    score_filtered_count = pre_filter_count - len(results)
+
+    # fallback_query/has_semantic_query serve both the scope-fallback fill
+    # search below and the tag_scope diagnostics in the response assembly.
+    fallback_query = query_text or next((q for q in queries_to_run if q), "")
+    has_semantic_query = bool(fallback_query) or bool(
+        embedding_param and str(embedding_param).strip()
+    )
+
+    # Scope fallback (opt-in, issue #130): the tag gate is working as intended
+    # but can leave a scoped pool with too few topical results. When requested,
+    # top up the response from an unscoped vector search. Fills never displace
+    # scoped results — they are appended after them — and each one is flagged
+    # with outside_tag_scope; see _apply_scope_fallback for the filter-parity
+    # rules (time, exclude_tags, min_score, and current-state filtering all
+    # still apply — only the tags scope is lifted).
+    scope_fallback_active = False
+    if (
+        scope_fallback
+        and tag_filters
+        and has_semantic_query
+        and qdrant_client is not None
+        and len(results) < limit
+    ):
+        scope_fallback_active = True
+        results = results + _apply_scope_fallback(
+            results=results,
+            limit=limit,
+            fallback_query=fallback_query,
+            query_text=query_text,
+            query_tokens=query_tokens,
+            embedding_param=embedding_param,
+            graph=graph,
+            qdrant_client=qdrant_client,
+            vector_search=vector_search,
+            result_passes_filters=result_passes_filters,
+            compute_metadata_score=compute_metadata_score,
+            extract_keywords=extract_keywords,
+            context_profile=any_context_profile,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_filters,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            exclude_tags=exclude_tags,
+            min_score=min_score,
+            current_only=current_only,
+            recall_max_limit=recall_max_limit,
+            logger=logger,
+        )
+
+    # Hydrate after scope-fallback fills so appended results get summaries too
     _hydrate_missing_summaries_from_graph(results, graph, logger)
 
     # JIT-enrich unenriched memories inline (cheap: entities + summary ~50ms each)
@@ -2117,6 +2320,22 @@ def handle_recall(
         response["time_window"] = {"start": start_time, "end": end_time}
     if tag_filters:
         response["tags"] = tag_filters
+        # Scope diagnostics (issue #130): make it visible that the candidate
+        # pool was constrained by the tag gate. pool_size_hint is the
+        # post-tag-filter, pre-limit vector candidate count (null when no
+        # semantic query ran against the vector store — e.g. tag-only
+        # recall — because no comparable pool count exists cheaply there).
+        response["tag_scope"] = {
+            "filtered": True,
+            "pool_size_hint": (
+                total_vector_matches if (qdrant_client is not None and has_semantic_query) else None
+            ),
+            "gated_low_evidence": sum(
+                1 for res in results if (res.get("score_components") or {}).get("relevance_gated")
+            ),
+        }
+    if scope_fallback_active:
+        response["scope_fallback"] = True
     if exclude_tags:
         response["exclude_tags"] = exclude_tags
     if state_filter_info is not None:
@@ -2129,7 +2348,7 @@ def handle_recall(
         response["score_filter"] = {
             "min_score": min_score,
             "adaptive_floor": score_floor_applied,
-            "filtered_count": pre_filter_count - len(results),
+            "filtered_count": score_filtered_count,
         }
     response["query_time_ms"] = round((time.perf_counter() - query_start) * 1000, 2)
     if entity_identities:

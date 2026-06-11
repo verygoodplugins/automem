@@ -296,6 +296,7 @@ export class AutoMemClient {
     if (Array.isArray(args.tags)) args.tags.forEach(t => p.append('tags', t));
     if (args.tag_mode) p.set('tag_mode', args.tag_mode);
     if (args.tag_match) p.set('tag_match', args.tag_match);
+    if (args.scope_fallback !== undefined) p.set('scope_fallback', String(!!args.scope_fallback));
 
     // Advanced recall options (pass-through to AutoMem /recall)
     if (args.expand_relations !== undefined) p.set('expand_relations', String(!!args.expand_relations));
@@ -358,9 +359,10 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
       const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
       const scoreSuffix = score !== undefined ? ` score=${score.toFixed(3)}` : '';
       const dedupNote = dedupCount ? ` (deduped x${dedupCount})` : '';
+      const scopeNote = it?.outside_tag_scope ? ' [outside tag scope]' : '';
       return {
         type: 'text',
-        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}\nID: ${id}`,
+        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}${scopeNote}\nID: ${id}`,
       };
     }
 
@@ -382,6 +384,7 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
     if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
     if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
     if (it?.source) lines.push(`Source: ${String(it.source)}`);
+    if (it?.outside_tag_scope) lines.push('Outside tag scope: true');
 
     // Associations (only present on relation-expanded results)
     const rels = Array.isArray(it?.relations) ? it.relations : [];
@@ -458,9 +461,10 @@ export function buildMcpServer(client) {
             enum: ['score', 'time_desc', 'time_asc', 'updated_desc', 'updated_asc'],
             description: 'Result ordering (use time_* for chronological recaps)',
           },
-          tags: { type: 'array', items: { type: 'string' }, description: 'Filter by tags' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Hard scope filter: memories without a matching tag are excluded before scoring. Use context_tags for soft boosting instead.' },
           tag_mode: { type: 'string', enum: ['any', 'all'], description: 'How to combine multiple tags (default: any)' },
-          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags (default: exact)' },
+          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags (default: prefix)' },
+          scope_fallback: { type: 'boolean', description: 'When tag-scoped results fall short of limit, fill remaining slots from an unscoped vector search; fills are appended after scoped results and flagged outside_tag_scope (default: false)' },
 
           expand_relations: { type: 'boolean', description: 'Enable graph relation expansion' },
           expand_entities: { type: 'boolean', description: 'Enable entity-based multi-hop expansion' },
@@ -575,6 +579,7 @@ export function buildMcpServer(client) {
             tags: Array.isArray(args?.tags) ? args.tags : undefined,
             tag_mode: args?.tag_mode,
             tag_match: args?.tag_match,
+            scope_fallback: args?.scope_fallback,
 
             expand_relations: args?.expand_relations,
             expand_entities: args?.expand_entities,

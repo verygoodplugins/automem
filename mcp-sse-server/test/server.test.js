@@ -35,6 +35,7 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
     tags: ["automem", "cursor"],
     tag_mode: "all",
     tag_match: "prefix",
+    scope_fallback: true,
     expand_entities: true,
     expand_relations: true,
     auto_decompose: true,
@@ -56,6 +57,7 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
   assert.ok(capturedPath.includes("sort=time_desc"));
   assert.ok(capturedPath.includes("tag_mode=all"));
   assert.ok(capturedPath.includes("tag_match=prefix"));
+  assert.ok(capturedPath.includes("scope_fallback=true"));
 
   assert.ok(capturedPath.includes("expand_entities=true"));
   assert.ok(capturedPath.includes("expand_relations=true"));
@@ -116,6 +118,30 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   const compact = formatRecallAsItems(results, { detailed: false })[0].text;
   assert.ok(compact.includes("score=0.123"));
   assert.ok(compact.includes("ID: mem-1"));
+});
+
+test("formatRecallAsItems surfaces outside_tag_scope fills in both formats", () => {
+  const results = [
+    {
+      final_score: 0.42,
+      outside_tag_scope: true,
+      memory: { id: "fill-1", content: "Unscoped fill", tags: ["other"] },
+    },
+    {
+      final_score: 0.9,
+      memory: { id: "scoped-1", content: "Scoped result", tags: ["scoped"] },
+    },
+  ];
+
+  const [fillDetailed, scopedDetailed] = formatRecallAsItems(results, { detailed: true }).map(
+    (x) => x.text,
+  );
+  assert.ok(fillDetailed.includes("Outside tag scope: true"));
+  assert.ok(!scopedDetailed.includes("Outside tag scope"));
+
+  const [fillCompact, scopedCompact] = formatRecallAsItems(results).map((x) => x.text);
+  assert.ok(fillCompact.includes("[outside tag scope]"));
+  assert.ok(!scopedCompact.includes("[outside tag scope]"));
 });
 
 test("AutoMemClient._request retries transient upstream errors", async () => {

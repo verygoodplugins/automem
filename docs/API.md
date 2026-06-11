@@ -47,8 +47,14 @@ Memory
 Recall
 
 - GET `/recall`
-  - **Basic parameters**: `query`, `limit`, `tags`, `exclude_tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
+  - **Basic parameters**: `query`, `limit`, `tags`, `exclude_tags`, `tag_mode` (any|all), `tag_match` (prefix|exact, default prefix), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
     - `exclude_tags` - Comma-separated list or multiple params to exclude memories containing ANY of these tags. Supports both exact and prefix matching (independent of `tag_match`). Example: `exclude_tags=conversation_5` or `exclude_tags=temp,draft`
+  - **Tag semantics** (per retrieval path):
+    - `tags` is a **hard scope filter** on the vector, keyword, metadata-sidecar, and tag-only fallback paths: memories without a matching tag are excluded *before* scoring.
+    - Graph/entity **expansion bypasses the tag scope by default**; pass `expand_respect_tags=true` to keep expanded results inside the scope.
+    - `context_tags` is the **soft-boost** channel: it raises matching results' scores without excluding anything.
+    - Within the tag-scoped pool, query-independent score components (importance, confidence, recency, tag overlap) can be ramped down for results with little topical evidence via the `RECALL_RELEVANCE_GATE` env var (default `0.0` = off; see ENVIRONMENT_VARIABLES.md).
+    - `scope_fallback` (boolean, default `false`) - When tag-scoped results come up short of `limit` and a text/semantic query is present, fill the remaining slots from an *unscoped* vector search. Fills are appended after all scoped results (never interleaved with or displacing them) and each carries `"outside_tag_scope": true`. Fills get filter parity with the scoped path: `exclude_tags`, time filters, `min_score`, and current-state filtering (payload-level reasons plus graph-edge supersession) all still apply — only the tags scope is lifted. Candidates whose tags match the request's `tags` are never returned as fills: they are in-scope by definition (already returned, or dropped by a score filter) and are not resurrected.
   - **Ordering**: `sort` (or `order_by`) supports:
     - `score` (default) - hybrid relevance/importance ranking
     - `time_desc` / `time_asc` - chronological ordering by `updated_at`/`timestamp` within the filter window (use for "what happened since X")
@@ -71,6 +77,7 @@ Recall
     - `expand_min_strength` - Minimum relation strength (0-1) to traverse during graph expansion. Only edges above this threshold are followed. Recommended: 0.3 for exploratory, 0.6+ for high-confidence connections.
   - Response: `{ "status": "success", "results": [...], "count": M, "state_mode": "current", "context_priority": {...} }`
   - Echoed filters (for debugging): `tags`, `exclude_tags`, `tag_mode`, `tag_match`
+  - When `tags` were passed, the response includes scope diagnostics: `tag_scope: { "filtered": true, "pool_size_hint": <int|null>, "gated_low_evidence": <int> }` — `pool_size_hint` is the post-tag-filter, pre-limit vector candidate count (null when no semantic query ran, e.g. tag-only recall), and `gated_low_evidence` counts returned results whose score components were ramped down by `RECALL_RELEVANCE_GATE`. Note the hint is capped by the vector fetch limit and sums per-query counts when the request decomposes into multiple queries (`queries[]`/`auto_decompose`), so the same memory can be counted more than once — treat it as a rough pool-size signal, not an exact count. `scope_fallback: true` is echoed when the fallback ran.
   - Echoed state: `state_mode` always reflects the resolved mode after `current_only` precedence. When current-state filtering runs, `state_filter` may include suppressed and replacement IDs, including `INVALIDATED_BY`, `EVOLVED_INTO`, and `CONTRADICTS` handling details when `state_debug=true`.
   - When `expand_entities=true`: includes `entity_expansion: { enabled, expanded_count, entities_found }`
   - When `expand_relations=true`: includes `expansion: { enabled, seed_count, expanded_count, relation_limit }`
