@@ -1000,6 +1000,55 @@ def test_recall_with_explicit_timestamps(client, mock_state, auth_headers):
     assert "time_window" in data
 
 
+def test_recall_metadata_roundtrip(client, mock_state, auth_headers):
+    """Custom metadata and timestamps stored via POST /memory surface in /recall (#111)."""
+    with_metadata = {
+        "content": "Memory with provenance metadata",
+        "tags": ["metadata-roundtrip", "with-metadata"],
+        "importance": 0.8,
+        "metadata": {"created_by": "test-agent", "task": "synthetic-task"},
+    }
+    without_metadata = {
+        "content": "Memory without metadata",
+        "tags": ["metadata-roundtrip", "no-metadata"],
+        "importance": 0.7,
+    }
+
+    memory_ids = {}
+    for key, payload in (("with", with_metadata), ("without", without_metadata)):
+        store_response = client.post("/memory", json=payload, headers=auth_headers)
+        assert store_response.status_code == 201
+        store_data = store_response.get_json()
+        assert store_data["status"] == "success"
+        memory_ids[key] = store_data["memory_id"]
+
+    response = client.get("/recall?tags=metadata-roundtrip&limit=10", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+
+    results = {result["id"]: result["memory"] for result in data.get("results", [])}
+    assert set(results) == set(memory_ids.values())
+
+    enriched = results[memory_ids["with"]]
+    assert isinstance(enriched["metadata"], dict)
+    assert enriched["metadata"]["created_by"] == "test-agent"
+    assert enriched["metadata"]["task"] == "synthetic-task"
+    # POST /memory defaults updated_at to created_at and last_accessed to updated_at
+    assert enriched["updated_at"]
+    assert enriched["last_accessed"]
+
+    # Backward compat: memories stored without metadata round-trip without user
+    # metadata. JIT enrichment may add server-side bookkeeping keys only
+    # (written by jit_enrich_lightweight in automem/enrichment/runtime_orchestration.py).
+    plain = results[memory_ids["without"]]
+    plain_metadata = plain.get("metadata") or {}
+    assert isinstance(plain_metadata, dict)
+    assert set(plain_metadata) <= {"enrichment", "entities"}
+    assert plain["updated_at"]
+    assert plain["last_accessed"]
+
+
 def test_recall_with_high_limit(client, mock_state, auth_headers):
     """Test recall with limit exceeding max - should clamp to 50."""
     response = client.get("/recall?limit=100", headers=auth_headers)

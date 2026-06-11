@@ -371,6 +371,7 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
     if (id) lines.push(`ID: ${id}`);
     if (mem.type) lines.push(`Type: ${String(mem.type)}`);
     if (mem.timestamp) lines.push(`Timestamp: ${String(mem.timestamp)}`);
+    if (mem.updated_at) lines.push(`Updated: ${String(mem.updated_at)}`);
     if (mem.last_accessed) lines.push(`Last accessed: ${String(mem.last_accessed)}`);
     if (mem.importance !== undefined) {
       const imp = Number(mem.importance);
@@ -381,6 +382,17 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
       lines.push(`Confidence: ${Number.isFinite(conf) ? conf.toFixed(3) : String(mem.confidence)}`);
     }
     if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
+    if (mem.metadata && typeof mem.metadata === 'object' && Object.keys(mem.metadata).length) {
+      let metaJson = '';
+      try {
+        metaJson = JSON.stringify(mem.metadata);
+      } catch (_) {
+        metaJson = '';
+      }
+      if (metaJson && metaJson !== '{}') {
+        lines.push(`Metadata: ${metaJson}`);
+      }
+    }
     if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
     if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
     if (it?.source) lines.push(`Source: ${String(it.source)}`);
@@ -484,7 +496,7 @@ export function buildMcpServer(client) {
             type: 'string',
             enum: ['text', 'items', 'detailed', 'json'],
             default: 'text',
-            description: 'Output formatting: text (single block), items (one memory per content item), detailed (per-item with timestamps/relations), json (raw response JSON as text)',
+            description: 'Output formatting: text (single block), items (one memory per content item), detailed (per-item with timestamps/metadata/relations), json (raw response JSON as text)',
           }
         }
       }

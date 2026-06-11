@@ -94,10 +94,12 @@ test("formatRecallAsItems supports detailed output including relations", () => {
         content: "Hello world",
         tags: ["automem", "cursor"],
         timestamp: "2025-12-14T00:00:00Z",
+        updated_at: "2025-12-14T02:00:00Z",
         last_accessed: "2025-12-14T01:00:00Z",
         importance: 0.95,
         confidence: 0.88,
         type: "Insight",
+        metadata: { created_by: "test-agent", task: "synthetic-task" },
       },
     },
   ];
@@ -106,10 +108,12 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   assert.ok(detailed.includes("ID: mem-1"));
   assert.ok(detailed.includes("Type: Insight"));
   assert.ok(detailed.includes("Timestamp: 2025-12-14T00:00:00Z"));
+  assert.ok(detailed.includes("Updated: 2025-12-14T02:00:00Z"));
   assert.ok(detailed.includes("Last accessed: 2025-12-14T01:00:00Z"));
   assert.ok(detailed.includes("Importance: 0.950"));
   assert.ok(detailed.includes("Confidence: 0.880"));
   assert.ok(detailed.includes("Tags: automem, cursor"));
+  assert.ok(detailed.includes('Metadata: {"created_by":"test-agent","task":"synthetic-task"}'));
   assert.ok(detailed.includes("Score: 0.123"));
   assert.ok(detailed.includes("Match: relation"));
   assert.ok(detailed.includes("Source: graph"));
@@ -118,6 +122,107 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   const compact = formatRecallAsItems(results, { detailed: false })[0].text;
   assert.ok(compact.includes("score=0.123"));
   assert.ok(compact.includes("ID: mem-1"));
+  assert.ok(!compact.includes("Metadata:"));
+});
+
+test("formatRecallAsItems detailed output renders full metadata and omits empty metadata", () => {
+  const bigMetadata = { notes: "x".repeat(400) };
+  const results = [
+    {
+      memory: { id: "mem-big", content: "Big metadata", metadata: bigMetadata },
+    },
+    {
+      memory: { id: "mem-empty", content: "Empty metadata", metadata: {} },
+    },
+    {
+      memory: { id: "mem-none", content: "No metadata" },
+    },
+  ];
+
+  const [big, empty, none] = formatRecallAsItems(results, { detailed: true }).map(x => x.text);
+
+  const metadataLine = big.split("\n").find(line => line.startsWith("Metadata: "));
+  assert.ok(metadataLine, "expected a Metadata line for oversized metadata");
+  const rendered = metadataLine.slice("Metadata: ".length);
+  assert.equal(rendered, JSON.stringify(bigMetadata));
+
+  assert.ok(!empty.includes("Metadata:"));
+  assert.ok(!none.includes("Metadata:"));
+  assert.ok(!big.includes("Updated:"));
+});
+
+test("recall_memory json format passes through metadata from the API response", async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://upstream.test";
+
+  const originalFetch = globalThis.fetch;
+  const upstreamResponse = {
+    status: "success",
+    results: [
+      {
+        id: "mem-json",
+        final_score: 0.9,
+        memory: {
+          id: "mem-json",
+          content: "JSON passthrough",
+          metadata: { created_by: "test-agent", task: "synthetic-task" },
+          updated_at: "2025-12-14T02:00:00Z",
+          last_accessed: "2025-12-14T01:00:00Z",
+        },
+      },
+    ],
+    count: 1,
+  };
+
+  globalThis.fetch = async (url, options) => {
+    if (String(url).startsWith("http://upstream.test/")) {
+      return new Response(JSON.stringify(upstreamResponse), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return originalFetch(url, options);
+  };
+
+  try {
+    const app = createApp();
+    await withServer(app, async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: "Bearer test-token",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "recall_memory",
+            arguments: { query: "passthrough", format: "json" },
+          },
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      const text = body.result.content[0].text;
+      const parsed = JSON.parse(text);
+      assert.deepEqual(parsed.results[0].memory.metadata, {
+        created_by: "test-agent",
+        task: "synthetic-task",
+      });
+      assert.equal(parsed.results[0].memory.updated_at, "2025-12-14T02:00:00Z");
+      assert.equal(parsed.results[0].memory.last_accessed, "2025-12-14T01:00:00Z");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
 });
 
 test("formatRecallAsItems surfaces outside_tag_scope fills in both formats", () => {
