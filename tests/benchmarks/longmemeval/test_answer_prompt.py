@@ -51,7 +51,13 @@ MEMORIES: List[Dict[str, Any]] = [
 
 
 def _legacy_chain_of_note_prompt(question: str, memories, question_date: str) -> str:
-    """Byte-for-byte copy of the pre-flag chain-of-note prompt."""
+    """Byte-for-byte copy of the pre-flag chain-of-note prompt.
+
+    Byte identity is load-bearing: this baseline prompt is the
+    experimental control for the temporal_answer_hint flag. If it
+    silently drifts from the historical prompt, new benchmark scores
+    are no longer comparable to previously recorded ones.
+    """
     lines = []
     for i, mem in enumerate(memories, 1):
         content = mem.get("content", "")

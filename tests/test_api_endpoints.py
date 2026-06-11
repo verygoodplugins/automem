@@ -4208,10 +4208,16 @@ def test_recall_current_only_supersession_chain_depth_bounded(client, mock_state
     assert data["results"][0]["state_replaces"] == source_id
 
 
-def test_recall_current_only_single_hop_fires_no_extra_chain_queries(
+def test_recall_current_only_single_hop_fires_exactly_one_chain_round(
     client, mock_state, auth_headers
 ):
-    """Chain re-queries fire only while replacements keep resolving deeper."""
+    """A single-hop replacement costs exactly one extra chain query.
+
+    The resolver can't know the chain ended until it asks: after the
+    first-hop batch resolves old -> replacement, one additional (empty)
+    chain round runs against the replacement head before resolution
+    stops. So the single-hop case is first-hop + 1, not first-hop only.
+    """
     mock_state.memory_graph.memories.clear()
     mock_state.memory_graph.relationships.clear()
     old_id = "ee000000-0000-0000-0000-000000000040"

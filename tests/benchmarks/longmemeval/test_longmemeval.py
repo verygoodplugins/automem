@@ -527,7 +527,9 @@ class LongMemEvalBenchmark:
         ordered = memories
         if temporal_hint:
             # Stable sort: undated memories sort first, equal dates keep
-            # their original (score) order.
+            # their original (score) order. Lexicographic sort on
+            # session_date is chronological only because LongMemEval's
+            # zero-padded "YYYY/MM/DD (Day) HH:MM" format guarantees it.
             ordered = sorted(
                 memories,
                 key=lambda mem: str((mem.get("metadata") or {}).get("session_date") or ""),

@@ -2478,8 +2478,12 @@ def handle_recall(
     if scope_fallback_active:
         response["scope_fallback"] = True
     if recency_bias_active:
-        # Echoed only when the re-rank actually ran for this request (i.e.
-        # "auto" that didn't match temporal intent stays silent).
+        # Echoed whenever the mode activated for this request ("on", or
+        # "auto" with temporal intent, on a score-sorted non-empty result
+        # set) — even when the re-rank was a no-op (zero timestamp spread
+        # or zero SEARCH_WEIGHT_TEMPORAL). "auto" without temporal intent
+        # stays silent. Per-result "temporal" score components only appear
+        # when scores actually changed.
         response["recency_bias"] = "on"
     if exclude_tags:
         response["exclude_tags"] = exclude_tags
