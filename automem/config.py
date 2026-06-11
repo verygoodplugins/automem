@@ -500,10 +500,14 @@ def _non_negative_int_or_default(raw: str, default: int) -> int:
 # Tag-score query-length normalization: the tag-overlap score divides token
 # hits by min(len(query_tokens), cap) so long queries aren't penalized
 # relative to short ones. 0 disables the cap (legacy: denominator = full
-# query length). Negative values fall back to the default of 3 — falling back
-# is safer than treating a typo'd negative as an intentional legacy opt-out.
+# query length). Default is 0 (opt-in): a production-corpus A/B (2026-06-11,
+# 200 queries, 10k-memory clone) showed cap values 2/3/4 regress Recall@5 by
+# 14/7/4pp on ungated queries — the capped denominator inflates tag scores
+# and amplifies tag noise over vector/keyword evidence. Negative values fall
+# back to the default — falling back is safer than treating a typo'd
+# negative as intentional.
 SEARCH_TAG_SCORE_TOKEN_CAP = _non_negative_int_or_default(
-    os.getenv("SEARCH_TAG_SCORE_TOKEN_CAP", "3"), 3
+    os.getenv("SEARCH_TAG_SCORE_TOKEN_CAP", "0"), 0
 )
 
 # API tokens
