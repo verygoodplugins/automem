@@ -273,11 +273,13 @@ if [ "$LLM_EVAL" = true ]; then
     if [ -n "$EVAL_LLM_MODEL" ]; then
         PREFLIGHT_CMD+=(--model "$EVAL_LLM_MODEL")
     fi
-    if ! (cd "$SCRIPT_DIR" && "${PREFLIGHT_CMD[@]}"); then
+    if (cd "$SCRIPT_DIR" && "${PREFLIGHT_CMD[@]}"); then
+        echo -e "${GREEN}Judge preflight passed${NC}"
+    else
+        preflight_status=$?
         echo -e "${RED}Judge preflight failed — aborting before the question loop${NC}"
-        exit 1
+        exit "$preflight_status"
     fi
-    echo -e "${GREEN}Judge preflight passed${NC}"
 fi
 
 echo ""
