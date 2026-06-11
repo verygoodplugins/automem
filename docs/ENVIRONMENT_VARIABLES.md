@@ -318,11 +318,13 @@ Controls how different factors are weighted in memory recall scoring.
 | `SEARCH_WEIGHT_TAG` | Tag matching | `0.20` | Tag overlap scoring |
 | `SEARCH_WEIGHT_EXACT` | Exact phrase match | `0.20` | Full query in metadata |
 | `SEARCH_WEIGHT_IMPORTANCE` | Memory importance | `0.10` | User/system defined |
-| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Linear decay over 180 days |
+| `SEARCH_WEIGHT_RECENCY` | Recent memories | `0.10` | Decay shaped by `SEARCH_RECENCY_WINDOW_DAYS` and `SEARCH_RECENCY_CURVE` |
+| `SEARCH_RECENCY_WINDOW_DAYS` | Recency decay window in days | `180` | Used by the recency score, not a weight |
+| `SEARCH_RECENCY_CURVE` | Recency decay curve | `linear` | `linear` (score reaches 0 at the window) or `exp` (window acts as half-life); invalid values fall back to `linear` |
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
 | `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` | Decay-derived score (see below) |
 
-These act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
+The `SEARCH_WEIGHT_*` variables act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
 
 **`SEARCH_WEIGHT_RELEVANCE` (new):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
 

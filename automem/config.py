@@ -463,6 +463,27 @@ SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.2"))
 SEARCH_WEIGHT_RELATION = float(os.getenv("SEARCH_WEIGHT_RELATION", "0.25"))
 SEARCH_WEIGHT_RELEVANCE = float(os.getenv("SEARCH_WEIGHT_RELEVANCE", "0.0"))
 
+
+def _positive_or_default(raw: str, default: float) -> float:
+    """Parse a float env value, falling back to ``default`` when not strictly positive.
+
+    Unparseable values raise ValueError, matching the neighboring float() parses;
+    only the domain (value > 0) is guarded here.
+    """
+    value = float(raw)
+    return value if value > 0 else default
+
+
+# Recency decay tuning: window in days, curve "linear" (score hits 0 at window)
+# or "exp" (window acts as half-life). Invalid curve values fall back to linear;
+# non-positive window values fall back to 180 (a window <= 0 would divide by
+# zero or produce unbounded scores at recall time).
+SEARCH_RECENCY_WINDOW_DAYS = _positive_or_default(
+    os.getenv("SEARCH_RECENCY_WINDOW_DAYS", "180"), 180.0
+)
+_RECENCY_CURVE_RAW = os.getenv("SEARCH_RECENCY_CURVE", "linear").strip().lower()
+SEARCH_RECENCY_CURVE = _RECENCY_CURVE_RAW if _RECENCY_CURVE_RAW in {"linear", "exp"} else "linear"
+
 # API tokens
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
