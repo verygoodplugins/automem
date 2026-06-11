@@ -87,6 +87,7 @@ class LongMemEvalResult(TypedDict, total=False):
     question_date: str
     answer_session_ids: List[str]
     retrieved_session_ids: List[str]
+    retrieved_session_ids_full: List[Dict[str, Any]]
     recall_hit_at_5: bool
     judge_attempts: int
     judge_error: Optional[str]
@@ -624,6 +625,23 @@ Question: {question}
 Answer:"""
         return prompt
 
+    @staticmethod
+    def _session_ids_with_scores(memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """All recalled memories' session ids in rank order with per-memory score.
+
+        Unlike _top_unique_session_ids this keeps every memory (duplicates
+        included). Recorded in result artifacts for future rank-6-10 depth
+        analysis; not yet consumed by diagnose_failures.
+        """
+        rows: List[Dict[str, Any]] = []
+        for memory in memories:
+            metadata = memory.get("metadata") or {}
+            session_id = metadata.get("session_id")
+            if not session_id:
+                continue
+            rows.append({"session_id": session_id, "score": memory.get("score")})
+        return rows
+
     def generate_answer(
         self,
         question: str,
@@ -826,6 +844,7 @@ Answer:"""
             "question_date": question_date,
             "answer_session_ids": answer_session_ids,
             "retrieved_session_ids": retrieved_session_ids,
+            "retrieved_session_ids_full": self._session_ids_with_scores(memories),
             "recall_hit_at_5": recall_hit_at_5,
             "judge_attempts": judge_attempts,
             "judge_error": judge_error,
@@ -854,6 +873,7 @@ Answer:"""
             "question_date": item.get("question_date", ""),
             "answer_session_ids": list(item.get("answer_session_ids") or []),
             "retrieved_session_ids": [],
+            "retrieved_session_ids_full": [],
             "recall_hit_at_5": False,
             "judge_attempts": 0,
             "judge_error": None,

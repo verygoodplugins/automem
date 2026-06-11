@@ -264,6 +264,24 @@ if [ "$RESUME" = true ]; then
     PYTHON_CMD+=(--resume)
 fi
 
+# Judge quota/auth preflight — abort before any ingestion or question-loop
+# work if the pinned judge model is unreachable or out of quota.
+if [ "$LLM_EVAL" = true ]; then
+    echo ""
+    echo -e "${BLUE}Running judge quota preflight...${NC}"
+    PREFLIGHT_CMD=("$PYTHON_BIN" -m tests.benchmarks.judge_preflight)
+    if [ -n "$EVAL_LLM_MODEL" ]; then
+        PREFLIGHT_CMD+=(--model "$EVAL_LLM_MODEL")
+    fi
+    if (cd "$SCRIPT_DIR" && "${PREFLIGHT_CMD[@]}"); then
+        echo -e "${GREEN}Judge preflight passed${NC}"
+    else
+        preflight_status=$?
+        echo -e "${RED}Judge preflight failed — aborting before the question loop${NC}"
+        exit "$preflight_status"
+    fi
+fi
+
 echo ""
 echo -e "${BLUE}Config: $CONFIG${NC}"
 echo -e "${BLUE}Starting benchmark evaluation...${NC}"
