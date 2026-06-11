@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from automem.config import (
     SEARCH_RECENCY_CURVE,
     SEARCH_RECENCY_WINDOW_DAYS,
+    SEARCH_TAG_SCORE_TOKEN_CAP,
     SEARCH_WEIGHT_CONFIDENCE,
     SEARCH_WEIGHT_EXACT,
     SEARCH_WEIGHT_IMPORTANCE,
@@ -157,7 +158,18 @@ def _compute_metadata_score(
 
     recency_score = _compute_recency_score(memory.get("timestamp"))
 
-    tag_score = token_hits / max(len(tokens), 1) if tokens else 0.0
+    if tokens:
+        if SEARCH_TAG_SCORE_TOKEN_CAP > 0:
+            # Cap the denominator so long queries aren't penalized relative to
+            # short ones: a query with more tokens than the cap only needs
+            # `cap` tag/metadata hits for full credit.
+            denominator = max(min(len(tokens), SEARCH_TAG_SCORE_TOKEN_CAP), 1)
+        else:
+            # Legacy behavior (cap == 0): denominator is the full query length.
+            denominator = max(len(tokens), 1)
+        tag_score = min(1.0, token_hits / denominator)
+    else:
+        tag_score = 0.0
 
     vector_component = (
         result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0

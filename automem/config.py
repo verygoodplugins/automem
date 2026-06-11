@@ -484,6 +484,32 @@ SEARCH_RECENCY_WINDOW_DAYS = _positive_or_default(
 _RECENCY_CURVE_RAW = os.getenv("SEARCH_RECENCY_CURVE", "linear").strip().lower()
 SEARCH_RECENCY_CURVE = _RECENCY_CURVE_RAW if _RECENCY_CURVE_RAW in {"linear", "exp"} else "linear"
 
+
+def _non_negative_int_or_default(raw: str, default: int) -> int:
+    """Parse an int env value, falling back to ``default`` when negative.
+
+    Unparseable values raise ValueError, matching the neighboring int()/float()
+    parses. 0 is a valid sentinel here (it selects legacy behavior), so only
+    negative values fall back — mirroring ``_positive_or_default``'s
+    fail-safe-to-default spirit rather than silently meaning "legacy".
+    """
+    value = int(raw)
+    return value if value >= 0 else default
+
+
+# Tag-score query-length normalization: the tag-overlap score divides token
+# hits by min(len(query_tokens), cap) so long queries aren't penalized
+# relative to short ones. 0 disables the cap (legacy: denominator = full
+# query length). Default is 0 (opt-in): a production-corpus A/B (2026-06-11,
+# 200 queries, 10k-memory clone) showed cap values 2/3/4 regress Recall@5 by
+# 14/7/4pp on ungated queries — the capped denominator inflates tag scores
+# and amplifies tag noise over vector/keyword evidence. Negative values fall
+# back to the default — falling back is safer than treating a typo'd
+# negative as intentional.
+SEARCH_TAG_SCORE_TOKEN_CAP = _non_negative_int_or_default(
+    os.getenv("SEARCH_TAG_SCORE_TOKEN_CAP", "0"), 0
+)
+
 # API tokens
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
