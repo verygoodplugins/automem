@@ -2273,6 +2273,174 @@ def test_recall_scope_fallback_edge_superseded_fill_replaced_under_current_state
     assert fill["match_type"] == "state_replacement"
 
 
+def test_recall_scope_fallback_in_scope_state_replacement_not_resurrected(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """An out-of-scope fill superseded by an IN-scope replacement must not
+    smuggle that replacement back in mislabeled outside_tag_scope: in-scope
+    rows belong to the scoped pass, where min_score already rejected this one."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    mock_state.memory_graph.memories.clear()
+    mock_state.memory_graph.relationships.clear()
+    superseded_id = "dd000000-0000-0000-0000-000000000011"
+    replacement_id = "dd000000-0000-0000-0000-000000000012"
+    _store_memory(mock_state, superseded_id, "Old unscoped fact", ["other"], 0.9)
+    _store_memory(
+        mock_state,
+        replacement_id,
+        "Replacement fact with unrelated wording",
+        ["scoped"],
+        0.1,
+    )
+    mock_state.memory_graph.relationships.append(
+        {"id1": superseded_id, "id2": replacement_id, "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+    mock_state.qdrant.search = _scoped_pool_search(
+        [
+            {
+                "id": "scoped-1",
+                "score": 0.9,
+                "payload": {
+                    "id": "scoped-1",
+                    "content": "Scoped vector match",
+                    "tags": ["scoped"],
+                    "importance": 0.1,
+                    "timestamp": utc_now(),
+                },
+            },
+            {
+                "id": superseded_id,
+                "score": 0.9,
+                "payload": {
+                    "id": superseded_id,
+                    "content": "Old unscoped fact",
+                    "tags": ["other"],
+                    "importance": 0.9,
+                    "timestamp": utc_now(),
+                },
+            },
+        ]
+    )
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0.3,
+            "scope_fallback": "true",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    ids = [r["id"] for r in data["results"]]
+    # The superseded fill is suppressed; its in-scope replacement must not
+    # take its slot as a fill (it is in scope, so the fill label would lie).
+    assert superseded_id not in ids
+    assert replacement_id not in ids
+    assert ids == ["scoped-1"]
+    assert all("outside_tag_scope" not in r for r in data["results"])
+
+
+def _filter_aware_pool_search(scoped_hits: list[dict], unscoped_hits: list[dict]) -> Any:
+    """Qdrant search stub that respects tag scoping: the scoped pass (tag
+    query_filter set) sees ``scoped_hits``; the unscoped fallback pass
+    (query_filter None) sees ``unscoped_hits``."""
+
+    def custom_search(
+        collection_name: str,
+        query_vector: list[float],
+        limit: int = 5,
+        *,
+        with_payload: bool = True,
+        with_vectors: bool = False,
+        query_filter=None,
+    ) -> list[Any]:
+        _ = collection_name, query_vector, limit, with_payload, with_vectors
+        hits = unscoped_hits if query_filter is None else scoped_hits
+        return [
+            SimpleNamespace(id=hit["id"], score=hit["score"], payload=hit["payload"])
+            for hit in hits
+        ]
+
+    return custom_search
+
+
+def test_recall_scope_fallback_rejects_in_scope_fill_above_min_score(
+    client, mock_state, auth_headers, monkeypatch
+):
+    """An in-scope candidate surfaced only by the unscoped fallback search must
+    be rejected as a direct fill even when its recomputed fill score clears
+    min_score. Runs under state_mode=history so the state-filter pass (which
+    re-checks tag scope on its own rows) cannot mask the direct-fill guard."""
+    _pin_default_scoring(monkeypatch, gate=0.0)
+    scoped_hit = {
+        "id": "scoped-1",
+        "score": 0.9,
+        "payload": {
+            "id": "scoped-1",
+            "content": "Scoped vector match",
+            "tags": ["scoped"],
+            "importance": 0.1,
+            "timestamp": utc_now(),
+        },
+    }
+    in_scope_victim = {
+        # Strong vector match + high importance: fill score well above
+        # min_score, so only the in-scope rejection can keep it out.
+        "id": "scoped-hidden",
+        "score": 0.9,
+        "payload": {
+            "id": "scoped-hidden",
+            "content": "Scoped match missing from the scoped pass",
+            "tags": ["scoped"],
+            "importance": 0.9,
+            "timestamp": utc_now(),
+        },
+    }
+    fill_ok = {
+        "id": "fill-ok",
+        "score": 0.8,
+        "payload": {
+            "id": "fill-ok",
+            "content": "Strong unscoped vector match",
+            "tags": ["other"],
+            "importance": 0.1,
+            "timestamp": utc_now(),
+        },
+    }
+    mock_state.qdrant.search = _filter_aware_pool_search(
+        [scoped_hit], [scoped_hit, in_scope_victim, fill_ok]
+    )
+
+    response = client.get(
+        "/recall",
+        query_string={
+            "query": "quarterly metrics dashboard",
+            "tags": "scoped",
+            "tag_match": "exact",
+            "limit": 3,
+            "min_score": 0.3,
+            "scope_fallback": "true",
+            "state_mode": "history",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    ids = [r["id"] for r in data["results"]]
+    # The in-scope candidate must not be resurrected as a fill; the genuine
+    # out-of-scope fill still lands.
+    assert "scoped-hidden" not in ids
+    assert ids == ["scoped-1", "fill-ok"]
+    assert data["results"][1]["outside_tag_scope"] is True
+
+
 def test_recall_adaptive_floor_keeps_clustered_relevant_tail():
     data = _call_handle_recall_for_scores(
         "AutoJack",
