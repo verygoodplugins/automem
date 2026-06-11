@@ -153,6 +153,26 @@ def test_batch_wrong_dims_single_works_uses_real_embeddings(caplog):
     assert _placeholder("x") not in result
 
 
+def test_missing_provider_name_still_falls_back_to_single_embeddings(caplog):
+    """A custom provider without provider_name() should not bypass fallback."""
+
+    class Provider:
+        def generate_embeddings_batch(self, contents):
+            raise RuntimeError("read timeout")
+
+        def generate_embedding(self, content):
+            return _real_vector(content)
+
+    contents = ["alpha", "bravo!"]
+    result = _run(contents, Provider(), caplog)
+
+    assert result == [_real_vector(c) for c in contents]
+    warnings = _warning_messages(caplog)
+    assert len(warnings) == 1, f"expected exactly one warning, got: {warnings}"
+    assert "Provider" in warnings[0]
+    assert "read timeout" in warnings[0]
+
+
 # ==================== Batch and singles both fail ====================
 
 

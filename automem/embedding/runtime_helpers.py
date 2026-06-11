@@ -106,7 +106,10 @@ def generate_real_embeddings_batch(
         return [placeholder_embedding(c) for c in contents]
 
     provider = state.embedding_provider
-    provider_name = provider.provider_name()
+    try:
+        provider_name = provider.provider_name()
+    except Exception:
+        provider_name = provider.__class__.__name__ or "unknown"
     expected_dim = state.effective_vector_size
     try:
         embeddings = provider.generate_embeddings_batch(contents)
