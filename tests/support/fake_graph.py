@@ -298,6 +298,19 @@ class FakeGraph:
                     deleted.append(memory_id)
             return FakeResult([[memory_id] for memory_id in deleted])
 
+        if (
+            "MATCH (m:Memory)" in query
+            and "WHERE m.id IN $ids" in query
+            and "RETURN m.id, m.summary" in query
+        ):
+            rows = []
+            for memory_id in params.get("ids") or []:
+                memory = self.memories.get(str(memory_id))
+                if memory is None or memory.get("summary") is None:
+                    continue
+                rows.append([str(memory_id), memory.get("summary")])
+            return FakeResult(rows)
+
         # Search by exact tag pattern
         if "MATCH (m:Memory)" in query and "$tag IN m.tags" in query:
             tag = str(params.get("tag") or "").strip().lower()
