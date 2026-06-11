@@ -105,18 +105,52 @@ def generate_real_embeddings_batch(
         logger.debug("No embedding provider available, falling back to placeholder embeddings")
         return [placeholder_embedding(c) for c in contents]
 
+    provider = state.embedding_provider
+    provider_name = provider.provider_name()
     expected_dim = state.effective_vector_size
     try:
-        embeddings = state.embedding_provider.generate_embeddings_batch(contents)
-        if not embeddings or any(
-            not isinstance(e, list) or len(e) != expected_dim for e in embeddings
+        embeddings = provider.generate_embeddings_batch(contents)
+        if (
+            not isinstance(embeddings, list)
+            or len(embeddings) != len(contents)
+            or any(not isinstance(e, list) or len(e) != expected_dim for e in embeddings)
         ):
-            logger.warning(
-                "Provider %s returned invalid dims in batch; using placeholders",
-                state.embedding_provider.provider_name() if state.embedding_provider else "unknown",
+            raise ValueError(
+                f"invalid batch result: expected {len(contents)} embeddings "
+                f"of {expected_dim} dims"
             )
-            return [placeholder_embedding(c) for c in contents]
         return embeddings
     except Exception as exc:
-        logger.warning("Failed to generate batch embeddings: %s", str(exc))
-        return [placeholder_embedding(c) for c in contents]
+        logger.warning(
+            "Batch embedding via provider %s failed (%s); "
+            "falling back to per-item embedding calls",
+            provider_name,
+            exc,
+        )
+
+    # Per-item fallback: single-input calls may succeed even when the batch
+    # endpoint fails (e.g. Voyage hanging on multi-input requests).
+    results: List[List[float]] = []
+    placeholder_count = 0
+    for content in contents:
+        try:
+            embedding = provider.generate_embedding(content)
+            if not isinstance(embedding, list) or len(embedding) != expected_dim:
+                raise ValueError(
+                    f"expected {expected_dim} dims, got "
+                    f"{len(embedding) if isinstance(embedding, list) else 'invalid'}"
+                )
+            results.append(embedding)
+        except Exception as exc:
+            logger.debug("Per-item embedding failed (%s); using placeholder", exc)
+            results.append(placeholder_embedding(content))
+            placeholder_count += 1
+
+    if placeholder_count:
+        logger.warning(
+            "%d/%d items fell back to placeholder embeddings — these will be "
+            "invisible to semantic search until re-embedded",
+            placeholder_count,
+            len(contents),
+        )
+    return results
