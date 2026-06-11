@@ -125,7 +125,7 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   assert.ok(!compact.includes("Metadata:"));
 });
 
-test("formatRecallAsItems detailed output caps metadata size and omits empty metadata", () => {
+test("formatRecallAsItems detailed output renders full metadata and omits empty metadata", () => {
   const bigMetadata = { notes: "x".repeat(400) };
   const results = [
     {
@@ -144,9 +144,7 @@ test("formatRecallAsItems detailed output caps metadata size and omits empty met
   const metadataLine = big.split("\n").find(line => line.startsWith("Metadata: "));
   assert.ok(metadataLine, "expected a Metadata line for oversized metadata");
   const rendered = metadataLine.slice("Metadata: ".length);
-  assert.ok(rendered.endsWith("…"));
-  assert.equal(rendered.length, 301); // 300 chars + ellipsis
-  assert.equal(rendered.slice(0, 300), JSON.stringify(bigMetadata).slice(0, 300));
+  assert.equal(rendered, JSON.stringify(bigMetadata));
 
   assert.ok(!empty.includes("Metadata:"));
   assert.ok(!none.includes("Metadata:"));

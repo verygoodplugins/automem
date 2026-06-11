@@ -23,10 +23,9 @@ on memories. It is intentionally a product/runtime spec, not an experiment note.
   on the caller path.
 - The MCP server's `json` recall format passes the raw response through, so it
   exposes the full metadata object. The MCP `detailed` format renders a
-  size-capped `Metadata:` line (single-line JSON truncated to 300 characters
-  with a trailing ellipsis) plus an `Updated:` line when present, and omits the
-  metadata line entirely for empty or missing metadata. The `text` and `items`
-  formats do not include metadata.
+  full `Metadata:` line as single-line JSON plus an `Updated:` line when
+  present, and omits the metadata line entirely for empty or missing metadata.
+  The `text` and `items` formats do not include metadata.
 - Final scoring can use metadata terms as weak evidence for candidates that are
   already present from another channel.
 

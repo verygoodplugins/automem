@@ -19,7 +19,6 @@ const DEFAULT_UPSTREAM_MAX_RETRIES = 2;
 const DEFAULT_HEALTH_TIMEOUT_MS = 5000;
 const DEFAULT_HEALTH_PROBE_INTERVAL_MS = 30000;
 const TRANSIENT_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
-const DETAILED_METADATA_MAX_CHARS = 300;
 
 function readIntEnv(name, fallback) {
   const raw = process.env[name];
@@ -391,10 +390,7 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
         metaJson = '';
       }
       if (metaJson && metaJson !== '{}') {
-        const capped = metaJson.length > DETAILED_METADATA_MAX_CHARS
-          ? `${metaJson.slice(0, DETAILED_METADATA_MAX_CHARS)}…`
-          : metaJson;
-        lines.push(`Metadata: ${capped}`);
+        lines.push(`Metadata: ${metaJson}`);
       }
     }
     if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
