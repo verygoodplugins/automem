@@ -159,7 +159,10 @@ def _compute_metadata_score(
     )
     keyword_component = 0.0
     if result.get("match_type") in {"keyword", "trending"}:
-        keyword_component = result.get("match_score", 0.0)
+        # Producers normalize, but no channel may exceed the 0-1 component
+        # contract (issue #190) — an unclamped score also defeats the
+        # RECALL_RELEVANCE_GATE evidence check.
+        keyword_component = min(1.0, float(result.get("match_score", 0.0) or 0.0))
     elif tokens:
         content_lower = str(memory.get("content") or "").lower()
         if content_lower:
