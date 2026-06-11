@@ -4096,11 +4096,62 @@ def test_recall_recency_bias_all_same_timestamp_is_safe(client, mock_state, auth
         assert "temporal" not in (result.get("score_components") or {})
 
 
+def test_recall_recency_bias_skips_timestamp_conversion_errors(
+    monkeypatch, client, mock_state, auth_headers
+):
+    """Extreme platform date failures are skipped instead of 500ing the request."""
+    mock_state.memory_graph.memories.clear()
+    now = datetime.now(timezone.utc)
+    old_id = "dd000000-0000-0000-0000-000000000013"
+    new_id = "dd000000-0000-0000-0000-000000000014"
+    bad_id = "dd000000-0000-0000-0000-000000000015"
+    bad_timestamp = "platform-date-range-error"
+    original_parse = recall_module._parse_iso_datetime
+
+    class _TimestampRaises:
+        def timestamp(self):
+            raise OSError("timestamp out of range")
+
+    def fake_parse(value):
+        if value == bad_timestamp:
+            return _TimestampRaises()
+        return original_parse(value)
+
+    monkeypatch.setattr(recall_module, "_parse_iso_datetime", fake_parse)
+    _store_memory(
+        mock_state,
+        old_id,
+        "Favorite color is blue",
+        ["fact"],
+        0.65,
+        timestamp=(now - timedelta(days=10)).isoformat(),
+    )
+    _store_memory(mock_state, new_id, "Favorite color is green", ["fact"], 0.5)
+    _store_memory(
+        mock_state,
+        bad_id,
+        "Favorite color needs a timestamp fallback",
+        ["fact"],
+        0.1,
+        timestamp=bad_timestamp,
+    )
+
+    response = client.get("/recall?tags=fact&limit=10&recency_bias=on", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data.get("recency_bias") == "on"
+    components = {result["id"]: result["score_components"] for result in data["results"]}
+    assert components[new_id]["temporal"] == pytest.approx(1.0)
+    assert components[old_id]["temporal"] == pytest.approx(0.0)
+    assert "temporal" not in components[bad_id]
+
+
 def test_recall_recency_bias_invalid_param_falls_back_to_default(client, mock_state, auth_headers):
     mock_state.memory_graph.memories.clear()
     now = datetime.now(timezone.utc)
-    old_id = "dd000000-0000-0000-0000-000000000011"
-    new_id = "dd000000-0000-0000-0000-000000000012"
+    old_id = "dd000000-0000-0000-0000-000000000016"
+    new_id = "dd000000-0000-0000-0000-000000000017"
 
     _store_memory(
         mock_state,

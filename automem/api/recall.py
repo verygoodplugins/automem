@@ -392,6 +392,16 @@ def _result_memory_id(result: Dict[str, Any]) -> str:
     ).strip()
 
 
+def _timestamp_epoch_or_none(value: Any) -> Optional[float]:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return None
+    try:
+        return parsed.timestamp()
+    except (OSError, OverflowError, ValueError):  # pragma: no cover - platform date limits
+        return None
+
+
 def _timestamp_epoch_for_sort(result: Dict[str, Any]) -> float:
     """Best-effort epoch seconds for the result's memory timestamp (0.0 fallback).
 
@@ -399,13 +409,8 @@ def _timestamp_epoch_for_sort(result: Dict[str, Any]) -> float:
     they lose timestamp tiebreaks against dated results without raising.
     """
     memory = result.get("memory") or {}
-    parsed = _parse_iso_datetime(memory.get("timestamp"))
-    if parsed is None:
-        return 0.0
-    try:
-        return parsed.timestamp()
-    except (OSError, OverflowError, ValueError):  # pragma: no cover - extreme dates
-        return 0.0
+    epoch = _timestamp_epoch_or_none(memory.get("timestamp"))
+    return epoch if epoch is not None else 0.0
 
 
 def _score_sort_key(result: Dict[str, Any]) -> Tuple[float, bool, float, float, float]:
@@ -2267,8 +2272,7 @@ def handle_recall(
     if recency_bias_active:
         epochs: List[Optional[float]] = []
         for res in results:
-            parsed_ts = _parse_iso_datetime((res.get("memory") or {}).get("timestamp"))
-            epochs.append(parsed_ts.timestamp() if parsed_ts is not None else None)
+            epochs.append(_timestamp_epoch_or_none((res.get("memory") or {}).get("timestamp")))
         valid_epochs = [epoch for epoch in epochs if epoch is not None]
         spread = (max(valid_epochs) - min(valid_epochs)) if valid_epochs else 0.0
         if spread > 0 and SEARCH_WEIGHT_TEMPORAL > 0:
