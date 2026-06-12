@@ -5,6 +5,10 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from automem.config import (
+    RECALL_RELEVANCE_GATE,
+    SEARCH_RECENCY_CURVE,
+    SEARCH_RECENCY_WINDOW_DAYS,
+    SEARCH_TAG_SCORE_TOKEN_CAP,
     SEARCH_WEIGHT_CONFIDENCE,
     SEARCH_WEIGHT_EXACT,
     SEARCH_WEIGHT_IMPORTANCE,
@@ -70,8 +74,11 @@ def _compute_recency_score(timestamp: Optional[str]) -> float:
     age_days = max((datetime.now(timezone.utc) - parsed).total_seconds() / 86400.0, 0.0)
     if age_days <= 0:
         return 1.0
-    # Linear decay over 180 days
-    return max(0.0, 1.0 - (age_days / 180.0))
+    if SEARCH_RECENCY_CURVE == "exp":
+        # Exponential decay where the window acts as the half-life.
+        return 0.5 ** (age_days / SEARCH_RECENCY_WINDOW_DAYS)
+    # Linear decay reaching zero at the window boundary
+    return max(0.0, 1.0 - (age_days / SEARCH_RECENCY_WINDOW_DAYS))
 
 
 def _context_tag_hit(tags: Set[str], priority_tags: Set[str]) -> bool:
@@ -126,7 +133,7 @@ def _compute_metadata_score(
     query: str,
     tokens: List[str],
     context_profile: Optional[Dict[str, Any]] = None,
-) -> Tuple[float, Dict[str, float]]:
+) -> Tuple[float, Dict[str, Any]]:
     memory = result.get("memory", {})
     metadata = _parse_metadata_field(memory.get("metadata")) if memory else {}
     metadata_terms = _collect_metadata_terms(metadata) if isinstance(metadata, dict) else set()
@@ -152,7 +159,18 @@ def _compute_metadata_score(
 
     recency_score = _compute_recency_score(memory.get("timestamp"))
 
-    tag_score = token_hits / max(len(tokens), 1) if tokens else 0.0
+    if tokens:
+        if SEARCH_TAG_SCORE_TOKEN_CAP > 0:
+            # Cap the denominator so long queries aren't penalized relative to
+            # short ones: a query with more tokens than the cap only needs
+            # `cap` tag/metadata hits for full credit.
+            denominator = max(min(len(tokens), SEARCH_TAG_SCORE_TOKEN_CAP), 1)
+        else:
+            # Legacy behavior (cap == 0): denominator is the full query length.
+            denominator = max(len(tokens), 1)
+        tag_score = min(1.0, token_hits / denominator)
+    else:
+        tag_score = 0.0
 
     vector_component = (
         result.get("match_score", 0.0) if result.get("match_type") == "vector" else 0.0
@@ -177,6 +195,40 @@ def _compute_metadata_score(
         else 0.0
     )
 
+    # Query-topical evidence: the strongest signal that this result is about
+    # the query itself. Tag overlap is excluded even though it is computed
+    # from query-token hits: inside a tag-scoped pool the scope tag itself
+    # often matches a query token, which makes tag overlap scope-confounded
+    # crumb evidence rather than independent topical evidence. Relation
+    # strength is graph-derived and carries no query signal at all.
+    evidence = max(vector_component, keyword_component, metadata_component, exact_match)
+
+    # Relevance score from consolidation decay (reflects access patterns + age).
+    # Default weight is 0.0 (disabled) — enable via SEARCH_WEIGHT_RELEVANCE env var.
+    relevance = memory.get("relevance_score")
+    relevance_score = float(relevance) if isinstance(relevance, (int, float)) else 0.0
+
+    # Within-pool relevance gate (issue #130): inside a tag-scoped pool,
+    # query-independent components (importance, confidence, recency, tag
+    # crumbs, consolidation relevance) can produce confident-looking final
+    # scores for results with near-zero topical evidence. When the gate is
+    # enabled and evidence falls short, ramp those components down linearly
+    # (evidence / gate — no cliff). Components are scaled *before* weighting
+    # so the `components` breakdown stays truthful. relevance_score is gated
+    # for completeness; with the default SEARCH_WEIGHT_RELEVANCE=0.0 that is
+    # a no-op today. The context bonus is untouched: context_tags is the
+    # explicit soft-boost channel. Gate 0.0 (default) must not even enter
+    # this branch so legacy scores stay bit-identical.
+    relevance_gated = False
+    if tokens and RECALL_RELEVANCE_GATE > 0 and evidence < RECALL_RELEVANCE_GATE:
+        gate_scale = evidence / RECALL_RELEVANCE_GATE
+        importance_score *= gate_scale
+        confidence_score *= gate_scale
+        recency_score *= gate_scale
+        tag_score *= gate_scale
+        relevance_score *= gate_scale
+        relevance_gated = True
+
     relation_component = 0.0
     if result.get("match_type") == "relation":
         relation_component = float(
@@ -188,11 +240,6 @@ def _compute_metadata_score(
     context_bonus = _compute_context_bonus(
         result, memory, tag_terms, metadata_terms, context_profile
     )
-
-    # Relevance score from consolidation decay (reflects access patterns + age)
-    # Default weight is 0.0 (disabled) — enable via SEARCH_WEIGHT_RELEVANCE env var
-    relevance = memory.get("relevance_score")
-    relevance_score = float(relevance) if isinstance(relevance, (int, float)) else 0.0
 
     final = (
         SEARCH_WEIGHT_VECTOR * vector_component
@@ -220,6 +267,8 @@ def _compute_metadata_score(
         "exact": exact_match,
         "relevance": relevance_score,
         "context": context_bonus,
+        "evidence": evidence,
+        "relevance_gated": relevance_gated,
     }
 
     return final, components

@@ -87,6 +87,7 @@ class LongMemEvalResult(TypedDict, total=False):
     question_date: str
     answer_session_ids: List[str]
     retrieved_session_ids: List[str]
+    retrieved_session_ids_full: List[Dict[str, Any]]
     recall_hit_at_5: bool
     judge_attempts: int
     judge_error: Optional[str]
@@ -510,21 +511,45 @@ class LongMemEvalBenchmark:
             logger.exception("Recall error for %s: %s", question_id, e)
             return []
 
-    def _format_memories_for_prompt(self, memories: List[Dict[str, Any]]) -> str:
-        """Format recalled memories for the answer generation prompt."""
+    def _format_memories_for_prompt(
+        self, memories: List[Dict[str, Any]], *, temporal_hint: bool = False
+    ) -> str:
+        """Format recalled memories for the answer generation prompt.
+
+        Default path (``temporal_hint=False``) is byte-identical to the
+        historical format: score order, ``[Memory N - {date}]`` headers.
+        With ``temporal_hint=True`` (temporal_answer_hint config flag) the
+        memories are rendered in chronological order with retrieval scores
+        noted in the headers.
+        """
         if not memories:
             return "(No relevant memories found)"
 
+        ordered = memories
+        if temporal_hint:
+            # Stable sort: undated memories sort first, equal dates keep
+            # their original (score) order. Lexicographic sort on
+            # session_date is chronological only because LongMemEval's
+            # zero-padded "YYYY/MM/DD (Day) HH:MM" format guarantees it.
+            ordered = sorted(
+                memories,
+                key=lambda mem: str((mem.get("metadata") or {}).get("session_date") or ""),
+            )
+
         lines = []
-        for i, mem in enumerate(memories, 1):
+        for i, mem in enumerate(ordered, 1):
             content = mem.get("content", "")
             # Include timestamp if available
-            metadata = mem.get("metadata", {})
+            metadata = mem.get("metadata", {}) or {}
             date = metadata.get("session_date", "")
+            header_parts = [f"Memory {i}"]
             if date:
-                lines.append(f"[Memory {i} - {date}]\n{content}")
-            else:
-                lines.append(f"[Memory {i}]\n{content}")
+                header_parts.append(str(date))
+            if temporal_hint:
+                score = mem.get("score")
+                if isinstance(score, (int, float)):
+                    header_parts.append(f"retrieval score {float(score):.2f}")
+            lines.append(f"[{' - '.join(header_parts)}]\n{content}")
         return "\n\n".join(lines)
 
     @staticmethod
@@ -541,6 +566,81 @@ class LongMemEvalBenchmark:
             if len(session_ids) >= limit:
                 break
         return session_ids
+
+    def _build_answer_prompt(
+        self,
+        question: str,
+        memories: List[Dict[str, Any]],
+        question_date: str,
+    ) -> str:
+        """Build the answer-generation prompt.
+
+        With ``temporal_answer_hint`` off (the default) the prompt is
+        byte-identical to the historical one. With the flag on, memories are
+        rendered chronologically with scores noted, and the prompt gains
+        conflict-recency plus anti-overabstention guidance (informed by the
+        LongMemEval failure diagnosis: abstentions-despite-hit and
+        missing-date-use dominate the answer-construction failures).
+        Abstention stays possible — some questions require it.
+        """
+        temporal_hint = bool(getattr(self.config, "temporal_answer_hint", False))
+        context = self._format_memories_for_prompt(memories, temporal_hint=temporal_hint)
+
+        temporal_guidance = ""
+        if temporal_hint:
+            temporal_guidance = (
+                "\n\nThe memories are dated and listed in chronological order (oldest first), "
+                "with retrieval scores noted. When memories conflict, prefer the most recent "
+                "one unless the question asks about an earlier time.\n"
+                'Before answering "I don\'t know", re-check each memory carefully — the '
+                "answer is often present even if phrased differently. Only conclude the "
+                "information is missing after checking every memory."
+            )
+
+        if self.config.use_chain_of_note:
+            prompt = f"""You are answering a question based on recalled conversation memories.
+
+First, extract relevant information from each memory excerpt.
+Then, reason about the answer based on the extracted information.
+Finally, provide a concise answer.
+
+If the information is not available in the provided memories, respond with "I don't know."{temporal_guidance}
+
+Memories:
+{context}
+
+Question (asked on {question_date}): {question}
+
+Step 1 - Extract relevant information:
+Step 2 - Reasoning:
+Step 3 - Answer:"""
+        else:
+            prompt = f"""Based on the following conversation history excerpts, answer the question.
+If the answer cannot be determined from the provided context, say "I don't know."{temporal_guidance}
+
+Context:
+{context}
+
+Question: {question}
+Answer:"""
+        return prompt
+
+    @staticmethod
+    def _session_ids_with_scores(memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """All recalled memories' session ids in rank order with per-memory score.
+
+        Unlike _top_unique_session_ids this keeps every memory (duplicates
+        included). Recorded in result artifacts for future rank-6-10 depth
+        analysis; not yet consumed by diagnose_failures.
+        """
+        rows: List[Dict[str, Any]] = []
+        for memory in memories:
+            metadata = memory.get("metadata") or {}
+            session_id = metadata.get("session_id")
+            if not session_id:
+                continue
+            rows.append({"session_id": session_id, "score": memory.get("score")})
+        return rows
 
     def generate_answer(
         self,
@@ -559,34 +659,7 @@ class LongMemEvalBenchmark:
                 return memories[0].get("content", "I don't know.")
             return "I don't know."
 
-        context = self._format_memories_for_prompt(memories)
-
-        if self.config.use_chain_of_note:
-            prompt = f"""You are answering a question based on recalled conversation memories.
-
-First, extract relevant information from each memory excerpt.
-Then, reason about the answer based on the extracted information.
-Finally, provide a concise answer.
-
-If the information is not available in the provided memories, respond with "I don't know."
-
-Memories:
-{context}
-
-Question (asked on {question_date}): {question}
-
-Step 1 - Extract relevant information:
-Step 2 - Reasoning:
-Step 3 - Answer:"""
-        else:
-            prompt = f"""Based on the following conversation history excerpts, answer the question.
-If the answer cannot be determined from the provided context, say "I don't know."
-
-Context:
-{context}
-
-Question: {question}
-Answer:"""
+        prompt = self._build_answer_prompt(question, memories, question_date)
 
         try:
             if is_gpt5_family(self.config.llm_model):
@@ -771,6 +844,7 @@ Answer:"""
             "question_date": question_date,
             "answer_session_ids": answer_session_ids,
             "retrieved_session_ids": retrieved_session_ids,
+            "retrieved_session_ids_full": self._session_ids_with_scores(memories),
             "recall_hit_at_5": recall_hit_at_5,
             "judge_attempts": judge_attempts,
             "judge_error": judge_error,
@@ -799,6 +873,7 @@ Answer:"""
             "question_date": item.get("question_date", ""),
             "answer_session_ids": list(item.get("answer_session_ids") or []),
             "retrieved_session_ids": [],
+            "retrieved_session_ids_full": [],
             "recall_hit_at_5": False,
             "judge_attempts": 0,
             "judge_error": None,
@@ -880,6 +955,7 @@ Answer:"""
         print(f"  Expand entities: {self.config.expand_entities}")
         print(f"  Expand relations: {self.config.expand_relations}")
         print(f"  Temporal hints: {self.config.use_temporal_hints}")
+        print(f"  Temporal answer hint: {self.config.temporal_answer_hint}")
         print(f"  Answerer model: {self.config.llm_model}")
         print(f"  LLM eval: {self.config.use_llm_eval}")
         if self.config.use_llm_eval:
@@ -971,6 +1047,7 @@ Answer:"""
             "expand_relations": self.config.expand_relations,
             "auto_decompose": self.config.auto_decompose,
             "use_temporal_hints": self.config.use_temporal_hints,
+            "temporal_answer_hint": self.config.temporal_answer_hint,
             "answerer_model": self.config.llm_model,
             "llm_model": self.config.llm_model,
             "eval_llm_model": self.config.eval_llm_model,
@@ -1067,6 +1144,7 @@ def main() -> int:
             "expand-relations",
             "high-k",
             "temporal",
+            "temporal-answer",
             "full-graph",
         ],
         help="Benchmark configuration preset (default: baseline)",

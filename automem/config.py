@@ -463,6 +463,113 @@ SEARCH_WEIGHT_EXACT = float(os.getenv("SEARCH_WEIGHT_EXACT", "0.2"))
 SEARCH_WEIGHT_RELATION = float(os.getenv("SEARCH_WEIGHT_RELATION", "0.25"))
 SEARCH_WEIGHT_RELEVANCE = float(os.getenv("SEARCH_WEIGHT_RELEVANCE", "0.0"))
 
+
+def _positive_or_default(raw: str, default: float) -> float:
+    """Parse a float env value, falling back to ``default`` when not strictly positive.
+
+    Unparseable values raise ValueError, matching the neighboring float() parses;
+    only the domain (value > 0) is guarded here.
+    """
+    value = float(raw)
+    return value if value > 0 else default
+
+
+# Recency decay tuning: window in days, curve "linear" (score hits 0 at window)
+# or "exp" (window acts as half-life). Invalid curve values fall back to linear;
+# non-positive window values fall back to 180 (a window <= 0 would divide by
+# zero or produce unbounded scores at recall time).
+SEARCH_RECENCY_WINDOW_DAYS = _positive_or_default(
+    os.getenv("SEARCH_RECENCY_WINDOW_DAYS", "180"), 180.0
+)
+_RECENCY_CURVE_RAW = os.getenv("SEARCH_RECENCY_CURVE", "linear").strip().lower()
+SEARCH_RECENCY_CURVE = _RECENCY_CURVE_RAW if _RECENCY_CURVE_RAW in {"linear", "exp"} else "linear"
+
+
+def _non_negative_int_or_default(raw: str, default: int) -> int:
+    """Parse an int env value, falling back to ``default`` when negative.
+
+    Unparseable values raise ValueError, matching the neighboring int()/float()
+    parses. 0 is a valid sentinel here (it selects legacy behavior), so only
+    negative values fall back — mirroring ``_positive_or_default``'s
+    fail-safe-to-default spirit rather than silently meaning "legacy".
+    """
+    value = int(raw)
+    return value if value >= 0 else default
+
+
+# Tag-score query-length normalization: the tag-overlap score divides token
+# hits by min(len(query_tokens), cap) so long queries aren't penalized
+# relative to short ones. 0 disables the cap (legacy: denominator = full
+# query length). Default is 0 (opt-in): a production-corpus A/B (2026-06-11,
+# 200 queries, 10k-memory clone) showed cap values 2/3/4 regress Recall@5 by
+# 14/7/4pp on ungated queries — the capped denominator inflates tag scores
+# and amplifies tag noise over vector/keyword evidence. Negative values fall
+# back to the default — falling back is safer than treating a typo'd
+# negative as intentional.
+SEARCH_TAG_SCORE_TOKEN_CAP = _non_negative_int_or_default(
+    os.getenv("SEARCH_TAG_SCORE_TOKEN_CAP", "0"), 0
+)
+
+
+def _clamped_unit_interval(raw: str) -> float:
+    """Parse a float env value and clamp it into [0.0, 1.0].
+
+    Unparseable values raise ValueError, matching the neighboring float()
+    parses. Negative values clamp to 0.0 (the gate-disabled sentinel).
+    Values above 1.0 clamp to 1.0 rather than falling back: the evidence
+    components the gate compares against are themselves bounded at ~1.0, so
+    a gate above 1.0 can never be exceeded and would only act as a uniform
+    score dampener — clamping preserves the strongest gate the caller could
+    have meant.
+    """
+    value = float(raw)
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+# Within-pool relevance gate (issue #130). When a query has tokens and a
+# result's best query-topical evidence (max of the vector, keyword, metadata,
+# and exact-match components) falls below this threshold, the
+# query-independent components (importance, confidence, recency, tag overlap)
+# are scaled by evidence / gate — a linear ramp, not a cliff — so
+# high-importance but off-topic memories cannot ride query-independent score
+# to the top of a tag-scoped pool. 0.0 (default) disables the gate and
+# preserves legacy scoring exactly. The context bonus is never gated:
+# `context_tags` remains the explicit soft-boost channel.
+RECALL_RELEVANCE_GATE = _clamped_unit_interval(os.getenv("RECALL_RELEVANCE_GATE", "0.0"))
+
+
+def _non_negative_or_zero(raw: str) -> float:
+    """Parse a float env value, clamping negatives to 0.0 (the no-op value).
+
+    Unparseable values raise ValueError, matching the neighboring float()
+    parses. Unlike ``_positive_or_default``, 0.0 is a meaningful caller
+    choice here (weight disabled), so negatives clamp instead of falling
+    back to the default.
+    """
+    value = float(raw)
+    return value if value > 0.0 else 0.0
+
+
+# Relative-recency re-rank weight (issues #158/#159). When a recall request
+# activates recency_bias, candidate timestamps are min-max normalized across
+# the current candidate set and this weight times that relative recency is
+# added to each final score. Inert unless the re-rank runs (RECALL_RECENCY_BIAS
+# env or the per-request recency_bias param), so the default changes nothing.
+SEARCH_WEIGHT_TEMPORAL = _non_negative_or_zero(os.getenv("SEARCH_WEIGHT_TEMPORAL", "0.1"))
+
+# Default recency-bias mode for /recall: "off" (never re-rank), "on" (always),
+# "auto" (only when the query expresses temporal intent — "latest", "current",
+# ...). Per-request override via the recency_bias query param. Invalid values
+# fall back to "off" so a typo cannot silently enable re-ranking.
+_RECALL_RECENCY_BIAS_RAW = os.getenv("RECALL_RECENCY_BIAS", "off").strip().lower()
+RECALL_RECENCY_BIAS = (
+    _RECALL_RECENCY_BIAS_RAW if _RECALL_RECENCY_BIAS_RAW in {"auto", "on", "off"} else "off"
+)
+
 # API tokens
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")

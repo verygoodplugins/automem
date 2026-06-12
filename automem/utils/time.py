@@ -1,6 +1,30 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
+
+# Keywords that signal the caller wants the present/latest state of something
+# ("what is my current X", "what changed", "latest decision"). Used by the
+# recency_bias=auto recall mode (issues #158/#159). Word-boundaried so
+# "currency" does not match "current" and "nowhere" does not match "now".
+_TEMPORAL_INTENT_RE = re.compile(
+    r"\b(?:"
+    r"latest|most recent|recently|current|currently|now|nowadays|today|"
+    r"changed|updated|last time|newest|these days|anymore"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def query_has_temporal_intent(query: str | None) -> bool:
+    """Return True when the query asks about the present or latest state.
+
+    Pure keyword/regex heuristic — no parsing of explicit dates (those are
+    handled by ``_parse_time_expression`` / time filters instead).
+    """
+    if not query:
+        return False
+    return bool(_TEMPORAL_INTENT_RE.search(query))
 
 
 def utc_now() -> str:

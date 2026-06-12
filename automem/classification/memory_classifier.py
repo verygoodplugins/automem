@@ -96,12 +96,14 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         get_openai_client: Callable[[], Any],
         classification_model: str,
         logger: Any,
+        stats: Any = None,
     ) -> None:
         self._normalize_memory_type = normalize_memory_type
         self._ensure_openai_client = ensure_openai_client
         self._get_openai_client = get_openai_client
         self._classification_model = classification_model
         self._logger = logger
+        self._stats = stats
 
     def classify(self, content: str, *, use_llm: bool = True) -> tuple[str, float]:
         """Classify memory type and return confidence score."""
@@ -114,15 +116,26 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
                     matches = sum(1 for p in patterns if re.search(p, content_lower))
                     if matches > 1:
                         confidence = min(0.95, confidence + (matches * 0.1))
+                    if self._stats is not None:
+                        self._stats.record_pattern()
                     return memory_type, confidence
 
         if use_llm:
+            llm_error: Optional[str] = None
+            if self._stats is not None:
+                self._stats.record_llm_attempt()
             try:
                 result = self._classify_with_llm(content)
                 if result:
+                    if self._stats is not None:
+                        self._stats.record_llm_success()
                     return result
-            except Exception:
+                llm_error = "no usable LLM result (missing client, empty response, or invalid JSON)"
+            except Exception as exc:
                 self._logger.exception("LLM classification failed, using fallback")
+                llm_error = str(exc)
+            if self._stats is not None:
+                self._stats.record_fallback(llm_error)
 
         return "Memory", 0.3
 
@@ -134,51 +147,47 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         if client is None:
             return None
 
-        try:
-            extra_params: dict[str, Any] = {}
-            uses_max_completion_tokens = self._classification_model.startswith(
-                self.MAX_COMPLETION_PREFIXES
-            )
-            if uses_max_completion_tokens:
-                extra_params["max_completion_tokens"] = 50
-            else:
-                extra_params["max_tokens"] = 50
-                extra_params["temperature"] = 0.3
+        extra_params: dict[str, Any] = {}
+        uses_max_completion_tokens = self._classification_model.startswith(
+            self.MAX_COMPLETION_PREFIXES
+        )
+        if uses_max_completion_tokens:
+            extra_params["max_completion_tokens"] = 50
+        else:
+            extra_params["max_tokens"] = 50
+            extra_params["temperature"] = 0.3
 
-            response = client.chat.completions.create(
-                model=self._classification_model,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": content[:1000]},
-                ],
-                response_format={"type": "json_object"},
-                **extra_params,
-            )
+        response = client.chat.completions.create(
+            model=self._classification_model,
+            messages=[
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": content[:1000]},
+            ],
+            response_format={"type": "json_object"},
+            **extra_params,
+        )
 
-            raw_content = response.choices[0].message.content
-            if not raw_content:
-                self._logger.warning("LLM returned empty classification response")
-                return None
-
-            try:
-                result = json.loads(raw_content)
-            except (json.JSONDecodeError, TypeError):
-                self._logger.warning("LLM returned invalid JSON classification response")
-                return None
-
-            raw_type = result.get("type", "Memory")
-            confidence = float(result.get("confidence", 0.7))
-
-            memory_type, was_normalized = self._normalize_memory_type(raw_type)
-            if not memory_type:
-                self._logger.warning("LLM returned unmappable type '%s', using Context", raw_type)
-                return "Context", 0.5
-
-            if was_normalized and memory_type != raw_type:
-                self._logger.debug("LLM type normalized '%s' -> '%s'", raw_type, memory_type)
-
-            self._logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
-            return memory_type, confidence
-        except Exception as exc:
-            self._logger.warning("LLM classification failed: %s", exc)
+        raw_content = response.choices[0].message.content
+        if not raw_content:
+            self._logger.warning("LLM returned empty classification response")
             return None
+
+        try:
+            result = json.loads(raw_content)
+        except (json.JSONDecodeError, TypeError):
+            self._logger.warning("LLM returned invalid JSON classification response")
+            return None
+
+        raw_type = result.get("type", "Memory")
+        confidence = float(result.get("confidence", 0.7))
+
+        memory_type, was_normalized = self._normalize_memory_type(raw_type)
+        if not memory_type:
+            self._logger.warning("LLM returned unmappable type '%s', using Context", raw_type)
+            return "Context", 0.5
+
+        if was_normalized and memory_type != raw_type:
+            self._logger.debug("LLM type normalized '%s' -> '%s'", raw_type, memory_type)
+
+        self._logger.info("LLM classified as %s (confidence: %.2f)", memory_type, confidence)
+        return memory_type, confidence

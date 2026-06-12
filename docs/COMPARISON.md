@@ -80,7 +80,7 @@ When building your own is the right answer:
 | **Tag** | 0.20 | Tag overlap between query and memory |
 | **Exact** | 0.20 | Exact phrase match in memory metadata |
 | **Importance** | 0.10 | The memory's `importance` score (0–1) |
-| **Recency** | 0.10 | Linear decay over a 180-day window |
+| **Recency** | 0.10 | Configurable decay (default: linear over 180 days) |
 | **Confidence** | 0.05 | The memory's `confidence` score (0–1) |
 | **Relevance** | 0.00 | Consolidation decay relevance — disabled by default |
 

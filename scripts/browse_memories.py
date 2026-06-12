@@ -758,11 +758,22 @@ def cmd_diagnose(args, graph, qdrant_client, qdrant_collection):
     else:
         issues.append(("INFO", "Qdrant not connected", "Cannot verify vector presence"))
 
-    # Step 4: Recency score (180-day linear decay)
+    # Step 4: Recency score (decay shaped by SEARCH_RECENCY_WINDOW_DAYS / SEARCH_RECENCY_CURVE,
+    # matching automem/config.py validation semantics)
+    recency_window = float(os.getenv("SEARCH_RECENCY_WINDOW_DAYS", "180"))
+    if not math.isfinite(recency_window) or recency_window <= 0:
+        recency_window = 180.0
+    recency_curve = os.getenv("SEARCH_RECENCY_CURVE", "linear").strip().lower()
+    if recency_curve not in {"linear", "exp"}:
+        recency_curve = "linear"
+
     created = parse_ts(props.get("timestamp"))
     if created:
         age_days = max(0.0, (now - created).total_seconds() / 86400.0)
-        recency = max(0.0, 1.0 - (age_days / 180.0))
+        if recency_curve == "exp":
+            recency = 0.5 ** (age_days / recency_window)
+        else:
+            recency = max(0.0, 1.0 - (age_days / recency_window))
     else:
         age_days = 0
         recency = 0.0
@@ -772,7 +783,8 @@ def cmd_diagnose(args, graph, qdrant_client, qdrant_collection):
             (
                 "INFO",
                 f"Recency score = 0.0 (age: {age_days:.0f} days)",
-                "Linear 180-day decay — this memory is beyond the recency window",
+                f"{recency_curve.capitalize()} {recency_window:.0f}-day decay — "
+                "this memory is beyond the recency window",
             )
         )
 

@@ -47,15 +47,22 @@ Memory
 Recall
 
 - GET `/recall`
-  - **Basic parameters**: `query`, `limit`, `tags`, `exclude_tags`, `tag_mode` (any|all), `tag_match` (prefix|exact), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
+  - **Basic parameters**: `query`, `limit`, `tags`, `exclude_tags`, `tag_mode` (any|all), `tag_match` (prefix|exact, default prefix), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
     - `exclude_tags` - Comma-separated list or multiple params to exclude memories containing ANY of these tags. Supports both exact and prefix matching (independent of `tag_match`). Example: `exclude_tags=conversation_5` or `exclude_tags=temp,draft`
+  - **Tag semantics** (per retrieval path):
+    - `tags` is a **hard scope filter** on the vector, keyword, metadata-sidecar, and tag-only fallback paths: memories without a matching tag are excluded *before* scoring.
+    - Graph/entity **expansion bypasses the tag scope by default**; pass `expand_respect_tags=true` to keep expanded results inside the scope.
+    - `context_tags` is the **soft-boost** channel: it raises matching results' scores without excluding anything.
+    - Within the tag-scoped pool, query-independent score components (importance, confidence, recency, tag overlap) can be ramped down for results with little topical evidence via the `RECALL_RELEVANCE_GATE` env var (default `0.0` = off; see ENVIRONMENT_VARIABLES.md).
+    - `scope_fallback` (boolean, default `false`) - When tag-scoped results come up short of `limit` and a text/semantic query is present, fill the remaining slots from an *unscoped* vector search. Fills are appended after all scoped results (never interleaved with or displacing them) and each carries `"outside_tag_scope": true`. Fills get filter parity with the scoped path: `exclude_tags`, time filters, `min_score`, and current-state filtering (payload-level reasons plus graph-edge supersession) all still apply — only the tags scope is lifted. Candidates whose tags match the request's `tags` are never returned as fills: they are in-scope by definition (already returned, or dropped by a score filter) and are not resurrected.
   - **Ordering**: `sort` (or `order_by`) supports:
-    - `score` (default) - hybrid relevance/importance ranking
+    - `score` (default) - hybrid relevance/importance ranking; exact score ties order newest-first
     - `time_desc` / `time_asc` - chronological ordering by `updated_at`/`timestamp` within the filter window (use for "what happened since X")
     - `updated_desc` / `updated_asc` - explicit alias (same ordering key as time\_\*)
+  - **Recency bias**: `recency_bias=auto|on|off` (default from `RECALL_RECENCY_BIAS` env, ships `off`) - relative-recency re-rank for score ordering: candidate timestamps are min-max normalized across the result set and `SEARCH_WEIGHT_TEMPORAL × relative_recency` is added to each final score, so the newest version of a conflicting fact can outrank an older, heavier one. `auto` activates only when the query expresses temporal intent ("latest", "current", "what changed", ...). The response echoes `"recency_bias": "on"` whenever the mode activated for the request (`on`, or `auto` with temporal intent on a score-sorted, non-empty result set) — even if the re-rank was a no-op; results carry a `temporal` score component only when the re-rank actually adjusted scores (zero timestamp spread or zero `SEARCH_WEIGHT_TEMPORAL` echoes the flag without adding the component).
   - **State filtering**:
     - `state_mode=current|history` controls whether recall returns only currently valid state or full state history. Default: `current`.
-    - `current` is equivalent to `current_only=true`: suppresses memories that are expired, not yet valid, archived, or invalidated/evolved by active replacements.
+    - `current` is equivalent to `current_only=true`: suppresses memories that are expired, not yet valid, archived, or invalidated/evolved by active replacements. Supersession chains (`INVALIDATED_BY`/`EVOLVED_INTO`) are resolved to their *head* — A→B→C surfaces C — bounded at 5 hops and cycle-safe; the surfaced head's `state_replaces`/`relations[].from` provenance still points at the originally suppressed memory.
     - `history` is equivalent to `current_only=false`: returns stale and future state when it matches the query/filter.
     - `current_only` remains supported for backward compatibility and wins over `state_mode` when both resolve to a value. A malformed `state_mode` is still rejected with `400` even when `current_only` is supplied — the value is validated before precedence is applied.
     - `state_debug=true` includes suppression/replacement details in `state_filter`.
@@ -71,6 +78,7 @@ Recall
     - `expand_min_strength` - Minimum relation strength (0-1) to traverse during graph expansion. Only edges above this threshold are followed. Recommended: 0.3 for exploratory, 0.6+ for high-confidence connections.
   - Response: `{ "status": "success", "results": [...], "count": M, "state_mode": "current", "context_priority": {...} }`
   - Echoed filters (for debugging): `tags`, `exclude_tags`, `tag_mode`, `tag_match`
+  - When `tags` were passed, the response includes scope diagnostics: `tag_scope: { "filtered": true, "pool_size_hint": <int|null>, "gated_low_evidence": <int> }` — `pool_size_hint` is the post-tag-filter, pre-limit vector candidate count (null when no semantic query ran, e.g. tag-only recall), and `gated_low_evidence` counts returned results whose score components were ramped down by `RECALL_RELEVANCE_GATE`. Note the hint is capped by the vector fetch limit and sums per-query counts when the request decomposes into multiple queries (`queries[]`/`auto_decompose`), so the same memory can be counted more than once — treat it as a rough pool-size signal, not an exact count. `scope_fallback: true` is echoed when the fallback ran.
   - Echoed state: `state_mode` always reflects the resolved mode after `current_only` precedence. When current-state filtering runs, `state_filter` may include suppressed and replacement IDs, including `INVALIDATED_BY`, `EVOLVED_INTO`, and `CONTRADICTS` handling details when `state_debug=true`.
   - When `expand_entities=true`: includes `entity_expansion: { enabled, expanded_count, entities_found }`
   - When `expand_relations=true`: includes `expansion: { enabled, seed_count, expanded_count, relation_limit }`
@@ -120,7 +128,7 @@ GET /recall?query=project%20plan&state_mode=history
 Enrichment
 
 - GET `/enrichment/status`
-  - Response: queue size, inflight/pending, stats.
+  - Response: queue size, inflight/pending, stats, plus a `classification` block with type-classification counters (`llm_attempts`, `llm_successes`, `fallbacks`, `pattern_classifications`, `last_error`, `last_error_at`) for monitoring LLM-classification fallback rate.
 
 - POST `/enrichment/reprocess`
   - Body: `{ "ids": ["..."] }` or query `?ids=a,b,c`

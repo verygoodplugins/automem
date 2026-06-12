@@ -48,6 +48,47 @@ class EnrichmentStats:
 
 
 @dataclass
+class ClassificationStats:
+    llm_attempts: int = 0
+    llm_successes: int = 0
+    fallbacks: int = 0
+    pattern_classifications: int = 0
+    last_error: Optional[str] = None
+    last_error_at: Optional[str] = None
+    _lock: Lock = field(default_factory=Lock, init=False, repr=False, compare=False)
+
+    def record_pattern(self) -> None:
+        with self._lock:
+            self.pattern_classifications += 1
+
+    def record_llm_attempt(self) -> None:
+        with self._lock:
+            self.llm_attempts += 1
+
+    def record_llm_success(self) -> None:
+        with self._lock:
+            self.llm_successes += 1
+
+    def record_fallback(self, error: Optional[str] = None) -> None:
+        with self._lock:
+            self.fallbacks += 1
+            if error:
+                self.last_error = error
+                self.last_error_at = utc_now()
+
+    def to_dict(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "llm_attempts": self.llm_attempts,
+                "llm_successes": self.llm_successes,
+                "fallbacks": self.fallbacks,
+                "pattern_classifications": self.pattern_classifications,
+                "last_error": self.last_error,
+                "last_error_at": self.last_error_at,
+            }
+
+
+@dataclass
 class EnrichmentJob:
     memory_id: str
     attempt: int = 0
@@ -64,6 +105,7 @@ class ServiceState:
     enrichment_queue: Optional[Queue] = None
     enrichment_thread: Optional[Thread] = None
     enrichment_stats: EnrichmentStats = field(default_factory=EnrichmentStats)
+    classification_stats: ClassificationStats = field(default_factory=ClassificationStats)
     enrichment_inflight: Set[str] = field(default_factory=set)
     enrichment_pending: Set[str] = field(default_factory=set)
     enrichment_lock: Lock = field(default_factory=Lock)

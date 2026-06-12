@@ -18,10 +18,14 @@ on memories. It is intentionally a product/runtime spec, not an experiment note.
 ## Recall Response Shape
 
 - Recall results include parsed `memory.metadata` when the graph or Qdrant
-  payload provides it.
-- `json` and detailed recall formats expose the same memory metadata object in
-  result payloads; malformed graph metadata is treated as an empty or raw parsed
-  value depending on the caller path.
+  payload provides it, along with `updated_at` and `last_accessed` timestamps;
+  malformed graph metadata is treated as an empty or raw parsed value depending
+  on the caller path.
+- The MCP server's `json` recall format passes the raw response through, so it
+  exposes the full metadata object. The MCP `detailed` format renders a
+  full `Metadata:` line as single-line JSON plus an `Updated:` line when
+  present, and omits the metadata line entirely for empty or missing metadata.
+  The `text` and `items` formats do not include metadata.
 - Final scoring can use metadata terms as weak evidence for candidates that are
   already present from another channel.
 
