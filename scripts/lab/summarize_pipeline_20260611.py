@@ -2,8 +2,10 @@
 """Tabulate the 2026-06-11 release-verification sweep results.
 
 Pools prod_parity runs as baseline; reports per-config metric deltas with a
-paired t-test on per-query recall@5 (computed from retrieved_ids[:5]) against
-parity run 1, plus per-category R@10 deltas.
+paired difference test on per-query recall@5 (computed from retrieved_ids[:5])
+against parity run 1, plus per-category R@10 deltas. The p-value uses a normal
+(z) approximation of the paired t-statistic — accurate for the n=200 query
+sets here, but not a Student's t p-value for small n.
 """
 
 import glob
@@ -54,7 +56,8 @@ def perq_recall5(run):
     return out
 
 
-def paired_t(a, b):
+def paired_z(a, b):
+    # z-approximation: t-statistic against the normal CDF (n=200 here, so t ~= z)
     diffs = [y - x for x, y in zip(a, b)]
     n = len(diffs)
     if n < 2:
@@ -96,7 +99,7 @@ def main():
             continue
         cand_pq = perq_recall5(rs[0])
         common = [q for q, v in base_pq.items() if v is not None and cand_pq.get(q) is not None]
-        p = paired_t([base_pq[q] for q in common], [cand_pq[q] for q in common])
+        p = paired_z([base_pq[q] for q in common], [cand_pq[q] for q in common])
         print(
             f"{cfg:>12} {len(rs):>4} {r5:7.3f} {r10:7.3f} {mrr:7.3f} {ndcg:7.3f} {r5 - base_r5:+7.3f} {p:8.4f}"
         )

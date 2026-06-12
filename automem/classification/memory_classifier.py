@@ -130,6 +130,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
                     if self._stats is not None:
                         self._stats.record_llm_success()
                     return result
+                llm_error = "no usable LLM result (missing client, empty response, or invalid JSON)"
             except Exception as exc:
                 self._logger.exception("LLM classification failed, using fallback")
                 llm_error = str(exc)

@@ -151,6 +151,24 @@ test("formatRecallAsItems detailed output renders full metadata and omits empty 
   assert.ok(!big.includes("Updated:"));
 });
 
+test("formatRecallAsItems detailed output truncates oversized metadata previews", () => {
+  const hugeMetadata = { notes: "x".repeat(5000) };
+  const results = [
+    {
+      memory: { id: "mem-huge", content: "Huge metadata", metadata: hugeMetadata },
+    },
+  ];
+
+  const [huge] = formatRecallAsItems(results, { detailed: true }).map(x => x.text);
+
+  const metadataLine = huge.split("\n").find(line => line.startsWith("Metadata: "));
+  assert.ok(metadataLine, "expected a Metadata line for huge metadata");
+  const rendered = metadataLine.slice("Metadata: ".length);
+  const fullJson = JSON.stringify(hugeMetadata);
+  assert.ok(rendered.length < fullJson.length, "preview should be shorter than the full JSON");
+  assert.ok(rendered.includes(`(truncated, ${fullJson.length} chars total)`));
+});
+
 test("recall_memory json format passes through metadata from the API response", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;

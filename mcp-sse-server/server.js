@@ -345,6 +345,9 @@ export class AutoMemClient {
   }
 }
 
+// Detailed text format previews metadata; full payload stays available via json format / memory_id fetch
+const METADATA_PREVIEW_CHARS = 1500;
+
 export function formatRecallAsItems(results, { detailed = false } = {}) {
   return (results || []).map((it, i) => {
     const mem = it?.memory || it || {};
@@ -390,6 +393,9 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
         metaJson = '';
       }
       if (metaJson && metaJson !== '{}') {
+        if (metaJson.length > METADATA_PREVIEW_CHARS) {
+          metaJson = `${metaJson.slice(0, METADATA_PREVIEW_CHARS)}… (truncated, ${metaJson.length} chars total)`;
+        }
         lines.push(`Metadata: ${metaJson}`);
       }
     }
