@@ -1,0 +1,159 @@
+name: Docs Dispatch
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: "Base SHA or ref for the docs diff. Defaults to head^."
+        required: false
+      head_sha:
+        description: "Head SHA or ref to document. Defaults to main."
+        required: false
+      reason:
+        description: "Why docs should be audited."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BASE_REF: ${{ inputs.base_sha }}
+          INPUT_HEAD_REF: ${{ inputs.head_sha }}
+          INPUT_REASON: ${{ inputs.reason }}
+          PUSH_BASE_REF: ${{ github.event.before }}
+          PUSH_HEAD_REF: ${{ github.event.after }}
+        run: |
+          ZERO_SHA="0000000000000000000000000000000000000000"
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            HEAD_REF="${INPUT_HEAD_REF:-main}"
+            BASE_REF="$INPUT_BASE_REF"
+            REASON="${INPUT_REASON:-Manual docs dispatch for ${HEAD_REF}}"
+          else
+            HEAD_REF="$PUSH_HEAD_REF"
+            BASE_REF="$PUSH_BASE_REF"
+            REASON="Push to main"
+          fi
+
+          HEAD_SHA=$(git rev-parse "$HEAD_REF")
+
+          if [ -z "$BASE_REF" ]; then
+            if git rev-parse --verify "${HEAD_REF}^" >/dev/null 2>&1; then
+              BASE_REF="${HEAD_REF}^"
+            else
+              BASE_REF=$(git rev-list --max-parents=0 "$HEAD_SHA")
+            fi
+          fi
+
+          if [ "$BASE_REF" = "$ZERO_SHA" ]; then
+            echo "::warning::No previous SHA found, diffing against first commit"
+            BASE_SHA=$(git rev-list --max-parents=0 "$HEAD_SHA")
+          else
+            BASE_SHA=$(git rev-parse "$BASE_REF")
+          fi
+
+          COMMIT_URL="https://github.com/${GITHUB_REPOSITORY}/commit/${HEAD_SHA}"
+          COMPARE_URL="https://github.com/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}"
+          FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+
+          {
+            echo "base_sha=$BASE_SHA"
+            echo "head_sha=$HEAD_SHA"
+            echo "files=$FILES"
+            echo "commit_url=$COMMIT_URL"
+            echo "compare_url=$COMPARE_URL"
+            echo "reason<<EOF"
+            echo "$REASON"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check file-doc mapping
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: |
+          if ! MAP=$(curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 --retry-connrefused \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/verygoodplugins/automem-website/contents/scripts/file-doc-map.json"); then
+            echo "::warning::Failed to fetch file-doc-map.json, dispatching anyway"
+            echo "affected=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          REPO_KEY="${GITHUB_REPOSITORY#*/}"
+
+          AFFECTED=$(echo "$MAP" | jq -r --arg repo "$REPO_KEY" --argjson changed "$CHANGED_FILES" '
+            def matches_pattern($file; $pattern):
+              if ($pattern | endswith("/**")) then
+                ($file | startswith($pattern[0:-2]))
+              else
+                $file == $pattern
+              end;
+
+            .[$repo] // {} | to_entries | map(
+              select(.key as $pattern | $changed | any(. as $file | matches_pattern($file; $pattern)))
+            ) | map(.value) | flatten | unique | .[]
+          ')
+
+          if [ -z "$AFFECTED" ]; then
+            echo "No doc pages affected by this change"
+            echo "affected=none" >> "$GITHUB_OUTPUT"
+          else
+            AFFECTED_JSON=$(echo "$AFFECTED" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+            echo "Affected doc pages: $AFFECTED_JSON"
+            echo "affected=$AFFECTED_JSON" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch to automem-website
+        if: steps.check.outputs.affected != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          SOURCE_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.changed.outputs.head_sha }}
+          BASE_SHA: ${{ steps.changed.outputs.base_sha }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          AFFECTED_DOCS: ${{ steps.check.outputs.affected }}
+          REASON: ${{ steps.changed.outputs.reason }}
+          COMMIT_URL: ${{ steps.changed.outputs.commit_url }}
+          COMPARE_URL: ${{ steps.changed.outputs.compare_url }}
+        run: |
+          jq -n \
+            --arg event_type "docs-update" \
+            --arg source_repo "$SOURCE_REPO" \
+            --arg source_sha "$HEAD_SHA" \
+            --arg base_sha "$BASE_SHA" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg changed_files "$CHANGED_FILES" \
+            --arg affected_docs "$AFFECTED_DOCS" \
+            --arg reason "$REASON" \
+            --arg commit_url "$COMMIT_URL" \
+            --arg compare_url "$COMPARE_URL" \
+            '{
+              event_type: $event_type,
+              client_payload: {
+                source_repo: $source_repo,
+                source_sha: $source_sha,
+                base_sha: $base_sha,
+                head_sha: $head_sha,
+                changed_files: ($changed_files | fromjson),
+                affected_docs: (try ($affected_docs | fromjson) catch $affected_docs),
+                reason: $reason,
+                commit_url: $commit_url,
+                compare_url: $compare_url
+              }
+            }' | gh api repos/verygoodplugins/automem-website/dispatches --input -
