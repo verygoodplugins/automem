@@ -167,6 +167,8 @@ PORT=8001 python app.py
 
 Requires Python 3.10+ (3.12 recommended). → [INSTALLATION.md](INSTALLATION.md#bare-api-development)
 
+**Contributing:** feature PRs target the `develop` branch. `main` only moves via validated release merges, so users deploying from `main` (e.g. Railway auto-deploys) see one deploy per release instead of one per PR.
+
 ## Connect your AI
 
 | Client | Mode | Setup |
