@@ -54,13 +54,13 @@ jobs:
             if git rev-parse --verify "${HEAD_REF}^" >/dev/null 2>&1; then
               BASE_REF="${HEAD_REF}^"
             else
-              BASE_REF=$(git rev-list --max-parents=0 "$HEAD_SHA")
+              BASE_REF=$(git rev-list --max-parents=0 --max-count=1 "$HEAD_SHA")
             fi
           fi
 
           if [ "$BASE_REF" = "$ZERO_SHA" ]; then
             echo "::warning::No previous SHA found, diffing against first commit"
-            BASE_SHA=$(git rev-list --max-parents=0 "$HEAD_SHA")
+            BASE_SHA=$(git rev-list --max-parents=0 --max-count=1 "$HEAD_SHA")
           else
             BASE_SHA=$(git rev-parse "$BASE_REF")
           fi
@@ -91,7 +91,8 @@ jobs:
             -H "Accept: application/vnd.github.raw" \
             "https://api.github.com/repos/verygoodplugins/automem-website/contents/scripts/file-doc-map.json"); then
             echo "::warning::Failed to fetch file-doc-map.json, dispatching anyway"
-            echo "affected=unknown" >> "$GITHUB_OUTPUT"
+            echo "affected=[]" >> "$GITHUB_OUTPUT"
+            echo "mapping_status=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -112,15 +113,17 @@ jobs:
 
           if [ -z "$AFFECTED" ]; then
             echo "No doc pages affected by this change"
-            echo "affected=none" >> "$GITHUB_OUTPUT"
+            echo "affected=[]" >> "$GITHUB_OUTPUT"
+            echo "mapping_status=none" >> "$GITHUB_OUTPUT"
           else
             AFFECTED_JSON=$(echo "$AFFECTED" | jq -R -s -c 'split("\n") | map(select(. != ""))')
             echo "Affected doc pages: $AFFECTED_JSON"
             echo "affected=$AFFECTED_JSON" >> "$GITHUB_OUTPUT"
+            echo "mapping_status=matched" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Dispatch to automem-website
-        if: steps.check.outputs.affected != 'none'
+        if: steps.check.outputs.mapping_status != 'none'
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           SOURCE_REPO: ${{ github.repository }}
@@ -128,6 +131,7 @@ jobs:
           BASE_SHA: ${{ steps.changed.outputs.base_sha }}
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
           AFFECTED_DOCS: ${{ steps.check.outputs.affected }}
+          MAPPING_STATUS: ${{ steps.check.outputs.mapping_status }}
           REASON: ${{ steps.changed.outputs.reason }}
           COMMIT_URL: ${{ steps.changed.outputs.commit_url }}
           COMPARE_URL: ${{ steps.changed.outputs.compare_url }}
@@ -140,6 +144,7 @@ jobs:
             --arg head_sha "$HEAD_SHA" \
             --arg changed_files "$CHANGED_FILES" \
             --arg affected_docs "$AFFECTED_DOCS" \
+            --arg mapping_status "$MAPPING_STATUS" \
             --arg reason "$REASON" \
             --arg commit_url "$COMMIT_URL" \
             --arg compare_url "$COMPARE_URL" \
@@ -151,7 +156,8 @@ jobs:
                 base_sha: $base_sha,
                 head_sha: $head_sha,
                 changed_files: ($changed_files | fromjson),
-                affected_docs: (try ($affected_docs | fromjson) catch $affected_docs),
+                affected_docs: ($affected_docs | fromjson),
+                mapping_status: $mapping_status,
                 reason: $reason,
                 commit_url: $commit_url,
                 compare_url: $compare_url
