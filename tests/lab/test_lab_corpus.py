@@ -60,3 +60,28 @@ def test_extract_ids_handles_nested_and_flat():
         ]
     }
     assert c.extract_ids(payload) == ["a", "b"]
+
+
+def test_make_distractor_memories_are_aged_low_importance_and_tagged():
+    payloads = c.make_distractor_memories(3, age_days=200, importance=0.05)
+    assert len(payloads) == 3
+    for p in payloads:
+        assert p["tags"] == ["lab-distractor"]
+        assert p["importance"] == 0.05
+        assert p["timestamp"] == p["last_accessed"]
+        assert p["metadata"]["lab_distractor"] is True
+        assert p["timestamp"].endswith("Z")
+
+
+def test_inject_distractors_returns_created_ids():
+    posted = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        posted.append(json)
+        idx = len(posted)
+        return FakeResp({"memory_id": f"id-{idx}"})
+
+    payloads = c.make_distractor_memories(2)
+    ids = c.inject_distractors("http://x", {}, payloads, http_post=fake_post)
+    assert ids == ["id-1", "id-2"]
+    assert len(posted) == 2
