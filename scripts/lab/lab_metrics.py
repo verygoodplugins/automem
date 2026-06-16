@@ -92,3 +92,44 @@ def paired_ttest(a: List[float], b: List[float]) -> Dict[str, Any]:
         "significant": p_value < 0.05,
         "mean_diff": round(mean_d, 4),
     }
+
+
+_FLAG_KEYS = {
+    "ENRICHMENT_ENABLED",
+    "JIT_ENRICHMENT_ENABLED",
+    "ENRICHMENT_ENABLE_SUMMARIES",
+    "RECALL_RECENCY_BIAS",
+}
+_OFF_VALUES = {"", "0", "0.0", "off", "false", "no", "none"}
+
+
+def _is_off(value: Any) -> bool:
+    return str(value).strip().lower() in _OFF_VALUES
+
+
+def config_complexity(config: Dict[str, Any]) -> int:
+    """Count 'active' knobs in a config. Lower = simpler/more elegant.
+
+    This is the simplicity tiebreaker: among configs within noise on quality,
+    the one with fewer active knobs wins.
+    """
+    count = 0
+    for key, value in config.items():
+        ku = str(key).upper()
+        if ku.startswith("SEARCH_WEIGHT_"):
+            try:
+                if float(value) != 0.0:
+                    count += 1
+            except (TypeError, ValueError):
+                continue
+        elif ku in _FLAG_KEYS:
+            if not _is_off(value):
+                count += 1
+        elif ku.endswith(("_THRESHOLD", "_CAP", "_GATE")):
+            try:
+                if float(value) > 0.0:
+                    count += 1
+            except (TypeError, ValueError):
+                if not _is_off(value):
+                    count += 1
+    return count
