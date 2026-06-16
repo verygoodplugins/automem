@@ -85,3 +85,28 @@ def test_inject_distractors_returns_created_ids():
     ids = c.inject_distractors("http://x", {}, payloads, http_post=fake_post)
     assert ids == ["id-1", "id-2"]
     assert len(posted) == 2
+
+
+def test_run_consolidation_sends_dry_run_false_in_order():
+    calls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append(json)
+        return FakeResp({"mode": json["mode"], "steps": {}})
+
+    out = c.run_consolidation("http://x", {}, http_post=fake_post)
+    sent_modes = [call["mode"] for call in calls]
+    assert sent_modes == ["decay", "creative", "cluster", "forget"]
+    assert all(call["dry_run"] is False for call in calls)
+    assert set(out.keys()) == {"decay", "creative", "cluster", "forget"}
+
+
+def test_run_consolidation_respects_explicit_modes():
+    calls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append(json)
+        return FakeResp({})
+
+    c.run_consolidation("http://x", {}, modes=["forget"], http_post=fake_post)
+    assert [call["mode"] for call in calls] == ["forget"]

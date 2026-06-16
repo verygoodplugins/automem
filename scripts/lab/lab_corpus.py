@@ -102,3 +102,35 @@ def extract_ids(recall_json: Dict[str, Any]) -> List[str]:
         if mid:
             ids.append(mid)
     return ids
+
+
+CONSOLIDATION_ORDER = ["decay", "creative", "cluster", "forget"]
+
+
+def run_consolidation(
+    api_url: str,
+    headers: Dict[str, str],
+    modes: Optional[List[str]] = None,
+    *,
+    dry_run: bool = False,
+    http_post=requests.post,
+) -> Dict[str, Dict[str, Any]]:
+    """Run a REAL consolidation pass per mode, in order.
+
+    dry_run defaults to False: the /consolidate endpoint's own default is True,
+    which makes creative/cluster/forget silent no-ops. Decay runs first so
+    creative/cluster see memories with relevance_score > 0.3.
+    """
+    if modes is None:
+        modes = list(CONSOLIDATION_ORDER)
+    out: Dict[str, Dict[str, Any]] = {}
+    for mode in modes:
+        resp = http_post(
+            f"{api_url}/consolidate",
+            json={"mode": mode, "dry_run": dry_run},
+            headers=headers,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        out[mode] = resp.json()
+    return out
