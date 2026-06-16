@@ -147,20 +147,19 @@ def pick_winner(
     Rule: highest NDCG@10 that does not regress distractor-precision vs the
     baseline; break ties (within ndcg_tol) toward fewer knobs, then lower latency.
     """
-    baseline = next(c for c in cards if c["name"] == baseline_name)
+    baseline = next((c for c in cards if c["name"] == baseline_name), None)
+    if baseline is None:
+        raise ValueError(f"baseline_name {baseline_name!r} not found among cards")
+    # The baseline is always eligible against itself (distractor_tol >= 0), so
+    # `eligible` is never empty and the max() below is always safe.
     ceiling = baseline["distractor_rate_10"] + distractor_tol
     eligible = [c for c in cards if c["distractor_rate_10"] <= ceiling]
-    regressed = not eligible
-    if regressed:
-        eligible = [baseline]
 
     best_ndcg = max(c["ndcg_10"] for c in eligible)
     contenders = [c for c in eligible if c["ndcg_10"] >= best_ndcg - ndcg_tol]
     winner = dict(min(contenders, key=lambda c: (c["complexity"], c["latency_ms"])))
 
-    if regressed:
-        winner["reason"] = "all candidates regressed distractor-precision; held baseline"
-    elif winner["name"] == baseline_name:
+    if winner["name"] == baseline_name:
         winner["reason"] = "no candidate beat baseline NDCG@10 without precision regression"
     else:
         winner["reason"] = (

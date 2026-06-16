@@ -303,7 +303,7 @@ def build_scorecard(result: TestRunResult) -> Dict[str, Any]:
     """The legible scorecard: NDCG@10 primary, distractor-rate guardrail,
     latency + complexity tiebreakers."""
     return {
-        "config_name": result.config_name,
+        "name": result.config_name,
         "ndcg_10": result.mean_ndcg_10,
         "distractor_rate_10": result.mean_distractor_rate_10,
         "latency_ms": result.mean_latency,
