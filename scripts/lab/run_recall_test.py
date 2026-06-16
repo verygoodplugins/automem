@@ -31,7 +31,21 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lab_metrics import mrr, ndcg_at_k, paired_ttest, recall_at_k  # noqa: E402
+from lab_metrics import (  # noqa: E402
+    config_complexity,
+    distractor_rate_at_k,
+    mrr,
+    ndcg_at_k,
+    paired_ttest,
+    recall_at_k,
+)
+from lab_corpus import (  # noqa: E402
+    extract_ids,
+    inject_distractors,
+    make_distractor_memories,
+    recall,
+    run_consolidation,
+)
 
 API_URL = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN", "test-token")
@@ -150,6 +164,7 @@ class QueryResult:
     recall_20: float = 0.0
     mrr_val: float = 0.0
     ndcg_10: float = 0.0
+    distractor_rate_10: float = 0.0
     latency_ms: float = 0.0
     category: str = ""
 
@@ -160,6 +175,12 @@ class TestRunResult:  # noqa: pytest will skip due to __init__
     config_name: str
     query_results: List[QueryResult] = field(default_factory=list)
     timestamp: str = ""
+    complexity: int = 0
+
+    @property
+    def mean_distractor_rate_10(self) -> float:
+        vals = [q.distractor_rate_10 for q in self.query_results]
+        return sum(vals) / len(vals) if vals else 0.0
 
     @property
     def mean_recall_5(self) -> float:
@@ -208,37 +229,31 @@ class TestRunResult:  # noqa: pytest will skip due to __init__
         }
 
 
-def run_single_query(query_data: Dict[str, Any], api_url: str) -> QueryResult:
-    """Execute a single recall query and compute metrics."""
+def run_single_query(
+    query_data: Dict[str, Any],
+    api_url: str,
+    *,
+    distractor_ids: Optional[set] = None,
+    recall_params: Optional[Dict[str, Any]] = None,
+) -> QueryResult:
+    """Execute a single recall query and compute metrics (incl. distractor rate)."""
     query = query_data["query"]
     expected_ids = query_data.get("expected_ids", [])
     category = query_data.get("category", "unknown")
+    distractor_ids = distractor_ids or set()
+    recall_params = recall_params or {}
 
     start = time.perf_counter()
     try:
-        resp = requests.get(
-            f"{api_url}/recall",
-            params={"query": query, "limit": 20},
-            headers=get_headers(),
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
+        data = recall(api_url, get_headers(), query, **recall_params)
+    except Exception as e:  # noqa: BLE001
         print(f"  WARNING: Query failed: {query[:50]}... — {e}")
         return QueryResult(
             query=query, expected_ids=expected_ids, retrieved_ids=[], category=category
         )
 
     latency_ms = (time.perf_counter() - start) * 1000
-
-    results = data.get("results", data.get("memories", []))
-    retrieved_ids = []
-    for r in results:
-        mem = r.get("memory", r)
-        mid = str(mem.get("id", r.get("id", "")))
-        if mid:
-            retrieved_ids.append(mid)
+    retrieved_ids = extract_ids(data)
 
     return QueryResult(
         query=query,
@@ -249,21 +264,32 @@ def run_single_query(query_data: Dict[str, Any], api_url: str) -> QueryResult:
         recall_20=recall_at_k(retrieved_ids, expected_ids, 20),
         mrr_val=mrr(retrieved_ids, expected_ids),
         ndcg_10=ndcg_at_k(retrieved_ids, expected_ids, 10),
+        distractor_rate_10=distractor_rate_at_k(retrieved_ids, distractor_ids, 10),
         latency_ms=latency_ms,
         category=category,
     )
 
 
-def run_test(config_name: str, queries: List[Dict], api_url: str) -> TestRunResult:
+def run_test(
+    config_name: str,
+    queries: List[Dict],
+    api_url: str,
+    *,
+    config: Optional[Dict[str, str]] = None,
+    distractor_ids: Optional[set] = None,
+    recall_params: Optional[Dict[str, Any]] = None,
+) -> TestRunResult:
     """Run all test queries with a specific config."""
     result = TestRunResult(
         config_name=config_name, timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     )
+    result.complexity = config_complexity(config or {})
 
     for i, q in enumerate(queries):
-        qr = run_single_query(q, api_url)
+        qr = run_single_query(
+            q, api_url, distractor_ids=distractor_ids, recall_params=recall_params
+        )
         result.query_results.append(qr)
-        # Progress dot
         hit = "." if qr.recall_10 > 0 else "x"
         print(hit, end="", flush=True)
         if (i + 1) % 50 == 0:
@@ -271,6 +297,18 @@ def run_test(config_name: str, queries: List[Dict], api_url: str) -> TestRunResu
 
     print(f" [{len(queries)}/{len(queries)}]")
     return result
+
+
+def build_scorecard(result: TestRunResult) -> Dict[str, Any]:
+    """The legible scorecard: NDCG@10 primary, distractor-rate guardrail,
+    latency + complexity tiebreakers."""
+    return {
+        "config_name": result.config_name,
+        "ndcg_10": result.mean_ndcg_10,
+        "distractor_rate_10": result.mean_distractor_rate_10,
+        "latency_ms": result.mean_latency,
+        "complexity": result.complexity,
+    }
 
 
 def print_summary(result: TestRunResult) -> None:
@@ -281,6 +319,8 @@ def print_summary(result: TestRunResult) -> None:
     print(f"  Recall@20:  {result.mean_recall_20:.3f}")
     print(f"  MRR:        {result.mean_mrr:.3f}")
     print(f"  NDCG@10:    {result.mean_ndcg_10:.3f}")
+    print(f"  Distractor@10: {result.mean_distractor_rate_10:.3f} (lower better)")
+    print(f"  Complexity:   {result.complexity} active knobs")
     print(f"  Latency:    {result.mean_latency:.0f}ms avg")
 
     cats = result.by_category()
@@ -351,6 +391,8 @@ def save_results(result: TestRunResult, output_dir: Path) -> Path:
             "mrr": result.mean_mrr,
             "ndcg_10": result.mean_ndcg_10,
             "latency_ms": result.mean_latency,
+            "distractor_rate_10": result.mean_distractor_rate_10,
+            "complexity": result.complexity,
         },
         "by_category": result.by_category(),
         "queries": [
@@ -395,6 +437,32 @@ def main() -> None:
     )
     parser.add_argument("--api-url", type=str, default=API_URL, help="AutoMem API URL")
     parser.add_argument("--output-dir", type=str, default=str(RESULTS_DIR), help="Results dir")
+    parser.add_argument(
+        "--distractors",
+        type=int,
+        default=0,
+        help="Inject N aged labelled distractor memories before testing",
+    )
+    parser.add_argument(
+        "--expand-relations", action="store_true", help="Recall with expand_relations"
+    )
+    parser.add_argument(
+        "--no-current-only",
+        action="store_true",
+        help="Recall with current_only=false (include archived)",
+    )
+    parser.add_argument(
+        "--recency-bias",
+        type=str,
+        default=None,
+        choices=["on", "off", "auto"],
+        help="Recall recency_bias override",
+    )
+    parser.add_argument(
+        "--consolidate",
+        action="store_true",
+        help="Run a real consolidation pass (dry_run=false) before recall",
+    )
     args = parser.parse_args()
 
     # Load test set
@@ -413,6 +481,22 @@ def main() -> None:
     queries = load_test_set(args.test_set)
     print(f"Loaded {len(queries)} test queries from {args.test_set}")
 
+    recall_params = {
+        "expand_relations": args.expand_relations,
+        "current_only": not args.no_current_only,
+    }
+    if args.recency_bias is not None:
+        recall_params["recency_bias"] = args.recency_bias
+
+    distractor_ids: set = set()
+    if args.distractors > 0:
+        payloads = make_distractor_memories(args.distractors)
+        distractor_ids = set(inject_distractors(args.api_url, get_headers(), payloads))
+        print(f"Injected {len(distractor_ids)} distractor memories")
+    if args.consolidate:
+        steps = run_consolidation(args.api_url, get_headers())
+        print(f"Consolidation pass complete: {list(steps.keys())}")
+
     output_dir = Path(args.output_dir)
 
     if args.sweep:
@@ -430,7 +514,14 @@ def main() -> None:
             restart_api_with_config(config, api_url=args.api_url)
             time.sleep(2)
 
-            result = run_test(config_name, queries, args.api_url)
+            result = run_test(
+                config_name,
+                queries,
+                args.api_url,
+                config=config,
+                distractor_ids=distractor_ids,
+                recall_params=recall_params,
+            )
             all_results.append(result)
             print_summary(result)
             save_results(result, output_dir)
@@ -456,14 +547,28 @@ def main() -> None:
         print(f"\n--- Running baseline: {args.compare} ---")
         restart_api_with_config(config_a, api_url=args.api_url)
         time.sleep(2)
-        result_a = run_test(args.compare, queries, args.api_url)
+        result_a = run_test(
+            args.compare,
+            queries,
+            args.api_url,
+            config=config_a,
+            distractor_ids=distractor_ids,
+            recall_params=recall_params,
+        )
         print_summary(result_a)
         save_results(result_a, output_dir)
 
         print(f"\n--- Running candidate: {args.config} ---")
         restart_api_with_config(config_b, api_url=args.api_url)
         time.sleep(2)
-        result_b = run_test(args.config, queries, args.api_url)
+        result_b = run_test(
+            args.config,
+            queries,
+            args.api_url,
+            config=config_b,
+            distractor_ids=distractor_ids,
+            recall_params=recall_params,
+        )
         print_summary(result_b)
         save_results(result_b, output_dir)
 
@@ -476,7 +581,14 @@ def main() -> None:
         restart_api_with_config(config, api_url=args.api_url)
         time.sleep(2)
 
-        result = run_test(args.config, queries, args.api_url)
+        result = run_test(
+            args.config,
+            queries,
+            args.api_url,
+            config=config,
+            distractor_ids=distractor_ids,
+            recall_params=recall_params,
+        )
         print_summary(result)
         save_results(result, output_dir)
 
