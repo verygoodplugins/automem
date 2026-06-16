@@ -17,3 +17,16 @@ def test_ndcg_at_k_rewards_top_rank():
     buried = m.ndcg_at_k(["a", "b", "x"], ["x"], 10)
     assert top == 1.0
     assert 0.0 < buried < top
+
+
+def test_distractor_rate_counts_distractors_in_top_k():
+    retrieved = ["good", "d1", "d2", "good2"]
+    distractors = {"d1", "d2"}
+    assert m.distractor_rate_at_k(retrieved, distractors, 4) == 0.5
+    # top-1 is clean -> 0.0
+    assert m.distractor_rate_at_k(retrieved, distractors, 1) == 0.0
+    # all distractors -> 1.0
+    assert m.distractor_rate_at_k(["d1", "d2"], distractors, 10) == 1.0
+    # empties are safe
+    assert m.distractor_rate_at_k([], distractors, 10) == 0.0
+    assert m.distractor_rate_at_k(retrieved, distractors, 0) == 0.0

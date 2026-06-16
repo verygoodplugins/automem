@@ -5,7 +5,7 @@ Imported by run_recall_test.py and by the parallel matrix harness.
 """
 
 import math
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 
 def recall_at_k(retrieved_ids: List[str], expected_ids: List[str], k: int) -> float:
@@ -35,6 +35,24 @@ def ndcg_at_k(retrieved_ids: List[str], expected_ids: List[str], k: int) -> floa
             dcg += 1.0 / math.log2(i + 2)
     ideal_dcg = sum(1.0 / math.log2(i + 2) for i in range(min(len(expected_ids), k)))
     return dcg / ideal_dcg if ideal_dcg > 0 else 0.0
+
+
+def distractor_rate_at_k(retrieved_ids: List[str], distractor_ids: Iterable[str], k: int) -> float:
+    """Fraction of the top-k results that are known distractors. Lower is better.
+
+    Distractors are memories we injected and labelled as never-relevant, so a
+    result that is a distractor is unambiguous noise. This is the precision
+    guardrail and the only metric that can see the `forget` consolidation mode
+    working (known-item recall is blind to suppression).
+    """
+    if k <= 0:
+        return 0.0
+    top_k = retrieved_ids[:k]
+    if not top_k:
+        return 0.0
+    dset = set(distractor_ids)
+    hits = sum(1 for rid in top_k if rid in dset)
+    return hits / len(top_k)
 
 
 def paired_ttest(a: List[float], b: List[float]) -> Dict[str, Any]:
