@@ -56,3 +56,41 @@ def test_config_complexity_counts_active_knobs():
         "SEARCH_TAG_SCORE_TOKEN_CAP": "0",  # +0
     }
     assert m.config_complexity(flags_and_gates) == 3
+
+
+def _card(name, ndcg, distractor, latency, complexity):
+    return {
+        "name": name,
+        "ndcg_10": ndcg,
+        "distractor_rate_10": distractor,
+        "latency_ms": latency,
+        "complexity": complexity,
+    }
+
+
+def test_pick_winner_prefers_simpler_within_ndcg_tolerance():
+    cards = [
+        _card("baseline", 0.800, 0.10, 100, 11),
+        _card("complex", 0.803, 0.10, 120, 13),  # tiny ndcg gain, more knobs
+        _card("simple", 0.801, 0.10, 90, 8),  # within tol, fewer knobs + faster
+    ]
+    winner = m.pick_winner(cards, baseline_name="baseline")
+    assert winner["name"] == "simple"
+
+
+def test_pick_winner_rejects_precision_regression():
+    cards = [
+        _card("baseline", 0.800, 0.10, 100, 11),
+        _card("greedy", 0.900, 0.30, 100, 11),  # big ndcg but junk floods results
+    ]
+    winner = m.pick_winner(cards, baseline_name="baseline")
+    assert winner["name"] == "baseline"
+
+
+def test_pick_winner_picks_clear_quality_jump():
+    cards = [
+        _card("baseline", 0.800, 0.10, 100, 11),
+        _card("better", 0.860, 0.09, 100, 11),  # real gain, no regression
+    ]
+    winner = m.pick_winner(cards, baseline_name="baseline")
+    assert winner["name"] == "better"

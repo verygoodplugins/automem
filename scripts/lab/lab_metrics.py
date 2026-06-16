@@ -133,3 +133,38 @@ def config_complexity(config: Dict[str, Any]) -> int:
                 if not _is_off(value):
                     count += 1
     return count
+
+
+def pick_winner(
+    cards: List[Dict[str, Any]],
+    *,
+    baseline_name: str,
+    ndcg_tol: float = 0.005,
+    distractor_tol: float = 0.01,
+) -> Dict[str, Any]:
+    """Apply the scorecard decision rule and return the winning card + reason.
+
+    Rule: highest NDCG@10 that does not regress distractor-precision vs the
+    baseline; break ties (within ndcg_tol) toward fewer knobs, then lower latency.
+    """
+    baseline = next(c for c in cards if c["name"] == baseline_name)
+    ceiling = baseline["distractor_rate_10"] + distractor_tol
+    eligible = [c for c in cards if c["distractor_rate_10"] <= ceiling]
+    regressed = not eligible
+    if regressed:
+        eligible = [baseline]
+
+    best_ndcg = max(c["ndcg_10"] for c in eligible)
+    contenders = [c for c in eligible if c["ndcg_10"] >= best_ndcg - ndcg_tol]
+    winner = dict(min(contenders, key=lambda c: (c["complexity"], c["latency_ms"])))
+
+    if regressed:
+        winner["reason"] = "all candidates regressed distractor-precision; held baseline"
+    elif winner["name"] == baseline_name:
+        winner["reason"] = "no candidate beat baseline NDCG@10 without precision regression"
+    else:
+        winner["reason"] = (
+            f"best NDCG@10 within tolerance, lowest complexity ({winner['complexity']}) "
+            f"and latency ({winner['latency_ms']:.0f}ms)"
+        )
+    return winner
