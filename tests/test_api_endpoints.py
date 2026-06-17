@@ -3191,6 +3191,157 @@ def test_create_association_with_properties(client, mock_state, auth_headers):
     assert data["context"] == "Production environment"
 
 
+def test_create_association_batch_all_success(client, mock_state, auth_headers):
+    """Batch association should create valid relationships in one request."""
+    mem_ids = [
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+        "33333333-3333-3333-3333-333333333333",
+    ]
+    for index, memory_id in enumerate(mem_ids, start=1):
+        mock_state.memory_graph.memories[memory_id] = {
+            "id": memory_id,
+            "content": f"Memory {index}",
+        }
+
+    response = client.post(
+        "/associate",
+        json={
+            "associations": [
+                {
+                    "memory1_id": mem_ids[0],
+                    "memory2_id": mem_ids[1],
+                    "type": "RELATES_TO",
+                    "strength": 0.8,
+                },
+                {
+                    "memory1_id": mem_ids[1],
+                    "memory2_id": mem_ids[2],
+                    "type": "PREFERS_OVER",
+                    "strength": 0.9,
+                    "reason": "Clearer",
+                    "context": "Test",
+                },
+            ]
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data["status"] == "success"
+    assert data["created_count"] == 2
+    assert data["failed_count"] == 0
+    assert data["summary"] == "2/2 associations created successfully"
+    assert [item["index"] for item in data["succeeded"]] == [0, 1]
+    assert data["failed"] == []
+    assert len(mock_state.memory_graph.relationships) == 2
+    prefers = [
+        rel for rel in mock_state.memory_graph.relationships if rel["type"] == "PREFERS_OVER"
+    ]
+    assert prefers[0]["reason"] == "Clearer"
+    assert prefers[0]["context"] == "Test"
+
+
+def test_create_association_batch_partial_success(client, mock_state, auth_headers):
+    """Batch association should report per-item failures without rolling back successes."""
+    mem_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    mem_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    missing = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    for memory_id in (mem_a, mem_b):
+        mock_state.memory_graph.memories[memory_id] = {
+            "id": memory_id,
+            "content": f"Memory {memory_id}",
+        }
+
+    response = client.post(
+        "/associate",
+        json={
+            "associations": [
+                {
+                    "memory1_id": mem_a,
+                    "memory2_id": mem_b,
+                    "type": "RELATES_TO",
+                    "strength": 0.8,
+                },
+                {
+                    "memory1_id": "not-a-uuid",
+                    "memory2_id": mem_b,
+                    "type": "RELATES_TO",
+                    "strength": 0.8,
+                },
+                {
+                    "memory1_id": mem_a,
+                    "memory2_id": mem_a,
+                    "type": "RELATES_TO",
+                    "strength": 0.8,
+                },
+                {
+                    "memory1_id": mem_a,
+                    "memory2_id": mem_b,
+                    "type": "SIMILAR_TO",
+                    "strength": 0.8,
+                },
+                {
+                    "memory1_id": mem_a,
+                    "memory2_id": missing,
+                    "type": "RELATES_TO",
+                    "strength": 0.8,
+                },
+            ]
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 207
+    data = response.get_json()
+    assert data["status"] == "partial_success"
+    assert data["created_count"] == 1
+    assert data["failed_count"] == 4
+    assert data["summary"] == "1/5 associations created successfully"
+    assert [item["index"] for item in data["succeeded"]] == [0]
+    failures = {item["index"]: item["reason"] for item in data["failed"]}
+    assert "'memory1_id' must be a valid UUID" in failures[1]
+    assert "Cannot associate a memory with itself" in failures[2]
+    assert "Relation type must be one of" in failures[3]
+    assert "One or both memories do not exist" in failures[4]
+    assert len(mock_state.memory_graph.relationships) == 1
+
+
+def test_create_association_batch_all_item_failures(client, mock_state, auth_headers):
+    """A valid batch request with no valid items should still return per-item failures."""
+    response = client.post(
+        "/associate",
+        json={
+            "associations": [
+                {
+                    "memory1_id": "not-a-uuid",
+                    "memory2_id": "also-not-a-uuid",
+                    "type": "RELATES_TO",
+                    "strength": 0.8,
+                }
+            ]
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 207
+    data = response.get_json()
+    assert data["status"] == "partial_success"
+    assert data["created_count"] == 0
+    assert data["failed_count"] == 1
+    assert data["summary"] == "0/1 associations created successfully"
+
+
+def test_create_association_batch_rejects_empty_array(client, mock_state, auth_headers):
+    """Malformed batch envelopes should remain hard 400 errors."""
+    response = client.post("/associate", json={"associations": []}, headers=auth_headers)
+
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "'associations' must be a non-empty array" in data["message"]
+
+
 # ==================== Test Startup Recall ====================
 
 

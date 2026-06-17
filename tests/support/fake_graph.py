@@ -427,6 +427,41 @@ class FakeGraph:
 
         # Association creation
         if (
+            "UNWIND $rows AS row" in query
+            and "MATCH (m1:Memory" in query
+            and "MATCH (m2:Memory" in query
+            and "MERGE (m1)-[r:" in query
+        ):
+            relation_type = "RELATES_TO"
+            match = re.search(r"MERGE \(m1\)-\[r:([A-Z_]+)\]->\(m2\)", query)
+            if match:
+                relation_type = match.group(1)
+            result_rows = []
+            for row in params.get("rows") or []:
+                memory1_id = str(row.get("memory1_id") or "")
+                memory2_id = str(row.get("memory2_id") or "")
+                if memory1_id not in self.memories or memory2_id not in self.memories:
+                    continue
+                props = row.get("props") if isinstance(row.get("props"), dict) else {}
+                self.relationships.append(
+                    {
+                        "id1": memory1_id,
+                        "id2": memory2_id,
+                        "type": relation_type,
+                        "strength": float(props.get("strength") or 0.5),
+                        "context": props.get("context"),
+                        "reason": props.get("reason"),
+                        "kind": props.get("kind"),
+                        "origin": props.get("origin"),
+                        "confidence": props.get("confidence"),
+                        "similarity": props.get("similarity"),
+                        "updated_at": props.get("updated_at"),
+                    }
+                )
+                result_rows.append([row.get("index"), memory1_id, memory2_id])
+            return FakeResult(result_rows)
+
+        if (
             "MATCH (m1:Memory" in query
             and "MATCH (m2:Memory" in query
             and "MERGE (m1)-[r:" in query

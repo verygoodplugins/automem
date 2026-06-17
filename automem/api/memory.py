@@ -26,6 +26,226 @@ def _validate_memory_id(memory_id: str) -> None:
         abort(400, description="memory_id must be a valid UUID")
 
 
+def _uuid_error(memory_id: str, field_name: str) -> Optional[str]:
+    try:
+        uuid.UUID(memory_id)
+    except ValueError:
+        return f"'{field_name}' must be a valid UUID"
+    return None
+
+
+def _association_summary(created_count: int, total_count: int) -> str:
+    return f"{created_count}/{total_count} associations created successfully"
+
+
+def _association_failure(index: int, reason: str) -> Dict[str, Any]:
+    return {"index": index, "reason": reason}
+
+
+def _association_success(
+    *,
+    index: int,
+    memory1_id: str,
+    memory2_id: str,
+    relation_type: str,
+    strength: float,
+) -> Dict[str, Any]:
+    return {
+        "index": index,
+        "memory1_id": memory1_id,
+        "memory2_id": memory2_id,
+        "relation_type": relation_type,
+        "strength": strength,
+    }
+
+
+def _prepare_association_props(
+    *,
+    payload: Dict[str, Any],
+    relation_type: str,
+    strength: float,
+    timestamp: str,
+    relationship_types: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    relationship_props = {"strength": strength, "updated_at": timestamp}
+    relation_config = relationship_types.get(relation_type, {})
+    for prop in relation_config.get("properties", []):
+        if prop in payload and prop not in relationship_props:
+            relationship_props[prop] = payload[prop]
+    return relationship_props
+
+
+def _parse_association_item(
+    *,
+    item: Any,
+    index: int,
+    authorable_relations: Set[str],
+    relationship_types: Dict[str, Dict[str, Any]],
+    coerce_importance_fn: Callable[[Any], float],
+    timestamp: str,
+) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    if not isinstance(item, dict):
+        return None, _association_failure(index, "Association item must be an object")
+
+    memory1_id = str(item.get("memory1_id") or "").strip()
+    memory2_id = str(item.get("memory2_id") or "").strip()
+    relation_type = str(item.get("type") or "RELATES_TO").strip().upper()
+    strength = coerce_importance_fn(item.get("strength", 0.5))
+
+    if not memory1_id or not memory2_id:
+        return None, _association_failure(index, "'memory1_id' and 'memory2_id' are required")
+
+    for field_name, value in (("memory1_id", memory1_id), ("memory2_id", memory2_id)):
+        error = _uuid_error(value, field_name)
+        if error:
+            return None, _association_failure(index, error)
+
+    if memory1_id == memory2_id:
+        return None, _association_failure(index, "Cannot associate a memory with itself")
+
+    if relation_type not in authorable_relations:
+        return None, _association_failure(
+            index,
+            f"Relation type must be one of {sorted(authorable_relations)}",
+        )
+
+    return (
+        {
+            "index": index,
+            "memory1_id": memory1_id,
+            "memory2_id": memory2_id,
+            "type": relation_type,
+            "strength": strength,
+            "props": _prepare_association_props(
+                payload=item,
+                relation_type=relation_type,
+                strength=strength,
+                timestamp=timestamp,
+                relationship_types=relationship_types,
+            ),
+        },
+        None,
+    )
+
+
+def _batch_association_response(
+    *,
+    succeeded: List[Dict[str, Any]],
+    failed: List[Dict[str, Any]],
+    total_count: int,
+    jsonify_fn: Callable[[Any], Any],
+) -> Any:
+    created_count = len(succeeded)
+    failed_count = len(failed)
+    status_code = 201 if failed_count == 0 else 207
+    status = "success" if failed_count == 0 else "partial_success"
+    return (
+        jsonify_fn(
+            {
+                "status": status,
+                "created_count": created_count,
+                "failed_count": failed_count,
+                "succeeded": sorted(succeeded, key=lambda item: item["index"]),
+                "failed": sorted(failed, key=lambda item: item["index"]),
+                "summary": _association_summary(created_count, total_count),
+            }
+        ),
+        status_code,
+    )
+
+
+def _create_association_batch(
+    *,
+    payload: Dict[str, Any],
+    coerce_importance_fn: Callable[[Any], float],
+    get_memory_graph_fn: Callable[[], Any],
+    authorable_relations: Set[str],
+    relationship_types: Dict[str, Dict[str, Any]],
+    utc_now_fn: Callable[[], str],
+    abort_fn: Callable[..., Any],
+    jsonify_fn: Callable[[Any], Any],
+    logger: Any,
+) -> Any:
+    associations = payload.get("associations")
+    if not isinstance(associations, list) or len(associations) == 0:
+        abort_fn(400, description="'associations' must be a non-empty array")
+    if len(associations) > 500:
+        abort_fn(400, description="Batch size limit is 500 associations per request")
+
+    timestamp = utc_now_fn()
+    valid_rows: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    for index, item in enumerate(associations):
+        row, failure = _parse_association_item(
+            item=item,
+            index=index,
+            authorable_relations=authorable_relations,
+            relationship_types=relationship_types,
+            coerce_importance_fn=coerce_importance_fn,
+            timestamp=timestamp,
+        )
+        if failure:
+            failed.append(failure)
+        elif row:
+            valid_rows.append(row)
+
+    succeeded: List[Dict[str, Any]] = []
+    if valid_rows:
+        graph = get_memory_graph_fn()
+        if graph is None:
+            abort_fn(503, description="FalkorDB is unavailable")
+
+        rows_by_index = {row["index"]: row for row in valid_rows}
+        rows_by_type: Dict[str, List[Dict[str, Any]]] = {}
+        for row in valid_rows:
+            rows_by_type.setdefault(row["type"], []).append(row)
+
+        for relation_type, rows in rows_by_type.items():
+            try:
+                result = graph.query(
+                    f"""
+                    UNWIND $rows AS row
+                    MATCH (m1:Memory {{id: row.memory1_id}})
+                    MATCH (m2:Memory {{id: row.memory2_id}})
+                    MERGE (m1)-[r:{relation_type}]->(m2)
+                    SET r += row.props
+                    RETURN row.index, row.memory1_id, row.memory2_id
+                    """,
+                    {"rows": rows},
+                )
+            except Exception:
+                logger.exception("Failed to create association batch")
+                abort_fn(500, description="Failed to create association batch")
+
+            created_indexes = set()
+            for result_row in list(getattr(result, "result_set", []) or []):
+                index = int(result_row[0])
+                created_indexes.add(index)
+                source = rows_by_index[index]
+                succeeded.append(
+                    _association_success(
+                        index=index,
+                        memory1_id=source["memory1_id"],
+                        memory2_id=source["memory2_id"],
+                        relation_type=source["type"],
+                        strength=source["strength"],
+                    )
+                )
+
+            for row in rows:
+                if row["index"] not in created_indexes:
+                    failed.append(
+                        _association_failure(row["index"], "One or both memories do not exist")
+                    )
+
+    return _batch_association_response(
+        succeeded=succeeded,
+        failed=failed,
+        total_count=len(associations),
+        jsonify_fn=jsonify_fn,
+    )
+
+
 def _parse_by_tag_request(
     *,
     request_args: Any,
@@ -767,6 +987,18 @@ def create_memory_blueprint_full(
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
+        if "associations" in payload:
+            return _create_association_batch(
+                payload=payload,
+                coerce_importance_fn=coerce_importance,
+                get_memory_graph_fn=get_memory_graph,
+                authorable_relations=set(authorable_relations),
+                relationship_types=relation_types,
+                utc_now_fn=utc_now,
+                abort_fn=abort,
+                jsonify_fn=jsonify,
+                logger=logger,
+            )
 
         memory1_id = (payload.get("memory1_id") or "").strip()
         memory2_id = (payload.get("memory2_id") or "").strip()
@@ -791,12 +1023,14 @@ def create_memory_blueprint_full(
 
         timestamp = utc_now()
 
-        relationship_props = {"strength": strength, "updated_at": timestamp}
+        relationship_props = _prepare_association_props(
+            payload=payload,
+            relation_type=relation_type,
+            strength=strength,
+            timestamp=timestamp,
+            relationship_types=relation_types,
+        )
         relation_config = relation_types.get(relation_type, {})
-        if "properties" in relation_config:
-            for prop in relation_config["properties"]:
-                if prop in payload:
-                    relationship_props[prop] = payload[prop]
 
         set_clauses = [f"r.{key} = ${key}" for key in relationship_props]
         set_clause = ", ".join(set_clauses)

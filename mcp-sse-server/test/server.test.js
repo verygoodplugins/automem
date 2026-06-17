@@ -305,6 +305,146 @@ test("AutoMemClient._request retries transient upstream errors", async () => {
   }
 });
 
+test("AutoMemClient.associateMemories forwards batch associations", async () => {
+  const client = new AutoMemClient({
+    endpoint: "http://example.test",
+    apiKey: "k",
+  });
+
+  let capturedMethod = "";
+  let capturedPath = "";
+  let capturedBody = null;
+  client._request = async (method, path, body) => {
+    capturedMethod = method;
+    capturedPath = path;
+    capturedBody = body;
+    return {
+      summary: "1/2 associations created successfully",
+      created_count: 1,
+      failed_count: 1,
+      succeeded: [{ index: 0 }],
+      failed: [{ index: 1, reason: "One or both memories do not exist" }],
+    };
+  };
+
+  const result = await client.associateMemories({
+    associations: [
+      {
+        memory1_id: "11111111-1111-1111-1111-111111111111",
+        memory2_id: "22222222-2222-2222-2222-222222222222",
+        type: "RELATES_TO",
+        strength: 0.8,
+      },
+      {
+        memory1_id: "11111111-1111-1111-1111-111111111111",
+        memory2_id: "33333333-3333-3333-3333-333333333333",
+        type: "RELATES_TO",
+        strength: 0.8,
+      },
+    ],
+  });
+
+  assert.equal(capturedMethod, "POST");
+  assert.equal(capturedPath, "associate");
+  assert.deepEqual(capturedBody.associations, [
+    {
+      memory1_id: "11111111-1111-1111-1111-111111111111",
+      memory2_id: "22222222-2222-2222-2222-222222222222",
+      type: "RELATES_TO",
+      strength: 0.8,
+    },
+    {
+      memory1_id: "11111111-1111-1111-1111-111111111111",
+      memory2_id: "33333333-3333-3333-3333-333333333333",
+      type: "RELATES_TO",
+      strength: 0.8,
+    },
+  ]);
+  assert.equal(result.message, "1/2 associations created successfully; failed index 1: One or both memories do not exist");
+});
+
+test("associate_memories tool returns partial success text without throwing", async () => {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://upstream.test";
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (String(url) === "http://upstream.test/health") {
+      return new Response(JSON.stringify({ status: "healthy" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (String(url) === "http://upstream.test/associate") {
+      const body = JSON.parse(options.body);
+      assert.equal(body.associations.length, 2);
+      return new Response(
+        JSON.stringify({
+          status: "partial_success",
+          summary: "1/2 associations created successfully",
+          created_count: 1,
+          failed_count: 1,
+          succeeded: [{ index: 0 }],
+          failed: [{ index: 1, reason: "One or both memories do not exist" }],
+        }),
+        { status: 207, headers: { "content-type": "application/json" } },
+      );
+    }
+    return originalFetch(url, options);
+  };
+
+  try {
+    const app = createApp();
+    await withServer(app, async (port) => {
+      const res = await originalFetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: "Bearer test-token",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "associate_memories",
+            arguments: {
+              associations: [
+                {
+                  memory1_id: "11111111-1111-1111-1111-111111111111",
+                  memory2_id: "22222222-2222-2222-2222-222222222222",
+                  type: "RELATES_TO",
+                  strength: 0.8,
+                },
+                {
+                  memory1_id: "11111111-1111-1111-1111-111111111111",
+                  memory2_id: "33333333-3333-3333-3333-333333333333",
+                  type: "RELATES_TO",
+                  strength: 0.8,
+                },
+              ],
+            },
+          },
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(
+        body.result.content[0].text,
+        "1/2 associations created successfully; failed index 1: One or both memories do not exist",
+      );
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
+  }
+});
+
 // =============================================================================
 // Streamable HTTP Transport Tests (MCP 2025-03-26)
 // =============================================================================
