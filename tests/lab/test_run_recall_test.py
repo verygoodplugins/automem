@@ -1,3 +1,5 @@
+import json
+
 import run_recall_test as rr
 
 
@@ -50,3 +52,25 @@ def test_build_scorecard_output_feeds_pick_winner():
     card = rr.build_scorecard(result)
     winner = m.pick_winner([card], baseline_name="baseline")
     assert winner["name"] == "baseline"
+
+
+def test_save_results_keeps_query_distractor_rate(tmp_path):
+    result = rr.TestRunResult(config_name="cfg", timestamp="2026-06-17T00:00:00Z")
+    result.query_results = [
+        rr.QueryResult(
+            query="q",
+            expected_ids=["a"],
+            retrieved_ids=["d1", "a"],
+            recall_10=1.0,
+            mrr_val=0.5,
+            ndcg_10=0.75,
+            distractor_rate_10=0.5,
+            latency_ms=12.34,
+            category="known_item",
+        )
+    ]
+
+    output_path = rr.save_results(result, tmp_path)
+    data = json.loads(output_path.read_text())
+
+    assert data["queries"][0]["distractor_rate_10"] == 0.5

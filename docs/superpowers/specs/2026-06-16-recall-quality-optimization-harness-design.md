@@ -48,8 +48,8 @@ distractor-precision; break ties toward fewer knobs and lower latency.*
 Why NDCG@10 over the current Recall@20: Recall@20 has no precision term — a config
 that returns the target at rank 20 under 19 junk results scores 100%. Optimizing it
 rewards casting wider nets (more complexity, the opposite of the goal) and is blind to
-forgetting. NDCG@10 fixes all three and is already computed at
-`scripts/lab/run_recall_test.py:47`.
+forgetting. NDCG@10 fixes all three and is computed by `lab_metrics.ndcg_at_k`,
+which `run_single_query` records per query.
 
 ## 4. The three-tier funnel
 
@@ -83,7 +83,8 @@ production defaults). The baseline config and the win condition are pre-register
   surface once, for the frozen winner only.
 - **Paired comparisons, fixed item set.** Same queries across all configs; store
   per-query outcome per config. The lab already does paired t-test + Cohen's d on
-  per-query IR metrics (`run_recall_test.py:81`). For binary correct/incorrect
+  per-query IR metrics via `lab_metrics.paired_ttest`, formatted by
+  `print_comparison`. For binary correct/incorrect
   (benchmark tier) use **McNemar (mid-p)**.
 - **Confidence intervals:** BCa bootstrap on items (≥10k resamples for any published
   number; 1k during the sweep). Accuracies sit near the ceiling, where percentile CIs
@@ -191,8 +192,8 @@ utility; consolidation step inside the recall loop; simplicity (knob-count) scor
 matrix-compose lint.
 
 **Build (the one real lift):** wire the lab recall test to run as a *matrix cell* —
-accept `endpoint + config` and drop the docker-restart coupling
-(`run_recall_test.py:158`) so the sweep runs in parallel across isolated stacks.
+accept `endpoint + config` and drop the docker-restart coupling in
+`restart_api_with_config` so the sweep runs in parallel across isolated stacks.
 
 ## 11. Repo placement (per `CLAUDE.md` benchmark-ownership)
 

@@ -31,6 +31,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lab_corpus import (  # noqa: E402
+    extract_ids,
+    inject_distractors,
+    make_distractor_memories,
+    recall,
+    run_consolidation,
+)
 from lab_metrics import (  # noqa: E402
     config_complexity,
     distractor_rate_at_k,
@@ -38,13 +45,6 @@ from lab_metrics import (  # noqa: E402
     ndcg_at_k,
     paired_ttest,
     recall_at_k,
-)
-from lab_corpus import (  # noqa: E402
-    extract_ids,
-    inject_distractors,
-    make_distractor_memories,
-    recall,
-    run_consolidation,
 )
 
 API_URL = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
@@ -403,6 +403,7 @@ def save_results(result: TestRunResult, output_dir: Path) -> Path:
                 "recall_10": q.recall_10,
                 "mrr": q.mrr_val,
                 "ndcg_10": q.ndcg_10,
+                "distractor_rate_10": q.distractor_rate_10,
                 "latency_ms": round(q.latency_ms, 1),
                 "category": q.category,
             }

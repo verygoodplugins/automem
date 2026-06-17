@@ -32,6 +32,19 @@ def test_distractor_rate_counts_distractors_in_top_k():
     assert m.distractor_rate_at_k(retrieved, distractors, 0) == 0.0
 
 
+def test_paired_ttest_degenerate_shape_matches_normal_result():
+    stats = m.paired_ttest([0.5], [0.7])
+
+    assert stats == {
+        "t_stat": 0.0,
+        "p_value": 1.0,
+        "cohens_d": 0.0,
+        "effect_size": "negligible",
+        "significant": False,
+        "mean_diff": 0.0,
+    }
+
+
 def test_config_complexity_counts_active_knobs():
     baseline = {
         "SEARCH_WEIGHT_VECTOR": "0.35",

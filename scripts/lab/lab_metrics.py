@@ -59,7 +59,14 @@ def paired_ttest(a: List[float], b: List[float]) -> Dict[str, Any]:
     """Paired t-test + Cohen's d effect size. Pure Python, no scipy needed."""
     n = len(a)
     if n < 2 or n != len(b):
-        return {"p_value": 1.0, "t_stat": 0.0, "effect_size": 0.0, "significant": False}
+        return {
+            "t_stat": 0.0,
+            "p_value": 1.0,
+            "cohens_d": 0.0,
+            "effect_size": "negligible",
+            "significant": False,
+            "mean_diff": 0.0,
+        }
 
     diffs = [b[i] - a[i] for i in range(n)]
     mean_d = sum(diffs) / n
