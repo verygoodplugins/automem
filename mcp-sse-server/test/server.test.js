@@ -363,6 +363,32 @@ test("AutoMemClient.associateMemories forwards batch associations", async () => 
   assert.equal(result.message, "1/2 associations created successfully; failed index 1: One or both memories do not exist");
 });
 
+test("AutoMemClient.associateMemories caps partial failure text", async () => {
+  const client = new AutoMemClient({
+    endpoint: "http://example.test",
+    apiKey: "k",
+  });
+
+  client._request = async () => ({
+    summary: "0/12 associations created successfully",
+    created_count: 0,
+    failed_count: 12,
+    succeeded: [],
+    failed: Array.from({ length: 12 }, (_, index) => ({
+      index,
+      reason: `failure ${index}`,
+    })),
+  });
+
+  const result = await client.associateMemories({ associations: [] });
+
+  assert.equal(
+    result.message,
+    "0/12 associations created successfully; failed index 0: failure 0; failed index 1: failure 1; failed index 2: failure 2; failed index 3: failure 3; failed index 4: failure 4; 7 more failures omitted",
+  );
+  assert.ok(!result.message.includes("failed index 5"));
+});
+
 test("associate_memories tool returns partial success text without throwing", async () => {
   const prevToken = process.env.AUTOMEM_API_TOKEN;
   const prevEndpoint = process.env.AUTOMEM_API_URL;

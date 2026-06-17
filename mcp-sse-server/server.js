@@ -65,16 +65,22 @@ function stripUndefinedValues(obj) {
   return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
 }
 
+const ASSOCIATION_FAILURE_DETAIL_LIMIT = 5;
+
 function formatAssociationResultMessage(data) {
   if (!data?.summary) {
     return data?.message || 'Association created successfully';
   }
 
   const failures = Array.isArray(data.failed) ? data.failed : [];
-  const failureText = failures
+  const visibleFailures = failures.slice(0, ASSOCIATION_FAILURE_DETAIL_LIMIT);
+  const failureParts = visibleFailures
     .map((item) => `failed index ${item.index}: ${item.reason || 'unknown error'}`)
-    .join('; ');
-  return failureText ? `${data.summary}; ${failureText}` : data.summary;
+  const omittedCount = failures.length - visibleFailures.length;
+  if (omittedCount > 0) {
+    failureParts.push(`${omittedCount} more failure${omittedCount === 1 ? '' : 's'} omitted`);
+  }
+  return failureParts.length ? `${data.summary}; ${failureParts.join('; ')}` : data.summary;
 }
 
 function isRetryableFetchError(error) {

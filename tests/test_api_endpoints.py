@@ -3236,7 +3236,13 @@ def test_create_association_batch_all_success(client, mock_state, auth_headers):
     assert [item["index"] for item in data["succeeded"]] == [0, 1]
     assert data["failed"] == []
     assert len(mock_state.memory_graph.relationships) == 2
-    assert mock_state.memory_graph.relationships[0]["strength"] == 0.0
+    assert any(
+        rel["type"] == "RELATES_TO"
+        and rel["id1"] == mem_ids[0]
+        and rel["id2"] == mem_ids[1]
+        and rel["strength"] == 0.0
+        for rel in mock_state.memory_graph.relationships
+    )
     prefers = [
         rel for rel in mock_state.memory_graph.relationships if rel["type"] == "PREFERS_OVER"
     ]
