@@ -20,7 +20,6 @@ Usage:
 
 import argparse
 import json
-import math
 import os
 import subprocess
 import sys
@@ -31,6 +30,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lab_corpus import (  # noqa: E402
+    extract_ids,
+    inject_distractors,
+    make_distractor_memories,
+    recall,
+    run_consolidation,
+)
+from lab_metrics import (  # noqa: E402
+    config_complexity,
+    distractor_rate_at_k,
+    mrr,
+    ndcg_at_k,
+    paired_ttest,
+    recall_at_k,
+)
+
 API_URL = os.getenv("AUTOMEM_TEST_BASE_URL", "http://localhost:8001")
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN", "test-token")
 CONFIGS_DIR = Path(__file__).parent / "configs"
@@ -39,87 +55,6 @@ RESULTS_DIR = Path("lab/results")
 
 def get_headers() -> dict:
     return {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
-
-
-# ---------- Metrics ----------
-
-
-def recall_at_k(retrieved_ids: List[str], expected_ids: List[str], k: int) -> float:
-    """Fraction of expected IDs found in top-K results."""
-    if not expected_ids:
-        return 0.0
-    top_k = set(retrieved_ids[:k])
-    hits = sum(1 for eid in expected_ids if eid in top_k)
-    return hits / len(expected_ids)
-
-
-def mrr(retrieved_ids: List[str], expected_ids: List[str]) -> float:
-    """Mean Reciprocal Rank — position of first relevant result."""
-    expected_set = set(expected_ids)
-    for i, rid in enumerate(retrieved_ids):
-        if rid in expected_set:
-            return 1.0 / (i + 1)
-    return 0.0
-
-
-def ndcg_at_k(retrieved_ids: List[str], expected_ids: List[str], k: int) -> float:
-    """Normalized Discounted Cumulative Gain at K."""
-    expected_set = set(expected_ids)
-    dcg = 0.0
-    for i, rid in enumerate(retrieved_ids[:k]):
-        if rid in expected_set:
-            dcg += 1.0 / math.log2(i + 2)  # i+2 because log2(1) = 0
-
-    # Ideal DCG: all relevant docs at top
-    ideal_dcg = sum(1.0 / math.log2(i + 2) for i in range(min(len(expected_ids), k)))
-    return dcg / ideal_dcg if ideal_dcg > 0 else 0.0
-
-
-# ---------- Statistical Comparison ----------
-
-
-def paired_ttest(a: List[float], b: List[float]) -> Dict[str, Any]:
-    """Paired t-test + Cohen's d effect size. Pure Python, no scipy needed."""
-    n = len(a)
-    if n < 2 or n != len(b):
-        return {"p_value": 1.0, "t_stat": 0.0, "effect_size": 0.0, "significant": False}
-
-    diffs = [b[i] - a[i] for i in range(n)]
-    mean_d = sum(diffs) / n
-    var_d = sum((d - mean_d) ** 2 for d in diffs) / (n - 1)
-    std_d = var_d**0.5 if var_d > 0 else 1e-10
-
-    t_stat = mean_d / (std_d / n**0.5)
-
-    # Approximate p-value using normal distribution for large n
-    # For n >= 30 this is reasonable; for smaller n it's conservative
-    z = abs(t_stat)
-    # Approximation of 2-tailed p from standard normal
-    p_value = 2 * (1 - 0.5 * (1 + math.erf(z / 2**0.5)))
-
-    # Cohen's d
-    pooled_std = (
-        (sum((ai - sum(a) / n) ** 2 for ai in a) + sum((bi - sum(b) / n) ** 2 for bi in b))
-        / (2 * n - 2)
-    ) ** 0.5
-    cohens_d = (sum(b) / n - sum(a) / n) / pooled_std if pooled_std > 0 else 0.0
-
-    effect_label = "negligible"
-    if abs(cohens_d) >= 0.8:
-        effect_label = "large"
-    elif abs(cohens_d) >= 0.5:
-        effect_label = "medium"
-    elif abs(cohens_d) >= 0.2:
-        effect_label = "small"
-
-    return {
-        "t_stat": round(t_stat, 4),
-        "p_value": round(p_value, 6),
-        "cohens_d": round(cohens_d, 4),
-        "effect_size": effect_label,
-        "significant": p_value < 0.05,
-        "mean_diff": round(mean_d, 4),
-    }
 
 
 # ---------- Config Management ----------
@@ -229,6 +164,7 @@ class QueryResult:
     recall_20: float = 0.0
     mrr_val: float = 0.0
     ndcg_10: float = 0.0
+    distractor_rate_10: float = 0.0
     latency_ms: float = 0.0
     category: str = ""
 
@@ -239,6 +175,12 @@ class TestRunResult:  # noqa: pytest will skip due to __init__
     config_name: str
     query_results: List[QueryResult] = field(default_factory=list)
     timestamp: str = ""
+    complexity: int = 0
+
+    @property
+    def mean_distractor_rate_10(self) -> float:
+        vals = [q.distractor_rate_10 for q in self.query_results]
+        return sum(vals) / len(vals) if vals else 0.0
 
     @property
     def mean_recall_5(self) -> float:
@@ -287,37 +229,31 @@ class TestRunResult:  # noqa: pytest will skip due to __init__
         }
 
 
-def run_single_query(query_data: Dict[str, Any], api_url: str) -> QueryResult:
-    """Execute a single recall query and compute metrics."""
+def run_single_query(
+    query_data: Dict[str, Any],
+    api_url: str,
+    *,
+    distractor_ids: Optional[set] = None,
+    recall_params: Optional[Dict[str, Any]] = None,
+) -> QueryResult:
+    """Execute a single recall query and compute metrics (incl. distractor rate)."""
     query = query_data["query"]
     expected_ids = query_data.get("expected_ids", [])
     category = query_data.get("category", "unknown")
+    distractor_ids = distractor_ids or set()
+    recall_params = recall_params or {}
 
     start = time.perf_counter()
     try:
-        resp = requests.get(
-            f"{api_url}/recall",
-            params={"query": query, "limit": 20},
-            headers=get_headers(),
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
+        data = recall(api_url, get_headers(), query, **recall_params)
+    except Exception as e:  # noqa: BLE001
         print(f"  WARNING: Query failed: {query[:50]}... — {e}")
         return QueryResult(
             query=query, expected_ids=expected_ids, retrieved_ids=[], category=category
         )
 
     latency_ms = (time.perf_counter() - start) * 1000
-
-    results = data.get("results", data.get("memories", []))
-    retrieved_ids = []
-    for r in results:
-        mem = r.get("memory", r)
-        mid = str(mem.get("id", r.get("id", "")))
-        if mid:
-            retrieved_ids.append(mid)
+    retrieved_ids = extract_ids(data)
 
     return QueryResult(
         query=query,
@@ -328,21 +264,32 @@ def run_single_query(query_data: Dict[str, Any], api_url: str) -> QueryResult:
         recall_20=recall_at_k(retrieved_ids, expected_ids, 20),
         mrr_val=mrr(retrieved_ids, expected_ids),
         ndcg_10=ndcg_at_k(retrieved_ids, expected_ids, 10),
+        distractor_rate_10=distractor_rate_at_k(retrieved_ids, distractor_ids, 10),
         latency_ms=latency_ms,
         category=category,
     )
 
 
-def run_test(config_name: str, queries: List[Dict], api_url: str) -> TestRunResult:
+def run_test(
+    config_name: str,
+    queries: List[Dict],
+    api_url: str,
+    *,
+    config: Optional[Dict[str, str]] = None,
+    distractor_ids: Optional[set] = None,
+    recall_params: Optional[Dict[str, Any]] = None,
+) -> TestRunResult:
     """Run all test queries with a specific config."""
     result = TestRunResult(
         config_name=config_name, timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     )
+    result.complexity = config_complexity(config or {})
 
     for i, q in enumerate(queries):
-        qr = run_single_query(q, api_url)
+        qr = run_single_query(
+            q, api_url, distractor_ids=distractor_ids, recall_params=recall_params
+        )
         result.query_results.append(qr)
-        # Progress dot
         hit = "." if qr.recall_10 > 0 else "x"
         print(hit, end="", flush=True)
         if (i + 1) % 50 == 0:
@@ -350,6 +297,18 @@ def run_test(config_name: str, queries: List[Dict], api_url: str) -> TestRunResu
 
     print(f" [{len(queries)}/{len(queries)}]")
     return result
+
+
+def build_scorecard(result: TestRunResult) -> Dict[str, Any]:
+    """The legible scorecard: NDCG@10 primary, distractor-rate guardrail,
+    latency + complexity tiebreakers."""
+    return {
+        "name": result.config_name,
+        "ndcg_10": result.mean_ndcg_10,
+        "distractor_rate_10": result.mean_distractor_rate_10,
+        "latency_ms": result.mean_latency,
+        "complexity": result.complexity,
+    }
 
 
 def print_summary(result: TestRunResult) -> None:
@@ -360,6 +319,8 @@ def print_summary(result: TestRunResult) -> None:
     print(f"  Recall@20:  {result.mean_recall_20:.3f}")
     print(f"  MRR:        {result.mean_mrr:.3f}")
     print(f"  NDCG@10:    {result.mean_ndcg_10:.3f}")
+    print(f"  Distractor@10: {result.mean_distractor_rate_10:.3f} (lower better)")
+    print(f"  Complexity:   {result.complexity} active knobs")
     print(f"  Latency:    {result.mean_latency:.0f}ms avg")
 
     cats = result.by_category()
@@ -430,6 +391,8 @@ def save_results(result: TestRunResult, output_dir: Path) -> Path:
             "mrr": result.mean_mrr,
             "ndcg_10": result.mean_ndcg_10,
             "latency_ms": result.mean_latency,
+            "distractor_rate_10": result.mean_distractor_rate_10,
+            "complexity": result.complexity,
         },
         "by_category": result.by_category(),
         "queries": [
@@ -440,6 +403,7 @@ def save_results(result: TestRunResult, output_dir: Path) -> Path:
                 "recall_10": q.recall_10,
                 "mrr": q.mrr_val,
                 "ndcg_10": q.ndcg_10,
+                "distractor_rate_10": q.distractor_rate_10,
                 "latency_ms": round(q.latency_ms, 1),
                 "category": q.category,
             }
@@ -474,6 +438,32 @@ def main() -> None:
     )
     parser.add_argument("--api-url", type=str, default=API_URL, help="AutoMem API URL")
     parser.add_argument("--output-dir", type=str, default=str(RESULTS_DIR), help="Results dir")
+    parser.add_argument(
+        "--distractors",
+        type=int,
+        default=0,
+        help="Inject N aged labelled distractor memories before testing",
+    )
+    parser.add_argument(
+        "--expand-relations", action="store_true", help="Recall with expand_relations"
+    )
+    parser.add_argument(
+        "--no-current-only",
+        action="store_true",
+        help="Recall with current_only=false (include archived)",
+    )
+    parser.add_argument(
+        "--recency-bias",
+        type=str,
+        default=None,
+        choices=["on", "off", "auto"],
+        help="Recall recency_bias override",
+    )
+    parser.add_argument(
+        "--consolidate",
+        action="store_true",
+        help="Run a real consolidation pass (dry_run=false) before recall",
+    )
     args = parser.parse_args()
 
     # Load test set
@@ -492,6 +482,22 @@ def main() -> None:
     queries = load_test_set(args.test_set)
     print(f"Loaded {len(queries)} test queries from {args.test_set}")
 
+    recall_params = {
+        "expand_relations": args.expand_relations,
+        "current_only": not args.no_current_only,
+    }
+    if args.recency_bias is not None:
+        recall_params["recency_bias"] = args.recency_bias
+
+    distractor_ids: set = set()
+    if args.distractors > 0:
+        payloads = make_distractor_memories(args.distractors)
+        distractor_ids = set(inject_distractors(args.api_url, get_headers(), payloads))
+        print(f"Injected {len(distractor_ids)} distractor memories")
+    if args.consolidate:
+        steps = run_consolidation(args.api_url, get_headers())
+        print(f"Consolidation pass complete: {list(steps.keys())}")
+
     output_dir = Path(args.output_dir)
 
     if args.sweep:
@@ -509,7 +515,14 @@ def main() -> None:
             restart_api_with_config(config, api_url=args.api_url)
             time.sleep(2)
 
-            result = run_test(config_name, queries, args.api_url)
+            result = run_test(
+                config_name,
+                queries,
+                args.api_url,
+                config=config,
+                distractor_ids=distractor_ids,
+                recall_params=recall_params,
+            )
             all_results.append(result)
             print_summary(result)
             save_results(result, output_dir)
@@ -535,14 +548,28 @@ def main() -> None:
         print(f"\n--- Running baseline: {args.compare} ---")
         restart_api_with_config(config_a, api_url=args.api_url)
         time.sleep(2)
-        result_a = run_test(args.compare, queries, args.api_url)
+        result_a = run_test(
+            args.compare,
+            queries,
+            args.api_url,
+            config=config_a,
+            distractor_ids=distractor_ids,
+            recall_params=recall_params,
+        )
         print_summary(result_a)
         save_results(result_a, output_dir)
 
         print(f"\n--- Running candidate: {args.config} ---")
         restart_api_with_config(config_b, api_url=args.api_url)
         time.sleep(2)
-        result_b = run_test(args.config, queries, args.api_url)
+        result_b = run_test(
+            args.config,
+            queries,
+            args.api_url,
+            config=config_b,
+            distractor_ids=distractor_ids,
+            recall_params=recall_params,
+        )
         print_summary(result_b)
         save_results(result_b, output_dir)
 
@@ -555,7 +582,14 @@ def main() -> None:
         restart_api_with_config(config, api_url=args.api_url)
         time.sleep(2)
 
-        result = run_test(args.config, queries, args.api_url)
+        result = run_test(
+            args.config,
+            queries,
+            args.api_url,
+            config=config,
+            distractor_ids=distractor_ids,
+            recall_params=recall_params,
+        )
         print_summary(result)
         save_results(result, output_dir)
 
