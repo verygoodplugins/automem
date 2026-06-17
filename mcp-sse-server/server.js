@@ -61,6 +61,28 @@ function summarizeUpstreamErrorBody(status, data) {
   return message ? String(message) : `HTTP ${status}`;
 }
 
+function stripUndefinedValues(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
+}
+
+const ASSOCIATION_FAILURE_DETAIL_LIMIT = 5;
+
+function formatAssociationResultMessage(data) {
+  if (!data?.summary) {
+    return data?.message || 'Association created successfully';
+  }
+
+  const failures = Array.isArray(data.failed) ? data.failed : [];
+  const visibleFailures = failures.slice(0, ASSOCIATION_FAILURE_DETAIL_LIMIT);
+  const failureParts = visibleFailures
+    .map((item) => `failed index ${item.index}: ${item.reason || 'unknown error'}`)
+  const omittedCount = failures.length - visibleFailures.length;
+  if (omittedCount > 0) {
+    failureParts.push(`${omittedCount} more failure${omittedCount === 1 ? '' : 's'} omitted`);
+  }
+  return failureParts.length ? `${data.summary}; ${failureParts.join('; ')}` : data.summary;
+}
+
 function isRetryableFetchError(error) {
   if (!error) return false;
   const name = error.name || '';
@@ -318,14 +340,13 @@ export class AutoMemClient {
     const r = await this._request('GET', path, undefined, options);
     return r;
   }
-  async associateMemories(args, options) {
-    const r = await this._request('POST', 'associate', {
-      memory1_id: args.memory1_id,
-      memory2_id: args.memory2_id,
-      type: args.type,
-      strength: args.strength
-    }, options);
-    return { success: true, message: r.message || 'Association created successfully' };
+  async associateMemories(args = {}, options) {
+    const { associations, ...singleAssociation } = args;
+    const body = Array.isArray(associations)
+      ? { associations }
+      : stripUndefinedValues(singleAssociation);
+    const r = await this._request('POST', 'associate', body, options);
+    return { success: true, message: formatAssociationResultMessage(r), response: r };
   }
   async updateMemory(args, options) {
     const { memory_id, ...updates } = args;
@@ -509,7 +530,7 @@ export function buildMcpServer(client) {
     },
     {
       name: 'associate_memories',
-      description: 'Create an association between two memories with a relationship type and strength',
+      description: 'Create one association or a batch of associations between memories',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         type: 'object',
@@ -522,8 +543,38 @@ export function buildMcpServer(client) {
             description: 'Relationship type between the two memories',
           },
           strength: { type: 'number', minimum: 0, maximum: 1, description: 'Relationship strength (0-1)' },
+          associations: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 500,
+            description: 'Batch of associations to create. Each item uses memory1_id, memory2_id, type, and strength.',
+            items: {
+              type: 'object',
+              properties: {
+                memory1_id: { type: 'string', description: 'ID of the source memory' },
+                memory2_id: { type: 'string', description: 'ID of the target memory' },
+                type: {
+                  type: 'string',
+                  enum: RELATION_TYPES,
+                  description: 'Relationship type between the two memories',
+                },
+                strength: {
+                  type: 'number',
+                  minimum: 0,
+                  maximum: 1,
+                  description: 'Relationship strength (0-1)',
+                },
+              },
+              required: ['memory1_id', 'memory2_id', 'type', 'strength'],
+              additionalProperties: true,
+            },
+          },
         },
-        required: ['memory1_id', 'memory2_id', 'type', 'strength']
+        anyOf: [
+          { required: ['memory1_id', 'memory2_id', 'type', 'strength'] },
+          { required: ['associations'] },
+        ],
+        additionalProperties: true,
       }
     },
     {

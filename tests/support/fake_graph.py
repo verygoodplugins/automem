@@ -46,6 +46,7 @@ class FakeGraph:
         self.memories: Dict[str, Dict[str, Any]] = {}
         self.nodes: set[str] = set()
         self.relationships: List[Dict[str, Any]] = []
+        self.association_error_types: set[str] = set()
 
         # Enrichment tracking
         self.temporal_calls: List[Dict[str, Any]] = []
@@ -427,6 +428,44 @@ class FakeGraph:
 
         # Association creation
         if (
+            "UNWIND $rows AS row" in query
+            and "MATCH (m1:Memory" in query
+            and "MATCH (m2:Memory" in query
+            and "MERGE (m1)-[r:" in query
+        ):
+            relation_type = "RELATES_TO"
+            match = re.search(r"MERGE \(m1\)-\[r:([A-Z_]+)\]->\(m2\)", query)
+            if match:
+                relation_type = match.group(1)
+            if relation_type in self.association_error_types:
+                raise RuntimeError(f"simulated association error for {relation_type}")
+            result_rows = []
+            for row in params.get("rows") or []:
+                memory1_id = str(row.get("memory1_id") or "")
+                memory2_id = str(row.get("memory2_id") or "")
+                if memory1_id not in self.memories or memory2_id not in self.memories:
+                    continue
+                props = row.get("props") if isinstance(row.get("props"), dict) else {}
+                strength = props.get("strength")
+                self.relationships.append(
+                    {
+                        "id1": memory1_id,
+                        "id2": memory2_id,
+                        "type": relation_type,
+                        "strength": float(0.5 if strength is None else strength),
+                        "context": props.get("context"),
+                        "reason": props.get("reason"),
+                        "kind": props.get("kind"),
+                        "origin": props.get("origin"),
+                        "confidence": props.get("confidence"),
+                        "similarity": props.get("similarity"),
+                        "updated_at": props.get("updated_at"),
+                    }
+                )
+                result_rows.append([row.get("index"), memory1_id, memory2_id])
+            return FakeResult(result_rows)
+
+        if (
             "MATCH (m1:Memory" in query
             and "MATCH (m2:Memory" in query
             and "MERGE (m1)-[r:" in query
@@ -437,12 +476,13 @@ class FakeGraph:
             match = re.search(r"MERGE \(m1\)-\[r:([A-Z_]+)\]->\(m2\)", query)
             if match:
                 relation_type = match.group(1)
+            strength = params.get("strength")
             self.relationships.append(
                 {
                     "id1": memory1_id,
                     "id2": memory2_id,
                     "type": relation_type,
-                    "strength": float(params.get("strength") or 0.5),
+                    "strength": float(0.5 if strength is None else strength),
                     "context": params.get("context"),
                     "reason": params.get("reason"),
                     "kind": params.get("kind"),

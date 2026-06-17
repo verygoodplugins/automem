@@ -155,7 +155,33 @@ The MCP bridge exposes these MCP tools:
 
 ## Recall Ordering
 
-`associate_memories` accepts only the 11 authorable semantic relationship types. Auto-generated labels such as `SIMILAR_TO`, `PRECEDED_BY`, and `DISCOVERED` remain readable on recall surfaces but are not exposed as authoring choices in the MCP schema.
+`associate_memories` accepts either a single association:
+
+```json
+{
+  "memory1_id": "...",
+  "memory2_id": "...",
+  "type": "RELATES_TO",
+  "strength": 0.9
+}
+```
+
+or a batch of up to 500 associations:
+
+```json
+{
+  "associations": [
+    {
+      "memory1_id": "...",
+      "memory2_id": "...",
+      "type": "RELATES_TO",
+      "strength": 0.9
+    }
+  ]
+}
+```
+
+Batch calls return a concise summary and item-indexed failures when only some associations succeed. `associate_memories` accepts only the 11 authorable semantic relationship types. Auto-generated labels such as `SIMILAR_TO`, `PRECEDED_BY`, and `DISCOVERED` remain readable on recall surfaces but are not exposed as authoring choices in the MCP schema.
 
 `recall_memory` defaults to relevance ranking (`sort: "score"`). For chronological recaps (e.g. “what happened since X”), set:
 
