@@ -987,7 +987,7 @@ def create_memory_blueprint_full(
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
-        if "associations" in payload:
+        if isinstance(payload.get("associations"), list):
             return _create_association_batch(
                 payload=payload,
                 coerce_importance_fn=coerce_importance,

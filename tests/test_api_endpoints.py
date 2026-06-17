@@ -3342,6 +3342,39 @@ def test_create_association_batch_rejects_empty_array(client, mock_state, auth_h
     assert "'associations' must be a non-empty array" in data["message"]
 
 
+def test_create_association_single_ignores_non_list_associations_key(
+    client, mock_state, auth_headers
+):
+    """Legacy single-association payloads should tolerate an unrelated associations key."""
+    mem1_id = "44444444-4444-4444-4444-444444444444"
+    mem2_id = "55555555-5555-5555-5555-555555555555"
+    mock_state.memory_graph.memories[mem1_id] = {
+        "id": mem1_id,
+        "content": "Memory 1",
+    }
+    mock_state.memory_graph.memories[mem2_id] = {
+        "id": mem2_id,
+        "content": "Memory 2",
+    }
+
+    response = client.post(
+        "/associate",
+        json={
+            "memory1_id": mem1_id,
+            "memory2_id": mem2_id,
+            "type": "RELATES_TO",
+            "strength": 0.8,
+            "associations": None,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data["status"] == "success"
+    assert len(mock_state.memory_graph.relationships) == 1
+
+
 # ==================== Test Startup Recall ====================
 
 

@@ -43,7 +43,7 @@ Memory
   - Body: `{ "memory1_id": "...", "memory2_id": "...", "type": "RELATES_TO", "strength": 0.9 }`
   - Batch body: `{ "associations": [{ "memory1_id": "...", "memory2_id": "...", "type": "RELATES_TO", "strength": 0.9 }] }` (max 500)
   - Single response: `{ "status": "success", ... }`
-  - Batch response: `{ "status": "success"|"partial_success", "created_count": N, "failed_count": N, "succeeded": [...], "failed": [...], "summary": "N/M associations created successfully" }`
+  - Batch response: `{ "status": "success"|"partial_success", "created_count": C, "failed_count": F, "succeeded": [...], "failed": [...], "summary": "C/M associations created successfully" }`
   - Batch requests return `201` when every item succeeds and `207` when one or more items fail validation or reference missing memories.
   - `type` accepts only the 11 authorable semantic relationship types. System-generated labels such as `SIMILAR_TO`, `PRECEDED_BY`, and `DISCOVERED` are readable/filterable but cannot be created via this endpoint.
 
