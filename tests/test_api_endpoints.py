@@ -3212,7 +3212,7 @@ def test_create_association_batch_all_success(client, mock_state, auth_headers):
                     "memory1_id": mem_ids[0],
                     "memory2_id": mem_ids[1],
                     "type": "RELATES_TO",
-                    "strength": 0.8,
+                    "strength": 0.0,
                 },
                 {
                     "memory1_id": mem_ids[1],
@@ -3236,6 +3236,7 @@ def test_create_association_batch_all_success(client, mock_state, auth_headers):
     assert [item["index"] for item in data["succeeded"]] == [0, 1]
     assert data["failed"] == []
     assert len(mock_state.memory_graph.relationships) == 2
+    assert mock_state.memory_graph.relationships[0]["strength"] == 0.0
     prefers = [
         rel for rel in mock_state.memory_graph.relationships if rel["type"] == "PREFERS_OVER"
     ]
@@ -3331,6 +3332,56 @@ def test_create_association_batch_all_item_failures(client, mock_state, auth_hea
     assert data["created_count"] == 0
     assert data["failed_count"] == 1
     assert data["summary"] == "0/1 associations created successfully"
+
+
+def test_create_association_batch_query_error_reports_partial_success(
+    client, mock_state, auth_headers
+):
+    """Later grouped write failures should not hide earlier successful writes."""
+    mem_ids = [
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+        "33333333-3333-3333-3333-333333333333",
+    ]
+    for index, memory_id in enumerate(mem_ids, start=1):
+        mock_state.memory_graph.memories[memory_id] = {
+            "id": memory_id,
+            "content": f"Memory {index}",
+        }
+    mock_state.memory_graph.association_error_types = {"PREFERS_OVER"}
+
+    response = client.post(
+        "/associate",
+        json={
+            "associations": [
+                {
+                    "memory1_id": mem_ids[0],
+                    "memory2_id": mem_ids[1],
+                    "type": "RELATES_TO",
+                    "strength": 0.8,
+                },
+                {
+                    "memory1_id": mem_ids[1],
+                    "memory2_id": mem_ids[2],
+                    "type": "PREFERS_OVER",
+                    "strength": 0.9,
+                    "reason": "Clearer",
+                },
+            ]
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 207
+    data = response.get_json()
+    assert data["status"] == "partial_success"
+    assert data["created_count"] == 1
+    assert data["failed_count"] == 1
+    assert data["summary"] == "1/2 associations created successfully"
+    assert [item["index"] for item in data["succeeded"]] == [0]
+    failures = {item["index"]: item["reason"] for item in data["failed"]}
+    assert failures == {1: "Failed to create association batch for relation type PREFERS_OVER"}
+    assert len(mock_state.memory_graph.relationships) == 1
 
 
 def test_create_association_batch_rejects_empty_array(client, mock_state, auth_headers):

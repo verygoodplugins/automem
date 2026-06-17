@@ -214,8 +214,18 @@ def _create_association_batch(
                     {"rows": rows},
                 )
             except Exception:
-                logger.exception("Failed to create association batch")
-                abort_fn(500, description="Failed to create association batch")
+                logger.exception(
+                    "Failed to create association batch for relation type %s",
+                    relation_type,
+                )
+                for row in rows:
+                    failed.append(
+                        _association_failure(
+                            row["index"],
+                            f"Failed to create association batch for relation type {relation_type}",
+                        )
+                    )
+                continue
 
             created_indexes = set()
             for result_row in list(getattr(result, "result_set", []) or []):
