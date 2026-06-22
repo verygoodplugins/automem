@@ -50,7 +50,7 @@ make status          # Check deployment status
 
 ## API Endpoints
 
-The `automem/api` module provides **28 endpoints** (admin: 2, memory: 10, recall: 4, graph: 5, health: 1, enrichment: 2, consolidation: 2, stream: 2). Additionally, 12 legacy routes remain in `app.py` for backward compatibility—combined total of 40 if both sets are active.
+The `automem/api` module registers all HTTP routes as Flask blueprints—there are **no routes in `app.py`** (it only wires the app together via `register_blueprints`). It exposes ~31 distinct paths across these blueprint modules: memory, recall, graph, entity, admin, backup, enrichment, consolidation, stream, viewer, and health.
 
 ### Core Memory Operations
 - `POST /memory` - Store a memory with content, tags, importance, metadata, and optional embedding
@@ -87,10 +87,10 @@ The `automem/api` module provides **28 endpoints** (admin: 2, memory: 10, recall
 ### Memory Consolidation Engine
 
 The `consolidation.py` module implements biological memory patterns:
-- **Decay** - Hourly exponential relevance updates (fractional-day decay keeps quick passes meaningful)
-- **Creative** - Discovers hidden associations during "REM-like" processing (hourly)
-- **Clustering** - Semantic grouping to compress related memories (every 6 hours)
-- **Forgetting** - Archives low-importance memories (daily)
+- **Decay** - Daily exponential relevance updates (`CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400`; fractional-day math keeps shorter intervals meaningful)
+- **Creative** - Discovers hidden associations during "REM-like" processing (weekly, `604800s`)
+- **Clustering** - Semantic grouping to compress related memories (monthly, `2592000s`)
+- **Forgetting** - Archives low-importance memories (**disabled by default**; `CONSOLIDATION_FORGET_INTERVAL_SECONDS=0`)
 
 Scheduling is managed by `ConsolidationScheduler` with configurable intervals via environment variables.
 
@@ -270,7 +270,7 @@ SEARCH_WEIGHT_EXACT=0.20           # Exact phrase in metadata
 SEARCH_WEIGHT_IMPORTANCE=0.10      # Memory importance score
 SEARCH_WEIGHT_RECENCY=0.10         # Decay per SEARCH_RECENCY_* (default: linear over 180 days)
 SEARCH_WEIGHT_CONFIDENCE=0.05      # Memory confidence score
-SEARCH_WEIGHT_RELEVANCE=0.0        # Consolidation decay relevance (disabled by default)
+SEARCH_WEIGHT_RELEVANCE=0.0        # Experimental — consolidation decay relevance; 0.0 = no-op (off by default)
 SEARCH_WEIGHT_TEMPORAL=0.1         # Relative-recency bonus, only when recency_bias re-rank runs
 RECALL_RECENCY_BIAS=off            # Recency re-rank default: off|on|auto (per-request recency_bias param overrides)
 

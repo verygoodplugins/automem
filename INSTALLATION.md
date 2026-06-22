@@ -145,11 +145,11 @@ Once deployed, your Railway services pull updates automatically — no `git push
 | `qdrant` | `qdrant/qdrant:latest` | Auto-redeploy nightly |
 | `falkordb` | `falkordb/falkordb:latest` | Auto-redeploy nightly |
 
-The `:stable` tag always points at the most recent `vX.Y.Z` release tag. New releases ship through [release-please](https://github.com/googleapis/release-please) — when a release PR is merged to `main`, GitHub Actions builds the image, publishes the new version (`v0.15.2`, `v0.15`, `v0`), and re-points `:stable`. See [`CHANGELOG.md`](CHANGELOG.md) for the release history.
+The `:stable` tag always points at the most recent `vX.Y.Z` release tag. New releases ship through [release-please](https://github.com/googleapis/release-please) — when a release PR is merged to `main`, GitHub Actions builds the image, publishes the new version (`v0.16.0`, `v0.16`, `v0`), and re-points `:stable`. See [`CHANGELOG.md`](CHANGELOG.md) for the release history.
 
 **Want to ship faster than nightly?** In Railway, click the service → **Deployments** → **Deploy latest** to pull `:stable` immediately.
 
-**Want to pin a specific version?** Edit the service's image (Settings → Source → Image) from `:stable` to `:v0.15.2` (or any published `vX.Y.Z`). Roll back the same way.
+**Want to pin a specific version?** Edit the service's image (Settings → Source → Image) from `:stable` to `:v0.16.0` (or any published `vX.Y.Z`). Roll back the same way.
 
 **Using the legacy MCP image path?** `ghcr.io/verygoodplugins/automem/mcp-sse-server:stable` is dual-published from the same workflow and tracks the same release tags — existing deployments keep working without changes.
 
@@ -198,7 +198,7 @@ Reference these in AutoMem config via `${{service.<name>.internalHost}}`
 
    - In Railway → **+ New** → **Deploy from Docker image**
    - Image: `ghcr.io/verygoodplugins/automem:stable`
-   - (Optional) pin a specific version with `:v0.15.2` instead of `:stable`
+   - (Optional) pin a specific version with `:v0.16.0` instead of `:stable`
    - Add a public domain: **Settings → Networking → Generate Domain**
 
 2. Configure environment variables:
