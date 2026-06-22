@@ -228,7 +228,7 @@ AutoMem is pre-1.0 and honest about its rough edges. The active ones for recall 
 **API and integration**
 - [API reference](docs/API.md) — endpoints, scoring, enrichment
 - [Remote MCP](docs/MCP_SSE.md) — ChatGPT, Claude.ai, ElevenLabs
-- [Migrations](docs/MIGRATIONS.md) — moving from MCP SQLite
+- [Migrations](docs/MIGRATIONS.md) — embedding dimensions, 0.16.0 data migrations, MCP SQLite import
 
 **Research and comparison**
 - [Research foundation](docs/RESEARCH.md) — papers and how AutoMem implements them
@@ -237,6 +237,7 @@ AutoMem is pre-1.0 and honest about its rough edges. The active ones for recall 
 - [Publication bundle](benchmarks/publication/2026-05-arxiv/) — arXiv claim posture, reproducibility commands, and artifact manifest
 
 **Operations**
+- [Scripts](scripts/README.md) — maintenance, migration, recovery, and eval tooling, by lifecycle
 - [Health monitoring & backups](docs/MONITORING_AND_BACKUPS.md)
 - [Testing guide](docs/TESTING.md) — unit, integration, benchmarks
 

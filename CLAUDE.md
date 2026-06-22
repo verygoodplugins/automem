@@ -294,104 +294,31 @@ python -m spacy download en_core_web_sm
 
 ## Migration Tools
 
-Use the consolidated helper to migrate from the legacy MCP SQLite store, then
-optionally re-embed:
-
-```bash
-# Preview what will be imported
-python scripts/migrate_mcp_sqlite.py --dry-run
-
-# Run migration against a deployed instance
-python scripts/migrate_mcp_sqlite.py \
-  --db /path/to/sqlite_vec.db \
-  --automem-url https://automem.example.com \
-  --api-token $AUTOMEM_API_TOKEN
-
-# Refresh embeddings after the migration
-python scripts/reembed_embeddings.py --limit 200
-```
+Migrating from the legacy MCP SQLite store, upgrading to 0.16.0 (entity nodes,
+tag prefixes, relevance rescore), or changing embedding dimensions? The runbook
+is [docs/MIGRATIONS.md](docs/MIGRATIONS.md); the scripts are cataloged in
+[scripts/README.md](scripts/README.md).
 
 ## Utility Scripts
 
-The `scripts/` directory contains maintenance and recovery tools:
+The `scripts/` directory holds all maintenance, migration, recovery, and
+evaluation tooling. **[scripts/README.md](scripts/README.md) is the canonical
+catalog** — every script, grouped by lifecycle (routine / one-time / recovery /
+dev / bench / lab), with usage and links to deep-dive docs. Update the catalog
+rather than re-listing scripts here.
 
-### Backup & Recovery
-- **backup_automem.py** - Creates backups of FalkorDB and Qdrant data
-- **recover_from_qdrant.py** - Recovers graph data from Qdrant vector store
+Agents most often reach for:
+- **`browse_memories.py`** — read-only FalkorDB + Qdrant browser (`search` / `inspect` / `stats` / `diagnose`); never modifies data.
+- **`backup_automem.py`** / **`restore_from_backup.py`** — snapshot and restore both stores.
 
-### Data Management
-- **cleanup_memory_types.py** - Cleans up memory type classifications
-- **reclassify_with_llm.py** - Uses LLM to reclassify memory types
-- **deduplicate_qdrant.py** - Removes duplicate vectors from Qdrant
-- **reembed_embeddings.py** - Regenerates embeddings for existing memories
-- **reenrich_batch.py** - Batch re-enrichment of memories
-
-### Monitoring
-- **health_monitor.py** - Health monitoring service for production deployments
-
-### Local Development Bootstrap
-- **scripts/bootstrap_dev.sh** - Creates `.venv` with Python 3.12, refreshes `venv -> .venv`, installs dev dependencies, and installs pre-commit hooks
+Deep dives: [docs/MIGRATIONS.md](docs/MIGRATIONS.md) (migrations),
+[docs/MONITORING_AND_BACKUPS.md](docs/MONITORING_AND_BACKUPS.md) (backup/recovery),
+[docs/RECALL_QUALITY_LAB.md](docs/RECALL_QUALITY_LAB.md) (the `lab/` recall-tuning harness).
 
 ### Benchmark Ownership
 - Official benchmark claims, baselines, and release-gating benchmark flows stay in `automem`.
 - Exploratory eval work such as ruleset sweeps, seeded corpora, scenario authoring, and cross-agent/back-end comparisons belongs in `automem-evals`.
 - External eval repos should use the local service contract documented in `docs/EVALS_CONTRACT.md`.
-
-### Database Browser (`scripts/browse_memories.py`)
-
-Interactive CLI for browsing production FalkorDB + Qdrant databases. Connects using `.env` credentials. Read-only — never modifies data.
-
-#### Subcommands
-
-**`search`** — Find memories by text, date, type, tag, or importance:
-```bash
-# All October 2025 memories
-python scripts/browse_memories.py search --from 2025-10 --to 2025-10
-
-# Text search with date filter
-python scripts/browse_memories.py search --text "Eva" --from 2025-10
-
-# Filter by type and importance
-python scripts/browse_memories.py search --type Decision --min-importance 0.8
-
-# Sort by relevance, cap at 50 results
-python scripts/browse_memories.py search --sort relevance -n 50
-
-# Include archived memories (excluded by default)
-python scripts/browse_memories.py search --text "old project" --include-archived
-```
-
-Output shows: ID, datetime, type, importance, relevance, confidence, relationship count, content preview, tags, and entity tags. Ends with a summary of type distribution, importance stats, top tags, and relationship totals.
-
-**`inspect <id>`** — Deep-dive into a single memory:
-```bash
-python scripts/browse_memories.py inspect 2751e70e   # 4+ char prefix works
-python scripts/browse_memories.py inspect 2751e70e-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
-Shows: full content, all FalkorDB properties, Qdrant presence/payload, and all graph relationships (outgoing + incoming with type, strength, and related content).
-
-**`stats`** — Database overview:
-```bash
-python scripts/browse_memories.py stats          # Quick stats
-python scripts/browse_memories.py stats --full   # + FalkorDB/Qdrant consistency check
-```
-
-Shows: total count, date range, archived count, memories by month (bar chart), type distribution, importance buckets. With `--full`, compares all IDs between FalkorDB and Qdrant and reports mismatches.
-
-**`diagnose <id>`** — Why a memory isn't surfacing in recall:
-```bash
-python scripts/browse_memories.py diagnose 2751e70e
-```
-
-Checks: FalkorDB existence, archived status, Qdrant presence + embedding quality, recency score (configurable decay, default 180-day), simulated relevance score breakdown (decay factor, access factor, relationship factor, importance floor), and current search weight config. Reports issues at `[CRITICAL]`, `[WARNING]`, and `[INFO]` severity levels.
-### Recall Quality Lab (`scripts/lab/`)
-- **clone_production.sh** - Clone production FalkorDB + Qdrant data to local Docker for safe testing
-- **create_test_queries.py** - Generate test queries with expected results from local data
-- **run_recall_test.py** - Run recall tests with IR metrics (Recall@K, MRR, NDCG), config comparison, and parameter sweeps
-- **configs/** - JSON config files that override search weights for A/B testing (e.g., `baseline.json`, `issue78_relevance_weight.json`)
-
-All scripts support `--help` for detailed usage information.
 
 ## Local vs Railway Workflow
 
