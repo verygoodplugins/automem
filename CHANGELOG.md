@@ -2,6 +2,80 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.16.0](https://github.com/verygoodplugins/automem/compare/v0.15.2...v0.16.0) (2026-06-26)
+
+
+### Features
+
+* **api:** add admin backup endpoint ([#162](https://github.com/verygoodplugins/automem/issues/162)) ([8b1f264](https://github.com/verygoodplugins/automem/commit/8b1f2649f7b5a2f4020a66b4f9eed84ae2c4bcba))
+* **api:** support bulk memory associations ([1221e36](https://github.com/verygoodplugins/automem/commit/1221e36dcd184dcdf89333c22d3e171c6a4ec504))
+* **api:** support bulk memory associations ([#198](https://github.com/verygoodplugins/automem/issues/198)) ([28eb916](https://github.com/verygoodplugins/automem/commit/28eb916eae430f80ebee57d44f63b712b9d45398))
+* **benchmarks:** LongMemEval failure-mode diagnosis harness + judge quota preflight ([#183](https://github.com/verygoodplugins/automem/issues/183)) ([f99bece](https://github.com/verygoodplugins/automem/commit/f99becea8858959313eb6e0914332ace1f5a18a2))
+* **consolidation:** expose cluster threshold and min size as env vars ([#163](https://github.com/verygoodplugins/automem/issues/163)) ([7e731f3](https://github.com/verygoodplugins/automem/commit/7e731f358bbd11b565960ee20456b7083a778c36))
+* **enrichment:** expose classification fallback-rate metrics in /enrichment/status ([#188](https://github.com/verygoodplugins/automem/issues/188)) ([0b522a9](https://github.com/verygoodplugins/automem/commit/0b522a9c61f2dcfe0aa980dc529ed357a90d786c))
+* **entity:** harden identity cleanup and repair tooling ([#176](https://github.com/verygoodplugins/automem/issues/176)) ([827dfbc](https://github.com/verygoodplugins/automem/commit/827dfbca997544252046867cb42ee6b6533635a3))
+* **eval:** recall-quality optimization harness — lab foundation + design ([#197](https://github.com/verygoodplugins/automem/issues/197)) ([431433e](https://github.com/verygoodplugins/automem/commit/431433eb11ba3ee04d88a526581e2319657e2f39))
+* **graph:** support unbounded visualizer snapshots ([#141](https://github.com/verygoodplugins/automem/issues/141)) ([c730128](https://github.com/verygoodplugins/automem/commit/c730128e1eec3c729db905db044dd269b8eccb31))
+* **lab:** add aged labelled distractor injection ([cc5d546](https://github.com/verygoodplugins/automem/commit/cc5d546cdc947ca8b608d7a29be3599393db98e3))
+* **lab:** add config_complexity simplicity metric ([dfb10d9](https://github.com/verygoodplugins/automem/commit/dfb10d95fef5e598da5ecd0f0da3efc9a7b1d8d0))
+* **lab:** add distractor_rate_at_k precision guardrail metric ([872eab2](https://github.com/verygoodplugins/automem/commit/872eab2b68dda1dcb8df627fb8f68369e516f0a1))
+* **lab:** add lab_corpus with parameterized recall ([5e1e071](https://github.com/verygoodplugins/automem/commit/5e1e07156f2a52bb70b356cf6c506268f82f9329))
+* **lab:** add pick_winner scorecard decision rule ([3187eac](https://github.com/verygoodplugins/automem/commit/3187eac1ad6ed692799a9a875fc15336c0680d2a))
+* **lab:** add real consolidation pass helper ([48a7d4a](https://github.com/verygoodplugins/automem/commit/48a7d4aa2690878e99442b110abeeec7617356d3))
+* **lab:** isolate production clone restores ([#171](https://github.com/verygoodplugins/automem/issues/171)) ([aef90c0](https://github.com/verygoodplugins/automem/commit/aef90c026e6cbe9a2395a1ba80b2376fa66f0fd1))
+* **lab:** wire scorecard, distractors, recall params, consolidation into runner ([589ec30](https://github.com/verygoodplugins/automem/commit/589ec302562c89d15df61ae27488ef21e17725ed))
+* **recall:** add metadata sidecar search ([#177](https://github.com/verygoodplugins/automem/issues/177)) ([4e7956e](https://github.com/verygoodplugins/automem/commit/4e7956e109a588cce95d458b9ea4327fb0862efa))
+* **recall:** add state_mode=current|history recall alias ([#173](https://github.com/verygoodplugins/automem/issues/173)) ([b1df86c](https://github.com/verygoodplugins/automem/commit/b1df86c01ef07da848a084966818f2b100c8ba83))
+* **recall:** cap tag-score denominator to fix query-length bias ([#193](https://github.com/verygoodplugins/automem/issues/193)) ([cefa516](https://github.com/verygoodplugins/automem/commit/cefa51600be0af7a1f244d772bb3b96846a17708))
+* **recall:** date-aware ranking + latest-fact selection ([#158](https://github.com/verygoodplugins/automem/issues/158), [#159](https://github.com/verygoodplugins/automem/issues/159)) ([#187](https://github.com/verygoodplugins/automem/issues/187)) ([a6ed945](https://github.com/verygoodplugins/automem/commit/a6ed94589e446fc1e1d21c97b698c93c97952d05))
+* **recall:** make recency decay window and curve configurable ([#182](https://github.com/verygoodplugins/automem/issues/182)) ([dbb933f](https://github.com/verygoodplugins/automem/commit/dbb933fe05db9dda132ea14c27bcf9194b7076c0))
+* **recall:** ranking release — recency config, tag-score cap, relevance gate, date-aware ranking ([#182](https://github.com/verygoodplugins/automem/issues/182), [#193](https://github.com/verygoodplugins/automem/issues/193), [#186](https://github.com/verygoodplugins/automem/issues/186), [#187](https://github.com/verygoodplugins/automem/issues/187), [#183](https://github.com/verygoodplugins/automem/issues/183), [#184](https://github.com/verygoodplugins/automem/issues/184), [#188](https://github.com/verygoodplugins/automem/issues/188)) ([#194](https://github.com/verygoodplugins/automem/issues/194)) ([337fe98](https://github.com/verygoodplugins/automem/commit/337fe98914dc7090fec17c45ef906ea90e2cef77))
+* **scripts:** safer reclassify_with_llm.py with provider flags + tighter prompt ([#164](https://github.com/verygoodplugins/automem/issues/164)) ([a742602](https://github.com/verygoodplugins/automem/commit/a742602f5d6ad2dea5a4d3c387d5b49d610afe2c))
+
+
+### Bug Fixes
+
+* **api:** address copilot review on PR [#198](https://github.com/verygoodplugins/automem/issues/198) ([0466a1e](https://github.com/verygoodplugins/automem/commit/0466a1e8c3f9851db065eda10b80e63fad14f2c7))
+* **api:** handle grouped association write failures ([cd93df9](https://github.com/verygoodplugins/automem/commit/cd93df9de0f577fb746aa32c6d4d4769f7bbc641))
+* **backup:** make backup_automem.py runnable as `python scripts/backup_automem.py` ([#175](https://github.com/verygoodplugins/automem/issues/175)) ([edd9742](https://github.com/verygoodplugins/automem/commit/edd9742197e561c2f096e206b82d2c79ade1e5f2))
+* **benchmarks:** add publication verification bundle ([#166](https://github.com/verygoodplugins/automem/issues/166)) ([420d721](https://github.com/verygoodplugins/automem/commit/420d72190d202af5bff6d872404df7fa4176999b))
+* **consolidation:** skip eager first tick at startup to avoid FalkorDB load race ([#165](https://github.com/verygoodplugins/automem/issues/165)) ([1b812cf](https://github.com/verygoodplugins/automem/commit/1b812cf883cbc95632d5f9f1ed180d1865c0638a))
+* **docs:** keep dispatch payload arrays stable ([df6e9e8](https://github.com/verygoodplugins/automem/commit/df6e9e8cc22e98821ad2c36918ed6eefa0b09a0f))
+* **embedding:** fall back to per-item real embeddings before placeholders in batch path ([#189](https://github.com/verygoodplugins/automem/issues/189)) ([6e9c62c](https://github.com/verygoodplugins/automem/commit/6e9c62c13e48f2ceb999c64e6981e72a396b842f))
+* **entity:** restore person-shape exemption on the slug validation path ([#179](https://github.com/verygoodplugins/automem/issues/179)) ([5e29960](https://github.com/verygoodplugins/automem/commit/5e299601260aacbd056651a5eb62b8b51e9f32b1))
+* **entity:** stop validator over-rejecting real people, code tools, and event categories ([#178](https://github.com/verygoodplugins/automem/issues/178)) ([193b730](https://github.com/verygoodplugins/automem/commit/193b73055f7c1157371a139df0aa8742fa3d5353))
+* **lab:** address copilot review on PR [#197](https://github.com/verygoodplugins/automem/issues/197) ([45f80d6](https://github.com/verygoodplugins/automem/commit/45f80d60706a771fd170035ff076a0c435192ac9))
+* **lab:** align scorecard key contract (build_scorecard -&gt; pick_winner) ([7d91530](https://github.com/verygoodplugins/automem/commit/7d9153023d9b9a2dee039d07c4aea40097576efc))
+* **mcp-sse:** decouple /health liveness from upstream readiness ([#151](https://github.com/verygoodplugins/automem/issues/151)) ([5bcfb8b](https://github.com/verygoodplugins/automem/commit/5bcfb8b2ec5f2fb32ef56adf0bf5e3032f181530))
+* **mcp:** cap association failure summary ([ea4e08f](https://github.com/verygoodplugins/automem/commit/ea4e08fd35cc8aefd67e72ec482695a689cfc3e8))
+* **mcp:** surface stored metadata and updated_at in detailed recall format ([#184](https://github.com/verygoodplugins/automem/issues/184)) ([230416e](https://github.com/verygoodplugins/automem/commit/230416e982e48356d3c9f68458906ab2ed745f92))
+* **recall:** address copilot review on PR [#194](https://github.com/verygoodplugins/automem/issues/194) ([50b1647](https://github.com/verygoodplugins/automem/commit/50b16472f8a69570f8dd15a4fc15ce01bf5593c6))
+* **recall:** canonicalize / and : separators in context_tag matching ([3afd9d3](https://github.com/verygoodplugins/automem/commit/3afd9d36cf79833ddd59b126ad58c3797c448f74))
+* **recall:** canonicalize / and : separators in context_tag matching ([#203](https://github.com/verygoodplugins/automem/issues/203)) ([ba5e9ff](https://github.com/verygoodplugins/automem/commit/ba5e9ff5170056403beb5c9fc186cd37a1bf0761))
+* **recall:** gate query-independent scoring on topical evidence within tag scope ([#130](https://github.com/verygoodplugins/automem/issues/130)) ([#186](https://github.com/verygoodplugins/automem/issues/186)) ([c11b594](https://github.com/verygoodplugins/automem/commit/c11b5944dd7f3246edecb2947958f1f4d2e2ff92))
+* **recall:** hydrate semantic recall summaries ([#192](https://github.com/verygoodplugins/automem/issues/192)) ([76e845d](https://github.com/verygoodplugins/automem/commit/76e845dd8287e2ba697e0066874c9ee7ce0c3590))
+* **recall:** normalize graph keyword scores into the 0-1 component range ([#191](https://github.com/verygoodplugins/automem/issues/191)) ([3653ddf](https://github.com/verygoodplugins/automem/commit/3653ddf90554d265fa5d9f355e7521c7b9c41579))
+* **recall:** respect current memory state ([#170](https://github.com/verygoodplugins/automem/issues/170)) ([ed36b98](https://github.com/verygoodplugins/automem/commit/ed36b98e3e1569dde71aa430417b6549520f7068)), closes [#169](https://github.com/verygoodplugins/automem/issues/169) [#158](https://github.com/verygoodplugins/automem/issues/158) [#159](https://github.com/verygoodplugins/automem/issues/159)
+* **scripts:** add sys.path guard to reembed_embeddings.py ([d333cf0](https://github.com/verygoodplugins/automem/commit/d333cf025dfc3fcf3f750230bcb210800ae3f10c))
+
+
+### Documentation
+
+* add scripts catalog, recall-quality-lab guide, and 0.16.0 migrations ([f20c664](https://github.com/verygoodplugins/automem/commit/f20c664c9e5df0eaf3a03af9256c338a6d7ca939))
+* **bench:** log full judged 500q LongMemEval ship-config run with churn attribution ([41bf8d0](https://github.com/verygoodplugins/automem/commit/41bf8d0efdb1d285f5c62fdc318eb345b4749d98))
+* **eval:** Plan A — lab metric foundation (TDD, 9 tasks) ([0087dda](https://github.com/verygoodplugins/automem/commit/0087dda014eba858bf6fb127db9628fcb9db415a))
+* **eval:** Plan B — parallel matrix harness (TDD, 9 tasks) ([c8ddfb2](https://github.com/verygoodplugins/automem/commit/c8ddfb2dce120ddb4b343f470659edc1da10e384))
+* **evals:** mark Memora/FAMA/WRIT lifecycle diagnostics as diagnostic-only ([#174](https://github.com/verygoodplugins/automem/issues/174)) ([e8a3285](https://github.com/verygoodplugins/automem/commit/e8a3285681cc0b2d6b8d2d188bf481ffe63452ee))
+* **eval:** spec for recall-quality optimization harness ([b1a1995](https://github.com/verygoodplugins/automem/commit/b1a1995ba38ca9d57fb864bd67ffd4c3e9153ab5))
+* fix stale claims and document gated flags for 0.16.0 ([b152d64](https://github.com/verygoodplugins/automem/commit/b152d6472ff475d91f73bfbce0e2847a91602e9d))
+* note develop-branch contribution policy in README ([ccf02dd](https://github.com/verygoodplugins/automem/commit/ccf02ddc516864d405edce99b8f131fbc36b27e7))
+* **positioning:** add scout reference ([#168](https://github.com/verygoodplugins/automem/issues/168)) ([922d23b](https://github.com/verygoodplugins/automem/commit/922d23b6bf40575cdacd7bfe39288c9acd371176))
+* refresh benchmark currency for the neutral AMB run and prune stale archive docs ([3ff95bd](https://github.com/verygoodplugins/automem/commit/3ff95bd82e2afc50d45183dfdc5259c6ee89be42))
+* refresh benchmark currency for the neutral AMB run and prune stale archive docs ([#204](https://github.com/verygoodplugins/automem/issues/204)) ([89c30e0](https://github.com/verygoodplugins/automem/commit/89c30e0c56592fd8794976cec09d8dd8abf2b4f7))
+* refresh README and benchmark guidance ([#157](https://github.com/verygoodplugins/automem/issues/157)) ([bba31cc](https://github.com/verygoodplugins/automem/commit/bba31ccdb864c5fe70de56ed309ff6bd587cdb28))
+* **runtime:** align Docker viewer paths and setup guidance ([#155](https://github.com/verygoodplugins/automem/issues/155)) ([bbda79b](https://github.com/verygoodplugins/automem/commit/bbda79b37cc18066b1de9a83ba7a8487cd6c7a7b))
+* scripts catalog, recall quality lab guide, and 0.16.0 migration runbook ([#199](https://github.com/verygoodplugins/automem/issues/199)) ([f190ae5](https://github.com/verygoodplugins/automem/commit/f190ae5942cec46c77132bac56c24e74423b9598))
+
 ## [0.15.2](https://github.com/verygoodplugins/automem/compare/v0.15.1...v0.15.2) (2026-04-23)
 
 
