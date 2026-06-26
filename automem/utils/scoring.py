@@ -84,9 +84,15 @@ def _compute_recency_score(timestamp: Optional[str]) -> float:
 def _context_tag_hit(tags: Set[str], priority_tags: Set[str]) -> bool:
     if not tags or not priority_tags:
         return False
+    # Canonicalize ``/`` and ``:`` to a single ``:`` delimiter on both sides so a
+    # context_tag like ``project:foo`` matches a ``project/foo``-tagged memory
+    # (mirrors ``_expand_tag_prefixes`` in utils.tags). Match semantics are
+    # otherwise unchanged: exact, prefix, or substring.
+    norm_priorities = {re.sub(r"[:/]+", ":", priority) for priority in priority_tags}
     for tag in tags:
-        for priority in priority_tags:
-            if tag == priority or tag.startswith(priority) or priority in tag:
+        norm_tag = re.sub(r"[:/]+", ":", tag)
+        for priority in norm_priorities:
+            if norm_tag == priority or norm_tag.startswith(priority) or priority in norm_tag:
                 return True
     return False
 
