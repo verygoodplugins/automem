@@ -32,6 +32,7 @@ node_modules/
 
 # Experiment results (promote notable runs to tests/benchmarks/results/)
 /tests/benchmarks/experiments/results_*/
+data/
 
 # Recall Quality Lab data (snapshots, test results)
 /lab/snapshots/
