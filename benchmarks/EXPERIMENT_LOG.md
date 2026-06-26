@@ -2,8 +2,73 @@
 
 Tracks recall quality experiments with before/after benchmark results.
 
-**Baselines** are created with Voyage 4 embeddings (`EMBEDDING_PROVIDER=voyage`, `VECTOR_SIZE=1024`)
-on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
+**Internal-harness baselines** in this log are created with Voyage 4 embeddings
+(`EMBEDDING_PROVIDER=voyage`, `VECTOR_SIZE=1024`) on the snapshot-based bench
+infrastructure (PR #97, merged 2026-03-02). These are AutoMem's *own* LoCoMo /
+LongMemEval harness — engineering baselines, **not** the neutral Agent Memory
+Benchmark. For the current outbound/release numbers (the neutral AMB run on
+FastEmbed `bge-base-en-v1.5` 768d with a Gemini answerer + judge), see the
+**Neutral Agent Memory Benchmark (AMB)** section immediately below.
+
+## Neutral Agent Memory Benchmark (AMB) — 0.16.0
+
+Everything else in this log is AutoMem's **internal** LoCoMo / LongMemEval
+harness. For **outbound / release claims**, the current numbers come from the
+neutral [Agent Memory Benchmark](https://automem.ai/benchmarks) (AMB, by
+vectorize-io) — a third-party harness AutoMem does not control. These supersede
+the internal-harness numbers for all outbound use.
+
+**Regime stamp (always cite with the numbers):** AMB neutral harness, Gemini
+answerer (`gemini-3.1-pro-preview`) + Gemini judge (`gemini-2.5-flash-lite`),
+single-query / RAG mode. AutoMem provider: self-spinning Docker (FalkorDB +
+Qdrant), **FastEmbed-local `bge-base-en-v1.5` (768d)**, no embedding API keys,
+`ENRICHMENT_ENABLED=false`. Run name `automem-sub`.
+
+**BEAM — the apples-to-apples axis** (same benchmark, same harness vs published
+competitors). Rubric-mean (0 / 0.5 / 1 per item, averaged — a different scale
+than the pass/fail Core-3 benchmarks):
+
+| Split | AutoMem (95% CI) | Honcho | Δ vs Honcho | Mean ctx tokens |
+|-------|------------------|--------|-------------|-----------------|
+| beam/100k | 67.5% (×3, spread 1.8pp) | 63.0% | **+4.5pp** | ~3.8k |
+| beam/500k | 65.6% ±2.8 (n=700) | 64.9% | +0.7pp | ~3.9k |
+| beam/1m | 63.8% ±2.7 (n=700) | 63.1% | +0.7pp | ~3.9k |
+| beam/10m | **57.4% ±5.5 (n=200)** | **40.6%** | **+16.8pp** | ~3.9k |
+
+AutoMem degrades gracefully (67.5% → 57.4%, −10pp across a 100× haystack
+increase) where Honcho collapses (63.0% → 40.6% — flat through 1M, then a cliff
+at 10M). Clear **#2 on BEAM** behind vectorize's own Hindsight (~73→64% across
+the curve). The **10M result is the centerpiece:** at 10M tokens context-stuffing
+is physically impossible, so the score reflects retrieval architecture, not
+context window. Efficiency is architectural — AutoMem feeds **~2.6–4.8k** mean
+context tokens to the answerer at every scale vs the board leader's 17–27k.
+
+**Core-3 (conversational) — AutoMem trails the leaders (the honest other half):**
+
+| Split | AutoMem (95% CI) | Hindsight (yardstick) |
+|-------|------------------|------------------------|
+| locomo/locomo10 | 85.1% ±1.8 (n=1540) | 92% |
+| longmemeval/s | 74.4% ±3.8 (n=500) | 94.6% |
+| personamem/32k | 76.1% ±3.4 (n=589) | 86.6% |
+
+AutoMem's strength is large-context BEAM scaling + token efficiency, **not**
+verbatim conversational recall. Honcho's Core-3 numbers are self-reported on its
+own harness (directional, not head-to-head) — only BEAM is the clean comparison;
+Hindsight is the apples-to-apples Core-3 yardstick (same AMB harness).
+
+**Status — submitted, not official.** AMB results are submitted to the neutral
+board; the vectorize-io provider PR is **under review**. Frame as "submitted, PR
+under review" and "run it yourself" — never "live/official on the leaderboard"
+until the PR merges. Outputs are committed and public; `AUTOMEM_REPRODUCE.md`
+gives one command per split, and the public GHCR image
+(`ghcr.io/verygoodplugins/automem:amb-v1`) self-spins the full stack with no API
+keys. **No cross-system latency/speed claims** — AMB timings are AutoMem's own
+hardware only.
+
+**Canonical homes:** the full per-tier head-to-head and reproducibility recipe
+live on [automem.ai/benchmarks](https://automem.ai/benchmarks); the full
+per-split run summary lives in `automem-evals`
+(`data/results/SUMMARY-amb-submission-2026-06.md`).
 
 ## Tiered Benchmarking
 
@@ -18,18 +83,15 @@ on the snapshot-based bench infrastructure (PR #97, merged 2026-03-02).
 
 ## Results
 
-Current headline results:
+Internal-harness headline results (engineering baselines — superseded for
+outbound/release claims by the **Neutral Agent Memory Benchmark (AMB)** section
+above):
 
 | Benchmark | Scope | Score | Retrieval | Notes |
 |-----------|-------|-------|-----------|-------|
 | LongMemEval full | 500 questions | **87.00% (435/500)** | recall@5 **97.00% (485/500)** | Fresh publication verification run with `gpt-5-mini` answerer + `gpt-5.4-mini-2026-03-17` judge; `judge_errors=0`, `memory_ingest_failures=0`, harness `publishable=true`. |
 | LongMemEval mini | 30 questions, stratified 5 per type | **70.00% (21/30)** | recall@5 **96.67% (29/30)** | Representative canary from the May 2026 publication verification run; do not compare to legacy prefix slices. |
 | LoCoMo full | 10 conversations, 1986 questions | **84.74% (1683/1986)** | -- | Fresh publication verification run with pinned `gpt-5.4-mini-2026-03-17` judge; 444 judge calls, 0 skips/errors. |
-
-For arXiv and release-facing claims, use the curated publication bundle at
-[`benchmarks/publication/2026-05-arxiv/`](publication/2026-05-arxiv/). It
-separates canonical, exploratory, historical, and external-reported results so
-paper text does not accidentally over-claim from diagnostic runs.
 
 Detailed experiment history:
 
@@ -60,7 +122,44 @@ Detailed experiment history:
 | 2026-05-17 | Publication verification | feat/automem-arxiv-publication | **85.20% (259/304)** | **84.74% (1683/1986)** | **70.00% (21/30)** | **87.00% (435/500)** | Fresh local publication reruns. LoCoMo full used pinned `gpt-5.4-mini-2026-03-17` judge, 444 judge calls, 0 skips/errors, estimated judge cost `$0.7909`, artifact `benchmarks/results/locomo_baseline_20260517_193934.json`, sha256 `a75816e9a6d3302c22b34852b75ac19a9d9f5cb27d1a109e0af7e49359330716`. LongMemEval full used `gpt-5-mini` answerer + `gpt-5.4-mini-2026-03-17` judge, recall@5 **97.00% (485/500)**, `memory_ingest_failures=0`, `judge_errors=0`, `publishable=true`, artifact `benchmarks/results/longmemeval-full-publication-20260518.json`, sha256 `ed6f7cf69b7be6fa0050536ec2b0f947f5510afd8c2a374b3fafb9cde009da75`. |
 | 2026-06-06 | main-refresh (no judge) | main @ b1df86c | **83.40% (196/235)** | -- | -- | -- | Same local `.env`, snapshot eval after #173. Comparison anchor for PR #124/#72 hardening; cat-5 judge disabled, so 69 complex questions are skipped and the result is directional. |
 | 2026-06-06 | PR #124 + #72 hardening | feat/entity-identity-hardening | **83.40% (+0.0)** | **81.71% (1260/1542)** | -- | -- | Entity quality gates, safe Entity-node migration/dedup, current-state identity synthesis, and disabled scheduled synthesis. Flat vs same-env main on LoCoMo-mini; full run is judge-off with 444 cat-5 questions skipped, so focused graph/entity regressions carry the entity-pollution risk. |
-| 2026-06-11 | Ranking release (develop) | develop @ 0b522a9 | -- | -- | **43.3% (13/30)**, recall@5 30/30 | **86.00% (430/500)**, recall@5 **96.60% (483/500)** | Full judged run with ship config: server `RECALL_RECENCY_BIAS=auto`, harness `temporal-answer` (`temporal_answer_hint=true`); `gpt-5-mini` answerer + pinned `gpt-5.4-mini-2026-03-17` judge; `judge_errors=0`, `memory_ingest_failures=0`. Artifact `benchmarks/results/lme_full_ship_20260611.json`, sha256 `1e53f715220d2ab4e2666106d56fd954fa4b3e4818a1bce7d060738b1bdd2d4b`. **Server-change vs harness-prompt split:** recall deltas are server-side only (prompt can't move recall); accuracy delta vs the 2026-05-17 verification run (87.00%) is within answerer noise — the two identical-config reference runs (2026-04-26 vs 2026-05-17) flip 28 answers (12 newly wrong / 16 newly right) while recall flips just 1 question, so recall is the deterministic signal and accuracy ±1pp is replicate noise. **Recall churn attribution (17 questions vs the 2026-04-26 canonical):** targeted re-runs of exactly the 17 churned questions on current main at defaults and develop at defaults show 8 of the 10 new misses also miss on current main (and the 7 newly-fixed questions already hit on current main) — i.e. 15 of the 17 churned questions (8 misses + 7 fixes) moved with this week's main merges (#191 keyword normalization), making the April canonical 97.2% floor stale; current main at defaults measures ~97.0% (485/500 est). Develop at defaults differs from current main by **1 question** (`9ea5eabc`, a near-tie rank-5/6 flip consistent with #187's deterministic timestamp tiebreak). The remaining 1 question (`00ca467f`) hits at defaults on both codebases and has no recency-trigger keyword (likely residual run noise, possibly ship-env). Attribution artifacts: `lme_churn17_main_defaults.*`, `lme_churn17_dev_defaults.*`, `analyze_churn17.py`. Failure-mode distribution vs canonical is stable (`failure_modes_ship_llm_20260612.json`: answer-construction 39 vs 41, retrieval-gap 7 vs 6); watch item: `missing-date-use` 2→6 in temporal-reasoning despite `temporal_answer_hint` (weak evidence given answerer noise). Per-category accuracy vs canonical: preference 63% vs 60%, single-session-user 94% vs 91%, assistant 100% vs 98%, multi-session 81% flat, knowledge-update 86% vs 88%, temporal 86% vs 88%. Mini-floor row (43.3% accuracy) is the judge-off develop canary, not comparable to judged rows. |
+| 2026-06-11 | Ranking release (develop) | develop @ 0b522a9 | -- | -- | **43.3% (13/30)**, recall@5 30/30 | **86.00% (430/500)**, recall@5 **96.60% (483/500)** | Full judged run, ship config (`RECALL_RECENCY_BIAS=auto`, harness `temporal-answer`); `gpt-5-mini` answerer + pinned `gpt-5.4-mini-2026-03-17` judge; `judge_errors=0`, `memory_ingest_failures=0`. Artifact `lme_full_ship_20260611.json` (sha256 `1e53f71…`). **Recall is the deterministic signal**; the accuracy delta vs the 2026-05-17 run (87.00%) is within answerer noise (±1pp replicate). Churn attribution shows the April 97.2% recall floor is stale — current main at defaults measures ~97.0% (485/500 est). Mini-floor row (43.3%) is the judge-off develop canary, not comparable to judged rows. → full forensic breakdown: [2026-06-11 ranking release: recall churn attribution](#2026-06-11-ranking-release-recall-churn-attribution). |
+
+### 2026-06-11 ranking release: recall churn attribution
+
+Deep dive for the `2026-06-11` ship-config row above (develop @ `0b522a9`), kept
+verbatim out of the table cell for readability. Nothing here is dropped.
+
+- **Server-change vs harness-prompt split.** Recall deltas are server-side only
+  (the harness prompt can't move recall). The accuracy delta vs the 2026-05-17
+  verification run (87.00%) is within answerer noise: the two identical-config
+  reference runs (2026-04-26 vs 2026-05-17) flip 28 answers (12 newly wrong / 16
+  newly right) while recall flips just 1 question — so recall is the
+  deterministic signal and accuracy ±1pp is replicate noise.
+- **Recall churn attribution (17 questions vs the 2026-04-26 canonical).**
+  Targeted re-runs of exactly the 17 churned questions on current main at
+  defaults and develop at defaults show 8 of the 10 new misses also miss on
+  current main (and the 7 newly-fixed questions already hit on current main) —
+  i.e. 15 of the 17 churned questions (8 misses + 7 fixes) moved with that week's
+  main merges (#191 keyword normalization), making the April canonical 97.2%
+  floor stale; current main at defaults measures ~97.0% (485/500 est).
+- **Develop vs current main: 1 question.** Develop at defaults differs from
+  current main by one question (`9ea5eabc`, a near-tie rank-5/6 flip consistent
+  with #187's deterministic timestamp tiebreak). The remaining churned question
+  (`00ca467f`) hits at defaults on both codebases and has no recency-trigger
+  keyword (likely residual run noise, possibly ship-env).
+- **Artifacts.** `lme_churn17_main_defaults.*`, `lme_churn17_dev_defaults.*`,
+  `analyze_churn17.py`; primary result
+  `benchmarks/results/lme_full_ship_20260611.json` (sha256
+  `1e53f715220d2ab4e2666106d56fd954fa4b3e4818a1bce7d060738b1bdd2d4b`).
+- **Failure-mode distribution** vs canonical is stable
+  (`failure_modes_ship_llm_20260612.json`: answer-construction 39 vs 41,
+  retrieval-gap 7 vs 6). Watch item: `missing-date-use` 2→6 in temporal-reasoning
+  despite `temporal_answer_hint` (weak evidence given answerer noise).
+- **Per-category accuracy vs canonical:** preference 63% vs 60%,
+  single-session-user 94% vs 91%, assistant 100% vs 98%, multi-session 81% flat,
+  knowledge-update 86% vs 88%, temporal 86% vs 88%.
+- **Mini-floor row (43.3% accuracy)** is the judge-off develop canary, not
+  comparable to judged rows.
 
 ### Category Breakdown (LoCoMo-mini)
 
