@@ -30,6 +30,10 @@ from falkordb import FalkorDB
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from automem.config import EMBEDDING_MODEL, VECTOR_SIZE
 
 logger = logging.getLogger("reembed")

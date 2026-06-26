@@ -5,10 +5,23 @@ This document provides step-by-step instructions for migrating between different
 **Heads up for existing deployments:** The default embedding dimension is now **1024d** (voyage-4) for new installs. If your Qdrant collection uses a different dimension (e.g. 3072d from `text-embedding-3-large` or 768d from `text-embedding-3-small`), **no action is needed** — `VECTOR_SIZE_AUTODETECT=true` (the default) automatically adopts your existing collection dimension on startup. To explicitly pin your dimension, set `VECTOR_SIZE=<your-dimension>` in your `.env`. To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`.
 
 ## Table of Contents
+
+**Embedding dimension migrations**
 - [Migrating to 1024d (voyage-4 default)](#migrating-to-1024d-voyage-4-default)
 - [Upgrading to 3072d Embeddings](#upgrading-to-3072d-embeddings)
 - [Downgrading to 768d Embeddings](#downgrading-to-768d-embeddings)
+
+**Data & schema migrations**
+- [Upgrading to 0.16.0](#upgrading-to-0160)
+- [Importing from the legacy MCP SQLite store](#importing-from-the-legacy-mcp-sqlite-store)
+
+**Reference**
 - [Troubleshooting](#troubleshooting)
+- [Best Practices](#best-practices)
+
+> Every script below is cataloged in [scripts/README.md](../scripts/README.md).
+> The embedding-dimension sections are about re-vectorizing; the data & schema
+> sections are one-time, idempotent FalkorDB/Qdrant migrations.
 
 ---
 
@@ -173,6 +186,90 @@ export EMBEDDING_MODEL=text-embedding-3-small
 ```
 
 Then run `reembed_embeddings.py` to recreate the collection with 768d vectors.
+
+---
+
+## Upgrading to 0.16.0
+
+0.16.0 adds several **one-time, idempotent** data migrations. None are required
+to keep an existing instance running — run them to adopt the new behavior. Each
+is safe to re-run and most support `--dry-run`. **Back up first**
+(`python scripts/backup_automem.py`).
+
+### Promote entity tags to first-class Entity nodes
+
+Earlier versions recorded entities only as `entity:{category}:{slug}` tags on
+Memory nodes. This migration creates real `Entity` nodes and links them with
+`REFERENCED_IN` relationships, which enables entity-centric recall and graph
+queries.
+
+```bash
+python scripts/migrate_entity_nodes.py --dry-run   # preview
+python scripts/migrate_entity_nodes.py             # apply (idempotent)
+```
+
+> First-class entity-node **synthesis** (`IDENTITY_SYNTHESIS_ENABLED`) is
+> experimental and gated **off** by default while people-entity word-pair noise
+> is addressed ([#181](https://github.com/verygoodplugins/automem/issues/181)).
+> Promote nodes when you opt into that feature. If your clone has noisy generated
+> entity tags, clean them first with
+> [`scripts/lab/repair_entity_tags.py`](../scripts/lab/repair_entity_tags.py)
+> (`--mode audit` → review the plan → `--mode execute`, with `--mode rollback`
+> available).
+
+### Backfill tag prefixes
+
+Recomputes the `tag_prefixes` sidecar on every memory in FalkorDB and Qdrant so
+prefix-match recall stays consistent with the current tag set. Run once after
+upgrading.
+
+```bash
+python scripts/backfill_tag_prefixes.py
+```
+
+### Rescore relevance
+
+Recomputes every `relevance_score` with the corrected consolidation decay
+(`base_decay_rate=0.01` + importance floor), undoing the damage from the old
+over-aggressive `0.1` rate. Targets a local clone by default; pass `--target` to
+point at production.
+
+```bash
+python scripts/rescore_relevance.py --dry-run     # preview against local
+python scripts/rescore_relevance.py               # apply against local
+```
+
+### Clean up invalid memory types
+
+Reclassifies legacy/invalid type values (e.g. `session_start`, `interaction`)
+back to the valid set (`Decision`, `Pattern`, `Preference`, `Style`, `Habit`,
+`Insight`, `Context`). Reads `.env`; takes no flags.
+
+```bash
+python scripts/cleanup_memory_types.py
+```
+
+---
+
+## Importing from the legacy MCP SQLite store
+
+If you're moving off the old MCP memory service, replay its `sqlite_vec.db` into
+AutoMem via the API. Original timestamps, tags, and importance are preserved, and
+the legacy payload is kept under `metadata['legacy']`. Always `--dry-run` first.
+
+```bash
+# Preview what will be imported
+python scripts/migrate_mcp_sqlite.py --dry-run
+
+# Run the import against a deployed instance
+python scripts/migrate_mcp_sqlite.py \
+  --db /path/to/sqlite_vec.db \
+  --automem-url https://automem.example.com \
+  --api-token $AUTOMEM_API_TOKEN
+
+# Refresh embeddings afterward
+python scripts/reembed_embeddings.py --limit 200
+```
 
 ---
 

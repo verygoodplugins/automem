@@ -122,7 +122,7 @@ Both workflows publish on every `v*` tag push (cut by [release-please](https://g
 Railway → service → **Deployments** → **Deploy latest**.
 
 **Pin to a specific version:**
-Service → **Settings** → **Source** → **Image** → change `:stable` to `:v0.15.2`. Railway will pull and redeploy.
+Service → **Settings** → **Source** → **Image** → change `:stable` to `:v0.16.0`. Railway will pull and redeploy.
 
 **Roll back:**
 Same flow — change the image tag to the prior `vX.Y.Z`, redeploy. Persistent volumes (FalkorDB data) are unaffected.

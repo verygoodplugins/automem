@@ -209,6 +209,15 @@ Until each PNG exists, the table cells will render as broken-image icons on GitH
 
 _Screenshots will be added once the referenced in-repo image assets are available._
 
+## Known limitations
+
+AutoMem is pre-1.0 and honest about its rough edges. The active ones for recall quality:
+
+- **Tags are a hard gate, not a soft boost.** Tags filter *before* scoring, so a memory missing the queried tag won't surface even on a perfect semantic match. Within a tag scope, high-importance off-topic memories can still over-rank — mitigated by the opt-in `RECALL_RELEVANCE_GATE`, not yet on by default ([#130](https://github.com/verygoodplugins/automem/issues/130)).
+- **Temporal and preference updates.** Recall doesn't yet reliably prefer the newest version of a conflicting fact, or fully resolve multi-session preference updates. The `RECALL_RECENCY_BIAS=auto` re-rank helps temporal-intent queries but stays opt-in pending broader validation ([#158](https://github.com/verygoodplugins/automem/issues/158), [#159](https://github.com/verygoodplugins/automem/issues/159)).
+- **The MCP SSE bridge doesn't forward `state_mode`.** The HTTP recall API supports it; the SSE proxy doesn't pass it through yet ([#172](https://github.com/verygoodplugins/automem/issues/172)).
+- **Entity-node synthesis is experimental and off by default.** First-class `Entity` nodes (`IDENTITY_SYNTHESIS_ENABLED`) are gated off while people-entity word-pair noise is addressed ([#181](https://github.com/verygoodplugins/automem/issues/181)).
+
 ## Docs, community, and license
 
 **Setup**
@@ -219,7 +228,7 @@ _Screenshots will be added once the referenced in-repo image assets are availabl
 **API and integration**
 - [API reference](docs/API.md) — endpoints, scoring, enrichment
 - [Remote MCP](docs/MCP_SSE.md) — ChatGPT, Claude.ai, ElevenLabs
-- [Migrations](docs/MIGRATIONS.md) — moving from MCP SQLite
+- [Migrations](docs/MIGRATIONS.md) — embedding dimensions, 0.16.0 data migrations, MCP SQLite import
 
 **Research and comparison**
 - [Research foundation](docs/RESEARCH.md) — papers and how AutoMem implements them
@@ -228,6 +237,7 @@ _Screenshots will be added once the referenced in-repo image assets are availabl
 - [Publication bundle](benchmarks/publication/2026-05-arxiv/) — arXiv claim posture, reproducibility commands, and artifact manifest
 
 **Operations**
+- [Scripts](scripts/README.md) — maintenance, migration, recovery, and eval tooling, by lifecycle
 - [Health monitoring & backups](docs/MONITORING_AND_BACKUPS.md)
 - [Testing guide](docs/TESTING.md) — unit, integration, benchmarks
 

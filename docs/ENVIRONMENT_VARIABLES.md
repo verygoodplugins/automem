@@ -145,6 +145,7 @@ VECTOR_SIZE=768                                  # must match the model's output
 | `QDRANT_PORT` | Qdrant port (used with `QDRANT_HOST`) | `6333` | `6333` |
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
 | `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
+| `QDRANT_ENSURE_PAYLOAD_INDEXES` | Create payload indexes on startup for faster filtered search | `true` | set `false` for read-only Qdrant credentials |
 | `VECTOR_SIZE` | Embedding dimension | `1024` | `1024` (voyage-4), `3072` (large), `768` (small) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
 
@@ -323,12 +324,12 @@ Controls how different factors are weighted in memory recall scoring.
 | `SEARCH_RECENCY_WINDOW_DAYS` | Recency decay window in days | `180` | Used by the recency score, not a weight |
 | `SEARCH_RECENCY_CURVE` | Recency decay curve | `linear` | `linear` (score reaches 0 at the window) or `exp` (window acts as half-life); invalid values fall back to `linear` |
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
-| `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` | Decay-derived score (see below) |
+| `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` (experimental) | Decay-derived score; `0.0` is a no-op (off). See note below before enabling |
 | `SEARCH_WEIGHT_TEMPORAL` | Relative-recency re-rank bonus | `0.1` | Only applied when the `recency_bias` re-rank runs (see `RECALL_RECENCY_BIAS`); candidate timestamps are min-max normalized across the result set. Negative values clamp to `0.0`. Inert by default |
 
 The `SEARCH_WEIGHT_*` variables act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
 
-**`SEARCH_WEIGHT_RELEVANCE` (new):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
+**`SEARCH_WEIGHT_RELEVANCE` (experimental):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
 
 ### Memory Content Limits
 
@@ -358,6 +359,7 @@ Background worker that checks FalkorDB ↔ Qdrant consistency.
 | `RECALL_EXPANSION_LIMIT` | Total max expansion results (relations + entities) | `25` |
 | `RECALL_METADATA_SEARCH_ENABLED` | Enable bounded metadata sidecar recall candidates | `true` |
 | `RECALL_MIN_SCORE` | Drop results scoring below this final score (per-request `min_score` overrides) | `0.0` (disabled) |
+| `RECALL_ADAPTIVE_FLOOR` | Drop weak tail results when there is a clear score gap between strong and weak candidates (per-request `adaptive_floor` overrides) | `true` |
 | `RECALL_RELEVANCE_GATE` | Within-pool relevance gate: when a query is present and a result's best topical evidence (max of vector/keyword/metadata/exact components) is below this threshold, its query-independent components (importance, confidence, recency, tag overlap) are scaled by `evidence / gate` — a linear ramp. Stops high-importance off-topic memories from dominating tag-scoped recall (issue #130). Negative values clamp to `0.0`, values above `1.0` clamp to `1.0`. | `0.0` (disabled) |
 | `RECALL_RECENCY_BIAS` | Default mode for the relative-recency re-rank (issues #158/#159): `off` (never), `on` (always), or `auto` (only when the query expresses temporal intent — "latest", "current", "what changed", ...). When active, `SEARCH_WEIGHT_TEMPORAL × relative_recency` is added to each candidate's final score after dedup/expansion, so the newest version of a conflicting fact can outrank an older, heavier one. Per-request override via the `recency_bias` query param; the response echoes `"recency_bias": "on"` when the re-rank ran. Invalid values fall back to `off`. | `off` |
 
