@@ -8,6 +8,7 @@
   <a href="https://automem.ai/discord"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://x.com/automem_ai"><img src="https://img.shields.io/badge/X-@automem__ai-000000?logo=x&logoColor=white" alt="X" /></a>
   <a href="benchmarks/EXPERIMENT_LOG.md"><img src="https://img.shields.io/badge/LongMemEval-87.00%25-success" alt="LongMemEval benchmark" /></a>
+  <a href="https://automem.ai/benchmarks"><img src="https://img.shields.io/badge/BEAM%2010M-57.4%25-success" alt="BEAM 10M on the Agent Memory Benchmark" /></a>
   <a href="https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic"><img src="https://img.shields.io/badge/Deploy%20on-Railway-0B0D0E?logo=railway&logoColor=white" alt="Deploy on Railway" /></a>
 </p>
 
@@ -29,7 +30,16 @@ AutoMem stores typed relationships *and* embeddings. When you ask "why did we ch
 
 Current canonical benchmark results are **87.00%** on LongMemEval full with **97.00% recall@5**, and **84.74%** on LoCoMo full. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology, judge policy, category breakdowns, and historical runs.
 
-Exploratory BEAM validation is tracked separately in [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md); those numbers are diagnostic and not apples-to-apples product claims against published 1M/10M BEAM results.
+### On the neutral Agent Memory Benchmark
+
+AutoMem **0.16.0** was run through the neutral [Agent Memory Benchmark](https://automem.ai/benchmarks) (AMB, by vectorize-io) on a self-spinning FalkorDB + Qdrant stack with **FastEmbed-local `bge-base-en-v1.5` (768d)** — no embedding API keys. The honest summary: AutoMem's strength is **large-context scaling and efficiency**, not verbatim conversational recall.
+
+- **BEAM is the apples-to-apples axis** (same benchmark, same Gemini answerer + judge). AutoMem scores above Honcho at every BEAM tier, and the gap widens with scale: **+4.5pp at 100k, +0.7pp at 500k, +0.7pp at 1M, +16.8pp at 10M**. AutoMem degrades gracefully — **67.5% → 57.4%** (−10pp) across a 100× haystack increase — while Honcho holds roughly flat through 1M, then drops to 40.6% at 10M. That places AutoMem **#2 on BEAM**, behind vectorize's own Hindsight (~73→64% across the curve).
+- **At 10M tokens, AutoMem holds 57.4% ±5.5%** while Honcho falls to ~41%. At that scale, context-stuffing is physically impossible, so the score reflects retrieval architecture, not context window.
+- **Efficiency is architectural:** AutoMem feeds the answerer **~2.6–4.8k context tokens** at every scale (mean), versus 17–27k for the board leader on BEAM.
+- **The honest other half:** on conversational Core-3, AutoMem **trails** the AMB leader Hindsight — locomo 85.1% vs 92%, longmemeval 74.4% vs 94.6%, personamem 76.1% vs 86.6%. Pick AutoMem for large-context scaling and efficiency, not for top-of-board verbatim recall.
+
+Outputs are committed and public, and [`AUTOMEM_REPRODUCE.md`](https://automem.ai/benchmarks) gives one command per split so you can **run it yourself**. AutoMem is **submitted to the neutral board (provider PR under review)** — not yet live on the public leaderboard. Full head-to-head numbers live at [automem.ai/benchmarks](https://automem.ai/benchmarks).
 
 ## Should you use AutoMem?
 
@@ -233,8 +243,8 @@ AutoMem is pre-1.0 and honest about its rough edges. The active ones for recall 
 **Research and comparison**
 - [Research foundation](docs/RESEARCH.md) — papers and how AutoMem implements them
 - [Comparison](docs/COMPARISON.md) — vs. RAG, vector DBs, building your own
-- [Benchmark history](benchmarks/EXPERIMENT_LOG.md) — LoCoMo, LongMemEval, and BEAM methodology and runs
-- [Publication bundle](benchmarks/publication/2026-05-arxiv/) — arXiv claim posture, reproducibility commands, and artifact manifest
+- [Benchmark history](benchmarks/EXPERIMENT_LOG.md) — internal LoCoMo / LongMemEval harness runs + the neutral AMB (BEAM + Core-3) summary
+- [AMB head-to-head + reproducibility](https://automem.ai/benchmarks) — neutral Agent Memory Benchmark results and the `AUTOMEM_REPRODUCE.md` "run it yourself" recipe
 
 **Operations**
 - [Scripts](scripts/README.md) — maintenance, migration, recovery, and eval tooling, by lifecycle
