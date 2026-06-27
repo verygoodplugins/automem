@@ -147,6 +147,23 @@ RECALL_METADATA_SEARCH_ENABLED = os.getenv(
     "no",
 }
 
+# Recall candidate-pool over-fetch. The vector store returns its top-K by raw
+# similarity, but the richer final score (importance, exact-match, tags) runs
+# only on those survivors — so a high-importance, exact-topic memory that is a
+# slightly weaker pure-vector match gets cut before its signal can lift it.
+# Over-fetch widens the pool the re-rank sees; the response is still trimmed to
+# the requested limit. Set OVERFETCH=1 to restore the legacy 1x behavior.
+RECALL_VECTOR_OVERFETCH = max(1, int(os.getenv("RECALL_VECTOR_OVERFETCH", "4")))
+# Absolute ceiling on the over-fetched candidate count, kept separate from the
+# user-facing RECALL_MAX_LIMIT so over-fetch isn't strangled by the response cap.
+RECALL_VECTOR_FETCH_CAP = max(1, int(os.getenv("RECALL_VECTOR_FETCH_CAP", "200")))
+
+# Internal artifact memory types that must never surface in user-facing /recall
+# results (e.g. consolidation cluster summaries). Comma-separated env override.
+RECALL_EXCLUDED_TYPES = frozenset(
+    t.strip() for t in os.getenv("RECALL_EXCLUDED_TYPES", "MetaPattern").split(",") if t.strip()
+)
+
 # Memory content size limits (governs auto-summarization on store)
 # Soft limit: Content above this triggers auto-summarization
 MEMORY_CONTENT_SOFT_LIMIT = int(os.getenv("MEMORY_CONTENT_SOFT_LIMIT", "500"))
