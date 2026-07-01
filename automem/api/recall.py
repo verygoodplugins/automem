@@ -1955,8 +1955,9 @@ def handle_recall(
             # pure-vector match would otherwise be cut before its signal can
             # lift it. Results are trimmed to `limit` downstream, so the
             # response size is unchanged. OVERFETCH=1 restores legacy behavior.
-            vector_fetch_limit = min(
-                per_query_limit * RECALL_VECTOR_OVERFETCH, RECALL_VECTOR_FETCH_CAP
+            vector_fetch_limit = max(
+                per_query_limit,
+                min(per_query_limit * RECALL_VECTOR_OVERFETCH, RECALL_VECTOR_FETCH_CAP),
             )
             if tag_filters and (query_str or embedding_param):
                 vector_fetch_limit = max(vector_fetch_limit, recall_max_limit)

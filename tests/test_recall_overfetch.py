@@ -117,3 +117,9 @@ def test_vector_overfetch_off_switch_uses_1x(overfetch_env, monkeypatch):
     assert last_limit == 5
     # without over-fetch the target never enters the candidate pool
     assert "lennard-bafoeg" not in ids
+
+
+def test_vector_fetch_cap_never_reduces_below_requested_limit(overfetch_env, monkeypatch):
+    monkeypatch.setattr(recall_module, "RECALL_VECTOR_FETCH_CAP", 3)
+    _ids, last_limit = _recall(overfetch_env)
+    assert last_limit == 5
