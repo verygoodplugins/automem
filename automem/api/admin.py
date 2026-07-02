@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
 
@@ -60,14 +60,11 @@ def _get_all_qdrant_ids(qdrant_client: Any, collection_name: str) -> Set[str]:
 
 def create_admin_blueprint_full(
     require_admin_token: Callable[[], None],
-    init_openai: Callable[[], None],
-    get_openai_client: Callable[[], Any],
     get_qdrant_client: Callable[[], Any],
     get_memory_graph: Callable[[], Any],
     point_struct: Any,
     collection_name: str,
-    get_vector_size: Callable[[], int],
-    embedding_model: str,
+    generate_real_embeddings_batch: Optional[Callable[[List[str]], List[List[float]]]],
     utc_now: Callable[[], str],
     logger: Any,
 ) -> Blueprint:
@@ -77,12 +74,8 @@ def create_admin_blueprint_full(
     def reembed() -> Any:
         require_admin_token()
 
-        # Ensure OpenAI and Qdrant are available
-        openai_client = get_openai_client()
-        if openai_client is None:
-            abort(
-                503, description="OpenAI API key not configured - cannot generate real embeddings"
-            )
+        if generate_real_embeddings_batch is None:
+            abort(503, description="Embedding provider is not configured")
 
         qdrant_client = get_qdrant_client()
         if qdrant_client is None:
@@ -178,16 +171,15 @@ def create_admin_blueprint_full(
             texts = [mem["content"] for mem in batch]
 
             try:
-                # Batch embedding request
-                resp = openai_client.embeddings.create(
-                    input=texts,
-                    model=embedding_model,
-                    dimensions=get_vector_size(),
-                )
+                embeddings = generate_real_embeddings_batch(texts)
+                if len(embeddings) != len(batch):
+                    raise ValueError(
+                        f"Embedding provider returned {len(embeddings)} vectors for "
+                        f"{len(batch)} memories"
+                    )
 
                 points = []
-                for mem, data in zip(batch, resp.data):
-                    embedding = data.embedding
+                for mem, embedding in zip(batch, embeddings):
                     # Preserve full payload from FalkorDB
                     payload_data = {
                         "content": mem["content"],
@@ -300,10 +292,8 @@ def create_admin_blueprint_full(
                 }
             )
 
-        # Ensure OpenAI is available for embedding
-        openai_client = get_openai_client()
-        if openai_client is None:
-            abort(503, description="OpenAI API key not configured - cannot generate embeddings")
+        if generate_real_embeddings_batch is None:
+            abort(503, description="Embedding provider is not configured")
 
         # Fetch full memory data for missing IDs
         # Process in batches to avoid huge IN clauses
@@ -356,15 +346,15 @@ def create_admin_blueprint_full(
             texts = [mem["content"] for mem in batch]
 
             try:
-                resp = openai_client.embeddings.create(
-                    input=texts,
-                    model=embedding_model,
-                    dimensions=get_vector_size(),
-                )
+                embeddings = generate_real_embeddings_batch(texts)
+                if len(embeddings) != len(batch):
+                    raise ValueError(
+                        f"Embedding provider returned {len(embeddings)} vectors for "
+                        f"{len(batch)} memories"
+                    )
 
                 points = []
-                for mem, data in zip(batch, resp.data):
-                    embedding = data.embedding
+                for mem, embedding in zip(batch, embeddings):
                     payload_data = {
                         "content": mem["content"],
                         "tags": mem["tags"],

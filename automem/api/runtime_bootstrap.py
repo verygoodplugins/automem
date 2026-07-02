@@ -58,9 +58,6 @@ def register_blueprints(
     authorable_relations: set[str],
     relationship_types: dict[str, dict[str, Any]],
     get_openai_client_fn: Callable[[], Any],
-    init_openai_fn: Callable[[], None],
-    effective_vector_size_fn: Callable[[], int],
-    embedding_model: str,
     build_consolidator_from_config_fn: Callable[[Any, Any], Any],
     persist_consolidation_run_fn: Callable[[Any, dict[str, Any]], None],
     build_scheduler_from_graph_fn: Callable[[Any], Any],
@@ -139,14 +136,11 @@ def register_blueprints(
 
     admin_bp = create_admin_blueprint_full(
         require_admin_token_fn,
-        init_openai_fn,
-        get_openai_client_fn,
         get_qdrant_client_fn,
         get_memory_graph_fn,
         point_struct_cls,
         collection_name,
-        effective_vector_size_fn,
-        embedding_model,
+        generate_real_embeddings_batch_fn,
         utc_now_fn,
         logger,
     )
