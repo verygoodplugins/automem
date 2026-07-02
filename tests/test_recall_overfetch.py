@@ -1,0 +1,125 @@
+"""Recall must over-fetch vector candidates so the richer final scoring can
+re-rank a wide enough pool.
+
+Reproduces the production miss: a high-importance, exact-topic memory that
+ranked just past the requested limit in *pure vector* similarity was discarded
+before its importance/keyword signal could ever lift it, while the pool filled
+with high-frequency-token ("berlin") noise. Over-fetching the candidate pool
+lets the existing re-rank surface it.
+"""
+
+from __future__ import annotations
+
+import logging
+from types import SimpleNamespace
+
+import pytest
+
+import app
+import automem.api.recall as recall_module
+import automem.search.runtime_recall_helpers as recall_helpers
+from tests.support.fake_graph import FakeGraph
+
+
+class _FakeQdrant:
+    """Records the requested limit and returns hits[:limit] (Qdrant top-K)."""
+
+    def __init__(self, hits):
+        self._hits = hits
+        self.last_limit = None
+
+    def search(self, *, collection_name, query_vector, limit, with_payload=True, query_filter=None):
+        self.last_limit = limit
+        return list(self._hits[:limit])
+
+
+def _hit(memory_id, score, *, content, importance, tags):
+    payload = {
+        "id": memory_id,
+        "content": content,
+        "tags": tags,
+        "importance": importance,
+        "confidence": 0.9,
+        "type": "Context",
+        "enriched": True,  # skip JIT enrichment during recall
+        "timestamp": "2026-05-18T00:00:00+00:00",
+    }
+    return SimpleNamespace(id=memory_id, payload=payload, score=score)
+
+
+@pytest.fixture
+def overfetch_env(monkeypatch):
+    state = app.ServiceState()
+    state.memory_graph = FakeGraph()
+
+    # 8 high-similarity but low-value "berlin" decoys, then the real target at
+    # vector-rank index 8 — just beyond the default per_query_limit of 5.
+    decoys = [
+        _hit(
+            f"decoy-{i}",
+            0.60 - i * 0.001,
+            content="berlin weather morning note",
+            importance=0.0,
+            tags=["entity:concepts:berlin"],
+        )
+        for i in range(8)
+    ]
+    target = _hit(
+        "lennard-bafoeg",
+        0.50,
+        content="lennard bafoeg benefits situation resolved german bureaucracy",
+        importance=0.9,
+        tags=["lennard", "bafoeg", "benefits"],
+    )
+    fake_qdrant = _FakeQdrant(decoys + [target])
+    state.qdrant = fake_qdrant
+
+    monkeypatch.setattr(app, "state", state)
+    monkeypatch.setattr(app, "init_falkordb", lambda: None)
+    monkeypatch.setattr(app, "init_qdrant", lambda: None)
+    monkeypatch.setattr(app, "API_TOKEN", "test-token")
+    monkeypatch.setattr(app, "ADMIN_TOKEN", "test-admin-token")
+
+    # Deterministic embedding + no graph relation lookups for vector hits.
+    # Pin a real logger so the vector path is independent of any helper-state
+    # pollution left by sibling tests that reconfigure the recall helpers.
+    monkeypatch.setattr(recall_helpers, "_generate_real_embedding", lambda _t: [0.1] * 8)
+    monkeypatch.setattr(recall_helpers, "_fetch_relations", lambda *_a, **_k: [])
+    monkeypatch.setattr(recall_helpers, "_logger", logging.getLogger("automem.test.recall"))
+
+    return fake_qdrant
+
+
+def _recall(fake_qdrant):
+    client = app.app.test_client()
+    resp = client.get(
+        "/recall?query=lennard%20benefits%20situation&limit=5&current_only=false",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    body = resp.get_json()
+    ids = [r.get("id") or (r.get("memory") or {}).get("id") for r in body["results"]]
+    return ids, fake_qdrant.last_limit
+
+
+def test_vector_overfetch_requests_widened_limit(overfetch_env):
+    ids, last_limit = _recall(overfetch_env)
+    # default RECALL_VECTOR_OVERFETCH=4 -> 5 * 4 = 20 candidates fetched
+    assert last_limit == 20
+    # the relevant memory ranked past 1x is now recalled and re-ranked to the top
+    assert "lennard-bafoeg" in ids
+    assert len(ids) <= 5  # response size unchanged by over-fetch
+
+
+def test_vector_overfetch_off_switch_uses_1x(overfetch_env, monkeypatch):
+    monkeypatch.setattr(recall_module, "RECALL_VECTOR_OVERFETCH", 1)
+    ids, last_limit = _recall(overfetch_env)
+    assert last_limit == 5
+    # without over-fetch the target never enters the candidate pool
+    assert "lennard-bafoeg" not in ids
+
+
+def test_vector_fetch_cap_never_reduces_below_requested_limit(overfetch_env, monkeypatch):
+    monkeypatch.setattr(recall_module, "RECALL_VECTOR_FETCH_CAP", 3)
+    _ids, last_limit = _recall(overfetch_env)
+    assert last_limit == 5

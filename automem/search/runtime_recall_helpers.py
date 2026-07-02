@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 from flask import abort, request
 from qdrant_client import QdrantClient
 
+from automem.config import RECALL_EXCLUDED_TYPES
+
 _parse_iso_datetime: Optional[Callable[[Any], Optional[Any]]] = None
 _prepare_tag_filters: Optional[Callable[[Optional[List[str]]], List[str]]] = None
 _build_graph_tag_predicate: Optional[Callable[[str, str], str]] = None
@@ -392,6 +394,17 @@ def _result_passes_filters(
         raise RuntimeError("recall helpers are not configured")
 
     memory = result.get("memory", {}) or {}
+
+    # Universal exclusion of internal artifact types (e.g. MetaPattern cluster
+    # summaries). This is the single chokepoint applied to vector, keyword, and
+    # metadata candidates plus every expansion/state-filter path, so excluded
+    # types can never surface in user-facing recall regardless of how they were
+    # retrieved.
+    if RECALL_EXCLUDED_TYPES:
+        memory_type = memory.get("type")
+        if memory_type and memory_type in RECALL_EXCLUDED_TYPES:
+            return False
+
     timestamp = memory.get("timestamp")
     if start_time or end_time:
         parsed = parse_iso_datetime(timestamp) if timestamp else None
@@ -618,6 +631,9 @@ def _graph_keyword_search(
     try:
         base_where = ["m.content IS NOT NULL", "coalesce(m.archived, false) = false"]
         params: Dict[str, Any] = {"limit": limit}
+        if RECALL_EXCLUDED_TYPES:
+            base_where.append("NOT coalesce(m.type, '') IN $excluded_types")
+            params["excluded_types"] = list(RECALL_EXCLUDED_TYPES)
         if start_time:
             base_where.append("m.timestamp >= $start_time")
             params["start_time"] = start_time
@@ -743,6 +759,9 @@ def _metadata_keyword_search(
         base_where = ["m.metadata IS NOT NULL", "coalesce(m.archived, false) = false"]
         scan_limit = min(max(limit * 25, METADATA_SCAN_LIMIT_MIN), METADATA_SCAN_LIMIT_MAX)
         params: Dict[str, Any] = {"limit": scan_limit, "keywords": keywords}
+        if RECALL_EXCLUDED_TYPES:
+            base_where.append("NOT coalesce(m.type, '') IN $excluded_types")
+            params["excluded_types"] = list(RECALL_EXCLUDED_TYPES)
         if start_time:
             base_where.append("m.timestamp >= $start_time")
             params["start_time"] = start_time

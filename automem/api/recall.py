@@ -19,6 +19,8 @@ from automem.config import (
     RECALL_MIN_SCORE,
     RECALL_RECENCY_BIAS,
     RECALL_RELATION_LIMIT,
+    RECALL_VECTOR_FETCH_CAP,
+    RECALL_VECTOR_OVERFETCH,
     SEARCH_WEIGHT_TEMPORAL,
     canonicalize_relation_type,
     expand_relation_query_types,
@@ -1947,9 +1949,18 @@ def handle_recall(
         vector_matches: List[Dict[str, Any]] = []
 
         if qdrant_client is not None:
-            vector_fetch_limit = per_query_limit
+            # Over-fetch vector candidates so the richer final scoring
+            # (importance, exact-match, tags) re-ranks a wide enough pool. A
+            # high-importance, exact-topic memory that is a slightly weaker
+            # pure-vector match would otherwise be cut before its signal can
+            # lift it. Results are trimmed to `limit` downstream, so the
+            # response size is unchanged. OVERFETCH=1 restores legacy behavior.
+            vector_fetch_limit = max(
+                per_query_limit,
+                min(per_query_limit * RECALL_VECTOR_OVERFETCH, RECALL_VECTOR_FETCH_CAP),
+            )
             if tag_filters and (query_str or embedding_param):
-                vector_fetch_limit = max(per_query_limit, recall_max_limit)
+                vector_fetch_limit = max(vector_fetch_limit, recall_max_limit)
             vector_matches = vector_search(
                 qdrant_client,
                 graph,
