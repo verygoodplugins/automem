@@ -171,9 +171,7 @@ def create_admin_blueprint_full(
             texts = [mem["content"] for mem in batch]
 
             try:
-                embeddings = generate_real_embeddings_batch(
-                    texts, allow_placeholder_fallback=False
-                )
+                embeddings = generate_real_embeddings_batch(texts, allow_placeholder_fallback=False)
                 if len(embeddings) != len(batch):
                     raise ValueError(
                         f"Embedding provider returned {len(embeddings)} vectors for "
@@ -348,9 +346,7 @@ def create_admin_blueprint_full(
             texts = [mem["content"] for mem in batch]
 
             try:
-                embeddings = generate_real_embeddings_batch(
-                    texts, allow_placeholder_fallback=False
-                )
+                embeddings = generate_real_embeddings_batch(texts, allow_placeholder_fallback=False)
                 if len(embeddings) != len(batch):
                     raise ValueError(
                         f"Embedding provider returned {len(embeddings)} vectors for "
