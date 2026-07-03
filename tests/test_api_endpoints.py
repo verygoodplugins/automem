@@ -195,6 +195,13 @@ class FailingEmbeddingProvider:
         return "failing-provider"
 
 
+class PlaceholderNamedEmbeddingProvider(FakeEmbeddingProvider):
+    """Provider test double that behaves like a configured placeholder provider."""
+
+    def provider_name(self):
+        return "placeholder"
+
+
 @pytest.fixture
 def client():
     """Create Flask test client."""
@@ -3015,6 +3022,33 @@ def test_admin_reembed_counts_provider_fallback_as_failed(client, mock_state, ad
     assert memory_id not in mock_state.qdrant.points
 
 
+def test_admin_reembed_counts_placeholder_provider_as_failed(client, mock_state, admin_headers):
+    """Test reembed rejects configured placeholder providers for repairs."""
+    mock_state.openai_client = None
+    mock_state.effective_vector_size = 768
+    mock_state.embedding_provider = PlaceholderNamedEmbeddingProvider([[0.7] * 768])
+
+    memory_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": "Memory that must not be repaired with placeholder provider",
+        "tags": ["test"],
+    }
+
+    response = client.post(
+        "/admin/reembed", json={"batch_size": 10, "limit": 1}, headers=admin_headers
+    )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "complete"
+    assert data["processed"] == 0
+    assert data["failed"] == 1
+    assert data["failed_ids"] == [memory_id]
+    assert memory_id not in mock_state.qdrant.points
+    assert mock_state.embedding_provider.batch_calls == []
+
+
 def test_admin_sync_uses_embedding_provider_without_openai(client, mock_state, admin_headers):
     """Test sync embeds missing memories through the configured provider."""
     mock_state.openai_client = None
@@ -3063,6 +3097,31 @@ def test_admin_sync_counts_provider_fallback_as_failed(client, mock_state, admin
     assert data["failed"] == 1
     assert data["failed_ids"] == [memory_id]
     assert memory_id not in mock_state.qdrant.points
+
+
+def test_admin_sync_counts_placeholder_provider_as_failed(client, mock_state, admin_headers):
+    """Test sync rejects configured placeholder providers for repairs."""
+    mock_state.openai_client = None
+    mock_state.effective_vector_size = 768
+    mock_state.embedding_provider = PlaceholderNamedEmbeddingProvider([[0.8] * 768])
+
+    memory_id = "99999999-9999-9999-9999-999999999999"
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": "Missing memory that must not use placeholder provider",
+        "tags": ["sync"],
+    }
+
+    response = client.post("/admin/sync", json={"batch_size": 10}, headers=admin_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "complete"
+    assert data["synced"] == 0
+    assert data["failed"] == 1
+    assert data["failed_ids"] == [memory_id]
+    assert memory_id not in mock_state.qdrant.points
+    assert mock_state.embedding_provider.batch_calls == []
 
 
 def test_admin_reembed_no_qdrant(client, mock_state, admin_headers):

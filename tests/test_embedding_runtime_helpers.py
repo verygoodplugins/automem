@@ -251,6 +251,27 @@ def test_strict_mode_raises_instead_of_using_placeholder_fallback(caplog):
         _run(["alpha"], Provider(), caplog, allow_placeholder_fallback=False)
 
 
+def test_strict_mode_raises_for_placeholder_provider(caplog):
+    """Repair callers can reject configured placeholder providers."""
+
+    class Provider:
+        batch_calls = 0
+
+        def provider_name(self):
+            return "placeholder"
+
+        def generate_embeddings_batch(self, contents):
+            Provider.batch_calls += 1
+            return [_placeholder(c) for c in contents]
+
+        def generate_embedding(self, content):
+            raise AssertionError("should not be called")
+
+    with pytest.raises(RuntimeError, match="Placeholder embedding provider"):
+        _run(["alpha"], Provider(), caplog, allow_placeholder_fallback=False)
+    assert Provider.batch_calls == 0
+
+
 # ==================== Contract ====================
 
 

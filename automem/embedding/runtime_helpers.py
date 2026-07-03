@@ -113,6 +113,8 @@ def generate_real_embeddings_batch(
         provider_name = provider.provider_name()
     except Exception:
         provider_name = provider.__class__.__name__ or "unknown"
+    if not allow_placeholder_fallback and str(provider_name).strip().lower() == "placeholder":
+        raise RuntimeError("Placeholder embedding provider is not allowed in strict mode")
     expected_dim = state.effective_vector_size
     try:
         embeddings = provider.generate_embeddings_batch(contents)
