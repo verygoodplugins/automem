@@ -34,7 +34,7 @@ class _State:
         self.effective_vector_size = DIM
 
 
-def _run(contents, provider, caplog):
+def _run(contents, provider, caplog, *, allow_placeholder_fallback=True):
     with caplog.at_level(logging.DEBUG):
         return generate_real_embeddings_batch(
             contents,
@@ -42,6 +42,7 @@ def _run(contents, provider, caplog):
             state=_State(provider),
             logger=logger,
             placeholder_embedding=_placeholder,
+            allow_placeholder_fallback=allow_placeholder_fallback,
         )
 
 
@@ -231,6 +232,44 @@ def test_partial_single_failure_only_failed_items_get_placeholders(caplog):
     assert summary, "expected a placeholder summary warning"
     assert "1/3" in summary[0]
     assert "invisible to semantic search" in summary[0]
+
+
+def test_strict_mode_raises_instead_of_using_placeholder_fallback(caplog):
+    """Repair callers can reject placeholder fallback when real embeddings fail."""
+
+    class Provider:
+        def provider_name(self):
+            return "voyage:voyage-4"
+
+        def generate_embeddings_batch(self, contents):
+            raise RuntimeError("read timeout")
+
+        def generate_embedding(self, content):
+            raise RuntimeError("connection refused")
+
+    with pytest.raises(RuntimeError, match="Failed to generate provider embedding"):
+        _run(["alpha"], Provider(), caplog, allow_placeholder_fallback=False)
+
+
+def test_strict_mode_raises_for_placeholder_provider(caplog):
+    """Repair callers can reject configured placeholder providers."""
+
+    class Provider:
+        batch_calls = 0
+
+        def provider_name(self):
+            return "placeholder"
+
+        def generate_embeddings_batch(self, contents):
+            Provider.batch_calls += 1
+            return [_placeholder(c) for c in contents]
+
+        def generate_embedding(self, content):
+            raise AssertionError("should not be called")
+
+    with pytest.raises(RuntimeError, match="Placeholder embedding provider"):
+        _run(["alpha"], Provider(), caplog, allow_placeholder_fallback=False)
+    assert Provider.batch_calls == 0
 
 
 # ==================== Contract ====================

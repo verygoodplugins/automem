@@ -382,6 +382,10 @@ class FakeGraph:
                     )
             return FakeResult(rows)
 
+        if "MATCH (m:Memory)" in query and "RETURN m.id AS id" in query:
+            rows = [[memory_id] for memory_id in self.memories]
+            return FakeResult(rows)
+
         # Startup recall query patterns
         if "WHERE 'critical' IN m.tags OR 'lesson' IN m.tags OR 'ai-assistant' IN m.tags" in query:
             rows = []
