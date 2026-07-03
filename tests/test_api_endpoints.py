@@ -2953,11 +2953,9 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
         "importance": 0.8,
     }
 
-    # Mock OpenAI client - return one embedding per input (batch processing)
+    mock_state.effective_vector_size = 768
     mock_state.openai_client = Mock()
-    mock_state.openai_client.embeddings.create.return_value = Mock(
-        data=[Mock(embedding=[0.2] * 768), Mock(embedding=[0.3] * 768)]
-    )
+    mock_state.embedding_provider = FakeEmbeddingProvider([[0.2] * 768, [0.3] * 768])
 
     response = client.post(
         "/admin/reembed", json={"batch_size": 10, "limit": 2}, headers=admin_headers
@@ -2968,6 +2966,10 @@ def test_admin_reembed_success(client, mock_state, admin_headers):
     assert data["status"] == "complete"
     assert data["processed"] == 2
     assert data["total"] == 2
+    assert mock_state.embedding_provider.batch_calls == [
+        ["First memory to reembed", "Second memory to reembed"]
+    ]
+    mock_state.openai_client.embeddings.create.assert_not_called()
 
 
 def test_admin_reembed_uses_embedding_provider_without_openai(client, mock_state, admin_headers):
@@ -3153,11 +3155,9 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
         "tags": ["test"],
     }
 
-    # Mock OpenAI - return one embedding per input (batch processing)
+    mock_state.effective_vector_size = 768
     mock_state.openai_client = Mock()
-    mock_state.openai_client.embeddings.create.return_value = Mock(
-        data=[Mock(embedding=[0.3] * 768)]  # One memory = one embedding
-    )
+    mock_state.embedding_provider = FakeEmbeddingProvider([[0.3] * 768])
 
     response = client.post(
         "/admin/reembed", json={"force": True, "limit": 1}, headers=admin_headers
@@ -3166,6 +3166,8 @@ def test_admin_reembed_force_flag(client, mock_state, admin_headers):
     assert response.status_code == 200
     data = response.get_json()
     assert data["processed"] == 1
+    assert mock_state.embedding_provider.batch_calls == [["Memory with existing embedding"]]
+    mock_state.openai_client.embeddings.create.assert_not_called()
 
 
 # ==================== Test Consolidation ====================
