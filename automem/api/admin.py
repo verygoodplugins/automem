@@ -64,7 +64,7 @@ def create_admin_blueprint_full(
     get_memory_graph: Callable[[], Any],
     point_struct: Any,
     collection_name: str,
-    generate_real_embeddings_batch: Optional[Callable[[List[str]], List[List[float]]]],
+    generate_real_embeddings_batch: Optional[Callable[..., List[List[float]]]],
     utc_now: Callable[[], str],
     logger: Any,
 ) -> Blueprint:
@@ -171,7 +171,9 @@ def create_admin_blueprint_full(
             texts = [mem["content"] for mem in batch]
 
             try:
-                embeddings = generate_real_embeddings_batch(texts)
+                embeddings = generate_real_embeddings_batch(
+                    texts, allow_placeholder_fallback=False
+                )
                 if len(embeddings) != len(batch):
                     raise ValueError(
                         f"Embedding provider returned {len(embeddings)} vectors for "
@@ -346,7 +348,9 @@ def create_admin_blueprint_full(
             texts = [mem["content"] for mem in batch]
 
             try:
-                embeddings = generate_real_embeddings_batch(texts)
+                embeddings = generate_real_embeddings_batch(
+                    texts, allow_placeholder_fallback=False
+                )
                 if len(embeddings) != len(batch):
                     raise ValueError(
                         f"Embedding provider returned {len(embeddings)} vectors for "
