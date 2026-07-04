@@ -18,6 +18,7 @@ import pytest
 import app
 import automem.api.recall as recall_module
 import automem.search.runtime_recall_helpers as recall_helpers
+from automem.utils.scoring import _compute_metadata_score
 from tests.support.fake_graph import FakeGraph
 
 
@@ -136,6 +137,74 @@ def test_tag_scoped_vector_fetch_respects_cap(overfetch_env, monkeypatch):
 
     assert resp.status_code == 200, resp.get_data(as_text=True)
     assert overfetch_env.last_limit == 20
+
+
+def test_context_tags_widen_vector_fetch_before_scoring(monkeypatch) -> None:
+    monkeypatch.setattr(recall_module, "RECALL_VECTOR_OVERFETCH", 4)
+    monkeypatch.setattr(recall_module, "RECALL_VECTOR_FETCH_CAP", 200)
+
+    requested_limits = []
+
+    def _result(memory_id, score, *, tags=None):
+        return {
+            "id": memory_id,
+            "score": score,
+            "match_score": score,
+            "match_type": "vector",
+            "source": "qdrant",
+            "memory": {
+                "id": memory_id,
+                "content": f"unrelated content for {memory_id}",
+                "tags": tags or [],
+                "importance": 0.0,
+                "confidence": 0.0,
+                "type": "Context",
+                "enriched": True,
+                "timestamp": "2026-05-18T00:00:00+00:00",
+            },
+            "relations": [],
+        }
+
+    vector_results = [_result(f"decoy-{i}", 0.95 - i * 0.001) for i in range(24)] + [
+        _result("context-target", 0.01, tags=["target-tag"]),
+    ]
+
+    def _vector_search(_qdrant, _graph, _query, _embedding, limit, seen_ids, *_args):
+        requested_limits.append(limit)
+        matches = [dict(result) for result in vector_results[:limit]]
+        for result in matches:
+            seen_ids.add(result["id"])
+        return matches
+
+    with app.app.test_request_context(
+        "/recall?query=quarterly%20metrics&context_tags=target-tag&limit=5&current_only=false"
+    ):
+        response = recall_module.handle_recall(
+            get_memory_graph=lambda: None,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=lambda _query: ["quarterly", "metrics"],
+            compute_metadata_score=_compute_metadata_score,
+            result_passes_filters=lambda *_args, **_kwargs: True,
+            graph_keyword_search=lambda *_args, **_kwargs: [],
+            vector_search=_vector_search,
+            vector_filter_only_tag_search=lambda *_args, **_kwargs: [],
+            metadata_keyword_search=lambda *_args, **_kwargs: [],
+            recall_max_limit=50,
+            logger=SimpleNamespace(
+                debug=lambda *_args, **_kwargs: None,
+                info=lambda *_args, **_kwargs: None,
+                exception=lambda *_args, **_kwargs: None,
+            ),
+        )
+
+    data = response.get_json()
+    ids = [result["id"] for result in data["results"]]
+    assert requested_limits == [50]
+    assert "context-target" in ids
+    assert len(ids) <= 5
 
 
 def test_vector_overfetch_hydrates_relations_after_trim(overfetch_env, monkeypatch):

@@ -20,6 +20,7 @@ def recall(
     expand_relations: bool = False,
     current_only: bool = True,
     recency_bias: Optional[str] = None,
+    context_tags: Optional[List[str]] = None,
     http_get=requests.get,
 ) -> Dict[str, Any]:
     """GET /recall with explicit recall parameters; returns parsed JSON."""
@@ -29,6 +30,8 @@ def recall(
     params["current_only"] = "true" if current_only else "false"
     if recency_bias is not None:
         params["recency_bias"] = recency_bias
+    if context_tags:
+        params["context_tags"] = context_tags
     resp = http_get(f"{api_url}/recall", params=params, headers=headers, timeout=30)
     resp.raise_for_status()
     return resp.json()

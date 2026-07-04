@@ -1968,7 +1968,8 @@ def handle_recall(
                 per_query_limit,
                 min(per_query_limit * RECALL_VECTOR_OVERFETCH, RECALL_VECTOR_FETCH_CAP),
             )
-            if tag_filters and (query_str or embedding_param):
+            priority_tags = (context_profile or {}).get("priority_tags") or set()
+            if (tag_filters or priority_tags) and (query_str or embedding_param):
                 vector_fetch_limit = max(
                     per_query_limit,
                     min(max(vector_fetch_limit, recall_max_limit), RECALL_VECTOR_FETCH_CAP),
