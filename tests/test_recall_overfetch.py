@@ -157,6 +157,7 @@ def test_vector_overfetch_hydrates_relations_after_trim(overfetch_env, monkeypat
 
 def test_vector_overfetch_does_not_hide_metadata_upgrade() -> None:
     metadata_seen_sets = []
+    metadata_include_sets = []
 
     def _result(memory_id, score, match_type="vector"):
         return {
@@ -191,9 +192,11 @@ def test_vector_overfetch_does_not_hide_metadata_upgrade() -> None:
             seen_ids.add(result["id"])
         return [dict(result) for result in vector_results]
 
-    def _metadata_keyword_search(_graph, _query, _limit, seen_ids, **_kwargs):
+    def _metadata_keyword_search(_graph, _query, _limit, seen_ids, **kwargs):
+        include_seen_ids = set(kwargs.get("include_seen_ids") or [])
         metadata_seen_sets.append(set(seen_ids))
-        if "metadata-target" in seen_ids:
+        metadata_include_sets.append(include_seen_ids)
+        if "metadata-target" in seen_ids and "metadata-target" not in include_seen_ids:
             return []
         return [_result("metadata-target", 1.25, match_type="metadata")]
 
@@ -225,7 +228,9 @@ def test_vector_overfetch_does_not_hide_metadata_upgrade() -> None:
         )
 
     results = response.get_json()["results"]
-    assert metadata_seen_sets == [set()]
+    vector_ids = {result["id"] for result in vector_results}
+    assert metadata_seen_sets == [vector_ids]
+    assert metadata_include_sets == [vector_ids]
     assert results[0]["id"] == "metadata-target"
     assert results[0]["match_type"] == "metadata"
 
@@ -293,6 +298,91 @@ def test_metadata_vector_duplicates_do_not_consume_trimmed_slots() -> None:
 
     ids = [result["id"] for result in response.get_json()["results"]]
     assert ids == ["metadata-target", "unique-1", "unique-2", "unique-3", "unique-4"]
+
+
+def test_metadata_overlap_does_not_spend_metadata_only_slots() -> None:
+    metadata_seen_sets = []
+    metadata_include_sets = []
+
+    def _result(memory_id, score, match_type="vector"):
+        return {
+            "id": memory_id,
+            "score": score,
+            "match_score": score,
+            "match_type": match_type,
+            "source": "qdrant" if match_type == "vector" else "graph",
+            "memory": {
+                "id": memory_id,
+                "content": f"content for {memory_id}",
+                "tags": [],
+                "target_score": score,
+                "type": "Context",
+                "enriched": True,
+                "timestamp": "2026-05-18T00:00:00+00:00",
+            },
+            "relations": [],
+        }
+
+    vector_results = [_result(f"vector-{i}", 0.95 - i * 0.01) for i in range(5)]
+    metadata_rows = [
+        *[_result(f"vector-{i}", 1.0 - i * 0.01, match_type="metadata") for i in range(5)],
+        _result("metadata-only", 1.30, match_type="metadata"),
+    ]
+
+    def _vector_search(_qdrant, _graph, _query, _embedding, _limit, seen_ids, *_args):
+        for result in vector_results:
+            seen_ids.add(result["id"])
+        return [dict(result) for result in vector_results]
+
+    def _metadata_keyword_search(_graph, _query, limit, seen_ids, **kwargs):
+        include_seen_ids = set(kwargs.get("include_seen_ids") or [])
+        metadata_seen_sets.append(set(seen_ids))
+        metadata_include_sets.append(include_seen_ids)
+
+        matches = []
+        metadata_only_count = 0
+        for result in metadata_rows:
+            memory_id = result["id"]
+            already_seen = memory_id in seen_ids
+            if already_seen and memory_id not in include_seen_ids:
+                continue
+            matches.append(dict(result))
+            if not already_seen:
+                metadata_only_count += 1
+            if metadata_only_count >= limit:
+                break
+        return matches
+
+    with app.app.test_request_context("/recall?query=metadata%20target&limit=5&current_only=false"):
+        response = recall_module.handle_recall(
+            get_memory_graph=lambda: FakeGraph(),
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=lambda _query: ["metadata", "target"],
+            compute_metadata_score=lambda result, _query, _tokens, _context: (
+                float((result.get("memory") or {}).get("target_score") or 0.0),
+                {},
+            ),
+            result_passes_filters=lambda *_args, **_kwargs: True,
+            graph_keyword_search=lambda *_args, **_kwargs: [],
+            vector_search=_vector_search,
+            vector_filter_only_tag_search=lambda *_args, **_kwargs: [],
+            metadata_keyword_search=_metadata_keyword_search,
+            recall_max_limit=50,
+            logger=SimpleNamespace(
+                debug=lambda *_args, **_kwargs: None,
+                info=lambda *_args, **_kwargs: None,
+                exception=lambda *_args, **_kwargs: None,
+            ),
+        )
+
+    vector_ids = {result["id"] for result in vector_results}
+    ids = [result["id"] for result in response.get_json()["results"]]
+    assert metadata_seen_sets == [vector_ids]
+    assert metadata_include_sets == [vector_ids]
+    assert "metadata-only" in ids
 
 
 def test_priority_tail_does_not_block_context_injection() -> None:

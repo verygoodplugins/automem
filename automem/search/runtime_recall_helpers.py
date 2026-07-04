@@ -735,6 +735,7 @@ def _metadata_keyword_search(
     tag_mode: str = "any",
     tag_match: str = "prefix",
     exclude_tags: Optional[List[str]] = None,
+    include_seen_ids: Optional[set[str]] = None,
 ) -> List[Dict[str, Any]]:
     prepare_tag_filters = _prepare_tag_filters
     build_graph_tag_predicate = _build_graph_tag_predicate
@@ -757,6 +758,11 @@ def _metadata_keyword_search(
     keywords = _metadata_prefilter_terms(normalized)
     if not keywords:
         return []
+    upgrade_seen_ids = {
+        str(memory_id).strip()
+        for memory_id in (include_seen_ids or set())
+        if str(memory_id).strip()
+    }
 
     try:
         base_where = ["m.metadata IS NOT NULL", "coalesce(m.archived, false) = false"]
@@ -800,7 +806,8 @@ def _metadata_keyword_search(
         node = row[0]
         data = serialize_node(node)
         memory_id = str(data.get("id")) if data.get("id") is not None else None
-        if not memory_id or memory_id in seen_ids:
+        already_seen = bool(memory_id and memory_id in seen_ids)
+        if not memory_id or (already_seen and memory_id not in upgrade_seen_ids):
             continue
         if data.get("archived"):
             continue
@@ -841,16 +848,21 @@ def _metadata_keyword_search(
     )
 
     matches: List[Dict[str, Any]] = []
+    metadata_only_count = 0
+    max_matches = limit + len(upgrade_seen_ids)
     for record in candidates:
         memory_id = str(record.get("id") or "")
-        if not memory_id or memory_id in seen_ids:
+        already_seen = memory_id in seen_ids
+        if not memory_id or (already_seen and memory_id not in upgrade_seen_ids):
             continue
-        seen_ids.add(memory_id)
+        if not already_seen:
+            seen_ids.add(memory_id)
+            metadata_only_count += 1
         # Relations are fetched only for kept records — candidates can number in
         # the hundreds while the trimmed result is at most `limit`.
         record["relations"] = fetch_relations(graph, memory_id)
         matches.append(record)
-        if len(matches) >= limit:
+        if metadata_only_count >= limit or len(matches) >= max_matches:
             break
 
     return matches

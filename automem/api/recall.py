@@ -2018,17 +2018,23 @@ def handle_recall(
             and RECALL_METADATA_SEARCH_ENABLED
         ):
             metadata_slots = max(1, min(per_query_limit, 10))
+            metadata_upgrade_ids = {
+                memory_id
+                for memory_id in (_result_memory_id(result) for result in local_results)
+                if memory_id
+            }
             metadata_matches = metadata_keyword_search(
                 graph,
                 query_str,
                 metadata_slots,
-                set(local_seen),
+                set(metadata_upgrade_ids),
                 start_time=start_time,
                 end_time=end_time,
                 tag_filters=tag_filters,
                 tag_mode=tag_mode,
                 tag_match=tag_match,
                 exclude_tags=exclude_tags,
+                include_seen_ids=metadata_upgrade_ids,
             )
             local_results.extend(metadata_matches)
 
