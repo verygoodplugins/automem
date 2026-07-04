@@ -3824,6 +3824,46 @@ def test_expand_related_memories_filters_strength_and_importance():
     assert ids == {keep_id}
 
 
+def test_expand_related_memories_emits_artifact_exclusion():
+    seed_id = "11111111-1000-0000-0000-000000000001"
+    seed_results = [{"id": seed_id, "final_score": 0.8, "memory": {"id": seed_id}}]
+
+    class Graph:
+        def __init__(self):
+            self.queries = []
+
+        def query(self, query: str, params: dict) -> SimpleNamespace:
+            self.queries.append((query, params))
+            return SimpleNamespace(result_set=[])
+
+    graph = Graph()
+    _expand_related_memories(
+        graph=graph,
+        seed_results=seed_results,
+        seen_ids=set(),
+        result_passes_filters=lambda *args, **kwargs: True,
+        compute_metadata_score=lambda *args, **kwargs: (0.5, {}),
+        query_text="",
+        query_tokens=[],
+        context_profile=None,
+        start_time=None,
+        end_time=None,
+        tag_filters=None,
+        tag_mode="any",
+        tag_match="prefix",
+        per_seed_limit=2,
+        expansion_limit=10,
+        allowed_relations={"RELATES_TO"},
+        logger=Mock(),
+    )
+
+    assert graph.queries, "expected relation expansion to query the graph"
+    issued_query, params = graph.queries[0]
+    assert "$excluded_types" in issued_query
+    assert "related.type" in issued_query
+    assert "MetaPattern" in (params.get("excluded_types") or [])
+
+
 def test_expand_related_memories_normalizes_legacy_discovered_relations():
     seed_id = "22222222-0000-0000-0000-000000000001"
     related_id = "22222222-0000-0000-0000-000000000002"

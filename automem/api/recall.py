@@ -14,6 +14,7 @@ from automem.config import (
     DEFAULT_EXPAND_RELATIONS,
     FILTERABLE_RELATIONS,
     RECALL_ADAPTIVE_FLOOR,
+    RECALL_EXCLUDED_TYPES,
     RECALL_EXPANSION_LIMIT,
     RECALL_METADATA_SEARCH_ENABLED,
     RECALL_MIN_SCORE,
@@ -1558,10 +1559,14 @@ def _expand_related_memories(
         seed_score = float(seed.get("final_score", seed.get("score", 0.0)) or 0.0)
 
         try:
-            rel_filter = " AND type(r) IN $types" if query_relation_types else ""
+            where_clauses = ["m.id <> related.id"]
+            if query_relation_types:
+                where_clauses.append("type(r) IN $types")
+            if RECALL_EXCLUDED_TYPES:
+                where_clauses.append("NOT coalesce(related.type, '') IN $excluded_types")
             query = f"""
                 MATCH (m:Memory {{id: $id}})-[r]-(related:Memory)
-                WHERE m.id <> related.id{rel_filter}
+                WHERE {' AND '.join(where_clauses)}
                 RETURN type(r) as relation_type,
                        coalesce(
                            r.strength,
@@ -1579,6 +1584,8 @@ def _expand_related_memories(
             params: Dict[str, Any] = {"id": seed_id, "limit": per_seed_limit}
             if query_relation_types:
                 params["types"] = query_relation_types
+            if RECALL_EXCLUDED_TYPES:
+                params["excluded_types"] = list(RECALL_EXCLUDED_TYPES)
             records = graph.query(query, params)
         except Exception:
             logger.exception("Failed to expand relations for seed %s", seed_id)
@@ -1962,7 +1969,10 @@ def handle_recall(
                 min(per_query_limit * RECALL_VECTOR_OVERFETCH, RECALL_VECTOR_FETCH_CAP),
             )
             if tag_filters and (query_str or embedding_param):
-                vector_fetch_limit = max(vector_fetch_limit, recall_max_limit)
+                vector_fetch_limit = max(
+                    per_query_limit,
+                    min(max(vector_fetch_limit, recall_max_limit), RECALL_VECTOR_FETCH_CAP),
+                )
             vector_matches = vector_search(
                 qdrant_client,
                 graph,
@@ -2044,11 +2054,65 @@ def handle_recall(
             )
             local_results.extend(tag_only_results)
 
+        query_tokens = extract_keywords(query_str.lower()) if query_str else []
+
+        def _rank_local_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            for result in results:
+                final_score, components = compute_metadata_score(
+                    result,
+                    query_str or "",
+                    query_tokens,
+                    context_profile,
+                )
+                score_components = result.setdefault("score_components", {})
+                score_components.update(components)
+                result["final_score"] = final_score
+                if "original_score" not in result:
+                    result["original_score"] = result.get("score", 0.0)
+                result["score"] = final_score
+
+            ranked = [
+                res
+                for res in results
+                if result_passes_filters(
+                    res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                )
+            ]
+
+            if min_score is not None and min_score > 0:
+                ranked = [res for res in ranked if float(res.get("final_score", 0.0)) >= min_score]
+
+            ranked, _local_dedup_removed = _dedupe_results(ranked)
+
+            if sort_param == "score":
+                ranked.sort(key=_score_sort_key)
+            elif sort_param in {"time_desc", "time_asc"}:
+                ranked.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
+            elif sort_param in {"updated_desc", "updated_asc"}:
+                # Same key, but favor updated_at (already primary) and keep the name explicit for callers
+                ranked.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
+
+            return ranked
+
+        local_results = _rank_local_results(local_results)
+
         context_injected = False
         if context_profile:
-            priority_ids_missing = not _results_have_priority_ids(local_results, context_profile)
-            needs_context_injection = not _results_have_priority(local_results, context_profile)
+            returnable_results = _guarantee_priority_results(
+                local_results, context_profile, per_query_limit
+            )
+            priority_ids_missing = not _results_have_priority_ids(
+                returnable_results, context_profile
+            )
+            needs_context_injection = not _results_have_priority(
+                returnable_results, context_profile
+            )
             if priority_ids_missing or needs_context_injection:
+                injection_seen = {
+                    memory_id
+                    for memory_id in (_result_memory_id(result) for result in returnable_results)
+                    if memory_id
+                }
                 context_injected = _inject_priority_memories(
                     local_results,
                     graph,
@@ -2056,7 +2120,7 @@ def handle_recall(
                     graph_keyword_search,
                     vector_filter_only_tag_search,
                     context_profile,
-                    local_seen,
+                    injection_seen,
                     result_passes_filters,
                     start_time,
                     end_time,
@@ -2066,41 +2130,9 @@ def handle_recall(
                     logger,
                     exclude_tags,
                 )
+                if context_injected:
+                    local_results = _rank_local_results(local_results)
 
-        query_tokens = extract_keywords(query_str.lower()) if query_str else []
-        for result in local_results:
-            final_score, components = compute_metadata_score(
-                result,
-                query_str or "",
-                query_tokens,
-                context_profile,
-            )
-            result.setdefault("score_components", components)
-            result["score_components"].update(components)
-            result["final_score"] = final_score
-            result["original_score"] = result.get("score", 0.0)
-            result["score"] = final_score
-
-        local_results = [
-            res
-            for res in local_results
-            if result_passes_filters(
-                res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
-            )
-        ]
-
-        if min_score is not None and min_score > 0:
-            local_results = [
-                res for res in local_results if float(res.get("final_score", 0.0)) >= min_score
-            ]
-
-        if sort_param == "score":
-            local_results.sort(key=_score_sort_key)
-        elif sort_param in {"time_desc", "time_asc"}:
-            local_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
-        elif sort_param in {"updated_desc", "updated_asc"}:
-            # Same key, but favor updated_at (already primary) and keep the name explicit for callers
-            local_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
         local_results = _guarantee_priority_results(local_results, context_profile, per_query_limit)
 
         # Track originating query for debugging/clients
