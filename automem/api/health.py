@@ -4,6 +4,8 @@ from typing import Any, Callable, Optional
 
 from flask import Blueprint, jsonify
 
+from automem.sync.accounting import count_falkor_memories, count_qdrant_points
+
 
 def create_health_blueprint(
     get_memory_graph: Callable[[], Any],
@@ -17,7 +19,7 @@ def create_health_blueprint(
 
     @bp.route("/health", methods=["GET"])
     def health() -> Any:
-        from automem.config import VECTOR_SIZE
+        from automem.config import RECALL_EXCLUDED_TYPES, VECTOR_SIZE
 
         graph_available = get_memory_graph() is not None
         qdrant_available = get_qdrant_client() is not None
@@ -35,9 +37,7 @@ def create_health_blueprint(
             try:
                 graph = get_memory_graph()
                 if graph:
-                    result = graph.query("MATCH (m:Memory) RETURN COUNT(m) as count")
-                    if getattr(result, "result_set", None):
-                        memory_count = result.result_set[0][0]
+                    memory_count = count_falkor_memories(graph, RECALL_EXCLUDED_TYPES)
             except Exception:
                 pass
 
@@ -49,7 +49,9 @@ def create_health_blueprint(
                 qdrant = get_qdrant_client()
                 if qdrant:
                     info = qdrant.get_collection(collection_name)
-                    vector_count = info.points_count
+                    vector_count = count_qdrant_points(
+                        qdrant, collection_name, RECALL_EXCLUDED_TYPES
+                    )
                     collection_vector_size = info.config.params.vectors.size
             except Exception:
                 pass
