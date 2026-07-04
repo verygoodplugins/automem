@@ -57,9 +57,9 @@ own harness (directional, not head-to-head) — only BEAM is the clean compariso
 Hindsight is the apples-to-apples Core-3 yardstick (same AMB harness).
 
 **Status — submitted, not official.** AMB results are submitted to the neutral
-board; the vectorize-io provider PR is **under review**. Frame as "submitted, PR
-under review" and "run it yourself" — never "live/official on the leaderboard"
-until the PR merges. Outputs are committed and public; `AUTOMEM_REPRODUCE.md`
+board; the vectorize-io provider PR ([#24](https://github.com/vectorize-io/agent-memory-benchmark/pull/24))
+is **under review**. Frame as "submitted, PR under review" and "run it yourself"
+— never "live/official on the leaderboard" until the PR merges. Outputs are committed and public; `AUTOMEM_REPRODUCE.md`
 gives one command per split, and the public GHCR image
 (`ghcr.io/verygoodplugins/automem:amb-v1`) self-spins the full stack with no API
 keys. **No cross-system latency/speed claims** — AMB timings are AutoMem's own
