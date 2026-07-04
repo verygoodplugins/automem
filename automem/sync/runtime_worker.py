@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Set
+from typing import Any, Callable
+
+from automem.config import RECALL_EXCLUDED_TYPES
+from automem.sync.accounting import fetch_falkor_memory_ids, fetch_qdrant_point_ids
 
 
 def init_sync_worker(
@@ -66,28 +69,8 @@ def run_sync_check(
         return
 
     try:
-        falkor_result = graph.query("MATCH (m:Memory) RETURN m.id AS id")
-        falkor_ids: Set[str] = set()
-        for row in getattr(falkor_result, "result_set", []) or []:
-            if row[0]:
-                falkor_ids.add(str(row[0]))
-
-        qdrant_ids: Set[str] = set()
-        offset = None
-        while True:
-            result = qdrant.scroll(
-                collection_name=collection_name,
-                limit=1000,
-                offset=offset,
-                with_payload=False,
-                with_vectors=False,
-            )
-            points, next_offset = result
-            for point in points:
-                qdrant_ids.add(str(point.id))
-            if next_offset is None:
-                break
-            offset = next_offset
+        falkor_ids = fetch_falkor_memory_ids(graph, RECALL_EXCLUDED_TYPES)
+        qdrant_ids = fetch_qdrant_point_ids(qdrant, collection_name, RECALL_EXCLUDED_TYPES)
 
         missing_ids = falkor_ids - qdrant_ids
 

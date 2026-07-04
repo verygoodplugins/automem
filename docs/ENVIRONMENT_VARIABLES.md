@@ -360,7 +360,7 @@ Background worker that checks FalkorDB ↔ Qdrant consistency.
 | `RECALL_METADATA_SEARCH_ENABLED` | Enable bounded metadata sidecar recall candidates | `true` |
 | `RECALL_VECTOR_OVERFETCH` | Multiplier for semantic vector candidate fetch size before final recall re-ranking | `4` |
 | `RECALL_VECTOR_FETCH_CAP` | Absolute cap for over-fetched vector candidates, separate from response `RECALL_MAX_LIMIT` | `200` |
-| `RECALL_EXCLUDED_TYPES` | Comma-separated memory types excluded from user-facing recall results | `MetaPattern` |
+| `RECALL_EXCLUDED_TYPES` | Comma-separated internal artifact memory types excluded from user-facing recall and vector sync accounting | `MetaPattern` |
 | `RECALL_MIN_SCORE` | Drop results scoring below this final score (per-request `min_score` overrides) | `0.0` (disabled) |
 | `RECALL_ADAPTIVE_FLOOR` | Drop weak tail results when there is a clear score gap between strong and weak candidates (per-request `adaptive_floor` overrides) | `true` |
 | `RECALL_RELEVANCE_GATE` | Within-pool relevance gate: when a query is present and a result's best topical evidence (max of vector/keyword/metadata/exact components) is below this threshold, its query-independent components (importance, confidence, recency, tag overlap) are scaled by `evidence / gate` — a linear ramp. Stops high-importance off-topic memories from dominating tag-scoped recall (issue #130). Negative values clamp to `0.0`, values above `1.0` clamp to `1.0`. | `0.0` (disabled) |

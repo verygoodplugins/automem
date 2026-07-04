@@ -159,7 +159,8 @@ RECALL_VECTOR_OVERFETCH = max(1, int(os.getenv("RECALL_VECTOR_OVERFETCH", "4")))
 RECALL_VECTOR_FETCH_CAP = max(1, int(os.getenv("RECALL_VECTOR_FETCH_CAP", "200")))
 
 # Internal artifact memory types that must never surface in user-facing /recall
-# results (e.g. consolidation cluster summaries). Comma-separated env override.
+# results or vector sync accounting (e.g. consolidation cluster summaries).
+# Comma-separated env override.
 RECALL_EXCLUDED_TYPES = frozenset(
     t.strip() for t in os.getenv("RECALL_EXCLUDED_TYPES", "MetaPattern").split(",") if t.strip()
 )

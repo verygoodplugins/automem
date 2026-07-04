@@ -5,6 +5,9 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from flask import Blueprint, abort, jsonify, request
 
+from automem.config import RECALL_EXCLUDED_TYPES
+from automem.sync.accounting import fetch_falkor_memory_ids, fetch_qdrant_point_ids
+
 
 def _parse_metadata(raw: Any) -> Dict[str, Any]:
     """Parse metadata from FalkorDB which may be a string or dict."""
@@ -34,28 +37,13 @@ def _parse_tags(raw: Any) -> List[str]:
     return []
 
 
-def _get_all_qdrant_ids(qdrant_client: Any, collection_name: str) -> Set[str]:
+def _get_all_qdrant_ids(
+    qdrant_client: Any,
+    collection_name: str,
+    excluded_types: Optional[Set[str]] = None,
+) -> Set[str]:
     """Fetch all point IDs from Qdrant collection."""
-    all_ids: Set[str] = set()
-    offset = None
-
-    while True:
-        result = qdrant_client.scroll(
-            collection_name=collection_name,
-            limit=1000,
-            offset=offset,
-            with_payload=False,
-            with_vectors=False,
-        )
-        points, next_offset = result
-        for point in points:
-            all_ids.add(str(point.id))
-
-        if next_offset is None:
-            break
-        offset = next_offset
-
-    return all_ids
+    return fetch_qdrant_point_ids(qdrant_client, collection_name, excluded_types)
 
 
 def create_admin_blueprint_full(
@@ -253,16 +241,11 @@ def create_admin_blueprint_full(
             batch_size = 32
         dry_run = bool(payload.get("dry_run", False))
 
-        # Get all memory IDs from FalkorDB
-        falkor_query = "MATCH (m:Memory) RETURN m.id AS id"
-        falkor_result = graph.query(falkor_query)
-        falkor_ids: Set[str] = set()
-        for row in getattr(falkor_result, "result_set", []) or []:
-            if row[0]:
-                falkor_ids.add(str(row[0]))
+        # Get vector-sync-eligible memory IDs from FalkorDB.
+        falkor_ids = fetch_falkor_memory_ids(graph, RECALL_EXCLUDED_TYPES)
 
-        # Get all point IDs from Qdrant
-        qdrant_ids = _get_all_qdrant_ids(qdrant_client, collection_name)
+        # Get vector-sync-eligible point IDs from Qdrant.
+        qdrant_ids = _get_all_qdrant_ids(qdrant_client, collection_name, RECALL_EXCLUDED_TYPES)
 
         # Find missing (in FalkorDB but not in Qdrant)
         missing_ids = falkor_ids - qdrant_ids

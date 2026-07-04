@@ -136,6 +136,24 @@ class MockQdrantClient:
                 return False
         return True
 
+    def count(self, collection_name, count_filter=None, exact=True):
+        """Mock count operation."""
+        _ = collection_name, exact
+        matches = [
+            point
+            for point in self.points.values()
+            if self._filter_matches(point["payload"], count_filter)
+        ]
+        return SimpleNamespace(count=len(matches))
+
+    def get_collection(self, collection_name):
+        """Mock collection metadata for health checks."""
+        _ = collection_name
+        return SimpleNamespace(
+            points_count=len(self.points),
+            config=SimpleNamespace(params=SimpleNamespace(vectors=SimpleNamespace(size=768))),
+        )
+
 
 @pytest.fixture
 def mock_state(monkeypatch):
@@ -318,6 +336,39 @@ def test_health_endpoint_falkordb_down(client, mock_state):
     assert data["status"] == "degraded"
     assert data["falkordb"] == "disconnected"
     assert data["qdrant"] == "connected"
+
+
+def test_health_endpoint_ignores_metapattern_artifacts_in_sync_counts(client, mock_state):
+    """MetaPattern graph artifacts should not create health drift."""
+    memory_id = "11111111-1111-1111-1111-111111111111"
+    artifact_id = "22222222-2222-2222-2222-222222222222"
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": "Ordinary vector-backed memory",
+        "type": "Context",
+    }
+    mock_state.memory_graph.memories[artifact_id] = {
+        "id": artifact_id,
+        "content": "Meta-pattern cluster artifact",
+        "type": "MetaPattern",
+    }
+    mock_state.qdrant.points[memory_id] = {
+        "vector": [0.1] * 768,
+        "payload": {"type": "Context", "content": "Ordinary vector-backed memory"},
+    }
+    mock_state.qdrant.points[artifact_id] = {
+        "vector": [0.0] * 768,
+        "payload": {"type": "MetaPattern", "content": "Meta-pattern cluster artifact"},
+    }
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["memory_count"] == 1
+    assert data["vector_count"] == 1
+    assert data["sync_status"] == "synced"
+    assert data["status"] == "healthy"
 
 
 # ==================== Test Memory Recall ====================
@@ -3086,6 +3137,88 @@ def test_admin_sync_uses_embedding_provider_without_openai(client, mock_state, a
     assert data["failed"] == 0
     assert mock_state.qdrant.points[memory_id]["vector"] == [0.6] * 768
     assert mock_state.embedding_provider.batch_calls == [["Missing vector memory"]]
+
+
+def test_admin_sync_dry_run_ignores_metapattern_missing_vector(client, mock_state, admin_headers):
+    """MetaPattern graph artifacts should not be reported as sync drift."""
+    memory_id = "12121212-1212-1212-1212-121212121212"
+    artifact_id = "34343434-3434-3434-3434-343434343434"
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": "Already vector-backed memory",
+        "tags": ["sync"],
+        "type": "Context",
+    }
+    mock_state.memory_graph.memories[artifact_id] = {
+        "id": artifact_id,
+        "content": "Meta-pattern cluster artifact",
+        "tags": [],
+        "type": "MetaPattern",
+    }
+    mock_state.qdrant.points[memory_id] = {
+        "vector": [0.2] * 768,
+        "payload": {"type": "Context", "content": "Already vector-backed memory"},
+    }
+    mock_state.qdrant.points[artifact_id] = {
+        "vector": [0.0] * 768,
+        "payload": {"type": "MetaPattern", "content": "Meta-pattern cluster artifact"},
+    }
+
+    response = client.post("/admin/sync", json={"dry_run": True}, headers=admin_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "dry_run"
+    assert data["falkordb_count"] == 1
+    assert data["qdrant_count"] == 1
+    assert data["missing_count"] == 0
+    assert data["orphaned_count"] == 0
+    assert data["missing_sample"] == []
+
+
+def test_sync_worker_ignores_metapattern_missing_vector(mock_state):
+    """Background sync repair should not enqueue graph-only artifacts."""
+    from automem.sync.runtime_worker import run_sync_check
+
+    memory_id = "56565656-5656-5656-5656-565656565656"
+    artifact_id = "78787878-7878-7878-7878-787878787878"
+    mock_state.memory_graph.memories[memory_id] = {
+        "id": memory_id,
+        "content": "Already synced memory",
+        "type": "Context",
+    }
+    mock_state.memory_graph.memories[artifact_id] = {
+        "id": artifact_id,
+        "content": "Meta-pattern cluster artifact",
+        "type": "MetaPattern",
+    }
+    mock_state.qdrant.points[memory_id] = {
+        "vector": [0.3] * 768,
+        "payload": {"type": "Context", "content": "Already synced memory"},
+    }
+    queued = []
+
+    run_sync_check(
+        state=mock_state,
+        logger=SimpleNamespace(
+            debug=lambda *args, **kwargs: None,
+            info=lambda *args, **kwargs: None,
+            warning=lambda *args, **kwargs: None,
+            exception=lambda *args, **kwargs: None,
+        ),
+        get_memory_graph_fn=lambda: mock_state.memory_graph,
+        get_qdrant_client_fn=lambda: mock_state.qdrant,
+        collection_name="memories",
+        utc_now_fn=lambda: "2026-01-01T00:00:00+00:00",
+        enqueue_embedding_fn=lambda memory_id, content: queued.append((memory_id, content)),
+    )
+
+    assert queued == []
+    assert mock_state.sync_last_result == {
+        "falkordb_count": 1,
+        "qdrant_count": 1,
+        "missing_count": 0,
+    }
 
 
 def test_admin_sync_counts_provider_fallback_as_failed(client, mock_state, admin_headers):

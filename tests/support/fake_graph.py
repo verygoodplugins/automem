@@ -32,6 +32,13 @@ def _skip_limit(query: str) -> tuple[int, int | None]:
     return int(match.group(1)), int(match.group(2))
 
 
+def _memory_type_allowed(memory: Dict[str, Any], excluded_types: List[str]) -> bool:
+    if not excluded_types:
+        return True
+    memory_type = str(memory.get("type") or "")
+    return memory_type not in {str(value) for value in excluded_types}
+
+
 class FakeGraph:
     """Shared fake FalkorDB graph used across unit tests.
 
@@ -129,6 +136,15 @@ class FakeGraph:
             if memory is not None:
                 memory["relevance_score"] = score
             return FakeResult([])
+
+        if "MATCH (m:Memory)" in query and "RETURN COUNT(m)" in query:
+            excluded_types = params.get("excluded_types") or []
+            count = sum(
+                1
+                for memory in self.memories.values()
+                if _memory_type_allowed(memory, excluded_types)
+            )
+            return FakeResult([[count]])
 
         # JIT canonical enrichment state check
         if "MATCH (m:Memory {id: $id}) RETURN m.enriched, m.processed" in query:
@@ -383,7 +399,12 @@ class FakeGraph:
             return FakeResult(rows)
 
         if "MATCH (m:Memory)" in query and "RETURN m.id AS id" in query:
-            rows = [[memory_id] for memory_id in self.memories]
+            excluded_types = params.get("excluded_types") or []
+            rows = [
+                [memory_id]
+                for memory_id, memory in self.memories.items()
+                if _memory_type_allowed(memory, excluded_types)
+            ]
             return FakeResult(rows)
 
         # Startup recall query patterns
