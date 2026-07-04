@@ -123,3 +123,20 @@ def test_vector_fetch_cap_never_reduces_below_requested_limit(overfetch_env, mon
     monkeypatch.setattr(recall_module, "RECALL_VECTOR_FETCH_CAP", 3)
     _ids, last_limit = _recall(overfetch_env)
     assert last_limit == 5
+
+
+def test_vector_overfetch_hydrates_relations_after_trim(overfetch_env, monkeypatch):
+    relation_calls = []
+
+    def _counting_fetch_relations(_graph, memory_id):
+        relation_calls.append(memory_id)
+        return []
+
+    monkeypatch.setattr(recall_helpers, "_fetch_relations", _counting_fetch_relations)
+
+    ids, last_limit = _recall(overfetch_env)
+
+    assert last_limit == 20
+    assert relation_calls
+    assert set(relation_calls).issubset(set(ids))
+    assert len(relation_calls) <= len(ids) <= 5

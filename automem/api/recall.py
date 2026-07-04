@@ -26,6 +26,7 @@ from automem.config import (
     expand_relation_query_types,
     normalize_relation_type,
 )
+from automem.search.runtime_recall_helpers import _hydrate_vector_relations
 from automem.utils.graph import _serialize_node
 from automem.utils.time import _parse_iso_datetime, query_has_temporal_intent
 
@@ -2232,20 +2233,19 @@ def handle_recall(
         entity_tag_filters = tag_filters if expand_respect_tags else None
         entity_tag_mode = tag_mode if expand_respect_tags else "any"
         entity_tag_match = tag_match if expand_respect_tags else "exact"
-        if start_time or end_time or entity_tag_filters or exclude_tags:
-            entity_expansion_results = [
-                r
-                for r in entity_expansion_results
-                if result_passes_filters(
-                    r,
-                    start_time,
-                    end_time,
-                    entity_tag_filters,
-                    entity_tag_mode,
-                    entity_tag_match,
-                    exclude_tags,
-                )
-            ]
+        entity_expansion_results = [
+            r
+            for r in entity_expansion_results
+            if result_passes_filters(
+                r,
+                start_time,
+                end_time,
+                entity_tag_filters,
+                entity_tag_mode,
+                entity_tag_match,
+                exclude_tags,
+            )
+        ]
         results = seed_results + expansion_results + entity_expansion_results
 
     state_filter_info: Optional[Dict[str, Any]] = None
@@ -2382,6 +2382,10 @@ def handle_recall(
             recall_max_limit=recall_max_limit,
             logger=logger,
         )
+
+    # Hydrate vector relations after trimming/selection so over-fetched candidates
+    # do not fan out into graph relation queries before most of them are dropped.
+    _hydrate_vector_relations(graph, results, logger)
 
     # Hydrate after scope-fallback fills so appended results get summaries too
     _hydrate_missing_summaries_from_graph(results, graph, logger)

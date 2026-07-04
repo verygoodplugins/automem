@@ -13,7 +13,7 @@ from automem.config import RECALL_EXCLUDED_TYPES
 _parse_iso_datetime: Optional[Callable[[Any], Optional[Any]]] = None
 _prepare_tag_filters: Optional[Callable[[Optional[List[str]]], List[str]]] = None
 _build_graph_tag_predicate: Optional[Callable[[str, str], str]] = None
-_build_qdrant_tag_filter: Optional[Callable[[Optional[List[str]], str, str], Any]] = None
+_build_qdrant_tag_filter: Optional[Callable[..., Any]] = None
 _serialize_node: Optional[Callable[[Any], Dict[str, Any]]] = None
 _fetch_relations: Optional[Callable[[Any, str], List[Dict[str, Any]]]] = None
 _extract_keywords: Optional[Callable[[str], List[str]]] = None
@@ -552,6 +552,9 @@ def _graph_trending_results(
 
         where_clauses = ["coalesce(m.archived, false) = false"]
         params: Dict[str, Any] = {"limit": limit}
+        if RECALL_EXCLUDED_TYPES:
+            where_clauses.append("NOT coalesce(m.type, '') IN $excluded_types")
+            params["excluded_types"] = list(RECALL_EXCLUDED_TYPES)
         if start_time:
             where_clauses.append("m.timestamp >= $start_time")
             params["start_time"] = start_time
@@ -870,7 +873,12 @@ def _vector_filter_only_tag_search(
     if qdrant_client is None or not tag_filters or limit <= 0:
         return []
 
-    query_filter = build_qdrant_tag_filter(tag_filters, tag_mode, tag_match)
+    query_filter = build_qdrant_tag_filter(
+        tag_filters,
+        tag_mode,
+        tag_match,
+        excluded_types=RECALL_EXCLUDED_TYPES,
+    )
     if query_filter is None:
         return []
 
@@ -931,14 +939,12 @@ def _vector_search(
     build_qdrant_tag_filter = _build_qdrant_tag_filter
     coerce_embedding = _coerce_embedding
     generate_real_embedding = _generate_real_embedding
-    fetch_relations = _fetch_relations
     logger = _logger
     collection_name = _collection_name
     if (
         build_qdrant_tag_filter is None
         or coerce_embedding is None
         or generate_real_embedding is None
-        or fetch_relations is None
         or logger is None
         or not collection_name
     ):
@@ -965,7 +971,12 @@ def _vector_search(
     if not embedding:
         return []
 
-    query_filter = build_qdrant_tag_filter(tag_filters, tag_mode, tag_match)
+    query_filter = build_qdrant_tag_filter(
+        tag_filters,
+        tag_mode,
+        tag_match,
+        excluded_types=RECALL_EXCLUDED_TYPES,
+    )
 
     try:
         vector_results = qdrant_client.search(
@@ -990,7 +1001,6 @@ def _vector_search(
             continue
 
         seen_ids.add(memory_id)
-        relations = fetch_relations(graph, memory_id) if graph is not None else []
         score = float(hit.score) if hit.score is not None else 0.0
 
         matches.append(
@@ -1001,8 +1011,36 @@ def _vector_search(
                 "match_type": "vector",
                 "source": "qdrant",
                 "memory": payload,
-                "relations": relations,
+                "relations": [],
             }
         )
 
     return matches
+
+
+def _hydrate_vector_relations(
+    graph: Any, results: List[Dict[str, Any]], logger: Any = None
+) -> None:
+    fetch_relations = _fetch_relations
+    if graph is None or fetch_relations is None:
+        return
+
+    for result in results:
+        if result.get("source") != "qdrant" or result.get("match_type") != "vector":
+            continue
+        if result.get("relations"):
+            continue
+
+        memory = result.get("memory") or {}
+        memory_id = str(
+            result.get("id") or memory.get("id") or memory.get("memory_id") or ""
+        ).strip()
+        if not memory_id:
+            continue
+
+        try:
+            result["relations"] = fetch_relations(graph, memory_id)
+        except Exception:
+            if logger is not None:
+                logger.exception("Failed to hydrate vector relations for %s", memory_id)
+            result.setdefault("relations", [])

@@ -95,26 +95,36 @@ class MockQdrantClient:
         if scroll_filter is None:
             return True
         must_conditions = getattr(scroll_filter, "must", []) or []
-        for condition in must_conditions:
+        must_not_conditions = getattr(scroll_filter, "must_not", []) or []
+
+        def _condition_matches(condition):
             field_values = payload.get(condition.key) or []
+            if not isinstance(field_values, list):
+                field_values = [field_values]
             normalized = [
                 str(value).strip().lower()
                 for value in field_values
-                if isinstance(value, str) and value.strip()
+                if value is not None and str(value).strip()
             ]
             match = condition.match
             if isinstance(match, qdrant_models.MatchAny):
                 targets = {
                     str(value).strip().lower()
                     for value in (match.any or [])
-                    if isinstance(value, str)
+                    if value is not None and str(value).strip()
                 }
-                if not targets or not any(val in targets for val in normalized):
-                    return False
+                return bool(targets and any(val in targets for val in normalized))
             elif isinstance(match, qdrant_models.MatchValue):
                 target = str(match.value).strip().lower()
-                if target not in normalized:
-                    return False
+                return target in normalized
+            return False
+
+        for condition in must_conditions:
+            if not _condition_matches(condition):
+                return False
+        for condition in must_not_conditions:
+            if _condition_matches(condition):
+                return False
         return True
 
 
@@ -2398,8 +2408,8 @@ def test_recall_scope_fallback_in_scope_state_replacement_not_resurrected(
 
 def _filter_aware_pool_search(scoped_hits: list[dict], unscoped_hits: list[dict]) -> Any:
     """Qdrant search stub that respects tag scoping: the scoped pass (tag
-    query_filter set) sees ``scoped_hits``; the unscoped fallback pass
-    (query_filter None) sees ``unscoped_hits``."""
+    query_filter has tag must clauses) sees ``scoped_hits``; the unscoped
+    fallback pass may still carry type-exclusion must_not clauses."""
 
     def custom_search(
         collection_name: str,
@@ -2411,7 +2421,8 @@ def _filter_aware_pool_search(scoped_hits: list[dict], unscoped_hits: list[dict]
         query_filter=None,
     ) -> list[Any]:
         _ = collection_name, query_vector, limit, with_payload, with_vectors
-        hits = unscoped_hits if query_filter is None else scoped_hits
+        has_tag_filter = bool(getattr(query_filter, "must", []) or [])
+        hits = scoped_hits if has_tag_filter else unscoped_hits
         return [
             SimpleNamespace(id=hit["id"], score=hit["score"], payload=hit["payload"])
             for hit in hits
