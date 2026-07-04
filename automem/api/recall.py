@@ -1948,6 +1948,7 @@ def handle_recall(
 
         local_results: List[Dict[str, Any]] = []
         vector_matches: List[Dict[str, Any]] = []
+        vector_seen: set[str] = set(local_seen)
 
         if qdrant_client is not None:
             # Over-fetch vector candidates so the richer final scoring
@@ -1968,7 +1969,7 @@ def handle_recall(
                 query_str,
                 embedding_param,
                 vector_fetch_limit,
-                local_seen,
+                vector_seen,
                 tag_filters,
                 tag_mode,
                 tag_match,
@@ -1985,11 +1986,13 @@ def handle_recall(
 
         remaining_slots = max(0, per_query_limit - len(local_results))
         if remaining_slots and graph is not None:
+            graph_seen = set(local_seen)
+            graph_seen.update(vector_seen)
             graph_matches = graph_keyword_search(
                 graph,
                 query_str,
                 remaining_slots,
-                local_seen,
+                graph_seen,
                 start_time=start_time,
                 end_time=end_time,
                 tag_filters=tag_filters,
@@ -2009,7 +2012,7 @@ def handle_recall(
                 graph,
                 query_str,
                 metadata_slots,
-                local_seen,
+                set(local_seen),
                 start_time=start_time,
                 end_time=end_time,
                 tag_filters=tag_filters,
@@ -2018,6 +2021,12 @@ def handle_recall(
                 exclude_tags=exclude_tags,
             )
             local_results.extend(metadata_matches)
+
+        local_seen.update(
+            str(result.get("id") or (result.get("memory") or {}).get("id") or "")
+            for result in local_results
+            if result.get("id") or (result.get("memory") or {}).get("id")
+        )
 
         tags_only_request = (
             not query_str
