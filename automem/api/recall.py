@@ -14,16 +14,20 @@ from automem.config import (
     DEFAULT_EXPAND_RELATIONS,
     FILTERABLE_RELATIONS,
     RECALL_ADAPTIVE_FLOOR,
+    RECALL_EXCLUDED_TYPES,
     RECALL_EXPANSION_LIMIT,
     RECALL_METADATA_SEARCH_ENABLED,
     RECALL_MIN_SCORE,
     RECALL_RECENCY_BIAS,
     RECALL_RELATION_LIMIT,
+    RECALL_VECTOR_FETCH_CAP,
+    RECALL_VECTOR_OVERFETCH,
     SEARCH_WEIGHT_TEMPORAL,
     canonicalize_relation_type,
     expand_relation_query_types,
     normalize_relation_type,
 )
+from automem.search.runtime_recall_helpers import _hydrate_vector_relations
 from automem.utils.graph import _serialize_node
 from automem.utils.time import _parse_iso_datetime, query_has_temporal_intent
 
@@ -1555,10 +1559,14 @@ def _expand_related_memories(
         seed_score = float(seed.get("final_score", seed.get("score", 0.0)) or 0.0)
 
         try:
-            rel_filter = " AND type(r) IN $types" if query_relation_types else ""
+            where_clauses = ["m.id <> related.id"]
+            if query_relation_types:
+                where_clauses.append("type(r) IN $types")
+            if RECALL_EXCLUDED_TYPES:
+                where_clauses.append("NOT coalesce(related.type, '') IN $excluded_types")
             query = f"""
                 MATCH (m:Memory {{id: $id}})-[r]-(related:Memory)
-                WHERE m.id <> related.id{rel_filter}
+                WHERE {' AND '.join(where_clauses)}
                 RETURN type(r) as relation_type,
                        coalesce(
                            r.strength,
@@ -1576,6 +1584,8 @@ def _expand_related_memories(
             params: Dict[str, Any] = {"id": seed_id, "limit": per_seed_limit}
             if query_relation_types:
                 params["types"] = query_relation_types
+            if RECALL_EXCLUDED_TYPES:
+                params["excluded_types"] = list(RECALL_EXCLUDED_TYPES)
             records = graph.query(query, params)
         except Exception:
             logger.exception("Failed to expand relations for seed %s", seed_id)
@@ -1945,18 +1955,31 @@ def handle_recall(
 
         local_results: List[Dict[str, Any]] = []
         vector_matches: List[Dict[str, Any]] = []
+        vector_seen: set[str] = set(local_seen)
 
         if qdrant_client is not None:
-            vector_fetch_limit = per_query_limit
+            # Over-fetch vector candidates so the richer final scoring
+            # (importance, exact-match, tags) re-ranks a wide enough pool. A
+            # high-importance, exact-topic memory that is a slightly weaker
+            # pure-vector match would otherwise be cut before its signal can
+            # lift it. Results are trimmed to `limit` downstream, so the
+            # response size is unchanged. OVERFETCH=1 restores legacy behavior.
+            vector_fetch_limit = max(
+                per_query_limit,
+                min(per_query_limit * RECALL_VECTOR_OVERFETCH, RECALL_VECTOR_FETCH_CAP),
+            )
             if tag_filters and (query_str or embedding_param):
-                vector_fetch_limit = max(per_query_limit, recall_max_limit)
+                vector_fetch_limit = max(
+                    per_query_limit,
+                    min(max(vector_fetch_limit, recall_max_limit), RECALL_VECTOR_FETCH_CAP),
+                )
             vector_matches = vector_search(
                 qdrant_client,
                 graph,
                 query_str,
                 embedding_param,
                 vector_fetch_limit,
-                local_seen,
+                vector_seen,
                 tag_filters,
                 tag_mode,
                 tag_match,
@@ -1973,11 +1996,13 @@ def handle_recall(
 
         remaining_slots = max(0, per_query_limit - len(local_results))
         if remaining_slots and graph is not None:
+            graph_seen = set(local_seen)
+            graph_seen.update(vector_seen)
             graph_matches = graph_keyword_search(
                 graph,
                 query_str,
                 remaining_slots,
-                local_seen,
+                graph_seen,
                 start_time=start_time,
                 end_time=end_time,
                 tag_filters=tag_filters,
@@ -1993,19 +2018,31 @@ def handle_recall(
             and RECALL_METADATA_SEARCH_ENABLED
         ):
             metadata_slots = max(1, min(per_query_limit, 10))
+            metadata_upgrade_ids = {
+                memory_id
+                for memory_id in (_result_memory_id(result) for result in local_results)
+                if memory_id
+            }
             metadata_matches = metadata_keyword_search(
                 graph,
                 query_str,
                 metadata_slots,
-                local_seen,
+                set(metadata_upgrade_ids),
                 start_time=start_time,
                 end_time=end_time,
                 tag_filters=tag_filters,
                 tag_mode=tag_mode,
                 tag_match=tag_match,
                 exclude_tags=exclude_tags,
+                include_seen_ids=metadata_upgrade_ids,
             )
             local_results.extend(metadata_matches)
+
+        local_seen.update(
+            str(result.get("id") or (result.get("memory") or {}).get("id") or "")
+            for result in local_results
+            if result.get("id") or (result.get("memory") or {}).get("id")
+        )
 
         tags_only_request = (
             not query_str
@@ -2023,11 +2060,65 @@ def handle_recall(
             )
             local_results.extend(tag_only_results)
 
+        query_tokens = extract_keywords(query_str.lower()) if query_str else []
+
+        def _rank_local_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            for result in results:
+                final_score, components = compute_metadata_score(
+                    result,
+                    query_str or "",
+                    query_tokens,
+                    context_profile,
+                )
+                score_components = result.setdefault("score_components", {})
+                score_components.update(components)
+                result["final_score"] = final_score
+                if "original_score" not in result:
+                    result["original_score"] = result.get("score", 0.0)
+                result["score"] = final_score
+
+            ranked = [
+                res
+                for res in results
+                if result_passes_filters(
+                    res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                )
+            ]
+
+            if min_score is not None and min_score > 0:
+                ranked = [res for res in ranked if float(res.get("final_score", 0.0)) >= min_score]
+
+            ranked, _local_dedup_removed = _dedupe_results(ranked)
+
+            if sort_param == "score":
+                ranked.sort(key=_score_sort_key)
+            elif sort_param in {"time_desc", "time_asc"}:
+                ranked.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
+            elif sort_param in {"updated_desc", "updated_asc"}:
+                # Same key, but favor updated_at (already primary) and keep the name explicit for callers
+                ranked.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
+
+            return ranked
+
+        local_results = _rank_local_results(local_results)
+
         context_injected = False
         if context_profile:
-            priority_ids_missing = not _results_have_priority_ids(local_results, context_profile)
-            needs_context_injection = not _results_have_priority(local_results, context_profile)
+            returnable_results = _guarantee_priority_results(
+                local_results, context_profile, per_query_limit
+            )
+            priority_ids_missing = not _results_have_priority_ids(
+                returnable_results, context_profile
+            )
+            needs_context_injection = not _results_have_priority(
+                returnable_results, context_profile
+            )
             if priority_ids_missing or needs_context_injection:
+                injection_seen = {
+                    memory_id
+                    for memory_id in (_result_memory_id(result) for result in returnable_results)
+                    if memory_id
+                }
                 context_injected = _inject_priority_memories(
                     local_results,
                     graph,
@@ -2035,7 +2126,7 @@ def handle_recall(
                     graph_keyword_search,
                     vector_filter_only_tag_search,
                     context_profile,
-                    local_seen,
+                    injection_seen,
                     result_passes_filters,
                     start_time,
                     end_time,
@@ -2045,41 +2136,9 @@ def handle_recall(
                     logger,
                     exclude_tags,
                 )
+                if context_injected:
+                    local_results = _rank_local_results(local_results)
 
-        query_tokens = extract_keywords(query_str.lower()) if query_str else []
-        for result in local_results:
-            final_score, components = compute_metadata_score(
-                result,
-                query_str or "",
-                query_tokens,
-                context_profile,
-            )
-            result.setdefault("score_components", components)
-            result["score_components"].update(components)
-            result["final_score"] = final_score
-            result["original_score"] = result.get("score", 0.0)
-            result["score"] = final_score
-
-        local_results = [
-            res
-            for res in local_results
-            if result_passes_filters(
-                res, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
-            )
-        ]
-
-        if min_score is not None and min_score > 0:
-            local_results = [
-                res for res in local_results if float(res.get("final_score", 0.0)) >= min_score
-            ]
-
-        if sort_param == "score":
-            local_results.sort(key=_score_sort_key)
-        elif sort_param in {"time_desc", "time_asc"}:
-            local_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
-        elif sort_param in {"updated_desc", "updated_asc"}:
-            # Same key, but favor updated_at (already primary) and keep the name explicit for callers
-            local_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
         local_results = _guarantee_priority_results(local_results, context_profile, per_query_limit)
 
         # Track originating query for debugging/clients
@@ -2221,20 +2280,19 @@ def handle_recall(
         entity_tag_filters = tag_filters if expand_respect_tags else None
         entity_tag_mode = tag_mode if expand_respect_tags else "any"
         entity_tag_match = tag_match if expand_respect_tags else "exact"
-        if start_time or end_time or entity_tag_filters or exclude_tags:
-            entity_expansion_results = [
-                r
-                for r in entity_expansion_results
-                if result_passes_filters(
-                    r,
-                    start_time,
-                    end_time,
-                    entity_tag_filters,
-                    entity_tag_mode,
-                    entity_tag_match,
-                    exclude_tags,
-                )
-            ]
+        entity_expansion_results = [
+            r
+            for r in entity_expansion_results
+            if result_passes_filters(
+                r,
+                start_time,
+                end_time,
+                entity_tag_filters,
+                entity_tag_mode,
+                entity_tag_match,
+                exclude_tags,
+            )
+        ]
         results = seed_results + expansion_results + entity_expansion_results
 
     state_filter_info: Optional[Dict[str, Any]] = None
@@ -2371,6 +2429,10 @@ def handle_recall(
             recall_max_limit=recall_max_limit,
             logger=logger,
         )
+
+    # Hydrate vector relations after trimming/selection so over-fetched candidates
+    # do not fan out into graph relation queries before most of them are dropped.
+    _hydrate_vector_relations(graph, results, logger)
 
     # Hydrate after scope-fallback fills so appended results get summaries too
     _hydrate_missing_summaries_from_graph(results, graph, logger)
