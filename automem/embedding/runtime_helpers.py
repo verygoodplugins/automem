@@ -94,6 +94,7 @@ def generate_real_embeddings_batch(
     state: Any,
     logger: Any,
     placeholder_embedding: Callable[[str], List[float]],
+    allow_placeholder_fallback: bool = True,
 ) -> List[List[float]]:
     """Generate multiple embeddings in a single batch for efficiency."""
     init_embedding_provider()
@@ -102,6 +103,8 @@ def generate_real_embeddings_batch(
         return []
 
     if state.embedding_provider is None:
+        if not allow_placeholder_fallback:
+            raise RuntimeError("No embedding provider available")
         logger.debug("No embedding provider available, falling back to placeholder embeddings")
         return [placeholder_embedding(c) for c in contents]
 
@@ -110,6 +113,8 @@ def generate_real_embeddings_batch(
         provider_name = provider.provider_name()
     except Exception:
         provider_name = provider.__class__.__name__ or "unknown"
+    if not allow_placeholder_fallback and str(provider_name).strip().lower() == "placeholder":
+        raise RuntimeError("Placeholder embedding provider is not allowed in strict mode")
     expected_dim = state.effective_vector_size
     try:
         embeddings = provider.generate_embeddings_batch(contents)
@@ -145,6 +150,11 @@ def generate_real_embeddings_batch(
                 )
             results.append(embedding)
         except Exception as exc:
+            if not allow_placeholder_fallback:
+                raise RuntimeError(
+                    f"Failed to generate provider embedding for item "
+                    f"{len(results) + 1}/{len(contents)}"
+                ) from exc
             logger.debug("Per-item embedding failed (%s); using placeholder", exc)
             results.append(placeholder_embedding(content))
             placeholder_count += 1
