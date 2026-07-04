@@ -39,7 +39,7 @@ AutoMem **0.16.0** was run through the neutral [Agent Memory Benchmark](https://
 - **Efficiency is architectural:** AutoMem feeds the answerer **~2.6–4.8k context tokens** at every scale (mean), versus 17–27k for the board leader on BEAM.
 - **The honest other half:** on conversational Core-3, AutoMem **trails** the AMB leader Hindsight — locomo 85.1% vs 92%, longmemeval 74.4% vs 94.6%, personamem 76.1% vs 86.6%. Pick AutoMem for large-context scaling and efficiency, not for top-of-board verbatim recall.
 
-Outputs are committed and public, and [`AUTOMEM_REPRODUCE.md`](https://automem.ai/benchmarks) gives one command per split so you can **run it yourself**. AutoMem is **submitted to the neutral board (provider PR under review)** — not yet live on the public leaderboard. Full head-to-head numbers live at [automem.ai/benchmarks](https://automem.ai/benchmarks).
+Outputs are committed and public, and [`AUTOMEM_REPRODUCE.md`](https://automem.ai/benchmarks) gives one command per split so you can **run it yourself**. AutoMem is **submitted to the neutral board ([provider PR #24](https://github.com/vectorize-io/agent-memory-benchmark/pull/24), under review)** — not yet live on the public leaderboard. Full head-to-head numbers live at [automem.ai/benchmarks](https://automem.ai/benchmarks).
 
 ## Should you use AutoMem?
 
