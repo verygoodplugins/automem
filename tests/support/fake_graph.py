@@ -232,6 +232,37 @@ class FakeGraph:
             skip, limit = _skip_limit(query)
             return FakeResult(rows[skip : None if limit is None else skip + limit])
 
+        # Batch memory create/upsert
+        if "UNWIND $memories AS m" in query and "MERGE (node:Memory {id: m.id})" in query:
+            rows = []
+            for memory in params.get("memories") or []:
+                memory_id = str(memory.get("id") or "")
+                if not memory_id:
+                    continue
+                self.nodes.add(memory_id)
+                existing = self.memories.get(memory_id, {})
+                self.memories[memory_id] = {
+                    "id": memory_id,
+                    "content": memory.get("content", existing.get("content", "")),
+                    "tags": memory.get("tags", existing.get("tags", [])),
+                    "tag_prefixes": memory.get("tag_prefixes", existing.get("tag_prefixes", [])),
+                    "importance": memory.get("importance", existing.get("importance", 0.5)),
+                    "type": memory.get("type", existing.get("type", "Memory")),
+                    "timestamp": memory.get("timestamp", existing.get("timestamp", _utc_now())),
+                    "metadata": memory.get("metadata", existing.get("metadata", "{}")),
+                    "updated_at": memory.get("updated_at", existing.get("updated_at")),
+                    "last_accessed": memory.get("last_accessed", existing.get("last_accessed")),
+                    "t_valid": memory.get("t_valid", existing.get("t_valid")),
+                    "t_invalid": memory.get("t_invalid", existing.get("t_invalid")),
+                    "confidence": memory.get("confidence", existing.get("confidence", 1.0)),
+                    "summary": memory.get("summary", existing.get("summary")),
+                    "processed": memory.get("processed", existing.get("processed", False)),
+                    "enriched": memory.get("enriched", existing.get("enriched", False)),
+                    "enriched_at": memory.get("enriched_at", existing.get("enriched_at")),
+                }
+                rows.append([memory_id])
+            return FakeResult(rows)
+
         # Memory create/upsert
         if "MERGE (m:Memory {id:" in query or "CREATE (m:Memory {id:" in query:
             memory_id = str(params["id"])

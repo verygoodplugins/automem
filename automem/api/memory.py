@@ -364,6 +364,48 @@ def _delete_graph_memories(
         abort_fn(500, description="Failed to delete memories by tag")
 
 
+def _result_rows(result: Any) -> List[Any]:
+    return list(getattr(result, "result_set", []) or [])
+
+
+def _returned_memory_id(row: Any) -> Optional[str]:
+    if not row:
+        return None
+
+    returned = row[0]
+    if isinstance(returned, str):
+        return returned
+
+    properties = getattr(returned, "properties", None)
+    if isinstance(properties, dict):
+        value = properties.get("id")
+        return str(value) if value is not None else None
+
+    if isinstance(returned, dict):
+        value = returned.get("id")
+        return str(value) if value is not None else None
+
+    return None
+
+
+def _memory_write_confirmed(result: Any, expected_id: str) -> bool:
+    rows = _result_rows(result)
+    if not rows:
+        return False
+
+    returned_id = _returned_memory_id(rows[0])
+    return returned_id == expected_id
+
+
+def _batch_memory_write_confirmed(result: Any, expected_ids: List[str]) -> bool:
+    rows = _result_rows(result)
+    if len(rows) != len(expected_ids):
+        return False
+
+    returned_ids = {_returned_memory_id(row) for row in rows}
+    return returned_ids == set(expected_ids)
+
+
 def create_memory_blueprint(
     store_memory: Callable[[], Any],
     update_memory: Callable[[str], Any],
@@ -568,7 +610,7 @@ def create_memory_blueprint_full(
             last_accessed = updated_at
 
         try:
-            graph.query(
+            graph_result = graph.query(
                 """
                 MERGE (m:Memory {id: $id})
                 ON CREATE SET
@@ -618,6 +660,10 @@ def create_memory_blueprint_full(
             )
         except Exception:
             logger.exception("Failed to persist memory in FalkorDB")
+            abort(500, description="Failed to store memory in FalkorDB")
+
+        if not _memory_write_confirmed(graph_result, memory_id):
+            logger.error("FalkorDB store returned no memory row for %s", memory_id)
             abort(500, description="Failed to store memory in FalkorDB")
 
         # Queue enrichment
@@ -1220,7 +1266,7 @@ def create_memory_blueprint_full(
             abort(503, description="FalkorDB is unavailable")
 
         try:
-            graph.query(
+            graph_result = graph.query(
                 """
                 UNWIND $memories AS m
                 MERGE (node:Memory {id: m.id})
@@ -1244,6 +1290,15 @@ def create_memory_blueprint_full(
             )
         except Exception:
             logger.exception("Batch graph write failed")
+            abort(500, description="Failed to store memories in FalkorDB")
+
+        expected_ids = [memory["id"] for memory in validated]
+        if not _batch_memory_write_confirmed(graph_result, expected_ids):
+            logger.error(
+                "Batch graph write returned %d/%d memory ids",
+                len(_result_rows(graph_result)),
+                len(expected_ids),
+            )
             abort(500, description="Failed to store memories in FalkorDB")
 
         # 4. Batch Qdrant upsert

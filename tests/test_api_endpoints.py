@@ -21,7 +21,7 @@ from automem.utils import scoring
 from automem.utils.scoring import _compute_metadata_score, _compute_recency_score
 from automem.utils.text import _extract_keywords
 from automem.utils.time import query_has_temporal_intent
-from tests.support.fake_graph import FakeGraph
+from tests.support.fake_graph import FakeGraph, FakeResult
 
 
 class MockQdrantClient:
@@ -3836,6 +3836,93 @@ def test_falkordb_unavailable(client, mock_state, auth_headers):
     assert response.status_code == 503
     data = response.get_json()
     assert "FalkorDB is unavailable" in data["message"]
+
+
+class EmptyStoreResultGraph(FakeGraph):
+    """Simulate FalkorDB accepting a write query but returning no persisted rows."""
+
+    def query(self, query: str, params: dict[str, Any] | None = None, **kwargs: Any) -> FakeResult:
+        self.queries.append((query, params or {}))
+        if "MERGE (m:Memory {id:" in query and "RETURN m" in query:
+            return FakeResult([])
+        if "UNWIND $memories AS m" in query and "RETURN node.id" in query:
+            return FakeResult([])
+        return super().query(query, params, **kwargs)
+
+
+def test_store_memory_requires_confirmed_graph_write(client, mock_state, auth_headers):
+    """POST /memory must not return success unless FalkorDB returns the stored node."""
+    mock_state.memory_graph = EmptyStoreResultGraph()
+
+    response = client.post(
+        "/memory",
+        json={
+            "content": "Silent store failure probe",
+            "type": "Context",
+            "embedding": [0.2] * config.VECTOR_SIZE,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 500
+    data = response.get_json()
+    assert "Failed to store memory in FalkorDB" in data["message"]
+    assert mock_state.memory_graph.memories == {}
+    assert mock_state.qdrant.upsert_calls == []
+    assert mock_state.qdrant.points == {}
+
+
+def test_batch_store_requires_confirmed_graph_write(client, mock_state, auth_headers):
+    """POST /memory/batch must not claim stored rows FalkorDB did not return."""
+    mock_state.memory_graph = EmptyStoreResultGraph()
+    mock_state.embedding_provider = FakeEmbeddingProvider([[0.3] * config.VECTOR_SIZE])
+
+    response = client.post(
+        "/memory/batch",
+        json={
+            "memories": [
+                {
+                    "content": "Silent batch failure probe",
+                    "type": "Context",
+                    "tags": ["issue-202"],
+                }
+            ]
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 500
+    data = response.get_json()
+    assert "Failed to store memories in FalkorDB" in data["message"]
+    assert mock_state.memory_graph.memories == {}
+    assert mock_state.qdrant.upsert_calls == []
+    assert mock_state.qdrant.points == {}
+
+
+def test_batch_store_success_confirms_graph_ids(client, mock_state, auth_headers):
+    """Successful POST /memory/batch writes graph rows before vector upsert."""
+    mock_state.embedding_provider = FakeEmbeddingProvider([[0.4] * config.VECTOR_SIZE])
+
+    response = client.post(
+        "/memory/batch",
+        json={
+            "memories": [
+                {
+                    "content": "Confirmed batch write probe",
+                    "type": "Context",
+                    "tags": ["issue-202"],
+                }
+            ]
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data["status"] == "success"
+    [memory_id] = data["memory_ids"]
+    assert memory_id in mock_state.memory_graph.memories
+    assert memory_id in mock_state.qdrant.points
 
 
 def test_invalid_json_payload(client, mock_state, auth_headers):
