@@ -241,7 +241,9 @@ def run_single_query(
     expected_ids = query_data.get("expected_ids", [])
     category = query_data.get("category", "unknown")
     distractor_ids = distractor_ids or set()
-    recall_params = recall_params or {}
+    recall_params = dict(recall_params or {})
+    if query_data.get("context_tags"):
+        recall_params["context_tags"] = query_data["context_tags"]
 
     start = time.perf_counter()
     try:

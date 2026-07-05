@@ -1,0 +1,63 @@
+{
+  "metadata": {
+    "created": "2026-07-04T00:00:00Z",
+    "source": "issue-201-context-tags-probes",
+    "query_count": 5,
+    "notes": "Probe rows exercise per-query context_tags in the recall lab harness."
+  },
+  "queries": [
+    {
+      "query": "What issues do React SPA editors face with WP Fusion integrations regarding data loss?",
+      "expected_ids": [
+        "d4fc88f1-52d1-489b-b39c-72982e406910"
+      ],
+      "category": "context_tags",
+      "context_tags": [
+        "wp-fusion"
+      ]
+    },
+    {
+      "query": "What decisions were made regarding the AutoApp chat UI on April 21, 2026?",
+      "expected_ids": [
+        "d7f35a92-50b6-46cb-9f00-e5f0d4f94819"
+      ],
+      "category": "context_tags",
+      "context_tags": [
+        "autoapp"
+      ]
+    },
+    {
+      "query": "What upgrades were made to the AutoHub voice latency settings?",
+      "expected_ids": [
+        "de37ff1a-db7f-4310-98af-22c03b2622b8"
+      ],
+      "category": "context_tags",
+      "context_tags": [
+        "autohub",
+        "voice"
+      ]
+    },
+    {
+      "query": "What issues were identified with mcp-wp taxonomy tools and their interaction with slugs?",
+      "expected_ids": [
+        "cd5115b8-e003-46c0-9178-b6b3c0d46117"
+      ],
+      "category": "context_tags",
+      "context_tags": [
+        "mcp-wp",
+        "wordpress"
+      ]
+    },
+    {
+      "query": "What design constraints did Jack mention for the AutoMem server in June 2026?",
+      "expected_ids": [
+        "24997f3a-3bb4-406c-bed3-4172dfb1caa2"
+      ],
+      "category": "context_tags",
+      "context_tags": [
+        "automem",
+        "mcp-automem"
+      ]
+    }
+  ]
+}

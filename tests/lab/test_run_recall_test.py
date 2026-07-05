@@ -1,5 +1,6 @@
 import json
 
+import pytest
 import run_recall_test as rr
 
 
@@ -74,3 +75,34 @@ def test_save_results_keeps_query_distractor_rate(tmp_path):
     data = json.loads(output_path.read_text())
 
     assert data["queries"][0]["distractor_rate_10"] == 0.5
+
+
+def test_run_single_query_forwards_row_context_tags(monkeypatch):
+    captured = {}
+
+    def fake_recall(api_url, headers, query, **params):
+        captured["api_url"] = api_url
+        captured["headers"] = headers
+        captured["query"] = query
+        captured["params"] = params
+        return {"results": [{"id": "target"}]}
+
+    monkeypatch.setattr(rr, "recall", fake_recall)
+    monkeypatch.setattr(rr, "get_headers", lambda: {"Authorization": "Bearer test"})
+
+    result = rr.run_single_query(
+        {
+            "query": "What did the AutoMem server prefer?",
+            "expected_ids": ["target"],
+            "category": "context_tags",
+            "context_tags": ["automem", "mcp-automem"],
+        },
+        "http://api",
+        recall_params={"limit": 5, "context_tags": ["fallback"]},
+    )
+
+    assert captured["api_url"] == "http://api"
+    assert captured["query"] == "What did the AutoMem server prefer?"
+    assert captured["params"]["limit"] == 5
+    assert captured["params"]["context_tags"] == ["automem", "mcp-automem"]
+    assert result.recall_5 == pytest.approx(1.0)

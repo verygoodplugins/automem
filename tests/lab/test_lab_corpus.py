@@ -30,6 +30,7 @@ def test_recall_serializes_params():
         expand_relations=True,
         current_only=False,
         recency_bias="auto",
+        context_tags=["automem", "mcp-automem"],
         http_get=fake_get,
     )
     assert captured["url"].endswith("/recall")
@@ -38,6 +39,7 @@ def test_recall_serializes_params():
     assert captured["params"]["expand_relations"] == "true"
     assert captured["params"]["current_only"] == "false"
     assert captured["params"]["recency_bias"] == "auto"
+    assert captured["params"]["context_tags"] == ["automem", "mcp-automem"]
 
 
 def test_recall_omits_recency_bias_when_none():
