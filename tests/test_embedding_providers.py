@@ -940,7 +940,11 @@ def test_end_to_end_memory_storage_with_provider(monkeypatch):
 
     # Mock graph
     mock_graph = Mock()
-    mock_graph.query.return_value = Mock(result_set=[[Mock(properties={"id": "test-id"})]])
+
+    def query_result_with_written_id(_query, params=None, **_kwargs):
+        return Mock(result_set=[[Mock(properties={"id": params["id"]})]])
+
+    mock_graph.query.side_effect = query_result_with_written_id
     app.state.memory_graph = mock_graph
 
     # Initialize provider
