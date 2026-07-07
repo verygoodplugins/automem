@@ -6,6 +6,7 @@ artifacts or network calls are used, mirroring test_analysis.py.
 
 from types import SimpleNamespace
 
+import tests.benchmarks.longmemeval.diagnose_failures as diagnose
 from tests.benchmarks.judge_preflight import (
     EXIT_AUTH,
     EXIT_OK,
@@ -328,6 +329,102 @@ def test_diagnose_stage1_missing_dataset_entry_keeps_rank_evidence():
     assert record["evidence"]["noise_ratio"] is None
     # ...but rank evidence comes from the results row alone (answer at rank 2).
     assert record["suggested_mode"] == MODE_RANKING
+
+
+def test_summarize_answer_construction_buckets_rank_abstention_type_and_noise():
+    report = {
+        "questions": [
+            {
+                "question_id": "llm-overrides-include",
+                "question_type": "multi-session",
+                "suggested_mode": MODE_RANKING,
+                "llm_mode": MODE_ANSWER_CONSTRUCTION,
+                "evidence": {
+                    "answer_rank": 1,
+                    "abstained_despite_hit": True,
+                    "noise_ratio": 0.0,
+                },
+            },
+            {
+                "question_id": "stage1-include",
+                "question_type": "temporal-reasoning",
+                "suggested_mode": MODE_ANSWER_CONSTRUCTION,
+                "evidence": {
+                    "answer_rank": 3,
+                    "abstained_despite_hit": False,
+                    "noise_ratio": 0.5,
+                },
+            },
+            {
+                "question_id": "llm-overrides-exclude",
+                "question_type": "single-session-user",
+                "suggested_mode": MODE_ANSWER_CONSTRUCTION,
+                "llm_mode": MODE_RANKING,
+                "evidence": {
+                    "answer_rank": 1,
+                    "abstained_despite_hit": True,
+                    "noise_ratio": 0.5,
+                },
+            },
+        ]
+    }
+
+    summary = diagnose.summarize_answer_construction(report, noise_threshold=0.4)
+
+    assert summary["total"] == 2
+    assert summary["by_type"] == {"multi-session": 1, "temporal-reasoning": 1}
+    assert summary["by_answer_rank"] == {"1": 1, "3": 1}
+    assert summary["abstained_despite_hit"] == {"false": 1, "true": 1}
+    assert summary["rank1_abstentions"] == 1
+    assert summary["high_noise_count"] == 1
+    assert summary["high_noise_threshold"] == 0.4
+
+
+def test_summarize_answer_construction_prefers_llm_mode_over_suggested_mode():
+    report = {
+        "questions": [
+            {
+                "question_id": "llm-says-answer-construction",
+                "question_type": "knowledge-update",
+                "suggested_mode": MODE_CONFLICT,
+                "llm_mode": MODE_ANSWER_CONSTRUCTION,
+                "evidence": {"answer_rank": 2, "abstained_despite_hit": False},
+            },
+            {
+                "question_id": "llm-says-ranking",
+                "question_type": "knowledge-update",
+                "suggested_mode": MODE_ANSWER_CONSTRUCTION,
+                "llm_mode": MODE_RANKING,
+                "evidence": {"answer_rank": 1, "abstained_despite_hit": True},
+            },
+        ]
+    }
+
+    summary = diagnose.summarize_answer_construction(report)
+
+    assert summary["total"] == 1
+    assert summary["question_ids"] == ["llm-says-answer-construction"]
+    assert summary["by_answer_rank"] == {"2": 1}
+
+
+def test_summarize_answer_construction_falls_back_to_stage1_on_llm_error():
+    report = {
+        "questions": [
+            {
+                "question_id": "errored-llm-placeholder",
+                "question_type": "single-session-user",
+                "suggested_mode": MODE_ANSWER_CONSTRUCTION,
+                "llm_mode": MODE_OTHER,
+                "llm_error": "JSONDecodeError: malformed response",
+                "evidence": {"answer_rank": 1, "abstained_despite_hit": True},
+            }
+        ]
+    }
+
+    summary = diagnose.summarize_answer_construction(report)
+
+    assert summary["total"] == 1
+    assert summary["question_ids"] == ["errored-llm-placeholder"]
 
 
 # ---------------------------------------------------------------------------

@@ -348,6 +348,13 @@ make test-longmemeval
 make test-longmemeval-live
 ```
 
+Answer-construction prompt variants are harness-only experiments. The
+`evidence-answer` config enables an explicit evidence-first answer prompt for
+#200 probes; it does not change `/recall`, graph expansion, vector retrieval, or
+production API behavior. As of the 2026-07-07 mini A/B, `evidence-answer`
+trailed the same-day `temporal-answer` control, so it is not a promoted
+LongMemEval default.
+
 Current LongMemEval results:
 
 | Setup | Scope | Score | Retrieval | Notes |

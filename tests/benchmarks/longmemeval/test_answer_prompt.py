@@ -97,6 +97,12 @@ def test_temporal_answer_config_preset_enables_flag():
     assert config.temporal_answer_hint is True
 
 
+def test_evidence_answer_config_preset_enables_answer_focus_prompt():
+    config = harness.get_config("evidence-answer")
+    assert config.answer_focus_prompt is True
+    assert config.temporal_answer_hint is False
+
+
 def test_prompt_flag_off_is_byte_identical_to_legacy(monkeypatch):
     benchmark = _make_benchmark(monkeypatch)
     prompt = benchmark._build_answer_prompt(QUESTION, MEMORIES, QUESTION_DATE)
@@ -129,6 +135,38 @@ def test_prompt_flag_on_renders_memories_chronologically_with_scores(monkeypatch
     # Scores are noted in the memory headers
     assert "0.85" in prompt
     assert "0.91" in prompt
+
+
+def test_evidence_prompt_instructs_per_memory_evidence_extraction(monkeypatch):
+    benchmark = _make_benchmark(monkeypatch, answer_focus_prompt=True)
+    prompt = benchmark._build_answer_prompt(QUESTION, MEMORIES, QUESTION_DATE)
+
+    assert "For each memory, decide whether it contains exact supporting evidence" in prompt
+    assert "The evidence may be paraphrased or implied by a stated preference" in prompt
+    assert "For count or multi-session questions, combine all supporting memories" in prompt
+    assert "For recommendation or preference questions, use stated preferences" in prompt
+    assert "For temporal questions, use the memory dates" in prompt
+    assert 'Do not answer "I don\'t know" until every memory has been checked' in prompt
+    assert "Step 1 - Evidence by memory:" in prompt
+    assert "Step 2 - Use the strongest supporting evidence:" in prompt
+    assert "Step 3 - Answer:" in prompt
+
+
+def test_evidence_prompt_keeps_rank_order_with_dates_and_scores(monkeypatch):
+    benchmark = _make_benchmark(monkeypatch, answer_focus_prompt=True)
+    prompt = benchmark._build_answer_prompt(QUESTION, MEMORIES, QUESTION_DATE)
+
+    assert prompt.index("cat named Miso") < prompt.index("dog named Rex")
+    assert "[Memory 1 - 2023/05/20 (Sat) 10:00 - retrieval score 0.91]" in prompt
+    assert "[Memory 2 - 2023/03/01 (Wed) 09:00 - retrieval score 0.85]" in prompt
+
+
+def test_evidence_prompt_no_memories_still_allows_dont_know(monkeypatch):
+    benchmark = _make_benchmark(monkeypatch, answer_focus_prompt=True)
+    prompt = benchmark._build_answer_prompt(QUESTION, [], QUESTION_DATE)
+
+    assert "(No relevant memories found)" in prompt
+    assert 'respond with "I don\'t know."' in prompt
 
 
 def test_prompt_flag_on_plain_variant_keeps_guidance(monkeypatch):

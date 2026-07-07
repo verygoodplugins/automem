@@ -286,6 +286,7 @@ class LongMemEvalBenchmark:
                 "answerer_model": self.config.llm_model,
                 "llm_model": self.config.llm_model,
                 "use_llm_eval": self.config.use_llm_eval,
+                "answer_focus_prompt": self.config.answer_focus_prompt,
                 "judge_model": self.effective_judge_model(),
             },
         }
@@ -512,7 +513,11 @@ class LongMemEvalBenchmark:
             return []
 
     def _format_memories_for_prompt(
-        self, memories: List[Dict[str, Any]], *, temporal_hint: bool = False
+        self,
+        memories: List[Dict[str, Any]],
+        *,
+        temporal_hint: bool = False,
+        include_scores: bool = False,
     ) -> str:
         """Format recalled memories for the answer generation prompt.
 
@@ -520,7 +525,8 @@ class LongMemEvalBenchmark:
         historical format: score order, ``[Memory N - {date}]`` headers.
         With ``temporal_hint=True`` (temporal_answer_hint config flag) the
         memories are rendered in chronological order with retrieval scores
-        noted in the headers.
+        noted in the headers. ``include_scores=True`` keeps the original
+        retrieval-rank order but still renders retrieval scores.
         """
         if not memories:
             return "(No relevant memories found)"
@@ -545,7 +551,7 @@ class LongMemEvalBenchmark:
             header_parts = [f"Memory {i}"]
             if date:
                 header_parts.append(str(date))
-            if temporal_hint:
+            if temporal_hint or include_scores:
                 score = mem.get("score")
                 if isinstance(score, (int, float)):
                     header_parts.append(f"retrieval score {float(score):.2f}")
@@ -584,7 +590,50 @@ class LongMemEvalBenchmark:
         Abstention stays possible — some questions require it.
         """
         temporal_hint = bool(getattr(self.config, "temporal_answer_hint", False))
-        context = self._format_memories_for_prompt(memories, temporal_hint=temporal_hint)
+        answer_focus = bool(getattr(self.config, "answer_focus_prompt", False))
+        context = self._format_memories_for_prompt(
+            memories,
+            temporal_hint=temporal_hint and not answer_focus,
+            include_scores=answer_focus,
+        )
+
+        if answer_focus:
+            if self.config.use_chain_of_note:
+                return f"""You are answering a question based on recalled conversation memories.
+
+For each memory, decide whether it contains exact supporting evidence for the question.
+The evidence may be paraphrased or implied by a stated preference; do not require exact wording.
+For count or multi-session questions, combine all supporting memories before answering.
+For recommendation or preference questions, use stated preferences, tools, brands, places, goals, and constraints as evidence.
+For temporal questions, use the memory dates and compute the requested order or elapsed time.
+Use only evidence from the memories. Do not answer "I don't know" until every memory has been checked.
+If no memory supports the answer, respond with "I don't know."
+
+Memories are listed in retrieval-rank order with dates and retrieval scores when available.
+
+Memories:
+{context}
+
+Question (asked on {question_date}): {question}
+
+Step 1 - Evidence by memory:
+Step 2 - Use the strongest supporting evidence:
+Step 3 - Answer:"""
+
+            return f"""Based on the following conversation history excerpts, answer the question.
+For each memory, decide whether it contains exact supporting evidence for the question.
+The evidence may be paraphrased or implied by a stated preference; do not require exact wording.
+For count or multi-session questions, combine all supporting memories before answering.
+For recommendation or preference questions, use stated preferences, tools, brands, places, goals, and constraints as evidence.
+For temporal questions, use the memory dates and compute the requested order or elapsed time.
+Use only evidence from the memories. Do not answer "I don't know" until every memory has been checked.
+If no memory supports the answer, respond with "I don't know."
+
+Context:
+{context}
+
+Question: {question}
+Answer:"""
 
         temporal_guidance = ""
         if temporal_hint:
@@ -956,6 +1005,7 @@ Answer:"""
         print(f"  Expand relations: {self.config.expand_relations}")
         print(f"  Temporal hints: {self.config.use_temporal_hints}")
         print(f"  Temporal answer hint: {self.config.temporal_answer_hint}")
+        print(f"  Answer focus prompt: {self.config.answer_focus_prompt}")
         print(f"  Answerer model: {self.config.llm_model}")
         print(f"  LLM eval: {self.config.use_llm_eval}")
         if self.config.use_llm_eval:
@@ -1048,6 +1098,7 @@ Answer:"""
             "auto_decompose": self.config.auto_decompose,
             "use_temporal_hints": self.config.use_temporal_hints,
             "temporal_answer_hint": self.config.temporal_answer_hint,
+            "answer_focus_prompt": self.config.answer_focus_prompt,
             "answerer_model": self.config.llm_model,
             "llm_model": self.config.llm_model,
             "eval_llm_model": self.config.eval_llm_model,
@@ -1145,6 +1196,7 @@ def main() -> int:
             "high-k",
             "temporal",
             "temporal-answer",
+            "evidence-answer",
             "full-graph",
         ],
         help="Benchmark configuration preset (default: baseline)",
