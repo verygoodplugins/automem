@@ -2,6 +2,36 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.16.1](https://github.com/verygoodplugins/automem/compare/v0.16.0...v0.16.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **api:** reject admin placeholder fallback ([69d8205](https://github.com/verygoodplugins/automem/commit/69d820550b807fd2372966220bcc2f88bd5d81c6))
+* **api:** reject placeholder provider repairs ([d2ce087](https://github.com/verygoodplugins/automem/commit/d2ce087edae6768bfc4a31b3fa3df7f7089bd924))
+* **api:** use provider embeddings for admin repair ([b636b50](https://github.com/verygoodplugins/automem/commit/b636b501060ab11687b8d873f3af3a0491c8ffee))
+* **api:** use provider embeddings for admin repair ([#211](https://github.com/verygoodplugins/automem/issues/211)) ([3ae04bf](https://github.com/verygoodplugins/automem/commit/3ae04bf6f4545f38744e4c3f280b763db881a6fb)), closes [#208](https://github.com/verygoodplugins/automem/issues/208)
+* **memory:** require confirmed graph writes ([878e638](https://github.com/verygoodplugins/automem/commit/878e638df115178131ca50079ccd0056025e744a))
+* **memory:** require confirmed graph writes ([#216](https://github.com/verygoodplugins/automem/issues/216)) ([57264a9](https://github.com/verygoodplugins/automem/commit/57264a9f71ae2ce9f08e3cd1950710af682106de))
+* **recall:** address Codex artifact review feedback ([860e0e7](https://github.com/verygoodplugins/automem/commit/860e0e7bd97bc89e757985f5a44d5183bbd59ea4))
+* **recall:** address Codex overfetch follow-ups ([d18d5d7](https://github.com/verygoodplugins/automem/commit/d18d5d7f30d89037f307f3c729fbc657d72f58a4))
+* **recall:** over-fetch vector candidates and exclude artifact types ([ddc9ecc](https://github.com/verygoodplugins/automem/commit/ddc9ecce3220175a1aa63a81711fc53ab33f6113))
+* **recall:** over-fetch vector candidates and exclude artifact types ([#205](https://github.com/verygoodplugins/automem/issues/205)) ([0720da2](https://github.com/verygoodplugins/automem/commit/0720da2c9400cb1fec60396df0fa05a6cfd3bf08))
+* **recall:** preserve metadata sidecar budget ([b9d89c2](https://github.com/verygoodplugins/automem/commit/b9d89c206612fe75525f2e447d5e196690bf18e7))
+* **recall:** preserve metadata sidecar upgrades ([ed3c188](https://github.com/verygoodplugins/automem/commit/ed3c188fd6246637b293cfbdc35fe66ecd6e060c))
+* **recall:** preserve vector fetch limit floor ([833cbbb](https://github.com/verygoodplugins/automem/commit/833cbbb558831a175661f8dbc3e710774ed776a5))
+* **recall:** widen context tag candidate fetch ([a29e9fb](https://github.com/verygoodplugins/automem/commit/a29e9fb50494d4a5e06ccb2338b5404a73dbb579))
+* **recall:** widen context tag candidate fetch ([#215](https://github.com/verygoodplugins/automem/issues/215)) ([01e1082](https://github.com/verygoodplugins/automem/commit/01e1082cf23c8d63865e1709583842067fe933bc))
+* **sync:** ignore metapattern artifacts in drift checks ([cd6f07d](https://github.com/verygoodplugins/automem/commit/cd6f07d0edf878a44faf1e60cfca2ab2578df8d3))
+* **sync:** ignore metapattern artifacts in drift checks ([#214](https://github.com/verygoodplugins/automem/issues/214)) ([7636021](https://github.com/verygoodplugins/automem/commit/7636021bcb535600da6ac870ed296ae836c5017d)), closes [#209](https://github.com/verygoodplugins/automem/issues/209)
+
+
+### Documentation
+
+* **bench:** log PR 205 validation ([a96478a](https://github.com/verygoodplugins/automem/commit/a96478a99afeed614cfd036185c5477dcba4f339))
+* link AMB submission to provider PR [#24](https://github.com/verygoodplugins/automem/issues/24) ([7e60939](https://github.com/verygoodplugins/automem/commit/7e60939cf2db146fdacf7d1090ac91f750d8d4d8))
+* link AMB submission to provider PR [#24](https://github.com/verygoodplugins/automem/issues/24) ([#213](https://github.com/verygoodplugins/automem/issues/213)) ([f207a40](https://github.com/verygoodplugins/automem/commit/f207a40ef4b861e25d595ab77b82125d46b4baf7))
+
 ## [0.16.0](https://github.com/verygoodplugins/automem/compare/v0.15.2...v0.16.0) (2026-06-26)
 
 
