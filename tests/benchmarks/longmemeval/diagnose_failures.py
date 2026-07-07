@@ -402,7 +402,7 @@ def diagnose_stage1(
             mode_counts_by_type[qtype].get(record["suggested_mode"], 0) + 1
         )
 
-    return {
+    report = {
         "metadata": {
             "results_file": results_file,
             "dataset_file": dataset_file,
@@ -423,6 +423,61 @@ def diagnose_stage1(
                 for qtype, modes in sorted(mode_counts_by_type.items())
             },
         },
+    }
+    report["summary"]["answer_construction"] = summarize_answer_construction(report)
+    return report
+
+
+def _effective_mode(record: Dict[str, Any]) -> str:
+    if record.get("llm_error"):
+        return str(record.get("suggested_mode") or MODE_OTHER)
+    return str(record.get("llm_mode") or record.get("suggested_mode") or MODE_OTHER)
+
+
+def summarize_answer_construction(
+    report: Dict[str, Any], *, noise_threshold: float = 0.4
+) -> Dict[str, Any]:
+    """Summarize retrieved-but-unused answer-construction misses."""
+    selected = [
+        record
+        for record in report.get("questions", [])
+        if _effective_mode(record) == MODE_ANSWER_CONSTRUCTION
+    ]
+
+    by_type: Counter = Counter(str(record.get("question_type") or "unknown") for record in selected)
+    by_rank: Counter = Counter()
+    abstained: Counter = Counter()
+    rank1_abstentions = 0
+    high_noise_count = 0
+    question_ids: List[str] = []
+
+    for record in selected:
+        evidence = record.get("evidence") or {}
+        rank = evidence.get("answer_rank")
+        by_rank[str(rank) if rank is not None else "missing"] += 1
+
+        abstained_value = bool(evidence.get("abstained_despite_hit"))
+        abstained["true" if abstained_value else "false"] += 1
+        if rank == 1 and abstained_value:
+            rank1_abstentions += 1
+
+        noise_ratio = evidence.get("noise_ratio")
+        if isinstance(noise_ratio, (int, float)) and noise_ratio >= noise_threshold:
+            high_noise_count += 1
+
+        question_id = record.get("question_id")
+        if question_id:
+            question_ids.append(str(question_id))
+
+    return {
+        "total": len(selected),
+        "by_type": dict(sorted(by_type.items())),
+        "by_answer_rank": dict(sorted(by_rank.items())),
+        "abstained_despite_hit": dict(sorted(abstained.items())),
+        "rank1_abstentions": rank1_abstentions,
+        "high_noise_count": high_noise_count,
+        "high_noise_threshold": noise_threshold,
+        "question_ids": question_ids,
     }
 
 
@@ -457,6 +512,25 @@ def format_summary(report: Dict[str, Any]) -> str:
     line += "".join(f"{totals.get(mode, 0):>26}" for mode in modes)
     line += f"{metadata['selected']:>8}"
     lines.append(line)
+
+    answer_summary = report.get("summary", {}).get("answer_construction")
+    if answer_summary:
+        lines.extend(
+            [
+                "",
+                "Answer-construction characterization",
+                f"  total: {answer_summary['total']}",
+                f"  by type: {answer_summary['by_type']}",
+                f"  by answer rank: {answer_summary['by_answer_rank']}",
+                f"  abstained despite hit: {answer_summary['abstained_despite_hit']}",
+                f"  rank-1 abstentions: {answer_summary['rank1_abstentions']}",
+                (
+                    f"  high-noise cases (noise_ratio >= "
+                    f"{answer_summary['high_noise_threshold']}): "
+                    f"{answer_summary['high_noise_count']}"
+                ),
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -611,6 +685,7 @@ def run_stage2(
     }
     report["metadata"]["llm_stage"] = True
     report["metadata"]["llm_model"] = model
+    report["summary"]["answer_construction"] = summarize_answer_construction(report)
     return report
 
 

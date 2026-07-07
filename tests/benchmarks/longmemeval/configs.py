@@ -35,11 +35,12 @@ class LongMemEvalConfig:
     expand_relations: bool = False
     auto_decompose: bool = False
     use_temporal_hints: bool = False
-    # Answer-assembly flag: when True, generate_answer renders memories
-    # chronologically with scores noted and appends conflict-recency +
-    # anti-overabstention guidance to the prompt. Default off keeps the
-    # prompt byte-identical to the historical baseline.
+    # Answer-assembly flags. Defaults off keep the prompt byte-identical
+    # to the historical baseline. ``temporal_answer_hint`` renders memories
+    # chronologically with conflict-recency guidance. ``answer_focus_prompt``
+    # keeps retrieval-rank order but makes evidence extraction explicit.
     temporal_answer_hint: bool = False
+    answer_focus_prompt: bool = False
 
     # Memory importance
     importance: float = 0.5
@@ -77,6 +78,7 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": False,
         "use_temporal_hints": False,
         "temporal_answer_hint": False,
+        "answer_focus_prompt": False,
     },
     "per-turn": {
         "name": "per-turn",
@@ -87,6 +89,7 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": False,
         "use_temporal_hints": False,
         "temporal_answer_hint": False,
+        "answer_focus_prompt": False,
     },
     "expand-entities": {
         "name": "expand-entities",
@@ -97,6 +100,7 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": False,
         "use_temporal_hints": False,
         "temporal_answer_hint": False,
+        "answer_focus_prompt": False,
     },
     "expand-relations": {
         "name": "expand-relations",
@@ -107,6 +111,7 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": False,
         "use_temporal_hints": False,
         "temporal_answer_hint": False,
+        "answer_focus_prompt": False,
     },
     "high-k": {
         "name": "high-k",
@@ -117,6 +122,7 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": False,
         "use_temporal_hints": False,
         "temporal_answer_hint": False,
+        "answer_focus_prompt": False,
     },
     "temporal": {
         "name": "temporal",
@@ -127,6 +133,7 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": False,
         "use_temporal_hints": True,
         "temporal_answer_hint": False,
+        "answer_focus_prompt": False,
     },
     "temporal-answer": {
         "name": "temporal-answer",
@@ -137,6 +144,18 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": False,
         "use_temporal_hints": False,
         "temporal_answer_hint": True,
+        "answer_focus_prompt": False,
+    },
+    "evidence-answer": {
+        "name": "evidence-answer",
+        "storage_strategy": "per-session",
+        "recall_limit": 10,
+        "expand_entities": False,
+        "expand_relations": False,
+        "auto_decompose": False,
+        "use_temporal_hints": False,
+        "temporal_answer_hint": False,
+        "answer_focus_prompt": True,
     },
     "full-graph": {
         "name": "full-graph",
@@ -147,6 +166,7 @@ BENCHMARK_CONFIGS: Dict[str, dict] = {
         "auto_decompose": True,
         "use_temporal_hints": True,
         "temporal_answer_hint": False,
+        "answer_focus_prompt": False,
     },
 }
 
