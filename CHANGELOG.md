@@ -2,6 +2,13 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.16.2](https://github.com/verygoodplugins/automem/compare/v0.16.1...v0.16.2) (2026-07-18)
+
+
+### Documentation
+
+* **readme:** lead benchmark section with neutral AMB numbers ([#219](https://github.com/verygoodplugins/automem/issues/219)) ([8ff266e](https://github.com/verygoodplugins/automem/commit/8ff266e62e65cb2e81719a765b05f64a2361a127))
+
 ## [0.16.1](https://github.com/verygoodplugins/automem/compare/v0.16.0...v0.16.1) (2026-07-07)
 
 
