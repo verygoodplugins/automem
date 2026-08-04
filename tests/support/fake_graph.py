@@ -32,6 +32,21 @@ def _skip_limit(query: str) -> tuple[int, int | None]:
     return int(match.group(1)), int(match.group(2))
 
 
+def _id_range(query: str, alias: str) -> tuple[int, int] | None:
+    """Parse the `id(x) >= lo AND id(x) < hi` window the backup exporter pages with."""
+    match = re.search(
+        rf"id\({alias}\)\s*>=\s*(\d+)\s+AND\s+id\({alias}\)\s*<\s*(\d+)", " ".join(query.split())
+    )
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _single_id(query: str, alias: str) -> int | None:
+    match = re.search(rf"id\({alias}\)\s*=\s*(\d+)", " ".join(query.split()))
+    return int(match.group(1)) if match else None
+
+
 def _memory_type_allowed(memory: Dict[str, Any], excluded_types: List[str]) -> bool:
     if not excluded_types:
         return True
@@ -48,6 +63,10 @@ class FakeGraph:
 
     def __init__(self, *, seed_enrichment_fixture: bool = False) -> None:
         self.queries: List[tuple[str, Dict[str, Any]]] = []
+        self.query_kwargs: List[Dict[str, Any]] = []
+
+        # Set to mimic FalkorDB's RESULTSET_SIZE cap (silent truncation).
+        self.resultset_cap: int | None = None
 
         # Generic memory storage + associations
         self.memories: Dict[str, Dict[str, Any]] = {}
@@ -94,8 +113,46 @@ class FakeGraph:
                 ["mem-c", "Automation habit noted"],
             ]
 
+    def _backup_node_rows(self) -> List[List[Any]]:
+        return [
+            [index, ["Memory"], dict(memory)]
+            for index, (_memory_id, memory) in enumerate(sorted(self.memories.items()))
+        ]
+
+    def _backup_relationship_rows(self) -> List[List[Any]]:
+        backup_ids = {memory_id: index for index, memory_id in enumerate(sorted(self.memories))}
+        rows: List[List[Any]] = []
+        for rel in self.relationships:
+            source_id = str(rel.get("id1") or "")
+            target_id = str(rel.get("id2") or "")
+            if source_id not in backup_ids or target_id not in backup_ids:
+                continue
+            props = {key: value for key, value in rel.items() if key not in {"id1", "id2", "type"}}
+            rows.append(
+                [
+                    backup_ids[source_id],
+                    str(rel.get("type") or "RELATES_TO"),
+                    backup_ids[target_id],
+                    props,
+                ]
+            )
+        return sorted(rows, key=lambda row: row[0])
+
+    def _apply_result_limits(self, rows: List[List[Any]], query: str) -> List[List[Any]]:
+        """Apply SKIP/LIMIT, then RESULTSET_SIZE truncation the way the server does: silently."""
+        skip, limit = _skip_limit(query)
+        rows = rows[skip : None if limit is None else skip + limit]
+        if self.resultset_cap is not None:
+            rows = rows[: self.resultset_cap]
+        return rows
+
+    def execute_command(self, *args: Any) -> Any:
+        if args[:3] == ("GRAPH.CONFIG", "GET", "RESULTSET_SIZE"):
+            return ["RESULTSET_SIZE", self.resultset_cap or 0]
+        raise NotImplementedError(f"FakeGraph.execute_command{args}")
+
     def query(self, query: str, params: Dict[str, Any] | None = None, **kwargs: Any) -> FakeResult:
-        del kwargs
+        self.query_kwargs.append(dict(kwargs))
         params = params or {}
         self.queries.append((query, params))
 
@@ -196,41 +253,36 @@ class FakeGraph:
             return FakeResult([])
 
         # Full graph backup export
+        if "RETURN max(id(n))" in query:
+            node_rows = self._backup_node_rows()
+            return FakeResult([[node_rows[-1][0] if node_rows else None]])
+
+        if "RETURN count(n)" in query:
+            return FakeResult([[len(self._backup_node_rows())]])
+
+        if "RETURN count(r)" in query:
+            return FakeResult([[len(self._backup_relationship_rows())]])
+
         if "MATCH (n)" in query and "id(n) as id" in query and "properties(n) as props" in query:
-            memory_items = sorted(self.memories.items(), key=lambda item: item[0])
-            rows = [
-                [index, ["Memory"], dict(memory)]
-                for index, (_memory_id, memory) in enumerate(memory_items)
-            ]
-            skip, limit = _skip_limit(query)
-            return FakeResult(rows[skip : None if limit is None else skip + limit])
+            rows = self._backup_node_rows()
+            id_range = _id_range(query, "n")
+            if id_range:
+                rows = [row for row in rows if id_range[0] <= row[0] < id_range[1]]
+            return FakeResult(self._apply_result_limits(rows, query))
 
         if (
             "MATCH (a)-[r]->(b)" in query
             and "id(a) as source_id" in query
             and "properties(r) as props" in query
         ):
-            memory_ids = [memory_id for memory_id, _memory in sorted(self.memories.items())]
-            backup_ids = {memory_id: index for index, memory_id in enumerate(memory_ids)}
-            rows = []
-            for rel in self.relationships:
-                source_id = str(rel.get("id1") or "")
-                target_id = str(rel.get("id2") or "")
-                if source_id not in backup_ids or target_id not in backup_ids:
-                    continue
-                props = {
-                    key: value for key, value in rel.items() if key not in {"id1", "id2", "type"}
-                }
-                rows.append(
-                    [
-                        backup_ids[source_id],
-                        str(rel.get("type") or "RELATES_TO"),
-                        backup_ids[target_id],
-                        props,
-                    ]
-                )
-            skip, limit = _skip_limit(query)
-            return FakeResult(rows[skip : None if limit is None else skip + limit])
+            rows = self._backup_relationship_rows()
+            id_range = _id_range(query, "a")
+            single_id = _single_id(query, "a")
+            if id_range:
+                rows = [row for row in rows if id_range[0] <= row[0] < id_range[1]]
+            elif single_id is not None:
+                rows = [row for row in rows if row[0] == single_id]
+            return FakeResult(self._apply_result_limits(rows, query))
 
         # Batch memory create/upsert
         if "UNWIND $memories AS m" in query and "MERGE (node:Memory {id: m.id})" in query:
