@@ -125,6 +125,48 @@ test("formatRecallAsItems supports detailed output including relations", () => {
   assert.ok(!compact.includes("Metadata:"));
 });
 
+// Regression: the compact (default) block used to drop the stored date entirely, so a
+// caller replaying recall text could not tell a note written today from one written six
+// weeks ago — relative language inside the content read as if it were current.
+test("formatRecallAsItems compact output carries the stored date on its own line", () => {
+  const results = [
+    {
+      final_score: 0.817,
+      memory: {
+        id: "mem-trip",
+        content: "Ground: drive up Aug 1 in Kyle's car. Kyoshk Island Aug 2-9.",
+        tags: ["travel", "canada-trip"],
+        timestamp: "2026-07-28T09:15:00Z",
+      },
+    },
+  ];
+
+  const compact = formatRecallAsItems(results)[0].text;
+  const lines = compact.split("\n");
+
+  // Own line, matching the stdio package's shape (src/recall-memory.ts).
+  assert.ok(
+    lines.some(line => line === "Created: 2026-07-28T09:15:00Z"),
+    `expected a standalone Created line, got:\n${compact}`
+  );
+  // The pre-existing trailing metadata must stay on the content line, because
+  // downstream parsers peel score/tags off the last *content* line.
+  assert.ok(lines[0].endsWith("score=0.817"));
+  assert.ok(lines.includes("ID: mem-trip"));
+});
+
+test("formatRecallAsItems accepts created_at as well as timestamp, and omits the line when absent", () => {
+  // id-fetch shapes carry created_at rather than timestamp.
+  const [fromCreatedAt, undated] = formatRecallAsItems([
+    { memory: { id: "mem-a", content: "A", created_at: "2026-01-02T03:04:05Z" } },
+    { memory: { id: "mem-b", content: "B" } },
+  ]).map(x => x.text);
+
+  assert.ok(fromCreatedAt.includes("Created: 2026-01-02T03:04:05Z"));
+  assert.ok(!undated.includes("Created:"), "no date must render no Created line");
+  assert.ok(undated.endsWith("ID: mem-b"), "undated output must not gain a trailing newline");
+});
+
 test("formatRecallAsItems detailed output renders full metadata and omits empty metadata", () => {
   const bigMetadata = { notes: "x".repeat(400) };
   const results = [
