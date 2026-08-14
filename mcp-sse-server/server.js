@@ -378,15 +378,23 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
     const tags = Array.isArray(mem.tags) ? mem.tags.filter(t => typeof t === 'string' && t.trim()) : [];
     const score = it?.final_score !== undefined ? Number(it.final_score) : undefined;
     const dedupCount = Array.isArray(it?.deduped_from) ? it.deduped_from.length : 0;
+    // When the memory was stored. Without it a caller replaying recall text has no
+    // way to tell a note written today from one written six weeks ago, and relative
+    // language inside the content ("we leave tomorrow") reads as if it were current.
+    // `timestamp` is what /recall returns; `created_at` covers id-fetch shapes.
+    const storedAt = mem.timestamp || mem.created_at || '';
 
     if (!detailed) {
       const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
       const scoreSuffix = score !== undefined ? ` score=${score.toFixed(3)}` : '';
       const dedupNote = dedupCount ? ` (deduped x${dedupCount})` : '';
       const scopeNote = it?.outside_tag_scope ? ' [outside tag scope]' : '';
+      // Own line, matching the stdio package (src/recall-memory.ts) so both
+      // transports render the same shape and downstream parsers see one format.
+      const createdLine = storedAt ? `\nCreated: ${String(storedAt)}` : '';
       return {
         type: 'text',
-        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}${scopeNote}\nID: ${id}`,
+        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}${scopeNote}\nID: ${id}${createdLine}`,
       };
     }
 
@@ -394,7 +402,9 @@ export function formatRecallAsItems(results, { detailed = false } = {}) {
     lines.push(`${i + 1}. ${String(content)}`);
     if (id) lines.push(`ID: ${id}`);
     if (mem.type) lines.push(`Type: ${String(mem.type)}`);
-    if (mem.timestamp) lines.push(`Timestamp: ${String(mem.timestamp)}`);
+    // Label kept as-is for compatibility; source broadened so id-fetch shapes
+    // (which carry created_at rather than timestamp) also render a date.
+    if (storedAt) lines.push(`Timestamp: ${String(storedAt)}`);
     if (mem.updated_at) lines.push(`Updated: ${String(mem.updated_at)}`);
     if (mem.last_accessed) lines.push(`Last accessed: ${String(mem.last_accessed)}`);
     if (mem.importance !== undefined) {
@@ -693,7 +703,9 @@ export function buildMcpServer(client) {
           }
 
           // Back-compat: preserve the old single-block text format as default.
-          const itemsText = formatRecallAsItems(results).map(x => x.text.replace('\nID: ', '\n   ID: ')).join('\n\n');
+          const itemsText = formatRecallAsItems(results)
+            .map(x => x.text.replace('\nID: ', '\n   ID: ').replace('\nCreated: ', '\n   Created: '))
+            .join('\n\n');
           return {
             content: [{
               type: 'text',
