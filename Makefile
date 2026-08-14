@@ -1,5 +1,5 @@
 # Makefile - Development commands
-.PHONY: help install dev stop test fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-current-state bench-health
+.PHONY: help install dev stop test test-node test-parity fmt lint test-integration test-live test-locomo test-locomo-live test-longmemeval test-longmemeval-live test-longmemeval-watch clean logs deploy deploy-check bench-current-state bench-health
 
 VENV_DIR := $(if $(wildcard .venv/bin/python),.venv,venv)
 VENV_BIN := $(VENV_DIR)/bin
@@ -67,6 +67,25 @@ test:
 		$(MAKE) install; \
 	fi
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(VENV_BIN)/pytest -rs -m unit
+	@$(MAKE) test-node
+
+# Run the MCP bridge's node suite (parity tests self-skip without a live stack)
+test-node:
+	@echo "🧪 Running MCP bridge node tests..."
+	@cd mcp-sse-server && npm ci --silent && npm test
+
+# Diff the remote and stdio MCP transports against one live AutoMem.
+# See docs/MCP_TRANSPORT_PARITY.md.
+test-parity:
+	@echo "🐳 Starting Docker services..."
+	@AUTOMEM_API_TOKEN=test-token ADMIN_API_TOKEN=test-admin-token docker compose up -d
+	@echo "⏳ Waiting for AutoMem to be ready..."
+	@for i in $$(seq 1 60); do \
+		if curl -fsS http://localhost:8001/health > /dev/null 2>&1; then break; fi; \
+		sleep 1; \
+	done
+	@echo "🧪 Diffing MCP transports..."
+	@cd mcp-sse-server && npm ci --silent && AUTOMEM_RUN_PARITY_TESTS=1 npm test
 
 # Format code
 fmt:
