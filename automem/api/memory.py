@@ -676,9 +676,6 @@ def create_memory_blueprint_full(
             logger.error("FalkorDB store returned no memory row for %s", memory_id)
             abort(500, description="Failed to store memory in FalkorDB")
 
-        # Queue enrichment
-        enqueue_enrichment(memory_id)
-
         # Handle embeddings
         embedding_status = "skipped"
         qdrant_client = get_qdrant_client()
@@ -775,6 +772,7 @@ def create_memory_blueprint_full(
             },
             utc_now,
         )
+        enqueue_enrichment(memory_id)
         return jsonify(response), 201
 
     @bp.route("/memory/<memory_id>", methods=["GET"])
@@ -830,6 +828,8 @@ def create_memory_blueprint_full(
                 "metadata",
                 "t_valid",
                 "t_invalid",
+                "updated_at",
+                "last_accessed",
             }
         )
 
@@ -1434,10 +1434,6 @@ def create_memory_blueprint_full(
                 for v in validated:
                     enqueue_embedding(v["id"], v["content"])
                 qdrant_status = "queued"
-        # Queue enrichment for all
-        for v in validated:
-            enqueue_enrichment(v["id"])
-
         elapsed_ms = round((time.perf_counter() - query_start) * 1000, 2)
         logger.info(
             "batch_stored",
@@ -1457,6 +1453,8 @@ def create_memory_blueprint_full(
             },
             utc_now,
         )
+        for v in validated:
+            enqueue_enrichment(v["id"])
 
         return (
             jsonify(

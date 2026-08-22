@@ -241,6 +241,25 @@ def test_update_emits_memory_update_event(client, auth_headers, sse_queue):
     assert "importance" in data["fields"]
 
 
+def test_update_event_includes_timestamp_fields(client, auth_headers, sse_queue):
+    memory_id = _store(client, auth_headers, "Timestamp patch probe")
+    _drain(sse_queue)
+    response = client.patch(
+        f"/memory/{memory_id}",
+        data=json.dumps(
+            {
+                "updated_at": "2026-08-22T12:00:00Z",
+                "last_accessed": "2026-08-22T12:00:01Z",
+            }
+        ),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    events = [event for event in _drain(sse_queue) if event["type"] == "memory.update"]
+    assert events[0]["data"]["fields"] == ["last_accessed", "updated_at"]
+
+
 def test_delete_emits_memory_delete_event(client, auth_headers, sse_queue):
     memory_id = _store(client, auth_headers, "Delete me")
     _drain(sse_queue)
