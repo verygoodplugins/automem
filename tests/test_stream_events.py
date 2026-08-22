@@ -98,8 +98,16 @@ def test_store_emits_memory_store_event(client, auth_headers, sse_queue):
     assert data["type"] == "Insight"
     assert data["importance"] == 0.8
     assert data["tags"][:2] == ["sse", "automem"]
-    assert data["size_bytes"] == len("SSE store coverage probe")
+    assert data["size_bytes"] == len("SSE store coverage probe".encode("utf-8"))
     assert "elapsed_ms" in data
+
+
+def test_store_event_size_bytes_uses_utf8_length(client, auth_headers, sse_queue):
+    memory_id = _store(client, auth_headers, "café")
+    events = [event for event in _drain(sse_queue) if event["type"] == "memory.store"]
+    assert events[0]["data"]["id"] == memory_id
+    assert events[0]["data"]["size_bytes"] == len("café".encode("utf-8"))
+    assert events[0]["data"]["size_bytes"] > len("café")
 
 
 def test_failed_store_does_not_emit(client, auth_headers, sse_queue):
@@ -124,6 +132,14 @@ def test_recall_emits_memory_recall_event(client, auth_headers, sse_queue):
     assert data["result_count"] == 0
     assert data["tags"] == ["sse"]
     assert "elapsed_ms" in data
+
+
+def test_recall_event_includes_multi_query_text(client, auth_headers, sse_queue):
+    response = client.get("/recall?queries=alpha&queries=beta", headers=auth_headers)
+    assert response.status_code == 200
+    events = [event for event in _drain(sse_queue) if event["type"] == "memory.recall"]
+    assert len(events) == 1
+    assert events[0]["data"]["query"] == "alpha | beta"
 
 
 def test_associate_emits_memory_associate_event(client, auth_headers, sse_queue):

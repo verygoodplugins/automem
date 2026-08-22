@@ -769,7 +769,7 @@ def create_memory_blueprint_full(
                 "type": memory_type,
                 "importance": importance,
                 "tags": tags[:5],
-                "size_bytes": len(content),
+                "size_bytes": len(content.encode("utf-8")),
                 "elapsed_ms": int(response["query_time_ms"]),
                 "count": 1,
             },

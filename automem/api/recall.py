@@ -2598,10 +2598,11 @@ def handle_recall(
             ),
         },
     )
+    recall_preview = query_text or " | ".join(q for q in queries_to_run if q)
     emit_event(
         "memory.recall",
         {
-            "query": preview_text(query_text, 50) if query_text else "(no query)",
+            "query": preview_text(recall_preview, 50) if recall_preview else "(no query)",
             "limit": limit,
             "result_count": len(results),
             "elapsed_ms": int(response["query_time_ms"]),
