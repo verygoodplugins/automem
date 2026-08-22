@@ -35,7 +35,20 @@ except ImportError:
     print("  pip install rich httpx")
     sys.exit(1)
 
-from automem.api.stream import event_count, is_single_memory_store
+
+def event_count(data: Dict, default: int = 1) -> int:
+    """Read an SSE payload count, preserving explicit zeros."""
+    if not isinstance(data, dict) or "count" not in data:
+        return default
+    try:
+        return int(data["count"])
+    except (TypeError, ValueError):
+        return default
+
+
+def is_single_memory_store(data: Dict) -> bool:
+    """True when a memory.store payload describes one concrete memory."""
+    return bool(isinstance(data, dict) and data.get("id") and event_count(data) == 1)
 
 
 class GarbageDetector:
