@@ -3,6 +3,11 @@
 Provides a /stream endpoint that emits events for memory operations,
 enrichment, and consolidation tasks. Uses an in-memory subscriber
 pattern with bounded queues per client.
+
+Event types:
+    memory.store / memory.recall / memory.update / memory.delete / memory.associate
+    enrichment.start / enrichment.complete / enrichment.failed
+    consolidation.run
 """
 
 from __future__ import annotations
@@ -17,6 +22,12 @@ from flask import Blueprint, Response
 # Subscriber management - thread-safe list of client queues
 _subscribers: List[Queue] = []
 _subscribers_lock = Lock()
+
+
+def preview_text(value: Any, limit: int = 100) -> str:
+    """Truncate *value* for SSE payloads without leaking huge content."""
+    text = "" if value is None else str(value)
+    return text[:limit] + "..." if len(text) > limit else text
 
 
 def emit_event(event_type: str, data: Dict[str, Any], utc_now: Callable[[], str]) -> None:

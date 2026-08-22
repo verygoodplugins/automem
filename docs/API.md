@@ -160,6 +160,23 @@ Consolidation
 - GET `/consolidate/status`
   - Response: `{ "status": "success", "next_runs": {...}, "history": [...] }`
 
+Stream
+
+- GET `/stream`
+  - Authenticated SSE feed of in-process memory operations. Each event is `data: {json}` with `{ "type", "timestamp", "data" }`. Keepalive comments (`: keepalive`) are sent every 30 seconds.
+  - Event types:
+    - `memory.store` — single store (`id`, `content_preview`, `type`, `importance`, `tags`, `size_bytes`, `elapsed_ms`, `count: 1`) or batch store (`count`, `ids`, `content_preview`, `elapsed_ms`)
+    - `memory.recall` — ranked recall (`query`, `limit`, `result_count`, `elapsed_ms`, `tags`)
+    - `memory.update` — patch (`id`, `content_preview`, `type`, `importance`, `tags`, `fields`)
+    - `memory.delete` — single delete (`id`, `count: 1`) or bulk-by-tag (`count`, `tags`)
+    - `memory.associate` — single edge (`memory1_id`, `memory2_id`, `relation_type`, `strength`, `count: 1`) or batch (`count`, `failed_count`, `relation_types`)
+    - `enrichment.start` / `enrichment.complete` / `enrichment.failed`
+    - `consolidation.run`
+  - Failed validation (`4xx`) does not emit. Watch with `python scripts/automem_watch.py --url … --token …`.
+
+- GET `/stream/status`
+  - Response: `{ "subscribers": N }`
+
 Notes
 
 - Tag matching supports exact and prefix semantics; vector searches are filtered by tag conditions when provided.
