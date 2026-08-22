@@ -30,6 +30,21 @@ def preview_text(value: Any, limit: int = 100) -> str:
     return text[:limit] + "..." if len(text) > limit else text
 
 
+def event_count(data: Dict[str, Any], default: int = 1) -> int:
+    """Read an SSE payload ``count``, preserving explicit zeros."""
+    if not isinstance(data, dict) or "count" not in data:
+        return default
+    try:
+        return int(data["count"])
+    except (TypeError, ValueError):
+        return default
+
+
+def is_single_memory_store(data: Dict[str, Any]) -> bool:
+    """True when a ``memory.store`` payload describes one concrete memory."""
+    return bool(isinstance(data, dict) and data.get("id") and event_count(data) == 1)
+
+
 def emit_event(event_type: str, data: Dict[str, Any], utc_now: Callable[[], str]) -> None:
     """Emit an event to all SSE subscribers.
 

@@ -5,6 +5,7 @@ import pytest
 
 import app
 from automem.api import stream as stream_mod
+from automem.api.stream import event_count, is_single_memory_store
 from tests.support.fake_graph import FakeGraph
 
 
@@ -267,6 +268,15 @@ def test_delete_by_tag_emits_memory_delete_event(client, auth_headers, sse_queue
     assert len(events) == 1
     assert events[0]["data"]["count"] == 1
     assert events[0]["data"]["tags"] == ["sse-bulk"]
+
+
+def test_event_count_preserves_explicit_zero():
+    assert event_count({}) == 1
+    assert event_count({"count": 2}) == 2
+    assert event_count({"count": 0}) == 0
+    assert is_single_memory_store({"id": "abc", "count": 1}) is True
+    assert is_single_memory_store({"count": 2, "ids": ["a", "b"]}) is False
+    assert is_single_memory_store({"content_preview": "2 memories stored"}) is False
 
 
 def test_stream_status_reports_subscriber_count(client, auth_headers, sse_queue):

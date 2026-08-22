@@ -35,6 +35,8 @@ except ImportError:
     print("  pip install rich httpx")
     sys.exit(1)
 
+from automem.api.stream import event_count, is_single_memory_store
+
 
 class GarbageDetector:
     """Detect suspicious patterns in memory stores."""
@@ -175,21 +177,22 @@ class AutoMemMonitor:
         event_type = event.get("type", "")
 
         # Update stats
+        data = event.get("data", {}) or {}
         if event_type == "memory.store":
-            self.stats["stores"] += int(event.get("data", {}).get("count") or 1)
-            # Check for garbage
-            warning = self.garbage.analyze(event)
-            if warning:
-                ts = datetime.now().strftime("%H:%M:%S")
-                self.errors.appendleft(f"[{ts}] [GARBAGE] {warning}")
+            self.stats["stores"] += event_count(data)
+            if is_single_memory_store(data):
+                warning = self.garbage.analyze(event)
+                if warning:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    self.errors.appendleft(f"[{ts}] [GARBAGE] {warning}")
         elif event_type == "memory.recall":
             self.stats["recalls"] += 1
         elif event_type == "memory.update":
             self.stats["updates"] += 1
         elif event_type == "memory.delete":
-            self.stats["deletes"] += int(event.get("data", {}).get("count") or 1)
+            self.stats["deletes"] += event_count(data)
         elif event_type == "memory.associate":
-            self.stats["associates"] += int(event.get("data", {}).get("count") or 1)
+            self.stats["associates"] += event_count(data)
         elif event_type == "enrichment.complete":
             self.stats["enriched"] += 1
         elif event_type == "enrichment.failed":
