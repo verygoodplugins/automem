@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from types import SimpleNamespace
+import logging
 
+from automem.classification.memory_classifier import MemoryClassifier
 from automem.service_state import EnrichmentCircuit
+from automem.utils.text import summarize_content
 
 
 def test_quota_failure_opens_circuit_and_skips_requests():
@@ -32,3 +35,55 @@ def test_successful_probe_closes_circuit_and_records_recovery():
 
     assert circuit.allow_request() is True
     assert circuit.to_dict()["recoveries"] == 1
+
+
+def test_failed_probe_does_not_permanently_block_future_requests():
+    now = [100.0]
+    circuit = EnrichmentCircuit(cooldown_seconds=60, clock=lambda: now[0])
+
+    circuit.record_failure("insufficient_quota")
+    now[0] += 60
+    assert circuit.allow_request() is True
+
+
+def test_classifier_makes_no_second_request_while_circuit_is_open():
+    calls = []
+
+    def create(*args, **kwargs):
+        calls.append(1)
+        raise RuntimeError("insufficient_quota")
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    circuit = EnrichmentCircuit(cooldown_seconds=60, clock=lambda: 100.0)
+    classifier = MemoryClassifier(
+        normalize_memory_type=lambda raw: (raw, False),
+        ensure_openai_client=lambda: None,
+        get_openai_client=lambda: client,
+        classification_model="gpt-4o-mini",
+        logger=logging.getLogger(__name__),
+        circuit=circuit,
+    )
+
+    classifier.classify("qwxz flibber jabberwock snorkelblatt")
+    classifier.classify("qwxz flibber jabberwock snorkelblatt")
+
+    assert len(calls) == 1
+
+
+def test_summarizer_makes_no_second_request_while_circuit_is_open():
+    calls = []
+
+    def create(*args, **kwargs):
+        calls.append(1)
+        raise RuntimeError("insufficient_quota")
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    circuit = EnrichmentCircuit(cooldown_seconds=60, clock=lambda: 100.0)
+    content = "x" * 600
+
+    summarize_content(content, client, "gpt-4o-mini", 300, circuit)
+    summarize_content(content, client, "gpt-4o-mini", 300, circuit)
+
+    assert len(calls) == 1
+    assert circuit.record_failure("connection reset") is False
+    assert circuit.allow_request() is True

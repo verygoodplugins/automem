@@ -41,6 +41,10 @@ class EnrichmentCircuit:
 
     def record_failure(self, error: str) -> bool:
         if "insufficient_quota" not in error.lower() and "quota" not in error.lower():
+            with self._lock:
+                if self._probe_pending:
+                    self._opened_until = 0.0
+                    self._probe_pending = False
             return False
         with self._lock:
             self._opened_until = self._clock() + self._cooldown_seconds
