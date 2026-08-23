@@ -97,6 +97,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         classification_model: str,
         logger: Any,
         stats: Any = None,
+        circuit: Any = None,
     ) -> None:
         self._normalize_memory_type = normalize_memory_type
         self._ensure_openai_client = ensure_openai_client
@@ -104,6 +105,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         self._classification_model = classification_model
         self._logger = logger
         self._stats = stats
+        self._circuit = circuit
 
     def classify(self, content: str, *, use_llm: bool = True) -> tuple[str, float]:
         """Classify memory type and return confidence score."""
@@ -134,12 +136,17 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             except Exception as exc:
                 self._logger.exception("LLM classification failed, using fallback")
                 llm_error = str(exc)
+                if self._circuit is not None:
+                    self._circuit.record_failure(llm_error)
             if self._stats is not None:
                 self._stats.record_fallback(llm_error)
 
         return "Memory", 0.3
 
     def _classify_with_llm(self, content: str) -> Optional[tuple[str, float]]:
+        if self._circuit is not None and not self._circuit.allow_request():
+            self._logger.info("Skipping LLM classification while enrichment circuit is open")
+            return None
         client = self._get_openai_client()
         if client is None:
             self._ensure_openai_client()
@@ -166,6 +173,8 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             response_format={"type": "json_object"},
             **extra_params,
         )
+        if self._circuit is not None:
+            self._circuit.record_success()
 
         raw_content = response.choices[0].message.content
         if not raw_content:

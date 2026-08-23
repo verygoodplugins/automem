@@ -514,6 +514,7 @@ def create_memory_blueprint_full(
                     openai_client,
                     CLASSIFICATION_MODEL,
                     MEMORY_SUMMARY_TARGET_LENGTH,
+                    state.enrichment_circuit,
                 )
                 if summary:
                     original_content = content
@@ -1248,6 +1249,7 @@ def create_memory_blueprint_full(
                         openai_client,
                         CLASSIFICATION_MODEL,
                         MEMORY_SUMMARY_TARGET_LENGTH,
+                        state.enrichment_circuit,
                     )
                     if summary:
                         logger.info(

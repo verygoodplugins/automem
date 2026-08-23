@@ -4,13 +4,63 @@ from dataclasses import dataclass, field
 from queue import Queue
 from threading import Event, Lock, Thread
 from typing import Any, Dict, Optional, Set
+import time
 
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient
 
-from automem.config import VECTOR_SIZE
+from automem.config import ENRICHMENT_CIRCUIT_COOLDOWN_SECONDS, VECTOR_SIZE
 from automem.embedding.provider import EmbeddingProvider
 from automem.utils.time import utc_now
+
+
+class EnrichmentCircuit:
+    """Fail-soft cooldown for definitive LLM quota failures."""
+
+    def __init__(self, cooldown_seconds: float = 300, clock: Any = time.monotonic) -> None:
+        self._cooldown_seconds = cooldown_seconds
+        self._clock = clock
+        self._opened_until = 0.0
+        self._probe_pending = False
+        self._lock = Lock()
+        self.circuit_open_skips = 0
+        self.recoveries = 0
+
+    def allow_request(self) -> bool:
+        with self._lock:
+            now = self._clock()
+            if now < self._opened_until:
+                self.circuit_open_skips += 1
+                return False
+            if self._opened_until:
+                if self._probe_pending:
+                    self.circuit_open_skips += 1
+                    return False
+                self._probe_pending = True
+            return True
+
+    def record_failure(self, error: str) -> bool:
+        if "insufficient_quota" not in error.lower() and "quota" not in error.lower():
+            return False
+        with self._lock:
+            self._opened_until = self._clock() + self._cooldown_seconds
+            self._probe_pending = False
+            return True
+
+    def record_success(self) -> None:
+        with self._lock:
+            if self._opened_until:
+                self.recoveries += 1
+            self._opened_until = 0.0
+            self._probe_pending = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "circuit_open_skips": self.circuit_open_skips,
+                "recoveries": self.recoveries,
+                "open": self._clock() < self._opened_until,
+            }
 
 
 @dataclass
@@ -106,6 +156,9 @@ class ServiceState:
     enrichment_thread: Optional[Thread] = None
     enrichment_stats: EnrichmentStats = field(default_factory=EnrichmentStats)
     classification_stats: ClassificationStats = field(default_factory=ClassificationStats)
+    enrichment_circuit: EnrichmentCircuit = field(
+        default_factory=lambda: EnrichmentCircuit(ENRICHMENT_CIRCUIT_COOLDOWN_SECONDS)
+    )
     enrichment_inflight: Set[str] = field(default_factory=set)
     enrichment_pending: Set[str] = field(default_factory=set)
     enrichment_lock: Lock = field(default_factory=Lock)

@@ -122,6 +122,7 @@ def summarize_content(
     openai_client: Any,
     model: str,
     target_length: int = 300,
+    circuit: Any = None,
 ) -> Optional[str]:
     """Summarize content using an LLM to fit within target length.
 
@@ -137,9 +138,11 @@ def summarize_content(
     if openai_client is None:
         logger.warning("Cannot summarize: OpenAI client not available")
         return None
-
     if not content or len(content) <= target_length:
         return content
+    if circuit is not None and not circuit.allow_request():
+        logger.info("Skipping summarization while enrichment circuit is open")
+        return None
 
     try:
         system_prompt = SUMMARIZE_SYSTEM_PROMPT.format(target_length=target_length)
@@ -163,6 +166,8 @@ def summarize_content(
             ],
             **extra_params,
         )
+        if circuit is not None:
+            circuit.record_success()
 
         summary = response.choices[0].message.content.strip()
 
@@ -183,8 +188,10 @@ def summarize_content(
         )
         return None
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Memory summarization failed")
+        if circuit is not None:
+            circuit.record_failure(str(exc))
         return None
 
 
