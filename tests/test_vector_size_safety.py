@@ -276,17 +276,13 @@ class TestEnsureQdrantCollectionPayloadIndexes:
         """`type` backs RECALL_EXCLUDED_TYPES; without an index Qdrant 400s every search."""
         qdrant = self._run_ensure(SimpleNamespace(KEYWORD="keyword"))
 
-        indexed = {
-            call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list
-        }
+        indexed = {call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list}
         assert indexed == {"tags", "tag_prefixes", "type"}
 
     def test_indexes_every_field_without_payload_schema_enum(self):
         qdrant = self._run_ensure(None)
 
-        indexed = {
-            call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list
-        }
+        indexed = {call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list}
         assert indexed == {"tags", "tag_prefixes", "type"}
         assert all(
             call.kwargs["field_schema"] == "keyword"
