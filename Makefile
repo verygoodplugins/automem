@@ -80,10 +80,16 @@ test-parity:
 	@echo "🐳 Starting Docker services..."
 	@AUTOMEM_API_TOKEN=test-token ADMIN_API_TOKEN=test-admin-token docker compose up -d
 	@echo "⏳ Waiting for AutoMem to be ready..."
-	@for i in $$(seq 1 60); do \
-		if curl -fsS http://localhost:8001/health > /dev/null 2>&1; then break; fi; \
+	@ready=0; \
+	for i in $$(seq 1 60); do \
+		if curl -fsS http://localhost:8001/health > /dev/null 2>&1; then ready=1; break; fi; \
 		sleep 1; \
-	done
+	done; \
+	if [ "$$ready" != "1" ]; then \
+		echo "❌ AutoMem did not become healthy within 60s"; \
+		docker compose logs --tail=50 flask-api; \
+		exit 1; \
+	fi
 	@echo "🧪 Diffing MCP transports..."
 	@cd mcp-sse-server && npm ci --silent && AUTOMEM_RUN_PARITY_TESTS=1 npm test
 

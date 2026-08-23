@@ -22,6 +22,11 @@ export function normalizeKeys(value) {
   return value;
 }
 
+// The remote transport appends " (request_id: <uuid>)" to error text for
+// observability on a hosted service. docs/MCP_TRANSPORT_PARITY.md allowlists
+// the whole suffix, so strip it entirely — redacting only the UUID inside it
+// would leave the three error scenarios permanently red.
+const REQUEST_ID_SUFFIX_RE = /\s*\(request_id: [^)]*\)/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 const SCORE_RE = /(score=|Score: |"final_score":\s*|"score":\s*)[\d.]+/g;
@@ -60,6 +65,7 @@ export function redact(text, scopeTag) {
   let out = String(text);
   if (scopeTag) out = out.split(scopeTag).join('<SCOPE_TAG>');
   return out
+    .replace(REQUEST_ID_SUFFIX_RE, '')
     .replace(UUID_RE, '<UUID>')
     .replace(ISO_RE, '<TS>')
     .replace(SCORE_RE, '$1<SCORE>')

@@ -9,9 +9,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { connectBothTransports } from '../parity/clients.js';
 import { normalizeKeys, redact } from '../parity/normalize.js';
 import { buildScenarios } from '../parity/scenarios.js';
+
+const require = createRequire(import.meta.url);
+const bridgePkg = require('../package.json');
+const stdioPkg = require('@verygoodplugins/mcp-automem/package.json');
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -78,10 +83,23 @@ test('server capabilities and instructions match', { skip: GATE }, async () => {
     );
     assert.equal(remote.getInstructions(), stdio.getInstructions());
 
-    // serverInfo.name is an allowlisted difference — clients must be able to
-    // tell the transports apart (docs/MCP_TRANSPORT_PARITY.md).
+    // serverInfo is transport-specific and allowlisted to differ, but each
+    // side must still report its OWN package version. The remote's hardcoded
+    // 0.1.0 disagreeing with its package.json is exactly the drift the audit
+    // records, so pin self-consistency rather than cross-transport equality.
     assert.equal(remote.getServerVersion().name, 'automem-mcp-sse');
     assert.equal(stdio.getServerVersion().name, 'mcp-automem');
+
+    assert.equal(
+      remote.getServerVersion().version,
+      bridgePkg.version,
+      'remote serverInfo.version must match mcp-sse-server/package.json'
+    );
+    assert.equal(
+      stdio.getServerVersion().version,
+      stdioPkg.version,
+      'stdio serverInfo.version must match the published package version'
+    );
   } finally {
     await close();
   }
