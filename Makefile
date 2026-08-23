@@ -76,22 +76,31 @@ test-node:
 
 # Diff the remote and stdio MCP transports against one live AutoMem.
 # See docs/MCP_TRANSPORT_PARITY.md.
+# Deliberately not 8001. The harness writes fixtures and bulk-deletes by tag,
+# and a developer running a local AutoMem install (~/.automem/server) already
+# holds 8001 — pointing this at that instance would seed test data into a real
+# memory store. Own port, own stack, no collision.
+PARITY_PORT ?= 8011
+
 test-parity:
-	@echo "🐳 Starting Docker services..."
-	@AUTOMEM_API_TOKEN=test-token ADMIN_API_TOKEN=test-admin-token docker compose up -d
+	@echo "🐳 Starting Docker services on port $(PARITY_PORT)..."
+	@AUTOMEM_API_HOST_PORT=$(PARITY_PORT) AUTOMEM_API_TOKEN=test-token ADMIN_API_TOKEN=test-admin-token docker compose up -d
 	@echo "⏳ Waiting for AutoMem to be ready..."
 	@ready=0; \
 	for i in $$(seq 1 60); do \
-		if curl -fsS http://localhost:8001/health > /dev/null 2>&1; then ready=1; break; fi; \
+		if curl -fsS http://localhost:$(PARITY_PORT)/health > /dev/null 2>&1; then ready=1; break; fi; \
 		sleep 1; \
 	done; \
 	if [ "$$ready" != "1" ]; then \
-		echo "❌ AutoMem did not become healthy within 60s"; \
+		echo "❌ AutoMem did not become healthy on port $(PARITY_PORT) within 60s"; \
 		docker compose logs --tail=50 flask-api; \
 		exit 1; \
 	fi
 	@echo "🧪 Diffing MCP transports..."
-	@cd mcp-sse-server && npm ci --silent && AUTOMEM_RUN_PARITY_TESTS=1 npm test
+	@cd mcp-sse-server && npm ci --silent && \
+		AUTOMEM_RUN_PARITY_TESTS=1 \
+		AUTOMEM_PARITY_API_URL=http://localhost:$(PARITY_PORT) \
+		npm test
 
 # Format code
 fmt:

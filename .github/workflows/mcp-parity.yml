@@ -2,6 +2,13 @@ name: MCP Transport Parity
 
 # Diffs the remote MCP bridge against the stdio package against one live
 # AutoMem. See docs/MCP_TRANSPORT_PARITY.md for the contract.
+#
+# No scheduled run yet, deliberately. While the harness is intentionally red
+# against the known gaps, `continue-on-error` leaves the workflow successful
+# either way, so a cron job could not distinguish "same known gaps" from "a
+# newly published mcp-automem added drift" — it would be an alarm that cannot
+# alarm. The weekly drift check lands with the change that turns the harness
+# green, where a failure is a real signal.
 
 on:
   pull_request:
@@ -9,9 +16,6 @@ on:
       - 'mcp-sse-server/**'
       - 'automem/api/**'
       - 'app.py'
-  schedule:
-    # Weekly drift alarm: catches a newly published mcp-automem the bridge has not adopted.
-    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 jobs:
@@ -31,6 +35,7 @@ jobs:
 
       - name: Start AutoMem stack
         env:
+          AUTOMEM_API_HOST_PORT: '8011'
           AUTOMEM_API_TOKEN: test-token
           ADMIN_API_TOKEN: test-admin-token
         run: docker compose up -d
@@ -38,7 +43,7 @@ jobs:
       - name: Wait for /health
         run: |
           for i in $(seq 1 60); do
-            if curl -fsS http://localhost:8001/health > /dev/null; then
+            if curl -fsS http://localhost:8011/health > /dev/null; then
               echo "AutoMem is up after ${i}s"
               exit 0
             fi
@@ -52,17 +57,10 @@ jobs:
         working-directory: mcp-sse-server
         env:
           AUTOMEM_RUN_PARITY_TESTS: '1'
-          AUTOMEM_PARITY_API_URL: http://localhost:8001
+          AUTOMEM_PARITY_API_URL: http://localhost:8011
           AUTOMEM_PARITY_API_TOKEN: test-token
         run: |
           npm ci
-          # npm ci reinstalls exactly what package-lock.json pins, so on the
-          # weekly run it would re-test the same version forever and could
-          # never alarm. Resolve the latest published package on that path
-          # only; PR runs stay reproducible.
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            npm install --no-save @verygoodplugins/mcp-automem@latest
-          fi
           node -p "'stdio package under test: ' + require('@verygoodplugins/mcp-automem/package.json').version"
           npm test
 

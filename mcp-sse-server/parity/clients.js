@@ -56,8 +56,13 @@ export async function connectBothTransports() {
       new URL(`http://127.0.0.1:${port}/mcp`),
       { requestInit: { headers: { Authorization: `Bearer ${API_TOKEN}` } } }
     );
-    await remote.connect(remoteTransport);
+    // Registered before the await: if the handshake itself rejects or times
+    // out, a closer added afterwards would never exist and the resource would
+    // leak. Closers swallow their own errors, so closing something that never
+    // finished connecting is safe.
+    closers.push(() => remoteTransport.close());
     closers.push(() => remote.close());
+    await remote.connect(remoteTransport);
 
     // --- stdio --------------------------------------------------------------
     const stdioEntry = require.resolve('@verygoodplugins/mcp-automem/dist/index.js');
@@ -68,8 +73,12 @@ export async function connectBothTransports() {
       env: { ...process.env, AUTOMEM_API_URL: API_URL, AUTOMEM_API_KEY: API_TOKEN },
       stderr: 'ignore',
     });
-    await stdio.connect(stdioTransport);
+    // Same ordering rule, and it matters more here: the child process is
+    // already spawned by the time the handshake runs, so a closer registered
+    // after the await would leave a live child holding node --test open.
+    closers.push(() => stdioTransport.close());
     closers.push(() => stdio.close());
+    await stdio.connect(stdioTransport);
   } catch (error) {
     await closeAll();
     throw error;

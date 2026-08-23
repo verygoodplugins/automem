@@ -133,5 +133,16 @@ It lives in `mcp-sse-server/parity/` with its entry point at
 The harness is gated on `AUTOMEM_RUN_PARITY_TESTS=1` because it needs a live
 service. Without the gate it skips cleanly, which is what CI's `node-test` job
 sees. `.github/workflows/mcp-parity.yml` runs it with the stack up on PRs that
-touch `mcp-sse-server/**`, `automem/api/**`, or `app.py`, plus weekly as a drift
-alarm against newly published `mcp-automem` versions.
+touch `mcp-sse-server/**`, `automem/api/**`, or `app.py`.
+
+It brings its own stack up on port **8011**, not the usual 8001. The harness
+writes fixtures and bulk-deletes by tag, and a developer running a local
+AutoMem install (`~/.automem/server`) already holds 8001 — pointing the harness
+at that instance would seed test data into a real memory store.
+
+**There is no scheduled drift run yet, deliberately.** While the harness is
+intentionally red against the known gaps, `continue-on-error` leaves the
+workflow successful either way, so a cron job could not distinguish "same known
+gaps" from "a newly published `mcp-automem` added drift". That would be an alarm
+that cannot alarm. The weekly check lands with the change that turns the harness
+green, where a failure is a real signal.

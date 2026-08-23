@@ -48,8 +48,12 @@ async function runScenarios(client, tag) {
       // structuredContent is client-visible machine-readable output, so it is
       // part of the contract too. Comparing only text would let a mismatch in
       // memory_ids, recall count, or health statistics pass unnoticed.
+      // Compared as a redacted string, not re-parsed: redaction substitutes
+      // placeholders like <MS> for numeric values, so the redacted form is
+      // deliberately not valid JSON. Key order is normalized first so the
+      // string comparison stays meaningful.
       const structured = res.structuredContent
-        ? JSON.parse(redact(JSON.stringify(normalizeKeys(res.structuredContent)), tag))
+        ? redact(JSON.stringify(normalizeKeys(res.structuredContent)), tag)
         : null;
       rendered.push({ isError: Boolean(res.isError), text: redact(text, tag), structured });
     }
@@ -134,15 +138,15 @@ test('tools/call renders identically across transports', { skip: GATE }, async (
       );
     }
   } finally {
-    // Bulk delete by tag exists only on the stdio transport for now, so cleanup
-    // for both namespaces runs there. Swallowed so a cleanup failure can never
+    // Every fixture carries its transport's root tag regardless of which
+    // per-scenario namespace it also has, so one bulk delete per namespace is
+    // enough. Bulk delete by tag exists only on the stdio transport for now,
+    // so cleanup for both runs there. Swallowed so a cleanup failure can never
     // mask an assertion failure.
     await stdio
       .callTool({
         name: 'delete_memory',
-        arguments: {
-          tags: [remoteTag, stdioTag, `${remoteTag}-bulk`, `${stdioTag}-bulk`],
-        },
+        arguments: { tags: [remoteTag, stdioTag] },
       })
       .catch(() => {});
     await close();
