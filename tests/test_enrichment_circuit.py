@@ -31,6 +31,8 @@ def test_successful_probe_closes_circuit_and_records_recovery():
     circuit.record_failure("insufficient_quota")
     now[0] += 60
     assert circuit.allow_request() is True
+    assert circuit.record_failure("connection reset") is False
+    assert circuit.allow_request() is True
     circuit.record_success()
 
     assert circuit.allow_request() is True
@@ -85,5 +87,3 @@ def test_summarizer_makes_no_second_request_while_circuit_is_open():
     summarize_content(content, client, "gpt-4o-mini", 300, circuit)
 
     assert len(calls) == 1
-    assert circuit.record_failure("connection reset") is False
-    assert circuit.allow_request() is True
