@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from flask import Blueprint, abort, jsonify, request
 from flask.typing import ResponseReturnValue
 
+from automem.api.stream import emit_event, preview_text
 from automem.config import (
     CLASSIFICATION_MODEL,
     MEMORY_AUTO_SUMMARIZE,
@@ -248,6 +249,15 @@ def _create_association_batch(
                         _association_failure(row["index"], "One or both memories do not exist")
                     )
 
+    emit_event(
+        "memory.associate",
+        {
+            "count": len(succeeded),
+            "failed_count": len(failed),
+            "relation_types": sorted({item["relation_type"] for item in succeeded})[:5],
+        },
+        utc_now_fn,
+    )
     return _batch_association_response(
         succeeded=succeeded,
         failed=failed,
@@ -666,9 +676,6 @@ def create_memory_blueprint_full(
             logger.error("FalkorDB store returned no memory row for %s", memory_id)
             abort(500, description="Failed to store memory in FalkorDB")
 
-        # Queue enrichment
-        enqueue_enrichment(memory_id)
-
         # Handle embeddings
         embedding_status = "skipped"
         qdrant_client = get_qdrant_client()
@@ -751,6 +758,21 @@ def create_memory_blueprint_full(
                 "enrichment_queued": bool(state.enrichment_queue),
             },
         )
+        emit_event(
+            "memory.store",
+            {
+                "id": memory_id,
+                "content_preview": preview_text(content),
+                "type": memory_type,
+                "importance": importance,
+                "tags": tags[:5],
+                "size_bytes": len(content.encode("utf-8")),
+                "elapsed_ms": int(response["query_time_ms"]),
+                "count": 1,
+            },
+            utc_now,
+        )
+        enqueue_enrichment(memory_id)
         return jsonify(response), 201
 
     @bp.route("/memory/<memory_id>", methods=["GET"])
@@ -792,6 +814,24 @@ def create_memory_blueprint_full(
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             abort(400, description="JSON body is required")
+        changed_fields = sorted(
+            key
+            for key in payload
+            if key
+            in {
+                "content",
+                "tags",
+                "importance",
+                "type",
+                "confidence",
+                "timestamp",
+                "metadata",
+                "t_valid",
+                "t_invalid",
+                "updated_at",
+                "last_accessed",
+            }
+        )
 
         graph = get_memory_graph()
         if graph is None:
@@ -937,6 +977,18 @@ def create_memory_blueprint_full(
                         collection_name,
                     )
 
+        emit_event(
+            "memory.update",
+            {
+                "id": memory_id,
+                "content_preview": preview_text(new_content),
+                "type": memory_type,
+                "importance": importance,
+                "tags": tags[:5] if isinstance(tags, list) else [],
+                "fields": changed_fields,
+            },
+            utc_now,
+        )
         return jsonify({"status": "success", "memory_id": memory_id})
 
     @bp.route("/memory/<memory_id>", methods=["DELETE"])
@@ -959,6 +1011,14 @@ def create_memory_blueprint_full(
             logger=logger,
         )
 
+        emit_event(
+            "memory.delete",
+            {
+                "id": memory_id,
+                "count": 1,
+            },
+            utc_now,
+        )
         return jsonify({"status": "success", "memory_id": memory_id})
 
     @bp.route("/memory/by-tag", methods=["GET", "DELETE"])
@@ -1005,6 +1065,14 @@ def create_memory_blueprint_full(
                 )
                 deleted_count += len(memory_ids)
 
+            emit_event(
+                "memory.delete",
+                {
+                    "count": deleted_count,
+                    "tags": tags[:5],
+                },
+                utc_now,
+            )
             return jsonify({"status": "success", "tags": tags, "deleted_count": deleted_count})
 
         memories, has_more = _load_memories_by_tag_page(
@@ -1118,6 +1186,17 @@ def create_memory_blueprint_full(
         for prop in relation_config.get("properties", []):
             if prop in relationship_props:
                 response[prop] = relationship_props[prop]
+        emit_event(
+            "memory.associate",
+            {
+                "memory1_id": memory1_id,
+                "memory2_id": memory2_id,
+                "relation_type": relation_type,
+                "strength": strength,
+                "count": 1,
+            },
+            utc_now,
+        )
         return jsonify(response), 201
 
     @bp.route("/memory/batch", methods=["POST"])
@@ -1355,10 +1434,6 @@ def create_memory_blueprint_full(
                 for v in validated:
                     enqueue_embedding(v["id"], v["content"])
                 qdrant_status = "queued"
-        # Queue enrichment for all
-        for v in validated:
-            enqueue_enrichment(v["id"])
-
         elapsed_ms = round((time.perf_counter() - query_start) * 1000, 2)
         logger.info(
             "batch_stored",
@@ -1368,6 +1443,18 @@ def create_memory_blueprint_full(
                 "qdrant_status": qdrant_status,
             },
         )
+        emit_event(
+            "memory.store",
+            {
+                "count": len(validated),
+                "ids": [item["id"] for item in validated][:5],
+                "content_preview": f"{len(validated)} memories stored",
+                "elapsed_ms": int(elapsed_ms),
+            },
+            utc_now,
+        )
+        for v in validated:
+            enqueue_enrichment(v["id"])
 
         return (
             jsonify(

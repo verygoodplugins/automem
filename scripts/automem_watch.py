@@ -36,6 +36,21 @@ except ImportError:
     sys.exit(1)
 
 
+def event_count(data: Dict, default: int = 1) -> int:
+    """Read an SSE payload count, preserving explicit zeros."""
+    if not isinstance(data, dict) or "count" not in data:
+        return default
+    try:
+        return int(data["count"])
+    except (TypeError, ValueError):
+        return default
+
+
+def is_single_memory_store(data: Dict) -> bool:
+    """True when a memory.store payload describes one concrete memory."""
+    return bool(isinstance(data, dict) and data.get("id") and event_count(data) == 1)
+
+
 class GarbageDetector:
     """Detect suspicious patterns in memory stores."""
 
@@ -134,6 +149,9 @@ class AutoMemMonitor:
         self.stats = {
             "stores": 0,
             "recalls": 0,
+            "updates": 0,
+            "deletes": 0,
+            "associates": 0,
             "enriched": 0,
             "consolidated": 0,
             "errors": 0,
@@ -172,15 +190,22 @@ class AutoMemMonitor:
         event_type = event.get("type", "")
 
         # Update stats
+        data = event.get("data", {}) or {}
         if event_type == "memory.store":
-            self.stats["stores"] += 1
-            # Check for garbage
-            warning = self.garbage.analyze(event)
-            if warning:
-                ts = datetime.now().strftime("%H:%M:%S")
-                self.errors.appendleft(f"[{ts}] [GARBAGE] {warning}")
+            self.stats["stores"] += event_count(data)
+            if is_single_memory_store(data):
+                warning = self.garbage.analyze(event)
+                if warning:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    self.errors.appendleft(f"[{ts}] [GARBAGE] {warning}")
         elif event_type == "memory.recall":
             self.stats["recalls"] += 1
+        elif event_type == "memory.update":
+            self.stats["updates"] += 1
+        elif event_type == "memory.delete":
+            self.stats["deletes"] += event_count(data)
+        elif event_type == "memory.associate":
+            self.stats["associates"] += event_count(data)
         elif event_type == "enrichment.complete":
             self.stats["enriched"] += 1
         elif event_type == "enrichment.failed":
@@ -254,8 +279,11 @@ class AutoMemMonitor:
 
             # Format based on event type
             if event_type == "memory.store":
+                count = data.get("count", 1)
                 preview = data.get("content_preview", "")[:40]
-                details = f"{preview}... ({data.get('type', '?')})"
+                details = f"{preview} ({data.get('type', '?')})"
+                if count and count > 1:
+                    details = f"{count} stored"
                 type_style = "green"
             elif event_type == "memory.recall":
                 query = data.get("query", "")[:30]
@@ -263,6 +291,26 @@ class AutoMemMonitor:
                     f"'{query}' -> {data.get('result_count', 0)} ({data.get('elapsed_ms', 0)}ms)"
                 )
                 type_style = "cyan"
+            elif event_type == "memory.update":
+                preview = data.get("content_preview", "")[:40]
+                fields = ",".join(data.get("fields") or [])
+                details = f"{preview} [{fields}]" if fields else preview
+                type_style = "yellow"
+            elif event_type == "memory.delete":
+                count = data.get("count", 1)
+                deleted_id = data.get("id", "")[:8]
+                tags = ",".join(data.get("tags") or [])
+                details = f"{count} deleted"
+                if deleted_id:
+                    details = f"{deleted_id}... ({count})"
+                elif tags:
+                    details = f"{details} tags={tags}"
+                type_style = "red"
+            elif event_type == "memory.associate":
+                count = data.get("count", 1)
+                relation = data.get("relation_type") or ",".join(data.get("relation_types") or [])
+                details = f"{relation or 'RELATES_TO'} x{count}"
+                type_style = "blue"
             elif event_type == "enrichment.start":
                 details = f"{data.get('memory_id', '')[:8]}... attempt {data.get('attempt', 1)}"
                 type_style = "yellow"
@@ -307,6 +355,9 @@ class AutoMemMonitor:
         stats_text = Text()
         stats_text.append(f"Stores:       {self.stats['stores']}\n", style="green")
         stats_text.append(f"Recalls:      {self.stats['recalls']}\n", style="cyan")
+        stats_text.append(f"Updates:      {self.stats['updates']}\n", style="yellow")
+        stats_text.append(f"Deletes:      {self.stats['deletes']}\n", style="red")
+        stats_text.append(f"Associates:   {self.stats['associates']}\n", style="blue")
         stats_text.append(f"Enriched:     {self.stats['enriched']}\n", style="yellow")
         stats_text.append(f"Consolidated: {self.stats['consolidated']}\n", style="magenta")
         stats_text.append(f"Errors:       {self.stats['errors']}\n", style="red")

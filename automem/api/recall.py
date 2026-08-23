@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
 
+from automem.api.stream import emit_event, preview_text
 from automem.config import (
     COLLECTION_NAME,
     DEFAULT_EXPAND_RELATIONS,
@@ -29,7 +30,7 @@ from automem.config import (
 )
 from automem.search.runtime_recall_helpers import _hydrate_vector_relations
 from automem.utils.graph import _serialize_node
-from automem.utils.time import _parse_iso_datetime, query_has_temporal_intent
+from automem.utils.time import _parse_iso_datetime, query_has_temporal_intent, utc_now
 
 DEFAULT_STYLE_PRIORITY_TAGS: Set[str] = {
     "coding-style",
@@ -2596,6 +2597,18 @@ def handle_recall(
                 (any_context_profile or {}).get("language") if any_context_profile else None
             ),
         },
+    )
+    recall_preview = query_text or " | ".join(q for q in queries_to_run if q)
+    emit_event(
+        "memory.recall",
+        {
+            "query": preview_text(recall_preview, 50) if recall_preview else "(no query)",
+            "limit": limit,
+            "result_count": len(results),
+            "elapsed_ms": int(response["query_time_ms"]),
+            "tags": tag_filters[:3] if tag_filters else [],
+        },
+        utc_now,
     )
 
     # Update last_accessed for direct matches (not expanded related memories)
