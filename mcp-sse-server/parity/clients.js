@@ -22,47 +22,58 @@ export const API_TOKEN = process.env.AUTOMEM_PARITY_API_TOKEN || 'test-token';
 
 export async function connectBothTransports() {
   const closers = [];
-
-  // --- remote ---------------------------------------------------------------
-  // server.js resolves the upstream inside its route handlers, so setting these
-  // before createApp() is enough.
-  process.env.AUTOMEM_API_URL = API_URL;
-  process.env.AUTOMEM_API_TOKEN = API_TOKEN;
-
-  const app = createApp();
-  const httpServer = await new Promise((resolve) => {
-    const s = app.listen(0, '127.0.0.1', () => resolve(s));
-  });
-  closers.push(() => new Promise((r) => httpServer.close(r)));
-  const { port } = httpServer.address();
-
-  const remote = new Client({ name: 'parity-harness', version: '1.0.0' }, {});
-  const remoteTransport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`),
-    { requestInit: { headers: { Authorization: `Bearer ${API_TOKEN}` } } }
-  );
-  await remote.connect(remoteTransport);
-  closers.push(() => remote.close());
-
-  // --- stdio ----------------------------------------------------------------
-  const stdioEntry = require.resolve('@verygoodplugins/mcp-automem/dist/index.js');
-  const stdio = new Client({ name: 'parity-harness', version: '1.0.0' }, {});
-  const stdioTransport = new StdioClientTransport({
-    command: process.execPath,
-    args: [stdioEntry],
-    env: { ...process.env, AUTOMEM_API_URL: API_URL, AUTOMEM_API_KEY: API_TOKEN },
-    stderr: 'ignore',
-  });
-  await stdio.connect(stdioTransport);
-  closers.push(() => stdio.close());
-
-  return {
-    remote,
-    stdio,
-    async close() {
-      for (const c of closers.reverse()) {
-        await Promise.resolve(c()).catch(() => {});
-      }
-    },
+  const closeAll = async () => {
+    for (const c of closers.reverse()) {
+      await Promise.resolve(c()).catch(() => {});
+    }
+    closers.length = 0;
   };
+
+  let remote;
+  let stdio;
+
+  // Setup opens an HTTP listener before the stdio child is connected. If that
+  // child fails to start — the weekly @latest install resolving an incompatible
+  // entry point is the realistic case — the listener would otherwise stay open,
+  // and `node --test` waits on open handles, so the job would hang until
+  // GitHub's timeout instead of reporting the startup failure.
+  try {
+    // --- remote -------------------------------------------------------------
+    // server.js resolves the upstream inside its route handlers, so setting
+    // these before createApp() is enough.
+    process.env.AUTOMEM_API_URL = API_URL;
+    process.env.AUTOMEM_API_TOKEN = API_TOKEN;
+
+    const app = createApp();
+    const httpServer = await new Promise((resolve) => {
+      const s = app.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    closers.push(() => new Promise((r) => httpServer.close(r)));
+    const { port } = httpServer.address();
+
+    remote = new Client({ name: 'parity-harness', version: '1.0.0' }, {});
+    const remoteTransport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+      { requestInit: { headers: { Authorization: `Bearer ${API_TOKEN}` } } }
+    );
+    await remote.connect(remoteTransport);
+    closers.push(() => remote.close());
+
+    // --- stdio --------------------------------------------------------------
+    const stdioEntry = require.resolve('@verygoodplugins/mcp-automem/dist/index.js');
+    stdio = new Client({ name: 'parity-harness', version: '1.0.0' }, {});
+    const stdioTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [stdioEntry],
+      env: { ...process.env, AUTOMEM_API_URL: API_URL, AUTOMEM_API_KEY: API_TOKEN },
+      stderr: 'ignore',
+    });
+    await stdio.connect(stdioTransport);
+    closers.push(() => stdio.close());
+  } catch (error) {
+    await closeAll();
+    throw error;
+  }
+
+  return { remote, stdio, close: closeAll };
 }
