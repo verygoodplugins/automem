@@ -31,8 +31,6 @@ def test_successful_probe_closes_circuit_and_records_recovery():
     circuit.record_failure("insufficient_quota")
     now[0] += 60
     assert circuit.allow_request() is True
-    assert circuit.record_failure("connection reset") is False
-    assert circuit.allow_request() is True
     circuit.record_success()
 
     assert circuit.allow_request() is True
@@ -45,6 +43,8 @@ def test_failed_probe_does_not_permanently_block_future_requests():
 
     circuit.record_failure("insufficient_quota")
     now[0] += 60
+    assert circuit.allow_request() is True
+    assert circuit.record_failure("connection reset") is False
     assert circuit.allow_request() is True
 
 
