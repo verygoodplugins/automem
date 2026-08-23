@@ -39,7 +39,14 @@ async function runScenarios(client, tag) {
         }));
       const text = (res.content || []).map((c) => c.text ?? '').join('\n');
       ids.push(res.structuredContent?.memory_id ?? (text.match(UUID_RE) || [])[0]);
-      rendered.push({ isError: Boolean(res.isError), text: redact(text, tag) });
+
+      // structuredContent is client-visible machine-readable output, so it is
+      // part of the contract too. Comparing only text would let a mismatch in
+      // memory_ids, recall count, or health statistics pass unnoticed.
+      const structured = res.structuredContent
+        ? JSON.parse(redact(JSON.stringify(normalizeKeys(res.structuredContent)), tag))
+        : null;
+      rendered.push({ isError: Boolean(res.isError), text: redact(text, tag), structured });
     }
     out.push({ name: scenario.name, rendered });
   }
@@ -87,8 +94,26 @@ test('tools/call renders identically across transports', { skip: GATE }, async (
   try {
     const a = await runScenarios(remote, remoteTag);
     const b = await runScenarios(stdio, stdioTag);
+
+    // Collect every mismatch before failing. A run costs ~90s, so reporting
+    // one scenario at a time turns a multi-scenario gap into a fix-one,
+    // rerun, fix-the-next loop.
+    const mismatched = [];
     for (let i = 0; i < a.length; i++) {
-      assert.deepStrictEqual(a[i], b[i], `scenario mismatch: ${a[i].name}`);
+      try {
+        assert.deepStrictEqual(a[i], b[i]);
+      } catch {
+        mismatched.push(i);
+      }
+    }
+    if (mismatched.length) {
+      const names = mismatched.map((i) => a[i].name).join(', ');
+      const first = mismatched[0];
+      assert.deepStrictEqual(
+        a[first],
+        b[first],
+        `${mismatched.length}/${a.length} scenarios differ: ${names}\nFirst mismatch (${a[first].name}) diffed below.`
+      );
     }
   } finally {
     // Bulk delete by tag exists only on the stdio transport for now, so cleanup

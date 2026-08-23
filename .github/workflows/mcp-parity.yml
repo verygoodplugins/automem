@@ -56,6 +56,14 @@ jobs:
           AUTOMEM_PARITY_API_TOKEN: test-token
         run: |
           npm ci
+          # npm ci reinstalls exactly what package-lock.json pins, so on the
+          # weekly run it would re-test the same version forever and could
+          # never alarm. Resolve the latest published package on that path
+          # only; PR runs stay reproducible.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            npm install --no-save @verygoodplugins/mcp-automem@latest
+          fi
+          node -p "'stdio package under test: ' + require('@verygoodplugins/mcp-automem/package.json').version"
           npm test
 
       - name: Dump service logs on failure
