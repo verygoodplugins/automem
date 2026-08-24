@@ -3,6 +3,11 @@ from __future__ import annotations
 import os
 from typing import Any, Callable
 
+# Qdrant rejects an entire search with 400 when a filter references an unindexed payload
+# field, so every field recall filters on must be indexed. `type` backs RECALL_EXCLUDED_TYPES,
+# which applies to all vector searches since that setting defaults to a non-empty value.
+QDRANT_FILTERED_PAYLOAD_FIELDS = ("tags", "tag_prefixes", "type")
+
 
 def init_falkordb(
     *,
@@ -157,27 +162,12 @@ def ensure_qdrant_collection(
             return
 
         logger.info("Ensuring Qdrant payload indexes for collection '%s'", collection_name)
-        if payload_schema_type_enum:
+        keyword_schema = payload_schema_type_enum.KEYWORD if payload_schema_type_enum else "keyword"
+        for field_name in QDRANT_FILTERED_PAYLOAD_FIELDS:
             state.qdrant.create_payload_index(
                 collection_name=collection_name,
-                field_name="tags",
-                field_schema=payload_schema_type_enum.KEYWORD,
-            )
-            state.qdrant.create_payload_index(
-                collection_name=collection_name,
-                field_name="tag_prefixes",
-                field_schema=payload_schema_type_enum.KEYWORD,
-            )
-        else:
-            state.qdrant.create_payload_index(
-                collection_name=collection_name,
-                field_name="tags",
-                field_schema="keyword",
-            )
-            state.qdrant.create_payload_index(
-                collection_name=collection_name,
-                field_name="tag_prefixes",
-                field_schema="keyword",
+                field_name=field_name,
+                field_schema=keyword_schema,
             )
     except ValueError:
         raise

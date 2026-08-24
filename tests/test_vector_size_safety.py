@@ -251,6 +251,44 @@ class TestInitQdrantPropagation:
 
 
 class TestEnsureQdrantCollectionPayloadIndexes:
+    def _run_ensure(self, payload_schema_type_enum):
+        from automem.stores.runtime_clients import ensure_qdrant_collection
+
+        qdrant = MagicMock()
+        qdrant.get_collections.return_value = SimpleNamespace(
+            collections=[SimpleNamespace(name="memories")]
+        )
+        state = SimpleNamespace(qdrant=qdrant, effective_vector_size=None)
+
+        ensure_qdrant_collection(
+            state=state,
+            logger=MagicMock(),
+            collection_name="memories",
+            vector_size_config=1024,
+            get_effective_vector_size_fn=lambda _client: (1024, "collection"),
+            vector_params_cls=MagicMock(),
+            distance_enum=SimpleNamespace(COSINE="Cosine"),
+            payload_schema_type_enum=payload_schema_type_enum,
+        )
+        return qdrant
+
+    def test_indexes_every_field_recall_filters_on(self):
+        """`type` backs RECALL_EXCLUDED_TYPES; without an index Qdrant 400s every search."""
+        qdrant = self._run_ensure(SimpleNamespace(KEYWORD="keyword"))
+
+        indexed = {call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list}
+        assert indexed == {"tags", "tag_prefixes", "type"}
+
+    def test_indexes_every_field_without_payload_schema_enum(self):
+        qdrant = self._run_ensure(None)
+
+        indexed = {call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list}
+        assert indexed == {"tags", "tag_prefixes", "type"}
+        assert all(
+            call.kwargs["field_schema"] == "keyword"
+            for call in qdrant.create_payload_index.call_args_list
+        )
+
     @patch.dict("os.environ", {"QDRANT_ENSURE_PAYLOAD_INDEXES": "false"}, clear=False)
     def test_can_skip_payload_indexes_for_restore_tuned_lab_collection(self):
         from automem.stores.runtime_clients import ensure_qdrant_collection
