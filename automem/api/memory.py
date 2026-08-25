@@ -10,6 +10,7 @@ from flask.typing import ResponseReturnValue
 
 from automem.config import (
     CLASSIFICATION_MODEL,
+    ENRICHMENT_MAX_TOKENS,
     MEMORY_AUTO_SUMMARIZE,
     MEMORY_CONTENT_HARD_LIMIT,
     MEMORY_CONTENT_SOFT_LIMIT,
@@ -504,6 +505,7 @@ def create_memory_blueprint_full(
                     openai_client,
                     CLASSIFICATION_MODEL,
                     MEMORY_SUMMARY_TARGET_LENGTH,
+                    max_output_tokens=ENRICHMENT_MAX_TOKENS,
                 )
                 if summary:
                     original_content = content
@@ -1169,6 +1171,7 @@ def create_memory_blueprint_full(
                         openai_client,
                         CLASSIFICATION_MODEL,
                         MEMORY_SUMMARY_TARGET_LENGTH,
+                        max_output_tokens=ENRICHMENT_MAX_TOKENS,
                     )
                     if summary:
                         logger.info(

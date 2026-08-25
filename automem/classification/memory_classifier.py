@@ -4,11 +4,11 @@ import json
 import re
 from typing import Any, Callable, Optional
 
+from automem.utils.openai import chat_completion_token_params
+
 
 class MemoryClassifier:
     """Classifies memories into specific types based on content patterns."""
-
-    MAX_COMPLETION_PREFIXES = ("o1", "o3", "o4", "gpt-4o", "gpt-4.1", "gpt-5")
 
     PATTERNS = {
         "Decision": [
@@ -95,6 +95,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         ensure_openai_client: Callable[[], None],
         get_openai_client: Callable[[], Any],
         classification_model: str,
+        classification_max_tokens: int,
         logger: Any,
         stats: Any = None,
     ) -> None:
@@ -102,6 +103,7 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         self._ensure_openai_client = ensure_openai_client
         self._get_openai_client = get_openai_client
         self._classification_model = classification_model
+        self._classification_max_tokens = classification_max_tokens
         self._logger = logger
         self._stats = stats
 
@@ -147,15 +149,10 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
         if client is None:
             return None
 
-        extra_params: dict[str, Any] = {}
-        uses_max_completion_tokens = self._classification_model.startswith(
-            self.MAX_COMPLETION_PREFIXES
+        extra_params = chat_completion_token_params(
+            self._classification_model,
+            self._classification_max_tokens,
         )
-        if uses_max_completion_tokens:
-            extra_params["max_completion_tokens"] = 50
-        else:
-            extra_params["max_tokens"] = 50
-            extra_params["temperature"] = 0.3
 
         response = client.chat.completions.create(
             model=self._classification_model,

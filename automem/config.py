@@ -134,6 +134,10 @@ JIT_ENRICHMENT_ENABLED = os.getenv("JIT_ENRICHMENT_ENABLED", "true").lower() not
 # text-embedding-3-large: OpenAI high-precision, use VECTOR_SIZE=3072
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "gpt-4o-mini")
+# Output budgets are intentionally separate: classification returns compact JSON,
+# while LLM summarization needs room to preserve a longer memory's key details.
+CLASSIFICATION_MAX_TOKENS = max(1, int(os.getenv("CLASSIFICATION_MAX_TOKENS", "256")))
+ENRICHMENT_MAX_TOKENS = max(1, int(os.getenv("ENRICHMENT_MAX_TOKENS", "512")))
 
 RECALL_RELATION_LIMIT = int(os.getenv("RECALL_RELATION_LIMIT", "5"))
 RECALL_EXPANSION_LIMIT = int(os.getenv("RECALL_EXPANSION_LIMIT", "25"))

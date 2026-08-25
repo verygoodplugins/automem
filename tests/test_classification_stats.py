@@ -35,12 +35,13 @@ def _succeeding_client(memory_type: str = "Insight", confidence: float = 0.9):
     return _stub_client(_create)
 
 
-def _make_classifier(client, stats):
+def _make_classifier(client, stats, *, model: str = "gpt-4o-mini", max_tokens: int = 256):
     return MemoryClassifier(
         normalize_memory_type=lambda raw: (raw, False),
         ensure_openai_client=lambda: None,
         get_openai_client=lambda: client,
-        classification_model="gpt-4o-mini",
+        classification_model=model,
+        classification_max_tokens=max_tokens,
         logger=LOGGER,
         stats=stats,
     )
@@ -157,6 +158,55 @@ def test_llm_success_counts_success():
     assert stats.llm_successes == 1
     assert stats.fallbacks == 0
     assert stats.last_error is None
+
+
+def test_classification_uses_configured_max_tokens_for_regular_chat_model():
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"type": "Insight"}'))]
+        )
+
+    classifier = _make_classifier(_stub_client(create), ClassificationStats(), max_tokens=256)
+
+    assert classifier.classify(NON_PATTERN_CONTENT) == ("Insight", 0.7)
+    assert captured["max_tokens"] == 256
+    assert "max_completion_tokens" not in captured
+    assert captured["temperature"] == 0.3
+
+
+def test_classification_uses_max_completion_tokens_for_reasoning_model():
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"type": "Insight"}'))]
+        )
+
+    classifier = _make_classifier(
+        _stub_client(create), ClassificationStats(), model="openai/gpt-5-mini", max_tokens=512
+    )
+
+    assert classifier.classify(NON_PATTERN_CONTENT) == ("Insight", 0.7)
+    assert captured["max_completion_tokens"] == 512
+    assert "max_tokens" not in captured
+    assert "temperature" not in captured
+
+
+def test_malformed_llm_json_records_fallback():
+    client = _stub_client(
+        lambda **kwargs: SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"type":'))]
+        )
+    )
+    stats = ClassificationStats()
+
+    assert _make_classifier(client, stats).classify(NON_PATTERN_CONTENT) == ("Memory", 0.3)
+    assert stats.fallbacks == 1
+    assert "invalid JSON" in stats.last_error
 
 
 def test_classifier_without_stats_still_works():

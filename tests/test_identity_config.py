@@ -34,3 +34,18 @@ def test_identity_synthesis_enabled_restores_weekly_default(monkeypatch) -> None
         assert config.CONSOLIDATION_IDENTITY_INTERVAL_SECONDS == 604800
 
     importlib.reload(config)
+
+
+def test_llm_output_budgets_are_independently_configurable(monkeypatch) -> None:
+    import automem.config as config
+
+    with monkeypatch.context() as mp:
+        mp.setenv("CLASSIFICATION_MAX_TOKENS", "320")
+        mp.setenv("ENRICHMENT_MAX_TOKENS", "640")
+
+        config = importlib.reload(config)
+
+        assert config.CLASSIFICATION_MAX_TOKENS == 320
+        assert config.ENRICHMENT_MAX_TOKENS == 640
+
+    importlib.reload(config)

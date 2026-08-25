@@ -4,6 +4,8 @@ import logging
 import re
 from typing import Any, List, Optional
 
+from automem.utils.openai import chat_completion_token_params
+
 logger = logging.getLogger(__name__)
 
 # Common stopwords to exclude from search tokens
@@ -122,6 +124,8 @@ def summarize_content(
     openai_client: Any,
     model: str,
     target_length: int = 300,
+    *,
+    max_output_tokens: int = 512,
 ) -> Optional[str]:
     """Summarize content using an LLM to fit within target length.
 
@@ -130,6 +134,7 @@ def summarize_content(
         openai_client: An initialized OpenAI client instance
         model: The model to use for summarization (e.g., gpt-4o-mini)
         target_length: Target character length for the summary (default 300)
+        max_output_tokens: Maximum model output tokens reserved for enrichment
 
     Returns:
         Summarized content string, or None if summarization fails
@@ -144,16 +149,7 @@ def summarize_content(
     try:
         system_prompt = SUMMARIZE_SYSTEM_PROMPT.format(target_length=target_length)
 
-        # Estimate tokens from target character length (~4 chars/token), cap at 150
-        token_limit = min(150, max(1, int(target_length / 4)))
-
-        # Build model-specific params (o-series and gpt-5 don't support temperature)
-        extra_params: dict = {}
-        if model.startswith(("o", "gpt-5")):
-            extra_params["max_completion_tokens"] = token_limit
-        else:
-            extra_params["max_tokens"] = token_limit
-            extra_params["temperature"] = 0.3
+        extra_params = chat_completion_token_params(model, max_output_tokens)
 
         response = openai_client.chat.completions.create(
             model=model,

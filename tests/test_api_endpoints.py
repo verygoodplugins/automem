@@ -3375,6 +3375,7 @@ def test_enrichment_status_includes_classification_metrics(client, monkeypatch, 
             ensure_openai_client=lambda: None,
             get_openai_client=lambda: client_stub,
             classification_model="gpt-4o-mini",
+            classification_max_tokens=256,
             logger=app.logger,
             stats=stats,
         )

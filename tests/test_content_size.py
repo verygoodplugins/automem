@@ -66,6 +66,32 @@ class TestSummarizeContent:
         assert result == expected_summary
         mock_client.chat.completions.create.assert_called_once()
 
+    def test_uses_configured_enrichment_budget_for_regular_chat_model(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Short summary."))]
+        )
+
+        summarize_content("x" * 600, mock_client, "gpt-4o-mini", max_output_tokens=384)
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert kwargs["max_tokens"] == 384
+        assert "max_completion_tokens" not in kwargs
+        assert kwargs["temperature"] == 0.3
+
+    def test_uses_configured_enrichment_budget_for_reasoning_model(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Short summary."))]
+        )
+
+        summarize_content("x" * 600, mock_client, "o3-mini", max_output_tokens=512)
+
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert kwargs["max_completion_tokens"] == 512
+        assert "max_tokens" not in kwargs
+        assert "temperature" not in kwargs
+
     def test_returns_none_when_summary_not_shorter(self):
         long_content = "x" * 600
         # Summary is same length as original
