@@ -131,7 +131,7 @@ GET /recall?query=project%20plan&state_mode=history
 Enrichment
 
 - GET `/enrichment/status`
-  - Response: queue size, inflight/pending, stats, plus a `classification` block with type-classification counters (`llm_attempts`, `llm_successes`, `fallbacks`, `pattern_classifications`, `last_error`, `last_error_at`) for monitoring LLM-classification fallback rate.
+  - Response: queue size, inflight/pending, stats, plus a `classification` block with type-classification counters (`llm_attempts`, `llm_successes`, `fallbacks`, `pattern_classifications`, `last_error`, `last_error_at`) for monitoring LLM-classification fallback rate, and a `circuit` block with `open`, `circuit_open_skips`, and `recoveries` for monitoring quota-circuit state.
 
 - POST `/enrichment/reprocess`
   - Body: `{ "ids": ["..."] }` or query `?ids=a,b,c`

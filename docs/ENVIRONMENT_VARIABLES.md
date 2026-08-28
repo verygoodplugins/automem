@@ -299,6 +299,7 @@ Controls entity extraction and relationship linking.
 | `ENRICHMENT_IDLE_SLEEP_SECONDS` | Sleep when queue empty | `2` |
 | `ENRICHMENT_FAILURE_BACKOFF_SECONDS` | Backoff on failure | `5` |
 | `ENRICHMENT_ENABLE_SUMMARIES` | Enable summarization | `true` |
+| `ENRICHMENT_CIRCUIT_COOLDOWN_SECONDS` | Cooldown after LLM quota exhaustion before one recovery probe is allowed | `300` |
 | `ENRICHMENT_SPACY_MODEL` | spaCy model name | `en_core_web_sm` |
 | `JIT_ENRICHMENT_ENABLED` | Inline enrichment during recall | `true` |
 
