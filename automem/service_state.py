@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Event, Lock, Thread
 from typing import Any, Dict, Optional, Set
-import time
 
 from falkordb import FalkorDB
 from qdrant_client import QdrantClient
@@ -26,23 +26,25 @@ class EnrichmentCircuit:
         self.circuit_open_skips = 0
         self.recoveries = 0
 
-    def allow_request(self) -> bool:
+    def begin_request(self) -> tuple[bool, bool]:
+        """Reserve an LLM request and report whether it is the recovery probe."""
         with self._lock:
             now = self._clock()
             if now < self._opened_until:
                 self.circuit_open_skips += 1
-                return False
+                return False, False
             if self._opened_until:
                 if self._probe_pending:
                     self.circuit_open_skips += 1
-                    return False
+                    return False, False
                 self._probe_pending = True
-            return True
+                return True, True
+            return True, False
 
-    def record_failure(self, error: str) -> bool:
+    def record_failure(self, error: str, was_probe: bool = False) -> bool:
         if "insufficient_quota" not in error.lower() and "quota" not in error.lower():
             with self._lock:
-                if self._probe_pending:
+                if was_probe and self._probe_pending:
                     self._opened_until = 0.0
                     self._probe_pending = False
             return False
@@ -51,12 +53,12 @@ class EnrichmentCircuit:
             self._probe_pending = False
             return True
 
-    def record_success(self) -> None:
+    def record_success(self, was_probe: bool = False) -> None:
         with self._lock:
-            if self._opened_until:
+            if was_probe and self._probe_pending:
                 self.recoveries += 1
-            self._opened_until = 0.0
-            self._probe_pending = False
+                self._opened_until = 0.0
+                self._probe_pending = False
 
     def to_dict(self) -> Dict[str, Any]:
         with self._lock:

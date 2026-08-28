@@ -140,9 +140,12 @@ def summarize_content(
         return None
     if not content or len(content) <= target_length:
         return content
-    if circuit is not None and not circuit.allow_request():
-        logger.info("Skipping summarization while enrichment circuit is open")
-        return None
+    was_probe = False
+    if circuit is not None:
+        allowed, was_probe = circuit.begin_request()
+        if not allowed:
+            logger.info("Skipping summarization while enrichment circuit is open")
+            return None
 
     try:
         system_prompt = SUMMARIZE_SYSTEM_PROMPT.format(target_length=target_length)
@@ -167,7 +170,7 @@ def summarize_content(
             **extra_params,
         )
         if circuit is not None:
-            circuit.record_success()
+            circuit.record_success(was_probe)
 
         summary = response.choices[0].message.content.strip()
 
@@ -191,7 +194,7 @@ def summarize_content(
     except Exception as exc:
         logger.exception("Memory summarization failed")
         if circuit is not None:
-            circuit.record_failure(str(exc))
+            circuit.record_failure(str(exc), was_probe)
         return None
 
 

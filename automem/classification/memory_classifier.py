@@ -136,22 +136,25 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             except Exception as exc:
                 self._logger.exception("LLM classification failed, using fallback")
                 llm_error = str(exc)
-                if self._circuit is not None:
-                    self._circuit.record_failure(llm_error)
             if self._stats is not None:
                 self._stats.record_fallback(llm_error)
 
         return "Memory", 0.3
 
     def _classify_with_llm(self, content: str) -> Optional[tuple[str, float]]:
-        if self._circuit is not None and not self._circuit.allow_request():
-            self._logger.info("Skipping LLM classification while enrichment circuit is open")
-            return None
+        was_probe = False
+        if self._circuit is not None:
+            allowed, was_probe = self._circuit.begin_request()
+            if not allowed:
+                self._logger.info("Skipping LLM classification while enrichment circuit is open")
+                return None
         client = self._get_openai_client()
         if client is None:
             self._ensure_openai_client()
             client = self._get_openai_client()
         if client is None:
+            if self._circuit is not None:
+                self._circuit.record_failure("OpenAI client unavailable", was_probe)
             return None
 
         extra_params: dict[str, Any] = {}
@@ -164,17 +167,22 @@ Return JSON with: {"type": "<type>", "confidence": <0.0-1.0>}"""
             extra_params["max_tokens"] = 50
             extra_params["temperature"] = 0.3
 
-        response = client.chat.completions.create(
-            model=self._classification_model,
-            messages=[
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": content[:1000]},
-            ],
-            response_format={"type": "json_object"},
-            **extra_params,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=self._classification_model,
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": content[:1000]},
+                ],
+                response_format={"type": "json_object"},
+                **extra_params,
+            )
+        except Exception as exc:
+            if self._circuit is not None:
+                self._circuit.record_failure(str(exc), was_probe)
+            raise
         if self._circuit is not None:
-            self._circuit.record_success()
+            self._circuit.record_success(was_probe)
 
         raw_content = response.choices[0].message.content
         if not raw_content:
