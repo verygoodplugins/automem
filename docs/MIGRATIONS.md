@@ -42,14 +42,15 @@ This document provides step-by-step instructions for migrating between different
    export VECTOR_SIZE=1024
    # The re-embed script needs a URL; derive one if your deployment uses host/port.
    export QDRANT_URL="${QDRANT_URL:-http://${QDRANT_HOST:-localhost}:${QDRANT_PORT:-6333}}"
+   export QDRANT_COLLECTION="${QDRANT_COLLECTION:-memories}"
    # Set QDRANT_API_KEY when the selected Qdrant instance requires authentication.
    export QDRANT_API_KEY="${QDRANT_API_KEY:-}"
    ```
 3. **Pause writes, then delete and recreate the Qdrant collection**:
    ```bash
-   curl -X DELETE "$QDRANT_URL/collections/memories" \
+   curl -X DELETE "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
      -H "api-key: $QDRANT_API_KEY"
-   curl -X PUT "$QDRANT_URL/collections/memories" \
+   curl -X PUT "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
      -H 'Content-Type: application/json' \
      -H "api-key: $QDRANT_API_KEY" \
      -d '{"vectors": {"size": 1024, "distance": "Cosine"}}'
@@ -58,7 +59,8 @@ This document provides step-by-step instructions for migrating between different
    ```bash
    python scripts/reembed_embeddings.py --batch-size 32
    ```
-5. **Verify**: Check that `/health` shows `vector_size: 1024` and recall returns results.
+5. **Restart or redeploy AutoMem with the selected provider configuration** before testing recall. For example, run `docker compose up -d` for Docker Compose or `railway up` for Railway.
+6. **Verify**: Check that `/health` shows `vector_size: 1024` and recall returns results.
 
 > `VECTOR_SIZE_AUTODETECT=true` can preserve the old collection dimension only when you keep its provider and model. It never makes an existing OpenAI, Voyage, Ollama, or FastEmbed vector compatible with another model space.
 
@@ -102,15 +104,18 @@ This creates timestamped backups in `backups/`:
 echo "EMBEDDING_PROVIDER=openai" >> .env
 echo "VECTOR_SIZE=3072" >> .env
 echo "EMBEDDING_MODEL=text-embedding-3-large" >> .env
-echo "QDRANT_URL=http://localhost:6333" >> .env
+echo "QDRANT_URL=${QDRANT_URL:-http://${QDRANT_HOST:-localhost}:${QDRANT_PORT:-6333}}" >> .env
+echo "QDRANT_COLLECTION=${QDRANT_COLLECTION:-memories}" >> .env
 ```
 
-Or export temporarily:
+Export the same settings for the collection commands and re-embed script:
 ```bash
 export EMBEDDING_PROVIDER=openai
 export VECTOR_SIZE=3072
 export EMBEDDING_MODEL=text-embedding-3-large
-export QDRANT_URL=http://localhost:6333
+export QDRANT_URL="${QDRANT_URL:-http://${QDRANT_HOST:-localhost}:${QDRANT_PORT:-6333}}"
+export QDRANT_COLLECTION="${QDRANT_COLLECTION:-memories}"
+export QDRANT_API_KEY="${QDRANT_API_KEY:-}"
 ```
 
 #### 3. Pause Writes and Recreate the Qdrant Collection
@@ -118,9 +123,11 @@ export QDRANT_URL=http://localhost:6333
 `reembed_embeddings.py` upserts into an existing collection; it does not recreate one. After the backup, stop or pause writes and recreate the collection for the new model space:
 
 ```bash
-curl -X DELETE http://localhost:6333/collections/memories
-curl -X PUT http://localhost:6333/collections/memories \
+curl -X DELETE "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
+  -H "api-key: $QDRANT_API_KEY"
+curl -X PUT "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
   -H 'Content-Type: application/json' \
+  -H "api-key: $QDRANT_API_KEY" \
   -d '{"vectors": {"size": 3072, "distance": "Cosine"}}'
 ```
 
@@ -139,7 +146,9 @@ This will:
 #### 5. Verify Migration
 Check Qdrant collection info:
 ```bash
-curl http://localhost:6333/collections/memories | jq '.result.config.params.vectors'
+curl -H "api-key: $QDRANT_API_KEY" \
+  "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
+  | jq '.result.config.params.vectors'
 ```
 
 Should show:
@@ -150,17 +159,11 @@ Should show:
 }
 ```
 
-#### 6. Test Recall
-```bash
-curl -X POST http://localhost:8001/recall \
-  -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "test recall", "limit": 5}'
-```
+#### 6. Restart Application with the New Configuration
 
-Verify results are returned and scores look reasonable.
+Restart or redeploy before recall testing so the API generates query vectors in
+the new model space:
 
-#### 7. Restart Application
 ```bash
 # If using Docker
 docker compose up -d
@@ -174,6 +177,16 @@ sudo systemctl restart automem
 # If using Railway
 railway up
 ```
+
+#### 7. Test Recall
+```bash
+curl -X POST http://localhost:8001/recall \
+  -H "Authorization: Bearer $AUTOMEM_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test recall", "limit": 5}'
+```
+
+Verify results are returned and scores look reasonable.
 
 ### Rollback Procedure
 If migration fails or results are poor:
@@ -343,9 +356,14 @@ Collection 'memories' already exists with different dimension
 **Solution:**
 Back up, pause writes, then delete **and recreate** the collection with the selected model's dimension before re-embedding. The script only upserts vectors:
 ```bash
-curl -X DELETE http://localhost:6333/collections/memories
-curl -X PUT http://localhost:6333/collections/memories \
+export QDRANT_URL="${QDRANT_URL:-http://${QDRANT_HOST:-localhost}:${QDRANT_PORT:-6333}}"
+export QDRANT_COLLECTION="${QDRANT_COLLECTION:-memories}"
+export QDRANT_API_KEY="${QDRANT_API_KEY:-}"
+curl -X DELETE "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
+  -H "api-key: $QDRANT_API_KEY"
+curl -X PUT "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
   -H 'Content-Type: application/json' \
+  -H "api-key: $QDRANT_API_KEY" \
   -d '{"vectors": {"size": 1024, "distance": "Cosine"}}'
 python scripts/reembed_embeddings.py --batch-size 32
 ```
