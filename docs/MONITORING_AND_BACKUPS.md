@@ -166,14 +166,16 @@ New AutoMem collections store vectors, the HNSW index, and payloads on disk by d
 
 > **Warning:** This operation deletes and recreates the configured Qdrant collection. Take and test a portable backup first; that backup is the rollback path.
 
-1. Record the current point count and create a recoverable Railway volume snapshot before touching the collection:
+1. Quiesce writes before taking the backup. Put API clients, workers, and scheduled writers into maintenance/read-only mode, then keep writes stopped through the restore and validation. The API may remain available only to serve the backup export; point counts alone cannot detect concurrent updates or same-count changes.
+
+2. Record the current point count and create a recoverable Railway volume snapshot before touching the collection:
 
    ```bash
    curl -sS -H "api-key: $QDRANT_API_KEY" \
      "$QDRANT_URL/collections/$QDRANT_COLLECTION" | jq '.result.points_count'
    ```
 
-2. Export a Qdrant-only portable backup from AutoMem:
+3. Export a Qdrant-only portable backup from AutoMem:
 
    ```bash
    curl -H "X-Admin-Token: $ADMIN_API_TOKEN" \
@@ -181,7 +183,7 @@ New AutoMem collections store vectors, the HNSW index, and payloads on disk by d
      -o qdrant-before-on-disk-migration.tar.gz
    ```
 
-3. Restore that backup to the intended Qdrant service with all on-disk settings enabled:
+4. Restore that backup to the intended Qdrant service with all on-disk settings enabled:
 
    ```bash
    QDRANT_RESTORE_VECTOR_ON_DISK=true \
@@ -194,9 +196,11 @@ New AutoMem collections store vectors, the HNSW index, and payloads on disk by d
 
    Ensure `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION` identify the production collection before running the command.
 
-4. Compare the restored point count with the value recorded in step 1 and run representative recall requests before declaring the migration complete. If validation fails, stop and restore the tested backup.
+5. Restart the AutoMem API while writes are still quiesced. With `QDRANT_ENSURE_PAYLOAD_INDEXES=true` (the default), startup recreates the `tags`, `tag_prefixes`, and `type` payload indexes that the collection restore does not preserve.
 
-5. Leave the existing Railway volume size unchanged through a stable observation period. Resize it manually only after the restored collection is healthy and its disk usage is understood; AutoMem does not automate that infrastructure change.
+6. Compare the restored point count with the value recorded in step 2 and run representative recall requests before declaring the migration complete. If validation fails, stop and restore the tested backup. Resume writers only after this validation succeeds.
+
+7. Leave the existing Railway volume size unchanged through a stable observation period. Resize it manually only after the restored collection is healthy and its disk usage is understood; AutoMem does not automate that infrastructure change.
 
 #### Local Backups (Development)
 
