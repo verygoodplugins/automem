@@ -183,7 +183,17 @@ New AutoMem collections store vectors, the HNSW index, and payloads on disk by d
      -o qdrant-before-on-disk-migration.tar.gz
    ```
 
-4. Restore that backup to the intended Qdrant service with all on-disk settings enabled:
+4. Dry-run the portable artifact and confirm its reported point count matches the value from step 2 **before** deleting the collection:
+
+   ```bash
+   python scripts/restore_from_backup.py \
+     --backup-dir qdrant-before-on-disk-migration.tar.gz \
+     --qdrant-only --dry-run --force
+   ```
+
+   If the counts differ, do not run the destructive restore. The portable export is incomplete; recover from the Railway volume snapshot instead of restoring the same artifact.
+
+5. Restore that verified backup to the intended Qdrant service with all on-disk settings enabled:
 
    ```bash
    QDRANT_RESTORE_VECTOR_ON_DISK=true \
@@ -196,11 +206,11 @@ New AutoMem collections store vectors, the HNSW index, and payloads on disk by d
 
    Ensure `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION` identify the production collection before running the command.
 
-5. Restart the AutoMem API while writes are still quiesced. With `QDRANT_ENSURE_PAYLOAD_INDEXES=true` (the default), startup recreates the `tags`, `tag_prefixes`, and `type` payload indexes that the collection restore does not preserve.
+6. Restart the AutoMem API while writes are still quiesced. With `QDRANT_ENSURE_PAYLOAD_INDEXES=true` (the default), startup recreates the `tags`, `tag_prefixes`, and `type` payload indexes that the collection restore does not preserve.
 
-6. Compare the restored point count with the value recorded in step 2 and run representative recall requests before declaring the migration complete. If validation fails, stop and restore the tested backup. Resume writers only after this validation succeeds.
+7. Compare the restored point count with the value recorded in step 2 and run representative recall requests before declaring the migration complete. If validation fails, stop and restore the tested backup. Resume writers only after this validation succeeds.
 
-7. Leave the existing Railway volume size unchanged through a stable observation period. Resize it manually only after the restored collection is healthy and its disk usage is understood; AutoMem does not automate that infrastructure change.
+8. Leave the existing Railway volume size unchanged through a stable observation period. Resize it manually only after the restored collection is healthy and its disk usage is understood; AutoMem does not automate that infrastructure change.
 
 #### Local Backups (Development)
 
