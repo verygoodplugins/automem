@@ -36,16 +36,17 @@ This document provides step-by-step instructions for migrating between different
 1. **Backup your data**: `python scripts/backup_automem.py`
 2. **Set environment variables**:
    ```bash
-   EMBEDDING_PROVIDER=voyage    # or auto (will prefer Voyage if VOYAGE_API_KEY is set)
-   VOYAGE_API_KEY=pa-...
-   VOYAGE_MODEL=voyage-4
-   VECTOR_SIZE=1024
-   QDRANT_URL=http://localhost:6333  # required by scripts/reembed_embeddings.py
+   export EMBEDDING_PROVIDER=voyage    # or auto (will prefer Voyage if VOYAGE_API_KEY is set)
+   export VOYAGE_API_KEY=pa-...
+   export VOYAGE_MODEL=voyage-4
+   export VECTOR_SIZE=1024
+   # The re-embed script needs a URL; derive one if your deployment uses host/port.
+   export QDRANT_URL="${QDRANT_URL:-http://${QDRANT_HOST:-localhost}:${QDRANT_PORT:-6333}}"
    ```
 3. **Pause writes, then delete and recreate the Qdrant collection**:
    ```bash
-   curl -X DELETE http://localhost:6333/collections/memories
-   curl -X PUT http://localhost:6333/collections/memories \
+   curl -X DELETE "$QDRANT_URL/collections/memories"
+   curl -X PUT "$QDRANT_URL/collections/memories" \
      -H 'Content-Type: application/json' \
      -d '{"vectors": {"size": 1024, "distance": "Cosine"}}'
    ```
