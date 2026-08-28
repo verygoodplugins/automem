@@ -2,6 +2,51 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.16.2](https://github.com/verygoodplugins/automem/compare/v0.16.1...v0.16.2) (2026-08-28)
+
+
+### Bug Fixes
+
+* **backup:** page FalkorDB export by node id instead of deep SKIP ([#221](https://github.com/verygoodplugins/automem/issues/221)) ([009d58e](https://github.com/verygoodplugins/automem/commit/009d58e9a16326200c6aff976761136dcd9654a8))
+* **config:** preserve Ollama defaults and migration checks ([0bc0096](https://github.com/verygoodplugins/automem/commit/0bc00969b1d9f3bb9c5875f82401ec4a5948cd65))
+* **docs:** complete embedding migration runbooks ([3468443](https://github.com/verygoodplugins/automem/commit/34684431293ef9b0a186bb8b4ffb4fc5ca03b4cc))
+* **docs:** correct re-embedding migration setup ([a8be394](https://github.com/verygoodplugins/automem/commit/a8be394bc9598bb8e30edabcec202c66c7256b18))
+* **enrichment:** circuit-break exhausted quota calls ([ea148e5](https://github.com/verygoodplugins/automem/commit/ea148e5e15e0b37ac98cf49a71470bc15b54f721))
+* **enrichment:** circuit-break exhausted quota calls ([#229](https://github.com/verygoodplugins/automem/issues/229)) ([ad3ed27](https://github.com/verygoodplugins/automem/commit/ad3ed2714003a337e0f40c24dc016af60c6ecdf3))
+* **enrichment:** preserve quota circuit during in-flight calls ([29f359d](https://github.com/verygoodplugins/automem/commit/29f359de4657e7de4306a0a2891da451977171e6))
+* **mcp-sse:** emit the stored date in compact recall output ([#224](https://github.com/verygoodplugins/automem/issues/224)) ([42ba8b6](https://github.com/verygoodplugins/automem/commit/42ba8b61b7d0b24ecaeb7feb4ceef59f09fc7cd0))
+* **mcp:** align the parity harness with its own allowlist ([9ac5b4e](https://github.com/verygoodplugins/automem/commit/9ac5b4eeb68dca4f29b8be71437b6702ba1aecd8))
+* **mcp:** close false-failure and coverage gaps in the parity harness ([4cf9ef1](https://github.com/verygoodplugins/automem/commit/4cf9ef1f2352bdbe65d9eea0758711788bcfe37d))
+* **mcp:** close partial connections when parity setup fails ([89346e9](https://github.com/verygoodplugins/automem/commit/89346e9c87f319ad1814cf2a2061e306c005a36c))
+* **mcp:** isolate parity fixtures per scenario and drop the false alarm ([fa458b0](https://github.com/verygoodplugins/automem/commit/fa458b00044598a73556fdf10347541bdabfae26))
+* **qdrant:** index the `type` payload field so recall filters stop 400ing ([c131f02](https://github.com/verygoodplugins/automem/commit/c131f029cbc81d8f9127e0328a02755bf46a9756))
+* **qdrant:** index the `type` payload field so recall filters stop 400ing ([#223](https://github.com/verygoodplugins/automem/issues/223)) ([10bcac7](https://github.com/verygoodplugins/automem/commit/10bcac7e7ac9002d759a047ce463123cd24784e6))
+* **recovery:** honor configured graph and cloud migrations ([4dd1325](https://github.com/verygoodplugins/automem/commit/4dd13258e9bda316adaf121da6fe652ab2057b7e))
+* **stream:** emit live memory operations on GET /stream ([#227](https://github.com/verygoodplugins/automem/issues/227)) ([7a92ebd](https://github.com/verygoodplugins/automem/commit/7a92ebd6fb5e107553d6300f94c5170a36e9335e))
+
+
+### Performance Improvements
+
+* **qdrant:** store collection data on disk ([#231](https://github.com/verygoodplugins/automem/issues/231)) ([07d8704](https://github.com/verygoodplugins/automem/commit/07d870401cd5ed2727a2b802f3cecc6e620d6386))
+* **qdrant:** store new collection data on disk ([c97b5b1](https://github.com/verygoodplugins/automem/commit/c97b5b1134d9aaf188f8a6c0ad47d5af34234d74))
+* **qdrant:** support disk-backed HNSW restores ([b04b9e1](https://github.com/verygoodplugins/automem/commit/b04b9e1cd75b69e652b066e2faf68ff9c8ec198f))
+
+
+### Documentation
+
+* add Qdrant on-disk implementation plan ([56da2b7](https://github.com/verygoodplugins/automem/commit/56da2b75f82a0e3a52a8d06551e251923c19b306))
+* add Qdrant on-disk storage design ([e177b60](https://github.com/verygoodplugins/automem/commit/e177b60115927352b973c3590f5ca429d37f05fc))
+* align provider and maintenance guidance ([93afcff](https://github.com/verygoodplugins/automem/commit/93afcffdf936a955066b2ad3d97c2c453b86891e))
+* align provider and maintenance guidance ([#232](https://github.com/verygoodplugins/automem/issues/232)) ([c40d1d2](https://github.com/verygoodplugins/automem/commit/c40d1d2653aca6fd99e194a53c95472263697b41))
+* **enrichment:** document quota circuit ([d9787cb](https://github.com/verygoodplugins/automem/commit/d9787cb3ccd1b69a85b0a5afbbcc8086488f0749))
+* **mcp:** audit remote vs stdio transport parity ([92b98ec](https://github.com/verygoodplugins/automem/commit/92b98ec8cfe85cfcd6e5d939f61dfe059bcb7b3f))
+* **qdrant:** add on-disk migration runbook ([d05a2d9](https://github.com/verygoodplugins/automem/commit/d05a2d9cd4f10c12f27dc7bf142702ae2b0590d1))
+* **qdrant:** harden on-disk migration runbook ([db71f07](https://github.com/verygoodplugins/automem/commit/db71f07096d920be2f1648c8705af8b648dd0179))
+* **qdrant:** limit migration to default topology ([9b31cde](https://github.com/verygoodplugins/automem/commit/9b31cdea4b5d89d4da8150e64547b9086e178105))
+* **qdrant:** verify migration export before restore ([45e77f4](https://github.com/verygoodplugins/automem/commit/45e77f49220a3d503263dd3d5fcb100d95606e6c))
+* **readme:** lead benchmark section with neutral AMB numbers ([#219](https://github.com/verygoodplugins/automem/issues/219)) ([8ff266e](https://github.com/verygoodplugins/automem/commit/8ff266e62e65cb2e81719a765b05f64a2361a127))
+* target feature PRs at develop ([#228](https://github.com/verygoodplugins/automem/issues/228)) ([bcef376](https://github.com/verygoodplugins/automem/commit/bcef37638d1f44aa72298889a50cd5105ae30c75))
+
 ## [0.16.1](https://github.com/verygoodplugins/automem/compare/v0.16.0...v0.16.1) (2026-07-07)
 
 

@@ -81,7 +81,7 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 
 ## Commit & Pull Requests
 
-- Feature PRs target `develop` (repo default). Promote `develop` to `main` with a validated release merge; release-please and GHCR `:stable` then run on `main`. Do not open feature work onto `main`.
+- Feature PRs target `develop` (repo default). Promote `develop` to `main` with a validated release merge; release-please and GHCR `:stable` then run on `main`. Do not open feature work onto `main`. Release Please must set `target-branch: main` — the action otherwise follows the GitHub default branch (`develop`) and never tags.
 - PR titles must use Conventional Commit format because squash merges use the PR title as the release commit title. Do not prefix titles with `[codex]`, `[claude]`, `[copilot]`, `[wip]`, or similar labels; put agent/status context in the PR body.
 - Use Conventional Commit types: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `build`, `chore`, `perf`, `revert` (e.g., `feat(api): add /analyze endpoint`).
 - For public API changes, use `feat(api): ...` unless the change is strictly a bug fix with no new public surface. For docs-only changes, use `docs: ...`; for release automation, use `ci(release): ...` or `chore(release): ...`.
