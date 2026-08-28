@@ -42,12 +42,16 @@ This document provides step-by-step instructions for migrating between different
    export VECTOR_SIZE=1024
    # The re-embed script needs a URL; derive one if your deployment uses host/port.
    export QDRANT_URL="${QDRANT_URL:-http://${QDRANT_HOST:-localhost}:${QDRANT_PORT:-6333}}"
+   # Set QDRANT_API_KEY when the selected Qdrant instance requires authentication.
+   export QDRANT_API_KEY="${QDRANT_API_KEY:-}"
    ```
 3. **Pause writes, then delete and recreate the Qdrant collection**:
    ```bash
-   curl -X DELETE "$QDRANT_URL/collections/memories"
+   curl -X DELETE "$QDRANT_URL/collections/memories" \
+     -H "api-key: $QDRANT_API_KEY"
    curl -X PUT "$QDRANT_URL/collections/memories" \
      -H 'Content-Type: application/json' \
+     -H "api-key: $QDRANT_API_KEY" \
      -d '{"vectors": {"size": 1024, "distance": "Cosine"}}'
    ```
 4. **Re-embed all memories**:

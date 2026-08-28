@@ -26,6 +26,7 @@ QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "memories")
 FALKORDB_HOST = os.getenv("FALKORDB_HOST", "localhost")
 FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", "6379"))
 FALKORDB_PASSWORD = os.getenv("FALKORDB_PASSWORD")
+FALKORDB_GRAPH = os.getenv("FALKORDB_GRAPH", "memories")
 BATCH_SIZE = 50
 
 
@@ -79,7 +80,7 @@ def restore_memory_to_graph_only(memory: Dict[str, Any], client) -> bool:
 
     try:
         # Store directly to FalkorDB graph
-        g = client.select_graph("memories")
+        g = client.select_graph(FALKORDB_GRAPH)
 
         # Build metadata string (exclude reserved fields to prevent overwriting)
         RESERVED_FIELDS = {"type", "confidence", "content", "timestamp", "importance", "tags", "id"}
@@ -124,6 +125,19 @@ def restore_memory_to_graph_only(memory: Dict[str, Any], client) -> bool:
         return False
 
 
+def clear_graph(client: FalkorDB) -> bool:
+    """Remove all nodes from the configured FalkorDB graph before recovery."""
+    print(f"🗑️  Clearing graph '{FALKORDB_GRAPH}'...")
+    try:
+        graph = client.select_graph(FALKORDB_GRAPH)
+        graph.query("MATCH (n) DETACH DELETE n")
+        print("✅ Graph cleared\n")
+        return True
+    except Exception as exc:
+        print(f"⚠️  Could not clear graph: {exc}\n")
+        return False
+
+
 def main():
     """Main recovery process."""
     print("=" * 60)
@@ -145,14 +159,8 @@ def main():
         print(f"❌ Failed to connect to FalkorDB: {e}")
         sys.exit(1)
 
-    # Clear existing graph
-    print("🗑️  Clearing existing graph data...")
-    try:
-        g = client.select_graph("memories")
-        g.query("MATCH (n) DETACH DELETE n")
-        print("✅ Graph cleared\n")
-    except Exception as e:
-        print(f"⚠️  Could not clear graph: {e}\n")
+    # Clear the configured graph before restoring from Qdrant.
+    clear_graph(client)
 
     # Fetch all memories from Qdrant
     memories = get_all_memories()
