@@ -11,6 +11,7 @@ class AppHelperBindings:
     coerce_embedding: Callable[[Any], Optional[List[float]]]
     generate_placeholder_embedding: Callable[[str], List[float]]
     generate_real_embedding: Callable[[str], List[float]]
+    generate_real_recall_embedding: Callable[[str], List[float]]
     generate_real_embeddings_batch: Callable[..., List[List[float]]]
     fetch_relations: Callable[[Any, str], List[Dict[str, Any]]]
 
@@ -62,6 +63,16 @@ def create_app_helper_runtime(
             placeholder_embedding=get_generate_placeholder_embedding_fn(),
         )
 
+    def generate_real_recall_embedding(content: str) -> List[float]:
+        return generate_real_embedding_value_fn(
+            content,
+            init_embedding_provider=init_embedding_provider_fn,
+            state=get_state_fn(),
+            logger=logger,
+            placeholder_embedding=get_generate_placeholder_embedding_fn(),
+            for_recall=True,
+        )
+
     def generate_real_embeddings_batch(
         contents: List[str], *, allow_placeholder_fallback: bool = True
     ) -> List[List[float]]:
@@ -90,6 +101,7 @@ def create_app_helper_runtime(
         coerce_embedding=coerce_embedding,
         generate_placeholder_embedding=generate_placeholder_embedding,
         generate_real_embedding=generate_real_embedding,
+        generate_real_recall_embedding=generate_real_recall_embedding,
         generate_real_embeddings_batch=generate_real_embeddings_batch,
         fetch_relations=fetch_relations,
     )

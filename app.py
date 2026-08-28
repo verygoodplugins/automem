@@ -520,6 +520,7 @@ _coerce_importance = _app_helpers.coerce_importance
 _coerce_embedding = _app_helpers.coerce_embedding
 _generate_placeholder_embedding = _app_helpers.generate_placeholder_embedding
 _generate_real_embedding = _app_helpers.generate_real_embedding
+_generate_real_recall_embedding = _app_helpers.generate_real_recall_embedding
 _generate_real_embeddings_batch = _app_helpers.generate_real_embeddings_batch
 _fetch_relations = _app_helpers.fetch_relations
 

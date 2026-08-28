@@ -20,7 +20,7 @@ def wire_recall_and_blueprints(
         fetch_relations=module._fetch_relations,
         extract_keywords=module._extract_keywords,
         coerce_embedding=module._coerce_embedding,
-        generate_real_embedding=module._generate_real_embedding,
+        generate_real_embedding=module._generate_real_recall_embedding,
         logger=module.logger,
         collection_name=module.COLLECTION_NAME,
     )

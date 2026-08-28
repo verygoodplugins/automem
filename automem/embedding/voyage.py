@@ -32,6 +32,8 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         self,
         api_key: Optional[str] = None,
         model: str = "voyage-4",
+        store_model: Optional[str] = None,
+        recall_model: Optional[str] = None,
         dimension: int = 1024,
         timeout: float = 30.0,
         max_retries: int = 2,
@@ -42,6 +44,8 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         Args:
             api_key: Voyage API key (falls back to VOYAGE_API_KEY env var)
             model: Voyage embedding model to use (voyage-4, voyage-4-large, voyage-4-lite)
+            store_model: Optional model override for stored memory embeddings
+            recall_model: Optional model override for recall query embeddings
             dimension: Number of dimensions for embeddings (256, 512, 1024, 2048)
             timeout: Request timeout in seconds (default 30)
             max_retries: Maximum number of retries (default 2)
@@ -60,6 +64,8 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
             )
 
         self.model = model
+        self._store_model = store_model or model
+        self._recall_model = recall_model or model
         self._dimension = dimension
         self.timeout = timeout
         self.max_retries = max_retries
@@ -74,21 +80,28 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         )
 
         logger.info(
-            "Voyage embedding provider initialized (model=%s, dimensions=%d, timeout=%.1fs, retries=%d)",
+            "Voyage embedding provider initialized "
+            "(model=%s, store_model=%s, recall_model=%s, dimensions=%d, timeout=%.1fs, retries=%d)",
             model,
+            self._store_model,
+            self._recall_model,
             dimension,
             timeout,
             max_retries,
         )
 
     def _make_request(
-        self, texts: List[str], input_type: Optional[str] = None
+        self,
+        texts: List[str],
+        input_type: Optional[str] = None,
+        model_override: Optional[str] = None,
     ) -> List[List[float]]:
         """Make embedding request to Voyage API.
 
         Args:
             texts: List of texts to embed
             input_type: Optional input type ("query" or "document")
+            model_override: Optional model to use for this request
 
         Returns:
             List of embedding vectors
@@ -96,9 +109,10 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         Raises:
             Exception: If API call fails after retries
         """
+        request_model = model_override or self._store_model
         payload = {
             "input": texts,
-            "model": self.model,
+            "model": request_model,
             "output_dimension": self._dimension,
         }
 
@@ -116,10 +130,13 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
 
                 # Defensive validation of API response structure
                 if not isinstance(data, dict):
-                    raise ValueError(f"Voyage API response is not an object (model={self.model})")
+                    raise ValueError(
+                        f"Voyage API response is not an object (model={request_model})"
+                    )
                 if "error" in data:
                     raise ValueError(
-                        f"Voyage API returned error payload (model={self.model}, status={response.status_code}): "
+                        f"Voyage API returned error payload "
+                        f"(model={request_model}, status={response.status_code}): "
                         f"{data['error']}"
                     )
                 if "data" not in data:
@@ -154,7 +171,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
                             f"Voyage embedding length {len(emb)} "
                             f"!= configured dimension "
                             f"{self._dimension} "
-                            f"at index {i} (model={self.model})"
+                            f"at index {i} (model={request_model})"
                         )
 
                 # Validate count matches input
@@ -210,9 +227,17 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         Raises:
             Exception: If API call fails
         """
-        embeddings = self._make_request([text])
+        embeddings = self._make_request([text], model_override=self._store_model)
         logger.debug("Generated Voyage embedding for text (length: %d)", len(text))
         return embeddings[0]
+
+    def embed_for_store(self, text: str) -> List[float]:
+        """Embed a memory document with the configured store model."""
+        return self._make_request([text], model_override=self._store_model)[0]
+
+    def embed_for_recall(self, text: str) -> List[float]:
+        """Embed a recall query with the configured recall model."""
+        return self._make_request([text], model_override=self._recall_model)[0]
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts in one API call.
@@ -235,7 +260,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
 
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            embeddings = self._make_request(batch)
+            embeddings = self._make_request(batch, model_override=self._store_model)
             all_embeddings.extend(embeddings)
 
         logger.info(

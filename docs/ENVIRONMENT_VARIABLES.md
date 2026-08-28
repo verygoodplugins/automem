@@ -56,6 +56,8 @@ AutoMem supports five embedding backends with automatic fallback.
 | `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `voyage`, `openai`, `local`, `ollama`, `placeholder` |
 | `VOYAGE_API_KEY` | Voyage API key (for Voyage provider) | - | `pa-...` |
 | `VOYAGE_MODEL` | Voyage embedding model | `voyage-4` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
+| `VOYAGE_STORE_MODEL` | Optional Voyage model for stored memory embeddings | `VOYAGE_MODEL` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
+| `VOYAGE_RECALL_MODEL` | Optional Voyage model for recall query embeddings | `VOYAGE_MODEL` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
 | `OPENAI_API_KEY` | API key (OpenAI or compatible provider) | - | `sk-proj-...` |
 | `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs (embeddings and classification/enrichment LLM calls) | - | `https://openrouter.ai/api/v1` |
 | `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
@@ -113,9 +115,23 @@ Set `OLLAMA_BASE_URL` when the Ollama server is not at `http://localhost:11434`.
 **Voyage Details:**
 - Requires `VOYAGE_API_KEY`
 - Optional model override via `VOYAGE_MODEL` (default `voyage-4`)
+- Optional mixed-model routing via `VOYAGE_STORE_MODEL` and `VOYAGE_RECALL_MODEL`; either setting falls back to `VOYAGE_MODEL` when unset
 - Voyage 4 family supports output dimensions `256`, `512`, `1024`, or `2048`
 - Set `VECTOR_SIZE` to one of the supported Voyage dimensions
 - Voyage's free tier covers typical AutoMem usage. See the maintained [Voyage pricing page](https://docs.voyageai.com/docs/pricing) for current limits and rates.
+
+To opt into cheaper writes and higher-quality query embeddings within Voyage 4's shared
+embedding space:
+
+```bash
+VOYAGE_MODEL=voyage-4
+VOYAGE_STORE_MODEL=voyage-4-lite
+VOYAGE_RECALL_MODEL=voyage-4-large
+VECTOR_SIZE=1024
+```
+
+The single-model configuration remains the default. Benchmark recall quality for your own
+dataset before adopting a mixed-model configuration in production.
 
 **OpenAI-Compatible Providers (OpenRouter, LiteLLM, Azure, vLLM, etc.):**
 
