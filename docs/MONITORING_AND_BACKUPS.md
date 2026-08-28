@@ -2,6 +2,9 @@
 
 Complete guide to setting up automated health monitoring and backups for AutoMem on Railway.
 
+For the current script inventory, safety classification, and exact CLI usage,
+see the [scripts catalog](../scripts/README.md).
+
 ## Overview
 
 AutoMem includes three layers of data protection:
@@ -60,7 +63,7 @@ Create a new Railway service for continuous monitoring:
 ```bash
 # In Railway dashboard
 1. Create new service from GitHub repo
-2. Set Dockerfile path: scripts/Dockerfile.health-monitor (we'll create this)
+2. Set Dockerfile path: `scripts/Dockerfile.health-monitor` (included in this repository)
 3. Configure environment variables (same as main service)
 4. Deploy
 ```
@@ -353,29 +356,14 @@ redis-cli -h monorail.proxy.rlwy.net -p 12345 -a YOUR_PASSWORD ping
 
 ---
 
-**Advanced: Railway Backup Service**
+**Railway-hosted backup schedules**
 
-For Railway Pro users who want backups running on Railway:
-
-⚠️ **Note:** Railway's UI makes Dockerfile configuration complex. This method is for advanced users.
-
-The `scripts/Dockerfile.backup` exists and runs backups every 6 hours in a loop. However, deploying it requires CLI:
-
-```bash
-cd /path/to/automem
-railway link
-railway up --service backup-service
-```
-
-Then configure in Railway dashboard:
-
-- Set Builder to Dockerfile
-- Dockerfile Path: `scripts/Dockerfile.backup`
-- Add environment variables (same as the AutoMem API service)
-
-**Cost:** ~$1-2/month
-
-**Recommendation:** Use GitHub Actions instead unless you have specific requirements for Railway-hosted backups.
+AutoMem does not ship a standalone backup container recipe; the old
+documentation reference was stale. Use the included [GitHub Actions backup
+workflow](../.github/workflows/backup.yml), or configure your platform's
+scheduler to run the documented `backup_automem.py` command with the required
+database credentials and off-site destination. The GitHub Actions workflow is
+the supported repository example.
 
 ---
 

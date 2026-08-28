@@ -8,7 +8,7 @@
 - `benchmarks/`: Snapshot-based benchmark system. See `EXPERIMENT_LOG.md` for current baselines and results.
 - `scripts/bench/`: Benchmark tooling (ingest, eval, compare, health check).
 - `docs/`: API, testing, deployment, monitoring, and env var references.
-- `scripts/`: Maintenance and ops helpers (backup, reembed, health monitor).
+- `scripts/`: Maintenance and ops helpers (backup, reembed, health monitor). See the canonical [scripts catalog](scripts/README.md) for lifecycle and usage.
 - `mcp-sse-server/`: Optional MCP bridge used in some deployments.
 
 ## Build, Test, and Development
@@ -76,7 +76,7 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 - `benchmarks/baselines/` — baseline result JSONs (small files committed, large ones gitignored).
 - `benchmarks/snapshots/` — Qdrant/FalkorDB snapshot data (gitignored, regenerate with `make bench-ingest`).
 - `benchmarks/results/` — per-run result JSONs (gitignored).
-- `scripts/bench/` — shell and Python scripts driving ingest, eval, compare, and health checks.
+- `scripts/bench/` — shell and Python scripts driving ingest, eval, compare, and health checks; see [scripts/README.md](scripts/README.md).
 - `tests/benchmarks/` — legacy benchmark harnesses (LoCoMo, LongMemEval) and historical result markdown files.
 
 ## Commit & Pull Requests

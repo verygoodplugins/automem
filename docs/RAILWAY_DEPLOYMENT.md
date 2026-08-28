@@ -1,5 +1,8 @@
 # Railway Deployment Guide
 
+For operational scripts used after deployment (health checks, backups, recovery,
+and migrations), see the [scripts catalog](../scripts/README.md).
+
 Complete guide to deploying AutoMem on Railway with persistent storage, backups, and zero data loss.
 
 ## Quick Start (One-Click Deploy)
@@ -49,7 +52,8 @@ flowchart TB
 
         subgraph external [External Services]
             QdrantCloud[(Qdrant Cloud<br/>Optional managed alternative)]
-            OpenAI[OpenAI API<br/>Embeddings]
+            Voyage[Voyage API<br/>Recommended embeddings]
+            OpenAI[OpenAI API<br/>Fallback embeddings]
         end
     end
 
@@ -65,7 +69,8 @@ flowchart TB
     FlaskAPI -->|Internal<br/>falkordb.railway.internal:6379| FalkorDB
     FlaskAPI -->|Internal<br/>qdrant.railway.internal:6333| Qdrant
     FlaskAPI -.->|Optional alternative| QdrantCloud
-    FlaskAPI --> OpenAI
+    FlaskAPI --> Voyage
+    FlaskAPI -.-> OpenAI
 
     Enrichment --> FalkorDB
     Enrichment -.-> QdrantCloud
@@ -143,12 +148,13 @@ After deploying, complete these steps to fully configure AutoMem:
 
 | Variable         | Required    | How to Get                                                           |
 | ---------------- | ----------- | -------------------------------------------------------------------- |
-| `OPENAI_API_KEY` | Yes\*       | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `VOYAGE_API_KEY` | Recommended | [Voyage API key](https://dash.voyageai.com/) for `voyage-4`          |
+| `OPENAI_API_KEY` | Optional fallback | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | `QDRANT_URL`     | Option A    | Qdrant Cloud URL — see [Qdrant Setup Guide](QDRANT_SETUP.md)         |
 | `QDRANT_API_KEY` | Option A    | Qdrant Cloud API key                                                  |
 | `QDRANT_HOST`    | Option B    | `qdrant` (self-hosted on Railway — see [Step 1b](#step-1b-qdrant-vector-database)) |
 
-\*Without `OPENAI_API_KEY`, semantic search won't work (embeddings skipped).
+Set `EMBEDDING_PROVIDER=auto`, `VOYAGE_MODEL=voyage-4`, and `VECTOR_SIZE=1024` with the Voyage key. In auto mode, OpenAI is the API fallback. Do not rely on FastEmbed for Railway: its 1024d fallback can add roughly 4 GB RSS and materially increase the service cost. See [Voyage pricing](https://docs.voyageai.com/docs/pricing) for the current free-tier limits and rates.
 
 👉 **Qdrant Cloud?** Follow the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step collection setup.
 👉 **Self-hosted Qdrant?** See [Step 1b](#step-1b-qdrant-vector-database) — remember to set `QDRANT__SERVICE__HOST=::` on the Qdrant service.
@@ -316,8 +322,13 @@ Run Qdrant inside your Railway project for lower latency (internal networking, n
    AUTOMEM_API_TOKEN=${{shared.AUTOMEM_API_TOKEN}}
    ADMIN_API_TOKEN=${{shared.ADMIN_API_TOKEN}}
 
-   # OpenAI for embeddings (required for semantic search)
-   OPENAI_API_KEY=<your-openai-key>
+   # Recommended cloud embeddings: Voyage first, OpenAI fallback
+   EMBEDDING_PROVIDER=auto
+   VOYAGE_API_KEY=<your-voyage-key>
+   VOYAGE_MODEL=voyage-4
+   VECTOR_SIZE=1024
+   # Optional: OpenAI-compatible API fallback when Voyage is unavailable
+   # OPENAI_API_KEY=<your-openai-key>
 
    # Vector search — pick ONE:
    # Option A: Qdrant Cloud
@@ -344,8 +355,13 @@ Run Qdrant inside your Railway project for lower latency (internal networking, n
    AUTOMEM_API_TOKEN=<your-generated-token>
    ADMIN_API_TOKEN=<your-generated-token>
 
-   # OpenAI for embeddings
-   OPENAI_API_KEY=<your-openai-key>
+   # Recommended cloud embeddings: Voyage first, OpenAI fallback
+   EMBEDDING_PROVIDER=auto
+   VOYAGE_API_KEY=<your-voyage-key>
+   VOYAGE_MODEL=voyage-4
+   VECTOR_SIZE=1024
+   # Optional: OpenAI-compatible API fallback when Voyage is unavailable
+   # OPENAI_API_KEY=<your-openai-key>
 
    # Vector search — pick ONE:
    # Option A: Qdrant Cloud

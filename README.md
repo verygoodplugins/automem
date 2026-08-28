@@ -8,49 +8,38 @@
   <a href="https://automem.ai/discord"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://x.com/automem_ai"><img src="https://img.shields.io/badge/X-@automem__ai-000000?logo=x&logoColor=white" alt="X" /></a>
   <a href="https://automem.ai/benchmarks"><img src="https://img.shields.io/badge/LoCoMo%20(AMB)-85.1%25-success" alt="LoCoMo on the neutral Agent Memory Benchmark" /></a>
+  <a href="benchmarks/EXPERIMENT_LOG.md#results"><img src="https://img.shields.io/badge/LongMemEval%20full-87.0%25-blueviolet" alt="LongMemEval full on AutoMem's internal harness: 87.0%" /></a>
   <a href="https://automem.ai/benchmarks"><img src="https://img.shields.io/badge/BEAM%2010M%20(AMB)-57.4%25-success" alt="BEAM 10M on the neutral Agent Memory Benchmark" /></a>
   <a href="https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic"><img src="https://img.shields.io/badge/Deploy%20on-Railway-0B0D0E?logo=railway&logoColor=white" alt="Deploy on Railway" /></a>
 </p>
 
 <p align="center">
-  <strong>Long-term memory for AI assistants. Graph + vector. Runs on your hardware.</strong>
+  <strong>Long-term memory for AI assistants — fast, private, and yours.</strong>
 </p>
-
-<!-- VIDEO PLACEHOLDER — replace this comment with a centered <p> containing a thumbnail image linking to the vidrush demo URL once recorded. Suggested markup:
-<p align="center">
-  <a href="https://vidrush.app/v/REPLACE-ME"><img src="docs/img/video-thumb.jpg" alt="Watch the demo" width="480" /></a>
-</p>
--->
 
 # AutoMem
 
-Your AI forgets between sessions. RAG dumps documents that look similar. Vector databases match keywords but miss meaning. None of them learn.
+[AutoMem](https://automem.ai) gives your AI a memory that survives the chat.
 
-AutoMem stores typed relationships *and* embeddings. When you ask "why did we choose PostgreSQL?", recall returns not just the matching memory — but the alternatives you considered, the principle behind the choice, and the related decisions that came after.
+Save the decisions, preferences, notes, and context that matter. The next time you open Claude, Cursor, Codex, ChatGPT, or another connected assistant, it can bring back the right details instead of making you repeat yourself.
 
-On its *own* internal harness, AutoMem scores **87.00%** on LongMemEval full (**97.00%** recall@5) and **84.74%** on LoCoMo full — but those are engineering baselines scored by a self-hosted judge (`gpt-5.4-mini`), and the same answers can swing ~12 points on judge model alone. For comparison against other systems, the numbers that matter come from the **neutral** third-party board below. See [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md) for methodology, judge policy, category breakdowns, and historical runs.
+Ask, “Why did we choose PostgreSQL?” and AutoMem can return the decision, the alternatives you considered, the principle behind it, and the work that followed — not just a pile of similarly worded snippets.
 
-### On the neutral Agent Memory Benchmark
+## Why AutoMem feels different
 
-AutoMem **0.16.0** was run through the neutral [Agent Memory Benchmark](https://automem.ai/benchmarks) (AMB, by vectorize-io) on a self-spinning FalkorDB + Qdrant stack with **FastEmbed-local `bge-base-en-v1.5` (768d)** — no embedding API keys. The honest summary: AutoMem's strength is **large-context scaling and efficiency**, not verbatim conversational recall.
+**No LLM call in the middle of recall.** AutoMem looks up memories directly through its graph and vector index. That keeps normal retrieval fast and avoids an extra generative-LLM charge every time your assistant needs context. It still uses embeddings — from Voyage, OpenAI, or a local provider — and optional enrichment can add more structure over time.
 
-- **BEAM is the apples-to-apples axis** (same benchmark, same Gemini answerer + judge). AutoMem scores above Honcho at every BEAM tier, and the gap widens with scale: **+4.5pp at 100k, +0.7pp at 500k, +0.7pp at 1M, +16.8pp at 10M**. AutoMem degrades gracefully — **67.5% → 57.4%** (−10pp) across a 100× haystack increase — while Honcho holds roughly flat through 1M, then drops to 40.6% at 10M. That places AutoMem **#2 on BEAM**, behind vectorize's own Hindsight (~73→64% across the curve).
-- **At 10M tokens, AutoMem holds 57.4% ±5.5%** while Honcho falls to ~41%. At that scale, context-stuffing is physically impossible, so the score reflects retrieval architecture, not context window.
-- **Efficiency is architectural:** AutoMem feeds the answerer **~2.6–4.8k context tokens** at every scale (mean), versus 17–27k for the board leader on BEAM.
-- **The honest other half:** on conversational Core-3, AutoMem **trails** the AMB leader Hindsight — locomo 85.1% vs 92%, longmemeval 74.4% vs 94.6%, personamem 76.1% vs 86.6%. Pick AutoMem for large-context scaling and efficiency, not for top-of-board verbatim recall.
+**More than vector search.** A vector match finds something similar; AutoMem also records typed relationships between memories. It can follow the connections between a decision, its rationale, and its consequences, so your assistant has a better chance of returning the *why*, not only the words it recognizes.
 
-Outputs are committed and public, and [`AUTOMEM_REPRODUCE.md`](https://automem.ai/benchmarks) gives one command per split so you can **run it yourself**. AutoMem is **submitted to the neutral board ([provider PR #24](https://github.com/vectorize-io/agent-memory-benchmark/pull/24), under review)** — not yet live on the public leaderboard. Full head-to-head numbers live at [automem.ai/benchmarks](https://automem.ai/benchmarks).
+**One memory across your tools.** Use the local MCP bridge with Claude Desktop, Cursor, Claude Code, Codex, Copilot, and more. For cloud agents, Remote MCP connects the same service to ChatGPT Developer Mode, Claude.ai, and ElevenLabs over HTTPS. Your memory is not locked to one chat app.
 
-## Should you use AutoMem?
+**Own the data and the setup.** Run AutoMem locally with Docker, on your own infrastructure, or as a small Railway service group. It exposes both MCP and a REST API, so it fits into the tools and workflows you already use.
 
-| Use AutoMem if... | Look elsewhere if... |
-|---|---|
-| You want one memory across Claude / Cursor / ChatGPT / Codex | You need SOC2 / HIPAA audit logs and row-level ACLs |
-| You're comfortable self-hosting (Docker or Railway) | You want a managed SaaS with a polished dashboard |
-| You're a solo dev, prosumer, or small team | You're running a multi-agent swarm needing per-agent memory isolation |
-| You want to own your memory data | You need an enterprise SLA and dedicated support |
+## Proven where long context gets hard
 
-If your row is on the right, AutoMem isn't it — yet. Try [Mem0](https://mem0.ai), [Letta](https://letta.com), or [Zep](https://www.getzep.com) instead.
+On the independent [Agent Memory Benchmark](https://automem.ai/benchmarks)'s BEAM long-context tests, AutoMem scored **57.4% at 10 million source tokens** while giving the answerer an average of only **~2.6–4.8k retrieved tokens**. That is the kind of efficiency that lets memory stay useful as an agent's history grows.
+
+The full picture — test setup, raw outputs, methodology, historical runs, and reproduction commands — is in [automem.ai/benchmarks](https://automem.ai/benchmarks) and [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md).
 
 ## How it works
 

@@ -142,11 +142,13 @@ AutoMem uses a provider pattern with multiple embedding backends:
 #### Provider Priority (Auto-Selection)
 
 1. **Voyage AI** (`voyage:voyage-4`) - If `VOYAGE_API_KEY` is set
+   - Recommended provider for new deployments: multilingual quality with a generous free tier; see [Voyage pricing](https://docs.voyageai.com/docs/pricing) for current limits and rates
    - High-quality embeddings with flexible model family (voyage-4, voyage-4-large, voyage-4-lite)
    - Supports output dimensions: 256, 512, 1024, 2048
    - Requires network and API key
 
 2. **OpenAI / OpenAI-compatible** (`openai:text-embedding-3-small`) - If `OPENAI_API_KEY` is set
+   - API fallback when Voyage is not configured
    - Semantic embeddings via API, truncated to `VECTOR_SIZE` via Matryoshka (OpenAI native only)
    - If `VECTOR_SIZE` > 1536, auto-upgrades to `text-embedding-3-large` (set `EMBEDDING_MODEL=text-embedding-3-large` to silence)
    - Supports any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (OpenRouter, LiteLLM, vLLM, Azure, etc.) for both embeddings and classification/enrichment LLM calls
@@ -155,23 +157,25 @@ AutoMem uses a provider pattern with multiple embedding backends:
 3. **Ollama** (`ollama:nomic-embed-text`) - If `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is configured
    - Fully local, easy model swapping
    - Requires running Ollama server
+   - Use `ollama pull bge-m3`, then `OLLAMA_MODEL=bge-m3` with `VECTOR_SIZE=1024` for local/self-hosted multilingual BGE-M3
 
 4. **FastEmbed** (`fastembed:BAAI/bge-base-en-v1.5`) - Local ONNX model
    - Good quality semantic embeddings
    - No API key or internet required (after first download)
    - Downloads ~210MB model to `~/.config/automem/models/` on first use
    - 768 dimensions (default), also supports 384 and 1024 dim models
+   - Local/self-hosted only: its 1024d cloud fallback can consume roughly 4 GB RSS and raise hosting cost substantially
 
 5. **Placeholder** (`placeholder`) - Hash-based fallback
    - Deterministic vectors from content hash
    - No semantic meaning, last resort only
 
-**Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed when updating. To enforce strict matching, set `VECTOR_SIZE_AUTODETECT=false`.
+**Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) only adopts an existing collection dimension. It does not make vectors from different models compatible: any provider or model change requires recreating the Qdrant collection and a full re-embed, including a swap between two 1024d models. To enforce strict dimension matching, set `VECTOR_SIZE_AUTODETECT=false`.
 
 #### Provider Configuration
 
 Control via `EMBEDDING_PROVIDER` environment variable:
-- `auto` (default): Try Voyage → OpenAI → Ollama → FastEmbed → Placeholder
+- `auto` (default): Try Voyage → OpenAI → Ollama (only when configured) → FastEmbed → Placeholder
 - `voyage`: Use Voyage only (fail if unavailable)
 - `openai`: Use OpenAI only (fail if unavailable). Also works with OpenAI-compatible providers when `OPENAI_BASE_URL` is set.
 - `ollama`: Use Ollama only (fail if unavailable)
@@ -226,7 +230,7 @@ QDRANT_HOST=                 # OR hostname for self-hosted Qdrant (e.g. "qdrant"
 QDRANT_PORT=6333             # Port for self-hosted Qdrant (used with QDRANT_HOST)
 QDRANT_API_KEY=              # Qdrant Cloud API key (optional, not needed for self-hosted)
 QDRANT_COLLECTION=memories   # Collection name
-VECTOR_SIZE=1024             # Embedding dimensions (1024 for voyage-4, 768 for small, 3072 for large)
+VECTOR_SIZE=1024             # Embedding dimensions (1024 for voyage-4 or Ollama bge-m3, 768 for small, 3072 for large)
 VECTOR_SIZE_AUTODETECT=true  # Adopt existing collection dim on startup (false = fail on mismatch)
 
 # API configuration
@@ -236,8 +240,12 @@ ADMIN_API_TOKEN=             # For admin endpoints
 
 # Embedding configuration
 EMBEDDING_PROVIDER=auto      # auto|voyage|openai|ollama|local|placeholder
+VOYAGE_API_KEY=              # Recommended for new cloud deployments
+VOYAGE_MODEL=voyage-4
 OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
 OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs used by embeddings and classification/enrichment (optional)
+OLLAMA_BASE_URL=             # Intentional local/self-hosted Ollama endpoint
+OLLAMA_MODEL=                # e.g. bge-m3 (requires `ollama pull bge-m3`)
 
 # Consolidation intervals (seconds)
 CONSOLIDATION_DECAY_INTERVAL_SECONDS=86400    # 1 day (default)

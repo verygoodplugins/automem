@@ -33,10 +33,8 @@ node_modules/
 # Experiment results (promote notable runs to tests/benchmarks/results/)
 /tests/benchmarks/experiments/results_*/
 
-# Recall Quality Lab data (snapshots, test results)
-/lab/snapshots/
-/lab/results/
-/lab/test_sets/
+# Recall Quality Lab data (generated snapshots, test sets, and results)
+/lab/
 
 # Benchmark overrides and snapshots
 .env.bench
@@ -47,3 +45,5 @@ node_modules/
 benchmarks/baselines/locomo_baseline.json
 data/bm25_index.db
 data/
+/.agents
+/docs/superpowers/

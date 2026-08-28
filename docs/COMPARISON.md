@@ -2,7 +2,7 @@
 
 This doc covers how AutoMem differs from the three things people most often compare it against: traditional RAG, pure vector databases, and rolling your own memory layer. It also covers the recall scoring formula in enough detail to evaluate whether AutoMem will solve your specific retrieval problem.
 
-For the short version, skip to the README's [Should you use AutoMem?](../README.md#should-you-use-automem) section. For research foundations, see [RESEARCH.md](RESEARCH.md).
+For the short version, start with the README's [Why AutoMem feels different](../README.md#why-automem-feels-different) section. For research foundations, see [RESEARCH.md](RESEARCH.md).
 
 ---
 
@@ -86,13 +86,13 @@ When building your own is the right answer:
 
 These defaults reflect the current canonical benchmark posture: LongMemEval full at 87.00% with 97.00% recall@5, and LoCoMo full at 84.74%. For a query like `GET /recall?query=database+migration&tags=decision&time_query=last+month`, the temporal-alignment and tag components dominate; for `GET /recall?query=why+postgres&expand_relations=true`, the relation component does.
 
-The Recall Quality Lab (`scripts/lab/`) lets you sweep any weight and A/B-compare configs against snapshots of production data without touching the service.
+The Recall Quality Lab (`scripts/lab/`) lets you sweep any weight and A/B-compare configs against snapshots of production data without touching the service. The [scripts catalog](../scripts/README.md) explains when to clone, generate queries, test, compare, or sweep.
 
 ---
 
 ## Where to go next
 
 - **Want to deploy?** [INSTALLATION.md](../INSTALLATION.md)
-- **Want to tune recall?** [`scripts/lab/`](../scripts/lab/) and [`docs/ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md)
+- **Want to tune recall?** [Recall Quality Lab in the scripts catalog](../scripts/README.md) and [`docs/ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md)
 - **Want to understand the science?** [RESEARCH.md](RESEARCH.md)
 - **Want to talk to humans?** [Discord](https://automem.ai/discord)

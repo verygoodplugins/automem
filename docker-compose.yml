@@ -58,10 +58,22 @@ services:
       QDRANT_ENSURE_PAYLOAD_INDEXES: ${QDRANT_ENSURE_PAYLOAD_INDEXES:-true}
       AUTOMEM_API_TOKEN: ${AUTOMEM_API_TOKEN:-test-token}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-test-admin-token}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      VOYAGE_MODEL: ${VOYAGE_MODEL:-voyage-4}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Pass these through only when intentionally configured. This preserves
+      # Ollama's runtime defaults for EMBEDDING_PROVIDER=ollama and prevents
+      # auto-selection from treating an empty Compose value as configuration.
+      OLLAMA_BASE_URL:
+      OLLAMA_MODEL:
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-30}
+      OLLAMA_MAX_RETRIES: ${OLLAMA_MAX_RETRIES:-2}
       VECTOR_SIZE: ${VECTOR_SIZE:-1024}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto} # auto|voyage|openai|local|placeholder
+      VECTOR_SIZE_AUTODETECT: ${VECTOR_SIZE_AUTODETECT:-true}
+      # auto tries Voyage, OpenAI, configured Ollama, FastEmbed, then placeholders.
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
       MEMORY_CONTENT_HARD_LIMIT: ${MEMORY_CONTENT_HARD_LIMIT:-2000}
       MEMORY_AUTO_SUMMARIZE: ${MEMORY_AUTO_SUMMARIZE:-true}
       AUTOMEM_MODELS_DIR: /root/.config/automem/models # Keep in sync with volume mount

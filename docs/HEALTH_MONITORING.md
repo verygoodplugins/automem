@@ -2,6 +2,9 @@
 
 AutoMem includes a built-in health monitoring system that watches for data inconsistencies and optionally triggers automatic recovery.
 
+For the current command catalog and safety notes for `health_monitor.py` and
+`recover_from_qdrant.py`, see [scripts/README.md](../scripts/README.md).
+
 ## Quick Start
 
 ### Alert-Only Mode (Recommended)
@@ -386,4 +389,4 @@ python scripts/health_monitor.py --once | grep drift_percent
 - [Recovery Script Documentation](../scripts/recover_from_qdrant.py)
 - [Environment Variables](./ENVIRONMENT_VARIABLES.md)
 - [Railway Deployment](./RAILWAY_DEPLOYMENT.md)
-- [Deployment Checklist](./DEPLOYMENT_CHECKLIST.md)
+- [Post-Deploy Checklist](./RAILWAY_DEPLOYMENT.md#post-deploy-checklist)
