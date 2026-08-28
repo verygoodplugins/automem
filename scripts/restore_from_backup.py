@@ -110,6 +110,7 @@ QDRANT_RESTORE_INDEXING_THRESHOLD = _optional_int_env("QDRANT_RESTORE_INDEXING_T
 QDRANT_RESTORE_DEFAULT_SEGMENT_NUMBER = _optional_int_env("QDRANT_RESTORE_DEFAULT_SEGMENT_NUMBER")
 QDRANT_RESTORE_MEMMAP_THRESHOLD = _optional_int_env("QDRANT_RESTORE_MEMMAP_THRESHOLD")
 QDRANT_RESTORE_HNSW_M = _optional_int_env("QDRANT_RESTORE_HNSW_M")
+QDRANT_RESTORE_HNSW_ON_DISK = _optional_bool_env("QDRANT_RESTORE_HNSW_ON_DISK")
 QDRANT_RESTORE_VECTOR_ON_DISK = _optional_bool_env("QDRANT_RESTORE_VECTOR_ON_DISK")
 QDRANT_RESTORE_ON_DISK_PAYLOAD = _optional_bool_env("QDRANT_RESTORE_ON_DISK_PAYLOAD")
 QDRANT_RESTORE_READY_TIMEOUT_SECONDS = float(
@@ -448,8 +449,13 @@ def _qdrant_collection_kwargs(vector_size: int) -> dict[str, Any]:
         optimizer_kwargs["memmap_threshold"] = QDRANT_RESTORE_MEMMAP_THRESHOLD
     if optimizer_kwargs:
         kwargs["optimizers_config"] = OptimizersConfigDiff(**optimizer_kwargs)
+    hnsw_kwargs: dict[str, Any] = {}
     if QDRANT_RESTORE_HNSW_M is not None:
-        kwargs["hnsw_config"] = HnswConfigDiff(m=QDRANT_RESTORE_HNSW_M)
+        hnsw_kwargs["m"] = QDRANT_RESTORE_HNSW_M
+    if QDRANT_RESTORE_HNSW_ON_DISK is not None:
+        hnsw_kwargs["on_disk"] = QDRANT_RESTORE_HNSW_ON_DISK
+    if hnsw_kwargs:
+        kwargs["hnsw_config"] = HnswConfigDiff(**hnsw_kwargs)
     if QDRANT_RESTORE_ON_DISK_PAYLOAD is not None:
         kwargs["on_disk_payload"] = QDRANT_RESTORE_ON_DISK_PAYLOAD
     return kwargs
