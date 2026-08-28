@@ -172,7 +172,7 @@ Stream
     - `memory.associate` — single edge (`memory1_id`, `memory2_id`, `relation_type`, `strength`, `count: 1`) or batch (`count`, `failed_count`, `relation_types`)
     - `enrichment.start` / `enrichment.complete` / `enrichment.failed`
     - `consolidation.run`
-  - Failed validation (`4xx`) does not emit. Watch with `python scripts/automem_watch.py --url … --token …`.
+  - Failed validation (`4xx`) does not emit. Watch with `python scripts/automem_watch.py --url … --token …`; see the [scripts catalog](../scripts/README.md#operations-and-maintenance) for its usage and safety notes.
 
 - GET `/stream/status`
   - Response: `{ "subscribers": N }`
