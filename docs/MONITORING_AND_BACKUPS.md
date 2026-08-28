@@ -175,6 +175,16 @@ New AutoMem collections store vectors, the HNSW index, and payloads on disk by d
      "$QDRANT_URL/collections/$QDRANT_COLLECTION" | jq '.result.points_count'
    ```
 
+   This runbook is for collections using Qdrant's default topology. Capture and review the existing collection configuration before continuing:
+
+   ```bash
+   curl -sS -H "api-key: $QDRANT_API_KEY" \
+     "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
+     -o qdrant-before-on-disk-migration-config.json
+   ```
+
+   The restore preserves points and vector size, then applies the documented on-disk tuning; it does not preserve custom sharding, replication, write-consistency, quantization, or strict-mode settings. If this configuration has non-default settings, stop before the export and use an operator-specific migration that reapplies them during collection creation.
+
 3. Export a Qdrant-only portable backup from AutoMem:
 
    ```bash
