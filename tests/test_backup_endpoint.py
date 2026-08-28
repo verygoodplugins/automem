@@ -489,6 +489,7 @@ def test_lab_clone_uses_paced_qdrant_restore_defaults() -> None:
     )
     assert 'QDRANT_RESTORE_MEMMAP_THRESHOLD="${QDRANT_RESTORE_MEMMAP_THRESHOLD:-0}"' in script
     assert 'QDRANT_RESTORE_HNSW_M="${QDRANT_RESTORE_HNSW_M:-0}"' in script
+    assert 'QDRANT_RESTORE_HNSW_ON_DISK="${QDRANT_RESTORE_HNSW_ON_DISK:-true}"' in script
     assert 'QDRANT_RESTORE_VECTOR_ON_DISK="${QDRANT_RESTORE_VECTOR_ON_DISK:-true}"' in script
     assert 'QDRANT_RESTORE_ON_DISK_PAYLOAD="${QDRANT_RESTORE_ON_DISK_PAYLOAD:-false}"' in script
     assert 'QDRANT_PREFER_GRPC="${QDRANT_PREFER_GRPC:-true}"' in script
@@ -662,6 +663,7 @@ def test_restore_qdrant_uses_optional_collection_tuning(
     monkeypatch.setattr(restore_module, "QDRANT_RESTORE_DEFAULT_SEGMENT_NUMBER", 1)
     monkeypatch.setattr(restore_module, "QDRANT_RESTORE_MEMMAP_THRESHOLD", 0)
     monkeypatch.setattr(restore_module, "QDRANT_RESTORE_HNSW_M", 0)
+    monkeypatch.setattr(restore_module, "QDRANT_RESTORE_HNSW_ON_DISK", True)
     monkeypatch.setattr(restore_module, "QDRANT_RESTORE_VECTOR_ON_DISK", True)
     monkeypatch.setattr(restore_module, "QDRANT_RESTORE_ON_DISK_PAYLOAD", False)
 
@@ -675,4 +677,5 @@ def test_restore_qdrant_uses_optional_collection_tuning(
     assert optimizers.default_segment_number == 1
     assert optimizers.memmap_threshold == 0
     assert RecordingQdrantClient.create_kwargs["hnsw_config"].m == 0
+    assert RecordingQdrantClient.create_kwargs["hnsw_config"].on_disk is True
     assert RecordingQdrantClient.create_kwargs["vectors_config"].on_disk is True

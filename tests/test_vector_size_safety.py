@@ -251,6 +251,44 @@ class TestInitQdrantPropagation:
 
 
 class TestEnsureQdrantCollectionPayloadIndexes:
+    def test_new_collection_uses_on_disk_storage(self):
+        from automem.stores.runtime_clients import ensure_qdrant_collection
+
+        class RecordingVectorParams:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        class RecordingHnswConfigDiff:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        qdrant = MagicMock()
+        qdrant.get_collections.return_value = SimpleNamespace(collections=[])
+
+        state = SimpleNamespace(qdrant=qdrant, effective_vector_size=None)
+
+        ensure_qdrant_collection(
+            state=state,
+            logger=MagicMock(),
+            collection_name="memories",
+            vector_size_config=1024,
+            get_effective_vector_size_fn=lambda _client: (768, "configured"),
+            vector_params_cls=RecordingVectorParams,
+            hnsw_config_diff_cls=RecordingHnswConfigDiff,
+            distance_enum=SimpleNamespace(COSINE="Cosine"),
+            payload_schema_type_enum=SimpleNamespace(KEYWORD="keyword"),
+        )
+
+        qdrant.create_collection.assert_called_once()
+        create_kwargs = qdrant.create_collection.call_args.kwargs
+        assert create_kwargs["collection_name"] == "memories"
+        assert create_kwargs["vectors_config"].size == 768
+        assert create_kwargs["vectors_config"].distance == "Cosine"
+        assert create_kwargs["vectors_config"].on_disk is True
+        assert create_kwargs["hnsw_config"].on_disk is True
+        assert create_kwargs["on_disk_payload"] is True
+        assert qdrant.create_payload_index.call_count == 3
+
     def _run_ensure(self, payload_schema_type_enum):
         from automem.stores.runtime_clients import ensure_qdrant_collection
 
@@ -267,6 +305,7 @@ class TestEnsureQdrantCollectionPayloadIndexes:
             vector_size_config=1024,
             get_effective_vector_size_fn=lambda _client: (1024, "collection"),
             vector_params_cls=MagicMock(),
+            hnsw_config_diff_cls=MagicMock(),
             distance_enum=SimpleNamespace(COSINE="Cosine"),
             payload_schema_type_enum=payload_schema_type_enum,
         )
@@ -307,11 +346,13 @@ class TestEnsureQdrantCollectionPayloadIndexes:
             vector_size_config=1024,
             get_effective_vector_size_fn=lambda _client: (1024, "collection"),
             vector_params_cls=MagicMock(),
+            hnsw_config_diff_cls=MagicMock(),
             distance_enum=SimpleNamespace(COSINE="Cosine"),
             payload_schema_type_enum=SimpleNamespace(KEYWORD="keyword"),
         )
 
         assert state.qdrant is qdrant
+        qdrant.create_collection.assert_not_called()
         qdrant.create_payload_index.assert_not_called()
         logger.info.assert_any_call(
             "Skipping Qdrant payload indexes for collection '%s'", "memories"

@@ -42,6 +42,7 @@ def create_service_runtime(
     collection_name: str,
     get_effective_vector_size_fn: Callable[[], int],
     vector_params_cls: Any,
+    hnsw_config_diff_cls: Any,
     distance_enum: Any,
     payload_schema_type_enum: Any,
     get_init_falkordb_fn: Callable[[], Callable[[], None]],
@@ -80,6 +81,7 @@ def create_service_runtime(
             vector_size_config=vector_size_config_fn(),
             get_effective_vector_size_fn=get_effective_vector_size_fn,
             vector_params_cls=vector_params_cls,
+            hnsw_config_diff_cls=hnsw_config_diff_cls,
             distance_enum=distance_enum,
             payload_schema_type_enum=payload_schema_type_enum,
         )

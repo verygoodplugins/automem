@@ -197,6 +197,16 @@ When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_
 
 **Backward Compatibility**: `MCP_MEMORY_HTTP_ENDPOINT` is deprecated but still supported (falls back to this if `AUTOMEM_API_URL` not set).
 
+### Qdrant Restore Tuning
+
+These options apply only to `scripts/restore_from_backup.py`; they do not reconfigure an existing collection during normal API startup.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `QDRANT_RESTORE_HNSW_ON_DISK` | Optional boolean that stores the HNSW index on disk when the restore creates the collection | unset |
+
+Use this with `QDRANT_RESTORE_VECTOR_ON_DISK=true` and `QDRANT_RESTORE_ON_DISK_PAYLOAD=true` for a full disk-backed Qdrant migration. The restore process deletes and recreates the selected collection unless run in import mode; see [Monitoring & Backups](MONITORING_AND_BACKUPS.md#api-backup-export) before using it against production.
+
 ### Health Monitor
 
 | Variable | Description | Default |

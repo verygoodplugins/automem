@@ -32,7 +32,13 @@ except ImportError:  # Allow tests to import without full qdrant client installe
     UnexpectedResponse = Exception  # type: ignore[misc,assignment]
 
 try:  # Allow tests to import without full qdrant client installed
-    from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
+    from qdrant_client.models import (
+        Distance,
+        HnswConfigDiff,
+        PayloadSchemaType,
+        PointStruct,
+        VectorParams,
+    )
 except Exception:  # pragma: no cover - degraded import path
     try:
         from qdrant_client.http import models as _qmodels
@@ -40,9 +46,10 @@ except Exception:  # pragma: no cover - degraded import path
         Distance = getattr(_qmodels, "Distance", None)
         PointStruct = getattr(_qmodels, "PointStruct", None)
         VectorParams = getattr(_qmodels, "VectorParams", None)
+        HnswConfigDiff = getattr(_qmodels, "HnswConfigDiff", None)
         PayloadSchemaType = getattr(_qmodels, "PayloadSchemaType", None)
     except Exception:
-        Distance = PointStruct = VectorParams = None
+        Distance = PointStruct = VectorParams = HnswConfigDiff = None
         PayloadSchemaType = None
 
 # Provide a simple PointStruct shim for tests/environments lacking qdrant models
@@ -296,6 +303,7 @@ _service_runtime = create_service_runtime(
     collection_name=COLLECTION_NAME,
     get_effective_vector_size_fn=get_effective_vector_size,
     vector_params_cls=VectorParams,
+    hnsw_config_diff_cls=HnswConfigDiff,
     distance_enum=Distance,
     payload_schema_type_enum=PayloadSchemaType,
     get_init_falkordb_fn=lambda: init_falkordb,
