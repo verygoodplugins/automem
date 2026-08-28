@@ -8,6 +8,10 @@
 #    - Updates CHANGELOG.md
 #    - Creates a GitHub Release with tag (v0.9.3, etc.)
 #
+# target-branch is pinned to main on purpose: the GitHub default branch is
+# develop, and release-please-action otherwise opens the Release PR against
+# develop. Merging that PR never tags, because this workflow only runs on main.
+#
 # Docs dispatch is handled separately by docs-dispatch.yml on main pushes.
 #
 # Commit message format:
@@ -41,4 +45,5 @@ jobs:
         id: release
         with:
           release-type: python
+          target-branch: main
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
