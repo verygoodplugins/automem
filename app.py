@@ -326,6 +326,7 @@ memory_classifier = MemoryClassifier(
     classification_model=CLASSIFICATION_MODEL,
     logger=logger,
     stats=state.classification_stats,
+    circuit=state.enrichment_circuit,
 )
 
 
