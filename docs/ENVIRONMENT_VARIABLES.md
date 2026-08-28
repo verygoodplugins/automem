@@ -67,11 +67,22 @@ AutoMem supports five embedding backends with automatic fallback.
 - `auto` (default): Try Voyage → OpenAI → Ollama (if configured) → FastEmbed local model → Placeholder
 - `voyage`: Use Voyage API only (requires `VOYAGE_API_KEY`)
 - `openai`: Use OpenAI API only (requires `OPENAI_API_KEY`)
-- `local`: Use FastEmbed local model only (~210MB download on first use)
+- `local`: Use FastEmbed local model only
 - `ollama`: Use Ollama only (requires `OLLAMA_BASE_URL` and a pulled model)
 - `placeholder`: Use hash-based embeddings (no semantic search)
 
-**Local Model Details:**
+For new cloud deployments, configure Voyage and leave automatic fallback enabled:
+
+```bash
+EMBEDDING_PROVIDER=auto
+VOYAGE_API_KEY=pa-...
+VOYAGE_MODEL=voyage-4
+VECTOR_SIZE=1024
+```
+
+With `auto`, Ollama is attempted only when `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is explicitly configured. FastEmbed is the final usable embedding fallback; do not rely on it as a cloud default.
+
+**FastEmbed (local/self-hosted only):**
 - Models: `BAAI/bge-small-en-v1.5` (384d), `BAAI/bge-base-en-v1.5` (768d), `BAAI/bge-large-en-v1.5` (1024d)
 - Size: ~67MB / ~210MB / ~1.2GB (cached to `~/.config/automem/models/`)
 - No API key or internet required after first download
@@ -79,6 +90,7 @@ AutoMem supports five embedding backends with automatic fallback.
 - Recommended: pin `onnxruntime<1.20` with `fastembed` 0.4.x to avoid runtime issues
 - Docker: persist model cache with a volume (see docker-compose.yml)
 - Ensure `VECTOR_SIZE` equals the selected model's dimension (default 768)
+- The 1024d fallback can add roughly 4 GB RSS in a cloud container. On Railway or another managed host, that materially raises the hosting bill; use Voyage instead unless you are intentionally self-hosting FastEmbed.
 
 **Ollama Details:**
 - Requires a running Ollama server (default `http://localhost:11434`)
@@ -86,11 +98,24 @@ AutoMem supports five embedding backends with automatic fallback.
 - Embedding dimensions vary by model; set `VECTOR_SIZE` to match the model output
 - For `auto` mode, Ollama is only attempted if `OLLAMA_BASE_URL` or `OLLAMA_MODEL` is set
 
+For a local/self-hosted multilingual option, run [BGE-M3 on Ollama](https://ollama.com/library/bge-m3):
+
+```bash
+ollama pull bge-m3
+
+EMBEDDING_PROVIDER=ollama
+OLLAMA_MODEL=bge-m3
+VECTOR_SIZE=1024
+```
+
+Set `OLLAMA_BASE_URL` when the Ollama server is not at `http://localhost:11434`. BGE-M3 is documented through Ollama; it is not a FastEmbed option in this project.
+
 **Voyage Details:**
 - Requires `VOYAGE_API_KEY`
 - Optional model override via `VOYAGE_MODEL` (default `voyage-4`)
 - Voyage 4 family supports output dimensions `256`, `512`, `1024`, or `2048`
 - Set `VECTOR_SIZE` to one of the supported Voyage dimensions
+- Voyage's free tier covers typical AutoMem usage. See the maintained [Voyage pricing page](https://docs.voyageai.com/docs/pricing) for current limits and rates.
 
 **OpenAI-Compatible Providers (OpenRouter, LiteLLM, Azure, vLLM, etc.):**
 
@@ -120,19 +145,21 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 | Provider | Cost | Pros | Cons | Best for |
 |----------|------|------|------|----------|
-| Voyage | API usage | Strong quality, flexible model family, simple API | Requires outbound network and matching `VECTOR_SIZE` | Teams using Voyage for quality/cost balance |
-| OpenAI | ~$0.13/1M tokens (large), ~$0.02/1M tokens (small) | Highest semantic quality, zero infra | Recurring API cost, outbound network required | Production accuracy with minimal ops |
-| FastEmbed (local) | Hardware-only (CPU/GPU) | Offline after first download, consistent latency | Model download size, quality tied to model size | Self-hosted + cost-sensitive environments |
+| Voyage | Free tier for typical usage, then API usage | Recommended default, strong multilingual quality, no model hosting | Requires outbound network and matching `VECTOR_SIZE` | New cloud deployments |
+| OpenAI | API usage | OpenAI-compatible API fallback, zero model hosting | Requires outbound network | When Voyage is unavailable or an OpenAI-compatible endpoint is required |
+| FastEmbed (local) | Hardware and memory | Offline after first download, consistent latency | 1024d fallback can add roughly 4 GB RSS in cloud containers | Intentional local/self-hosted deployments only |
 | Ollama | Hardware-only (CPU/GPU) | Fully local, easy model swapping | Requires running Ollama service, model dims vary | Self-hosted deployments with Ollama already in stack |
 | Placeholder | Free | Always available, deterministic | No semantic search quality | Development/testing without vectors |
 
-**Dimension matching tip:** If embeddings fail with a size mismatch, confirm your model's output length and set `VECTOR_SIZE` accordingly (or use `VECTOR_SIZE_AUTODETECT=true` if you accept adopting the existing collection size).
+See [Voyage pricing](https://docs.voyageai.com/docs/pricing) for current free-tier limits and rates rather than relying on fixed pricing in this table.
+
+**Dimension matching tip:** If embeddings fail with a size mismatch, confirm your model's output length and set `VECTOR_SIZE` accordingly. `VECTOR_SIZE_AUTODETECT=true` can adopt an existing collection's dimension for compatibility, but it does not make vectors from different models compatible.
 
 ## Hosting Considerations (Railway vs Self-Hosted)
 
-- **Railway / managed PaaS:** Voyage and OpenAI are the simplest choices (no local model downloads). FastEmbed works but increases image size and cold-start time; use a persistent volume for `AUTOMEM_MODELS_DIR` if supported. Ollama typically requires a **separate service** (Railway does not ship Ollama by default), so you'll need to deploy Ollama elsewhere and set `OLLAMA_BASE_URL` to that service.
-- **Self-hosted Docker/VPS:** FastEmbed and Ollama are straightforward and avoid API costs. Ollama benefits from GPU acceleration if available; otherwise expect higher latency on CPU. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in docker compose setups).
-- **Dimension consistency:** Regardless of host, make sure `VECTOR_SIZE` matches the embedding model output. Changing models requires re-embedding existing memories.
+- **Railway / managed PaaS:** Configure Voyage (`VOYAGE_MODEL=voyage-4`, `VECTOR_SIZE=1024`) for new deployments. OpenAI is the API fallback. Do not use FastEmbed as the default fallback: its 1024d model can add roughly 4 GB RSS and materially increase hosting cost. Ollama requires a separately operated service; Railway does not ship it by default.
+- **Self-hosted Docker/VPS:** FastEmbed and Ollama are deliberate local options that avoid embedding API usage. Ollama benefits from GPU acceleration if available; otherwise expect higher CPU latency. Ensure the Ollama base URL is reachable from the AutoMem container (`OLLAMA_BASE_URL=http://ollama:11434` in Docker Compose setups).
+- **Model-space consistency:** Regardless of host, make sure `VECTOR_SIZE` matches the embedding model output. Changing a provider or model requires a full re-embed even when both models use the same dimension.
 
 ## Optional Variables
 
@@ -146,7 +173,7 @@ VECTOR_SIZE=768                                  # must match the model's output
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
 | `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
 | `QDRANT_ENSURE_PAYLOAD_INDEXES` | Create payload indexes on startup for faster filtered search | `true` | set `false` for read-only Qdrant credentials |
-| `VECTOR_SIZE` | Embedding dimension | `1024` | `1024` (voyage-4), `3072` (large), `768` (small) |
+| `VECTOR_SIZE` | Embedding dimension | `1024` | `1024` (voyage-4 or Ollama bge-m3), `3072` (OpenAI large), `768` (truncated OpenAI small) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](QDRANT_SETUP.md) for step-by-step instructions on creating a collection with the right settings.
@@ -155,9 +182,10 @@ VECTOR_SIZE=768                                  # must match the model's output
 
 **Notes**:
 - Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
-- **Existing deployments on 3072d or 768d**: `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts your existing collection dimension on startup. No manual action needed after updating.
+- **Existing deployments on 3072d or 768d**: `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts the existing collection dimension on startup. This avoids a dimension-startup failure; it does **not** migrate vectors to a new model.
 - To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The server will exit with a clear error message and fix instructions.
 - When creating a new collection, the configured `VECTOR_SIZE` (default 1024 for voyage-4) is used.
+- Changing embedding provider or model always requires a clean collection and a full re-embed, even when the old and new outputs are both 1024d.
 
 #### Self-Hosted Qdrant on Railway
 
@@ -191,11 +219,24 @@ When running Qdrant as a Railway service (instead of Qdrant Cloud), set `QDRANT_
 
 ### Scripts Only
 
+See the [scripts catalog](../scripts/README.md) for when and how to run the
+operational tools that consume these values.
+
 | Variable | Description | Default | Used By |
 |----------|-------------|---------|---------|
 | `AUTOMEM_API_URL` | AutoMem API endpoint | `http://localhost:8001` | `recover_from_qdrant.py`, `health_monitor.py` |
 
 **Backward Compatibility**: `MCP_MEMORY_HTTP_ENDPOINT` is deprecated but still supported (falls back to this if `AUTOMEM_API_URL` not set).
+
+### Qdrant Restore Tuning
+
+These options apply only to `scripts/restore_from_backup.py`; they do not reconfigure an existing collection during normal API startup.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `QDRANT_RESTORE_HNSW_ON_DISK` | Optional boolean that stores the HNSW index on disk when the restore creates the collection | unset |
+
+Use this with `QDRANT_RESTORE_VECTOR_ON_DISK=true` and `QDRANT_RESTORE_ON_DISK_PAYLOAD=true` for a full disk-backed Qdrant migration. The restore process deletes and recreates the selected collection unless run in import mode; see [Monitoring & Backups](MONITORING_AND_BACKUPS.md#api-backup-export) before using it against production.
 
 ### Health Monitor
 
@@ -246,8 +287,8 @@ Controls embedding provider and classification model settings.
 | Variable | Description | Default | Options |
 |----------|-------------|---------|---------|
 | `EMBEDDING_MODEL` | OpenAI embedding model (used when provider is `openai`) | `text-embedding-3-small` | `text-embedding-3-small`, `text-embedding-3-large` |
-| `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4, 1536=text-embedding-3-small native; choose ≤1536 when truncating, 3072=text-embedding-3-large native) |
-| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
+| `VECTOR_SIZE` | Embedding dimension | `1024` | Must match embedding provider (1024=voyage-4 or Ollama bge-m3; 1536=text-embedding-3-small native; choose ≤1536 when truncating; 3072=text-embedding-3-large native) |
+| `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | Dimension compatibility only; `false` enforces strict matching |
 | `CLASSIFICATION_MODEL` | LLM for memory type classification | `gpt-4o-mini` | `gpt-4o-mini`, `gpt-4.1`, `gpt-5.1` |
 | `CLASSIFICATION_BASE_URL` | Optional OpenAI-compatible endpoint for `scripts/reclassify_with_llm.py` | _(unset → OpenAI)_ | e.g. `https://openrouter.ai/api/v1` |
 | `CLASSIFICATION_API_KEY` | API key paired with `CLASSIFICATION_BASE_URL` (never falls back across providers) | _(unset)_ | provider key |
@@ -257,14 +298,16 @@ Controls embedding provider and classification model settings.
 
 | Provider / Model | Dimensions | Cost/1M tokens | Quality | Use Case |
 |------------------|-----------|----------------|---------|----------|
-| `voyage-4` | 1024 | ~$0.05 | Excellent | **Recommended default** |
-| `text-embedding-3-small` | 1536 native (truncatable) | $0.02 | Good | OpenAI fallback (truncated to `VECTOR_SIZE` via Matryoshka) |
-| `text-embedding-3-large` | 3072 native | $0.13 | Excellent | Maximum precision (legacy default) |
+| `voyage-4` | 1024 by default | [Current Voyage pricing](https://docs.voyageai.com/docs/pricing) | Excellent, multilingual | **Recommended default** |
+| `text-embedding-3-small` | 1536 native (truncatable) | OpenAI API usage | Good | OpenAI fallback (truncated to `VECTOR_SIZE` via Matryoshka) |
+| `text-embedding-3-large` | 3072 native | OpenAI API usage | Excellent | Explicit OpenAI precision option |
+| `bge-m3` via Ollama | 1024 | Local hardware | Multilingual | Intentional local/self-hosted deployment |
 
 Recommended setup (Voyage):
 ```bash
 EMBEDDING_PROVIDER=auto  # or voyage
 VOYAGE_API_KEY=pa-...
+VOYAGE_MODEL=voyage-4
 VECTOR_SIZE=1024
 ```
 
@@ -276,7 +319,16 @@ EMBEDDING_MODEL=text-embedding-3-small
 VECTOR_SIZE=768
 ```
 
-**Upgrade safety**: Changing embedding dimensions requires a full re-embed. By default, `VECTOR_SIZE_AUTODETECT=true` adopts the existing Qdrant collection dimension on startup, so updating AutoMem won't break existing data even if the default `VECTOR_SIZE` changes between releases. To enforce strict matching, set `VECTOR_SIZE_AUTODETECT=false` — the server will exit with a clear error and fix instructions if there's a mismatch.
+To use local/self-hosted BGE-M3 through Ollama:
+
+```bash
+ollama pull bge-m3
+EMBEDDING_PROVIDER=ollama
+OLLAMA_MODEL=bge-m3
+VECTOR_SIZE=1024
+```
+
+**Upgrade safety**: Changing an embedding provider, model, or dimension requires a full re-embed. This is true even when both models output 1024 dimensions: the vectors occupy different model spaces. `VECTOR_SIZE_AUTODETECT=true` only adopts the current Qdrant collection dimension to avoid a startup mismatch; it is not a model migration. To enforce strict dimension matching, set `VECTOR_SIZE_AUTODETECT=false`.
 
 **Classification Model Pricing (Dec 2025):**
 | Model | Input | Output | Notes |
@@ -299,6 +351,7 @@ Controls entity extraction and relationship linking.
 | `ENRICHMENT_IDLE_SLEEP_SECONDS` | Sleep when queue empty | `2` |
 | `ENRICHMENT_FAILURE_BACKOFF_SECONDS` | Backoff on failure | `5` |
 | `ENRICHMENT_ENABLE_SUMMARIES` | Enable summarization | `true` |
+| `ENRICHMENT_CIRCUIT_COOLDOWN_SECONDS` | Cooldown after LLM quota exhaustion before one recovery probe is allowed | `300` |
 | `ENRICHMENT_SPACY_MODEL` | spaCy model name | `en_core_web_sm` |
 | `JIT_ENRICHMENT_ENABLED` | Inline enrichment during recall | `true` |
 
@@ -403,6 +456,9 @@ These variables are only used by test suites.
 
 The `scripts/lab/` directory provides a data-driven framework for testing and optimizing recall scoring. It uses IR metrics (Recall@K, MRR, NDCG) and statistical comparison to evaluate config changes.
 
+For prerequisites, safe clone workflow, and exact commands, see the [scripts
+catalog](../scripts/README.md).
+
 **Makefile targets:**
 
 | Target | Description | Example |
@@ -505,7 +561,7 @@ FALKORDB_HOST = (
 
 ## Re-embedding Memories
 
-When changing `EMBEDDING_MODEL` or `VECTOR_SIZE`, you must re-embed all existing memories:
+When changing the embedding provider, model, or `VECTOR_SIZE`, you must re-embed all existing memories. This includes swaps between two 1024d models, such as `voyage-4` and `bge-m3`: equal dimensions do not make their vector spaces compatible.
 
 ### 1. Backup First
 ```bash
@@ -513,13 +569,20 @@ python scripts/backup_automem.py
 ```
 
 ### 2. Set New Environment Variables
+
+Configure the provider that should create the replacement vectors. For the recommended Voyage configuration:
+
 ```bash
-export EMBEDDING_MODEL=text-embedding-3-large  # or text-embedding-3-small
-export VECTOR_SIZE=3072  # 3072 for large, 768 for small
+export EMBEDDING_PROVIDER=voyage
+export VOYAGE_API_KEY=pa-...
+export VOYAGE_MODEL=voyage-4
+export VECTOR_SIZE=1024
 ```
 
+For OpenAI, set `EMBEDDING_PROVIDER=openai`, `OPENAI_API_KEY`, `EMBEDDING_MODEL`, and its matching `VECTOR_SIZE`. For local/self-hosted multilingual BGE-M3, run `ollama pull bge-m3` and set `EMBEDDING_PROVIDER=ollama`, `OLLAMA_MODEL=bge-m3`, and `VECTOR_SIZE=1024`.
+
 ### 3. Recreate Qdrant Collection
-The collection must be recreated with the new dimension:
+Pause memory writes, then recreate the collection before re-embedding. This prevents old and new model spaces from being mixed. The re-embed script upserts vectors; it does **not** delete or create the Qdrant collection for you.
 
 ```bash
 # Delete old collection
@@ -530,22 +593,24 @@ curl -X DELETE "$QDRANT_URL/collections/memories" \
 curl -X PUT "$QDRANT_URL/collections/memories" \
   -H "api-key: $QDRANT_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"vectors": {"size": 3072, "distance": "Cosine"}}'  # Use 768 for small
+  -d '{"vectors": {"size": 1024, "distance": "Cosine"}}'
 ```
+
+Replace `memories` with your `QDRANT_COLLECTION` name and `1024` with the selected model's output dimension.
 
 ### 4. Re-embed All Memories
 ```bash
 python scripts/reembed_embeddings.py --batch-size 32
 ```
 
-The script reads from FalkorDB (which retains all memory data) and re-creates the vector embeddings in Qdrant.
+The script reads from FalkorDB (which retains all memory data) and re-creates the vector embeddings in Qdrant. It requires `QDRANT_URL`; unlike the API service, it does not construct a URL from `QDRANT_HOST` and `QDRANT_PORT`.
 
-**Cost estimate:** ~$0.15 for 6000 memories with large embeddings, ~$0.02 with small.
+After the full run, verify the service health and run a representative recall. `VECTOR_SIZE_AUTODETECT` is not a substitute for this procedure: it only accepts an existing collection dimension and never converts old vectors to a new model space.
 
 ---
 
 ## See Also
 
 - [Railway Deployment Guide](./RAILWAY_DEPLOYMENT.md)
-- [Deployment Checklist](./DEPLOYMENT_CHECKLIST.md)
+- [Post-Deploy Checklist](./RAILWAY_DEPLOYMENT.md#post-deploy-checklist)
 - [Installation Guide](../INSTALLATION.md)

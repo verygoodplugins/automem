@@ -131,7 +131,7 @@ GET /recall?query=project%20plan&state_mode=history
 Enrichment
 
 - GET `/enrichment/status`
-  - Response: queue size, inflight/pending, stats, plus a `classification` block with type-classification counters (`llm_attempts`, `llm_successes`, `fallbacks`, `pattern_classifications`, `last_error`, `last_error_at`) for monitoring LLM-classification fallback rate.
+  - Response: queue size, inflight/pending, stats, plus a `classification` block with type-classification counters (`llm_attempts`, `llm_successes`, `fallbacks`, `pattern_classifications`, `last_error`, `last_error_at`) for monitoring LLM-classification fallback rate, and a `circuit` block with `open`, `circuit_open_skips`, and `recoveries` for monitoring quota-circuit state.
 
 - POST `/enrichment/reprocess`
   - Body: `{ "ids": ["..."] }` or query `?ids=a,b,c`
@@ -159,6 +159,23 @@ Consolidation
 
 - GET `/consolidate/status`
   - Response: `{ "status": "success", "next_runs": {...}, "history": [...] }`
+
+Stream
+
+- GET `/stream`
+  - Authenticated SSE feed of in-process memory operations. Each event is `data: {json}` with `{ "type", "timestamp", "data" }`. Keepalive comments (`: keepalive`) are sent every 30 seconds.
+  - Event types:
+    - `memory.store` — single store (`id`, `content_preview`, `type`, `importance`, `tags`, `size_bytes`, `elapsed_ms`, `count: 1`) or batch store (`count`, `ids`, `content_preview`, `elapsed_ms`)
+    - `memory.recall` — ranked recall (`query`, `limit`, `result_count`, `elapsed_ms`, `tags`)
+    - `memory.update` — patch (`id`, `content_preview`, `type`, `importance`, `tags`, `fields`)
+    - `memory.delete` — single delete (`id`, `count: 1`) or bulk-by-tag (`count`, `tags`)
+    - `memory.associate` — single edge (`memory1_id`, `memory2_id`, `relation_type`, `strength`, `count: 1`) or batch (`count`, `failed_count`, `relation_types`)
+    - `enrichment.start` / `enrichment.complete` / `enrichment.failed`
+    - `consolidation.run`
+  - Failed validation (`4xx`) does not emit. Watch with `python scripts/automem_watch.py --url … --token …`; see the [scripts catalog](../scripts/README.md#operations-and-maintenance) for its usage and safety notes.
+
+- GET `/stream/status`
+  - Response: `{ "subscribers": N }`
 
 Notes
 

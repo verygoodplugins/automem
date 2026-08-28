@@ -2,6 +2,9 @@
 
 Complete guide to setting up automated health monitoring and backups for AutoMem on Railway.
 
+For the current script inventory, safety classification, and exact CLI usage,
+see the [scripts catalog](../scripts/README.md).
+
 ## Overview
 
 AutoMem includes three layers of data protection:
@@ -60,7 +63,7 @@ Create a new Railway service for continuous monitoring:
 ```bash
 # In Railway dashboard
 1. Create new service from GitHub repo
-2. Set Dockerfile path: scripts/Dockerfile.health-monitor (we'll create this)
+2. Set Dockerfile path: `scripts/Dockerfile.health-monitor` (included in this repository)
 3. Configure environment variables (same as main service)
 4. Deploy
 ```
@@ -159,6 +162,68 @@ python scripts/restore_from_backup.py --backup-dir snapshot.tar.gz --force
 ```
 
 `GET /backup` requires the admin token because it exports the full corpus. Add `?include=falkordb` or `?include=qdrant` to export only one store.
+
+#### Migrate an Existing Qdrant Collection to On-Disk Storage
+
+New AutoMem collections store vectors, the HNSW index, and payloads on disk by default. Existing collections retain their configuration, so migrate them deliberately during a maintenance window.
+
+> **Warning:** This operation deletes and recreates the configured Qdrant collection. Take and test a portable backup first; that backup is the rollback path.
+
+1. Quiesce writes before taking the backup. Put API clients, workers, and scheduled writers into maintenance/read-only mode, then keep writes stopped through the restore and validation. The API may remain available only to serve the backup export; point counts alone cannot detect concurrent updates or same-count changes.
+
+2. Record the current point count and create a recoverable Railway volume snapshot before touching the collection:
+
+   ```bash
+   curl -sS -H "api-key: $QDRANT_API_KEY" \
+     "$QDRANT_URL/collections/$QDRANT_COLLECTION" | jq '.result.points_count'
+   ```
+
+   This runbook is for collections using Qdrant's default topology. Capture and review the existing collection configuration before continuing:
+
+   ```bash
+   curl -sS -H "api-key: $QDRANT_API_KEY" \
+     "$QDRANT_URL/collections/$QDRANT_COLLECTION" \
+     -o qdrant-before-on-disk-migration-config.json
+   ```
+
+   The restore preserves points and vector size, then applies the documented on-disk tuning; it does not preserve custom sharding, replication, write-consistency, quantization, or strict-mode settings. If this configuration has non-default settings, stop before the export and use an operator-specific migration that reapplies them during collection creation.
+
+3. Export a Qdrant-only portable backup from AutoMem:
+
+   ```bash
+   curl -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+     "$AUTOMEM_API_URL/backup?include=qdrant" \
+     -o qdrant-before-on-disk-migration.tar.gz
+   ```
+
+4. Dry-run the portable artifact and confirm its reported point count matches the value from step 2 **before** deleting the collection:
+
+   ```bash
+   python scripts/restore_from_backup.py \
+     --backup-dir qdrant-before-on-disk-migration.tar.gz \
+     --qdrant-only --dry-run --force
+   ```
+
+   If the counts differ, do not run the destructive restore. The portable export is incomplete; recover from the Railway volume snapshot instead of restoring the same artifact.
+
+5. Restore that verified backup to the intended Qdrant service with all on-disk settings enabled:
+
+   ```bash
+   QDRANT_RESTORE_VECTOR_ON_DISK=true \
+   QDRANT_RESTORE_HNSW_ON_DISK=true \
+   QDRANT_RESTORE_ON_DISK_PAYLOAD=true \
+   python scripts/restore_from_backup.py \
+     --backup-dir qdrant-before-on-disk-migration.tar.gz \
+     --qdrant-only --force
+   ```
+
+   Ensure `QDRANT_URL`, `QDRANT_API_KEY`, and `QDRANT_COLLECTION` identify the production collection before running the command.
+
+6. Restart the AutoMem API while writes are still quiesced. With `QDRANT_ENSURE_PAYLOAD_INDEXES=true` (the default), startup recreates the `tags`, `tag_prefixes`, and `type` payload indexes that the collection restore does not preserve.
+
+7. Compare the restored point count with the value recorded in step 2 and run representative recall requests before declaring the migration complete. If validation fails, stop and restore the tested backup. Resume writers only after this validation succeeds.
+
+8. Leave the existing Railway volume size unchanged through a stable observation period. Resize it manually only after the restored collection is healthy and its disk usage is understood; AutoMem does not automate that infrastructure change.
 
 #### Local Backups (Development)
 
@@ -291,29 +356,14 @@ redis-cli -h monorail.proxy.rlwy.net -p 12345 -a YOUR_PASSWORD ping
 
 ---
 
-**Advanced: Railway Backup Service**
+**Railway-hosted backup schedules**
 
-For Railway Pro users who want backups running on Railway:
-
-⚠️ **Note:** Railway's UI makes Dockerfile configuration complex. This method is for advanced users.
-
-The `scripts/Dockerfile.backup` exists and runs backups every 6 hours in a loop. However, deploying it requires CLI:
-
-```bash
-cd /path/to/automem
-railway link
-railway up --service backup-service
-```
-
-Then configure in Railway dashboard:
-
-- Set Builder to Dockerfile
-- Dockerfile Path: `scripts/Dockerfile.backup`
-- Add environment variables (same as the AutoMem API service)
-
-**Cost:** ~$1-2/month
-
-**Recommendation:** Use GitHub Actions instead unless you have specific requirements for Railway-hosted backups.
+AutoMem does not ship a standalone backup container recipe; the old
+documentation reference was stale. Use the included [GitHub Actions backup
+workflow](../.github/workflows/backup.yml), or configure your platform's
+scheduler to run the documented `backup_automem.py` command with the required
+database credentials and off-site destination. The GitHub Actions workflow is
+the supported repository example.
 
 ---
 

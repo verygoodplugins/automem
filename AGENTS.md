@@ -8,7 +8,7 @@
 - `benchmarks/`: Snapshot-based benchmark system. See `EXPERIMENT_LOG.md` for current baselines and results.
 - `scripts/bench/`: Benchmark tooling (ingest, eval, compare, health check).
 - `docs/`: API, testing, deployment, monitoring, and env var references.
-- `scripts/`: Maintenance and ops helpers (backup, reembed, health monitor).
+- `scripts/`: Maintenance and ops helpers (backup, reembed, health monitor). See the canonical [scripts catalog](scripts/README.md) for lifecycle and usage.
 - `mcp-sse-server/`: Optional MCP bridge used in some deployments.
 
 ## Build, Test, and Development
@@ -76,11 +76,12 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 - `benchmarks/baselines/` — baseline result JSONs (small files committed, large ones gitignored).
 - `benchmarks/snapshots/` — Qdrant/FalkorDB snapshot data (gitignored, regenerate with `make bench-ingest`).
 - `benchmarks/results/` — per-run result JSONs (gitignored).
-- `scripts/bench/` — shell and Python scripts driving ingest, eval, compare, and health checks.
+- `scripts/bench/` — shell and Python scripts driving ingest, eval, compare, and health checks; see [scripts/README.md](scripts/README.md).
 - `tests/benchmarks/` — legacy benchmark harnesses (LoCoMo, LongMemEval) and historical result markdown files.
 
 ## Commit & Pull Requests
 
+- Feature PRs target `develop` (repo default). Promote `develop` to `main` with a validated release merge; release-please and GHCR `:stable` then run on `main`. Do not open feature work onto `main`.
 - PR titles must use Conventional Commit format because squash merges use the PR title as the release commit title. Do not prefix titles with `[codex]`, `[claude]`, `[copilot]`, `[wip]`, or similar labels; put agent/status context in the PR body.
 - Use Conventional Commit types: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `build`, `chore`, `perf`, `revert` (e.g., `feat(api): add /analyze endpoint`).
 - For public API changes, use `feat(api): ...` unless the change is strictly a bug fix with no new public surface. For docs-only changes, use `docs: ...`; for release automation, use `ci(release): ...` or `chore(release): ...`.

@@ -123,9 +123,9 @@ AutoMem uses dense text embeddings (Voyage/OpenAI/etc.) for semantic search. Key
 
 *Click image to view full size*
 
-> **Using a smaller model?** If you set `EMBEDDING_MODEL=text-embedding-3-small`, use `768` dimensions instead and set `VECTOR_SIZE=768` in AutoMem.
+> **Using OpenAI small?** If you set `EMBEDDING_PROVIDER=openai` and `EMBEDDING_MODEL=text-embedding-3-small`, use `768` dimensions and set `VECTOR_SIZE=768` in AutoMem.
 >
-> **Using FastEmbed or Ollama?** Set dimensions to match your local model output (e.g., 384/768/1024 for FastEmbed). Ollama model dimensions vary—verify with a test embedding and set `VECTOR_SIZE` accordingly.
+> **Using local/self-hosted BGE-M3?** Run `ollama pull bge-m3`, set `EMBEDDING_PROVIDER=ollama`, `OLLAMA_MODEL=bge-m3`, and `VECTOR_SIZE=1024`. Other Ollama models and local FastEmbed models must use their own output dimension. FastEmbed is local/self-hosted only, not a Railway default.
 
 #### Payload Indexes (Recommended)
 
@@ -159,6 +159,12 @@ Add these to your AutoMem environment variables:
 QDRANT_URL="https://xxxxx-xxxxx.aws.cloud.qdrant.io"
 QDRANT_API_KEY="your-api-key-here"
 QDRANT_COLLECTION="memories"  # Only if using custom name
+
+# Recommended cloud embeddings
+EMBEDDING_PROVIDER=auto
+VOYAGE_API_KEY="pa-..."
+VOYAGE_MODEL="voyage-4"
+VECTOR_SIZE=1024
 ```
 
 **Railway**: Add these in `AutoMem` → Variables, then redeploy.
@@ -198,17 +204,18 @@ If `qdrant` shows `"disconnected"` or `"not configured"`:
 
 | Provider / Model | Dimensions | Cost | Quality |
 |------------------|------------|------|---------|
-| `voyage-4` (recommended) | 1024 | ~$0.05/1M tokens | Excellent for short text |
-| `text-embedding-3-small` | 1536 native (truncatable) | $0.02/1M tokens | Good OpenAI fallback |
-| `text-embedding-3-large` | 3072 native (truncatable) | $0.13/1M tokens | Maximum precision |
+| `voyage-4` (recommended) | 1024 | [Current Voyage pricing](https://docs.voyageai.com/docs/pricing) | Excellent, multilingual |
+| `text-embedding-3-small` | 1536 native (truncatable) | OpenAI API usage | Good OpenAI fallback |
+| `text-embedding-3-large` | 3072 native (truncatable) | OpenAI API usage | Explicit precision option |
+| `bge-m3` via Ollama | 1024 | Local hardware | Multilingual, self-hosted |
 
 **To switch providers**:
 1. Set `EMBEDDING_PROVIDER` and any required API key
 2. Set `VECTOR_SIZE` to match the provider's output dimension
-3. Create a new Qdrant collection with matching dimensions (or use `VECTOR_SIZE_AUTODETECT=true`)
-4. Redeploy AutoMem
+3. Back up, pause writes, and recreate the Qdrant collection with matching dimensions
+4. Re-embed all memories through the selected provider, then redeploy AutoMem
 
-> ⚠️ **Warning**: Changing embedding models requires re-embedding all existing memories. See [MIGRATIONS.md](MIGRATIONS.md) for the reembed script.
+> ⚠️ **Warning**: Changing embedding providers or models requires a clean collection and a full re-embed, even if both models output the same dimension. `VECTOR_SIZE_AUTODETECT` only accepts an existing dimension; it does not migrate model spaces. See [MIGRATIONS.md](MIGRATIONS.md) for the complete procedure.
 
 ### Custom Collection Names
 
@@ -265,6 +272,7 @@ AutoMem expects dimensions to match `VECTOR_SIZE`:
 - `voyage-4` → `VECTOR_SIZE=1024` (default)
 - `text-embedding-3-small` → `VECTOR_SIZE` ≤ 1536 (default: 768; auto-upgrades to `text-embedding-3-large` if exceeded)
 - `text-embedding-3-large` → `VECTOR_SIZE` ≤ 3072 (truncatable via Matryoshka)
+- `bge-m3` via Ollama → `VECTOR_SIZE=1024`
 
 If you created the collection with wrong dimensions:
 1. Delete the collection in Qdrant dashboard
@@ -273,7 +281,7 @@ If you created the collection with wrong dimensions:
 
 ### Memories not appearing in semantic search
 
-1. **Check `OPENAI_API_KEY`**: Required for generating embeddings
+1. **Check provider configuration**: Voyage is recommended for cloud (`VOYAGE_API_KEY`, `VOYAGE_MODEL=voyage-4`); OpenAI is the API fallback; Ollama must be explicitly configured and reachable
 2. **Verify embeddings exist**: Check `/health` shows `qdrant: connected`
 3. **Wait for enrichment**: New memories are embedded async (few seconds)
 
