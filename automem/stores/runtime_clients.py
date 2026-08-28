@@ -113,6 +113,7 @@ def ensure_qdrant_collection(
     vector_size_config: int,
     get_effective_vector_size_fn: Callable[[Any], tuple[int, str]],
     vector_params_cls: Any,
+    hnsw_config_diff_cls: Any,
     distance_enum: Any,
     payload_schema_type_enum: Any,
 ) -> None:
@@ -143,7 +144,13 @@ def ensure_qdrant_collection(
             )
             state.qdrant.create_collection(
                 collection_name=collection_name,
-                vectors_config=vector_params_cls(size=effective_dim, distance=distance_enum.COSINE),
+                vectors_config=vector_params_cls(
+                    size=effective_dim,
+                    distance=distance_enum.COSINE,
+                    on_disk=True,
+                ),
+                hnsw_config=hnsw_config_diff_cls(on_disk=True),
+                on_disk_payload=True,
             )
 
         ensure_payload_indexes = os.getenv("QDRANT_ENSURE_PAYLOAD_INDEXES", "true").lower() in {
