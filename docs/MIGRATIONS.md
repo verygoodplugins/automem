@@ -60,7 +60,7 @@ This document provides step-by-step instructions for migrating between different
    python scripts/reembed_embeddings.py --batch-size 32
    ```
 5. **Restart or redeploy AutoMem with the selected provider configuration** before testing recall. For example, run `docker compose up -d` for Docker Compose or `railway up` for Railway.
-6. **Verify**: Check that `/health` shows `vector_size: 1024` and recall returns results.
+6. **Verify**: Check that `/health` reports `vector_dimensions.collection: 1024` and recall returns results.
 
 > `VECTOR_SIZE_AUTODETECT=true` can preserve the old collection dimension only when you keep its provider and model. It never makes an existing OpenAI, Voyage, Ollama, or FastEmbed vector compatible with another model space.
 

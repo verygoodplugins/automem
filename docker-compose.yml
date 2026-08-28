@@ -63,8 +63,11 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      # Pass these through only when intentionally configured. This preserves
+      # Ollama's runtime defaults for EMBEDDING_PROVIDER=ollama and prevents
+      # auto-selection from treating an empty Compose value as configuration.
+      OLLAMA_BASE_URL:
+      OLLAMA_MODEL:
       OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-30}
       OLLAMA_MAX_RETRIES: ${OLLAMA_MAX_RETRIES:-2}
       VECTOR_SIZE: ${VECTOR_SIZE:-1024}
