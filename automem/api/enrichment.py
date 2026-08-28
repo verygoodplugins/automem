@@ -30,6 +30,7 @@ def create_enrichment_blueprint(
             "max_attempts": max_attempts,
             "stats": state.enrichment_stats.to_dict(),
             "classification": state.classification_stats.to_dict(),
+            "circuit": state.enrichment_circuit.to_dict(),
         }
         return jsonify(response)
 

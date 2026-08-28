@@ -178,6 +178,8 @@ MEMORY_AUTO_SUMMARIZE = os.getenv("MEMORY_AUTO_SUMMARIZE", "true").lower() not i
 }
 # Target length for summarized content
 MEMORY_SUMMARY_TARGET_LENGTH = int(os.getenv("MEMORY_SUMMARY_TARGET_LENGTH", "300"))
+# Cooldown after a definitive LLM quota exhaustion response.
+ENRICHMENT_CIRCUIT_COOLDOWN_SECONDS = float(os.getenv("ENRICHMENT_CIRCUIT_COOLDOWN_SECONDS", "300"))
 
 # Memory types for classification
 MEMORY_TYPES = {"Decision", "Pattern", "Preference", "Style", "Habit", "Insight", "Context"}
