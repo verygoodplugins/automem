@@ -2,7 +2,7 @@
 
 This document provides step-by-step instructions for migrating between different AutoMem configurations.
 
-**Heads up for existing deployments:** New installs default to **1024d** with Voyage (`voyage-4`). If you are only updating AutoMem and keeping the same embedding provider and model, `VECTOR_SIZE_AUTODETECT=true` (the default) can adopt an existing collection dimension to avoid a startup mismatch. It does **not** migrate embeddings. Any provider or model change requires backing up, recreating the Qdrant collection, and fully re-embedding every memory—even when both models output 1024 dimensions. To explicitly pin a dimension, set `VECTOR_SIZE=<your-dimension>`; set `VECTOR_SIZE_AUTODETECT=false` to fail on mismatch.
+**Heads up for existing deployments:** New installs default to **1024d** with Voyage (`voyage-4`). If you are only updating AutoMem and keeping the same embedding provider and model, `VECTOR_SIZE_AUTODETECT=true` (the default) can adopt an existing collection dimension to avoid a startup mismatch. It does **not** migrate embeddings. Any provider or model change requires backing up, recreating the Qdrant collection, and fully re-embedding every memory—even when both models output 1024 dimensions. The intentional exception is mixed-model routing within the Voyage 4 family via `VOYAGE_STORE_MODEL` and `VOYAGE_RECALL_MODEL`, whose vectors share an embedding space. To explicitly pin a dimension, set `VECTOR_SIZE=<your-dimension>`; set `VECTOR_SIZE_AUTODETECT=false` to fail on mismatch.
 
 ## Table of Contents
 

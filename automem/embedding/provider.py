@@ -26,6 +26,14 @@ class EmbeddingProvider(ABC):
         """
         pass
 
+    def embed_for_store(self, text: str) -> List[float]:
+        """Generate a document embedding for storage."""
+        return self.generate_embedding(text)
+
+    def embed_for_recall(self, text: str) -> List[float]:
+        """Generate a query embedding for recall."""
+        return self.generate_embedding(text)
+
     @abstractmethod
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts in a single batch.

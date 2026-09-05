@@ -100,8 +100,14 @@ def init_embedding_provider(
             from automem.embedding.voyage import VoyageEmbeddingProvider
 
             voyage_model = os.getenv("VOYAGE_MODEL", "voyage-4")
+            voyage_store_model = os.getenv("VOYAGE_STORE_MODEL") or None
+            voyage_recall_model = os.getenv("VOYAGE_RECALL_MODEL") or None
             state.embedding_provider = VoyageEmbeddingProvider(
-                api_key=api_key, model=voyage_model, dimension=vector_size
+                api_key=api_key,
+                model=voyage_model,
+                store_model=voyage_store_model,
+                recall_model=voyage_recall_model,
+                dimension=vector_size,
             )
             logger.info("Embedding provider: %s", state.embedding_provider.provider_name())
             return
@@ -178,8 +184,14 @@ def init_embedding_provider(
                 from automem.embedding.voyage import VoyageEmbeddingProvider
 
                 voyage_model = os.getenv("VOYAGE_MODEL", "voyage-4")
+                voyage_store_model = os.getenv("VOYAGE_STORE_MODEL") or None
+                voyage_recall_model = os.getenv("VOYAGE_RECALL_MODEL") or None
                 state.embedding_provider = VoyageEmbeddingProvider(
-                    api_key=voyage_key, model=voyage_model, dimension=vector_size
+                    api_key=voyage_key,
+                    model=voyage_model,
+                    store_model=voyage_store_model,
+                    recall_model=voyage_recall_model,
+                    dimension=vector_size,
                 )
                 logger.info(
                     "Embedding provider (auto-selected): %s",

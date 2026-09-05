@@ -62,6 +62,7 @@ def generate_real_embedding(
     state: Any,
     logger: Any,
     placeholder_embedding: Callable[[str], List[float]],
+    for_recall: bool = False,
 ) -> List[float]:
     """Generate an embedding using the configured provider."""
     init_embedding_provider()
@@ -72,7 +73,12 @@ def generate_real_embedding(
 
     expected_dim = state.effective_vector_size
     try:
-        embedding = state.embedding_provider.generate_embedding(content)
+        embed = (
+            state.embedding_provider.embed_for_recall
+            if for_recall
+            else state.embedding_provider.embed_for_store
+        )
+        embedding = embed(content)
         if not isinstance(embedding, list) or len(embedding) != expected_dim:
             logger.warning(
                 "Provider %s returned %s dims (expected %d); falling back to placeholder",

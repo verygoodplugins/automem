@@ -1,5 +1,30 @@
 # Repository Guidelines
 
+## Astra 协作约定
+
+- 以用户当前目标和本轮明确约束为准。任务要求实施时，完成实际修改与必要验证，不停在计划、建议或“是否继续”。普通实现选择自行决定；只有缺失信息会实质改变结果或操作超出授权时才询问，并先完成不依赖答案的工作。
+- 用户指令优先于本地 skills 的工作流建议。只读取与当前任务直接相关的文件和技能；不因关键词命中就串联整套技能、生成流程工件或增加审批。
+- 保留既有业务规则、数据所有权、用户改动和明确的工具限制。只改当前目标需要的内容，不顺手重构、升级依赖、搬目录或扩展产品范围。
+
+## 拒绝过度防御性编程
+
+- 直接使用已有输入、文件、依赖和运行环境，不重复做环境、权限、目录或文件存在性预检查。
+- 不为假想故障添加重复参数验证、大量极端输入分支、宽泛 `try/catch`、默认值兜底、静默失败或伪造成功。契约不满足时暴露具体错误。
+- 不主动新增重试、退避、熔断、降级、备用实现、兼容层、自动备份、回滚、迁移或恢复机制。
+- 不主动添加 SHA、MD5、签名、文件哈希、完整性校验、CI/CD、发布门禁、安全扫描、许可证审计、复杂日志、监控、遥测或诊断框架。
+- 不为未来需求预建插件系统、通用框架或抽象层，不为小改动铺设大量单元测试、回归测试、故障注入或性能基准。
+- 只在缺少检查会立即阻止核心功能、造成明显数据损坏或掩盖真实错误时保留最小必要检查。现有鉴权、真实业务校验和数据保护功能继续遵守其契约；本规则不授权删除这些功能。
+- 例外必须来自用户明确要求，或与本次改动直接相关的既有产品契约。旧文档中泛化的“每次全量检查”“必须先审批”“自动完善”不构成额外任务。
+
+## 验证与交付
+
+- 选择能证明本次行为的最小验证：文档或提示词改动检查内容和 diff；代码改动运行相关构建、现有定向测试或核心流程冒烟。低影响、可逆改动不新增仅复述实现的测试。
+- 必要检查通过即交付；只有新改动、失败或具体未解决疑点才扩大或重复验证。不要为了收尾重跑无关全量测试、打包、实机流程或基准。
+- 错误如实报告。区分实际运行通过、静态检查、未运行与真实环境验证；历史测试数量不能当作本次证据。
+- 仅在任务需要时使用子代理；不强制委派、切换模型或修改推理档位，遵守当前会话设置与工具权限。
+- 按当前授权和项目约定执行 Git 操作，只提交本任务文件；不要为清空工作区而夹带其他改动，不强推或丢弃用户内容。没有远端时报告，不擅自创建远端。
+- 用简明中文交代实际修改、验证结果和已知问题。只有需求、接口或已验证事实改变时同步相关文档，不追加与交付无关的报告。
+
 ## Project Structure & Modules
 
 - `automem/`: Core package. Notable dirs: `api/` (Flask blueprints), `utils/`, `stores/`, `config.py`.
@@ -26,7 +51,7 @@
 
 - Python with type hints. Indent 4 spaces; line length 100 (Black).
 - Tools: Black, Isort (profile=black), Flake8; pre-commit hooks available.
-- Run `pre-commit install` and `make fmt && make lint` before committing.
+- Reuse existing formatting/lint tools for affected Python changes; do not install hooks as part of unrelated work.
 - Naming: modules/functions `snake_case`, classes `PascalCase`, constants `UPPER_SNAKE_CASE`.
 
 ## Testing Guidelines
@@ -34,50 +59,13 @@
 - Framework: Pytest. Place tests in `tests/` named `test_*.py`.
 - Unit tests: `make test`.
 - Integration: `make test-integration` (requires Docker). See `docs/TESTING.md` for env flags and live testing options.
-- Add/adjust tests for new endpoints, stores, or utils; prefer fixtures over globals.
+- Run the directly affected tests. Add one only when needed to prove a new behavior or reproduce the defect; prefer fixtures over globals.
 
 ## Benchmarking
 
-The benchmark system uses **snapshot-based evaluation**: ingest once, eval many times from the same snapshot. This keeps runs deterministic and fast.
+Run benchmarks only for requested retrieval/scoring/performance work. Prefer the existing snapshot-based `make bench-eval BENCH=locomo-mini` for a bounded before/after comparison; use a full benchmark only when required to answer the task. Do not attach paid judge runs or full benchmark tiers to ordinary commits.
 
-**Source of truth**: `benchmarks/EXPERIMENT_LOG.md` — contains current baselines, all experiment results, and the tiered benchmark table.
-
-`automem` is the canonical home for official benchmark harnesses and published benchmark numbers. Use the separate `automem-evals` repo for exploratory ruleset work, seeded corpora, scenario authoring, cross-agent or cross-backend comparisons, and bulky timestamped result artifacts. External eval repos should treat AutoMem as a black-box service and follow `docs/EVALS_CONTRACT.md`.
-
-### Tiered System
-
-| Tier | Benchmark | Command | Runtime | Cost | When to use |
-|------|-----------|---------|---------|------|-------------|
-| 0 | Unit tests | `make test` | 30s | free | Every change |
-| 1 | LoCoMo-mini (2 convos, 304 Qs) | `make bench-eval BENCH=locomo-mini` | 2-3 min | free / ~$0.20 with judge | Rapid iteration |
-| 2 | LoCoMo-full (10 convos, 1986 Qs) | `make bench-eval BENCH=locomo` | 5-10 min | free / ~$1-3 with judge | Before merge |
-| 3 | LongMemEval-mini (20 Qs) | `make bench-mini-longmemeval` | 15 min | ~$1 | Scoring/entity changes |
-| 4 | LongMemEval-full (500 Qs) | `make test-longmemeval` | 1-2 hr | ~$10 | Milestones only |
-
-### Key Commands
-
-- `make bench-eval BENCH=locomo-mini CONFIG=baseline` — eval from snapshot (~2 min).
-- `make bench-compare BENCH=locomo CONFIG=<name> BASELINE=baseline` — A/B compare two configs.
-- `make bench-compare-branch BRANCH=<branch>` — compare a branch against baseline.
-- `make bench-ingest BENCH=locomo` — ingest + snapshot (run once per embedding change).
-- `make bench-health` — recall health check (score distribution, entity quality, latency).
-
-### Workflow for Recall/Retrieval Changes
-
-1. Run `make bench-eval BENCH=locomo-mini` on `main` to confirm the current baseline.
-2. Create a feature branch and implement changes.
-3. Run the same eval on the branch.
-4. Record both results as a new row in `benchmarks/EXPERIMENT_LOG.md`.
-5. Promote to `make bench-eval BENCH=locomo` (full) before merge.
-
-### Directory Layout
-
-- `benchmarks/EXPERIMENT_LOG.md` — results table and experiment metadata (committed).
-- `benchmarks/baselines/` — baseline result JSONs (small files committed, large ones gitignored).
-- `benchmarks/snapshots/` — Qdrant/FalkorDB snapshot data (gitignored, regenerate with `make bench-ingest`).
-- `benchmarks/results/` — per-run result JSONs (gitignored).
-- `scripts/bench/` — shell and Python scripts driving ingest, eval, compare, and health checks; see [scripts/README.md](scripts/README.md).
-- `tests/benchmarks/` — legacy benchmark harnesses (LoCoMo, LongMemEval) and historical result markdown files.
+`benchmarks/EXPERIMENT_LOG.md` stores official results. `automem-evals` holds exploratory corpora and bulky results; external evaluations follow `docs/EVALS_CONTRACT.md`. Keep snapshots and generated results in existing ignored paths. Record only measurements actually run.
 
 ## Commit & Pull Requests
 
@@ -86,7 +74,7 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 - Use Conventional Commit types: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `build`, `chore`, `perf`, `revert` (e.g., `feat(api): add /analyze endpoint`).
 - For public API changes, use `feat(api): ...` unless the change is strictly a bug fix with no new public surface. For docs-only changes, use `docs: ...`; for release automation, use `ci(release): ...` or `chore(release): ...`.
 - PRs must include: clear description and scope, linked issues, test plan/output, and notes on API or config changes. Update relevant docs under `docs/`.
-- CI must pass; formatting/lint clean.
+- Observe existing checks when a PR is requested; do not add CI or make unrelated workflows a gate for a local documentation change.
 
 ## Security & Configuration
 
@@ -95,4 +83,4 @@ The benchmark system uses **snapshot-based evaluation**: ingest once, eval many 
 
 ## Agent Memory Protocol
 
-Follow rules in `.cursor/rules/automem.mdc` for memory operations.
+Consult `.cursor/rules/automem.mdc` only when the user requests AutoMem memory operations. Ordinary repository work does not authorize writing agent memories.

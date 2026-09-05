@@ -548,6 +548,8 @@ def test_provider_selection_explicit_voyage(monkeypatch):
         mock_voyage_class.assert_called_once_with(
             api_key="voyage-key",
             model="voyage-4",
+            store_model=None,
+            recall_model=None,
             dimension=1024,
         )
 
@@ -579,7 +581,13 @@ def test_provider_selection_auto_prefers_voyage(monkeypatch):
             app.init_embedding_provider()
 
             assert app.state.embedding_provider is mock_provider
-            mock_voyage_class.assert_called_once()
+            mock_voyage_class.assert_called_once_with(
+                api_key="voyage-key",
+                model="voyage-4",
+                store_model=None,
+                recall_model=None,
+                dimension=1024,
+            )
             mock_openai_class.assert_not_called()
 
 

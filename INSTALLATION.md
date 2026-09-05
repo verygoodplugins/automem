@@ -466,6 +466,8 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-small` |
 | `VOYAGE_API_KEY`    | Voyage API key (Voyage provider)      | _unset_    |
 | `VOYAGE_MODEL`      | Voyage model (Voyage provider)        | `voyage-4` |
+| `VOYAGE_STORE_MODEL`| Optional Voyage model for stored memories | `VOYAGE_MODEL` |
+| `VOYAGE_RECALL_MODEL`| Optional Voyage model for recall queries | `VOYAGE_MODEL` |
 | `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
 | `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
 | `OLLAMA_BASE_URL`   | Ollama endpoint for intentional local/self-hosted use | `http://localhost:11434` |
@@ -473,7 +475,7 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 
 👉 **New to Qdrant?** See the [Qdrant Setup Guide](docs/QDRANT_SETUP.md) for setup options (self-hosted on Railway or Qdrant Cloud).
 
-> **Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) adopts an existing collection dimension to avoid a startup mismatch. It does not migrate vectors: changing embedding provider or model requires recreating the collection and re-embedding, even when both models are 1024d.
+> **Upgrade safety:** `VECTOR_SIZE_AUTODETECT=true` (default) adopts an existing collection dimension to avoid a startup mismatch. It does not migrate vectors: changing embedding provider or model requires recreating the collection and re-embedding, even when both models are 1024d. The intentional exception is mixed-model routing within the Voyage 4 family via `VOYAGE_STORE_MODEL` and `VOYAGE_RECALL_MODEL`, whose vectors share an embedding space.
 >
 > The recommended setup is Voyage (`voyage-4`) at 1024d. If Voyage is unavailable, an OpenAI-compatible provider is the API fallback. Use FastEmbed only for intentional local/self-hosted deployments; its 1024d cloud fallback can add roughly 4 GB RSS and materially increase hosting cost.
 
