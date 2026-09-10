@@ -38,11 +38,26 @@
    dedicated AutoMem deployment/namespace for each AML run so deletion is
    auditable and cannot affect normal user memories.
 
+## Version and route controls
+
+- This image is an adapter and requires a separately deployed, reachable
+  AutoMem MCP upstream. Submit it through AML's hosted-API route unless the
+  platform-managed Docker deployment is also given a pinned AutoMem stack and
+  its runtime secrets. Do not imply that the adapter image alone is a complete
+  academic code-route deployment.
+- Pin the adapter image digest, AutoMem API/MCP image versions, MCP package
+  version, upstream configuration, and embedding/model providers. AML's
+  current full-evaluation checklist requires `gpt-4o-mini` for a model used by
+  Add or Search. The adapter makes no model calls itself; the operator must
+  audit and record the AutoMem upstream model configuration before checking
+  that item.
+
 ## Submission gate
 
 Do not submit a formal run until the official AML compatibility smoke passes
 against the deployed endpoint, authenticated capacity testing is complete, the
 submitted AutoMem configuration is pinned and recorded, and the 30-day
 on-call/backup plan has an assigned owner. Resolve AutoMem MCP's current
-50-result single-call ceiling if competitive `top_k=100` retrieval is required;
-this adapter remains schema-compliant by returning fewer results.
+50-result single-call ceiling if competitive `top_k=100` retrieval is required,
+and verify the upstream model requirement; this adapter remains
+schema-compliant by returning fewer results.

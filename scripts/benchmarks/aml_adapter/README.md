@@ -73,3 +73,16 @@ contract but is a quality limitation to resolve before a competitive run.
 
 See [OPS.md](OPS.md) for the production runbook and
 [SMOKE_REPORT.md](SMOKE_REPORT.md) for checked-in evidence.
+
+## Submission gates
+
+This container is an adapter, not a standalone AutoMem deployment: the
+academic hosted-API route must provide a reachable, pinned AutoMem MCP
+upstream and its credentials at runtime. It cannot be submitted through the
+platform-managed Docker route without also supplying that upstream deployment.
+
+Before a formal run, verify the submitted AutoMem configuration against AML's
+current full-evaluation checklist. The platform currently requires
+`gpt-4o-mini` for any model used during Add or Search; the adapter itself makes
+no model calls, but its AutoMem upstream may. Record the exact upstream image,
+configuration, model, and MCP package version alongside the submitted version.

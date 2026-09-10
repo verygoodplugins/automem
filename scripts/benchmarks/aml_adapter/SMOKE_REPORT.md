@@ -60,8 +60,12 @@ The published AutoMem `recall_memory` MCP schema limits an individual call to
 response schema is compliant, but retrieval breadth may reduce score.
 
 **NO-GO for a formal submission today.** Before Cycle 2 opens on 2026-09-20,
-deploy a stable HTTPS endpoint, obtain/bind the AML key, pass AML's official
-smoke, pin and record the submitted AutoMem configuration, complete
-authenticated capacity testing, assign 30-day operations ownership, and decide
-whether the 50-result MCP ceiling is acceptable. **GO** only after those gates
-pass; the local adapter contract itself is ready for that preflight.
+deploy a stable HTTPS hosted API with a pinned AutoMem MCP upstream, obtain and
+bind the AML key, pass AML's official smoke, pin and record the submitted
+AutoMem configuration (including any Add/Search model, for which AML currently
+requires `gpt-4o-mini`), complete authenticated capacity testing, assign
+30-day operations ownership, and decide whether the 50-result MCP ceiling is
+acceptable. The adapter image alone is not sufficient for AML's
+platform-managed Docker route because it requires the separately deployed MCP
+upstream. **GO** only after those gates pass; the local adapter contract itself
+is ready for that preflight.
