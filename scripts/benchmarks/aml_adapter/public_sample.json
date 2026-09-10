@@ -1,0 +1,26 @@
+{
+  "source": "https://agentmemoryleaderboard.ai/ (public Add/Search API Guide examples, accessed 2026-09-10)",
+  "add": {
+    "request_id": "eval:public-smoke:locomo_refined:conv-0:chunk-0",
+    "messages": [
+      {
+        "role": "user",
+        "timestamp": 1704067200000,
+        "content": "Maya's preferred editor is Zed."
+      },
+      {
+        "role": "assistant",
+        "timestamp": 1704067260000,
+        "content": "I will use Zed in future setup instructions."
+      }
+    ],
+    "user_id": "eval:public-smoke:locomo:conv-0",
+    "session_id": "eval:public-smoke:sample:0"
+  },
+  "search": {
+    "query": "Which editor does Maya prefer?",
+    "options": ["A. Vim", "B. Zed"],
+    "user_id": "eval:public-smoke:locomo:conv-0",
+    "top_k": 100
+  }
+}
