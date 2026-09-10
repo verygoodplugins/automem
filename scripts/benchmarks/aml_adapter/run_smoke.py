@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List
@@ -24,7 +27,7 @@ ROOT = Path(__file__).parent
 SAMPLE = json.loads((ROOT / "public_sample.json").read_text())
 
 
-class FakeMcpHandler(BaseHTTPRequestHandler):
+class FakeAutoMemHandler(BaseHTTPRequestHandler):
     calls: List[Dict[str, Any]] = []
     recall_results: List[Dict[str, Any]] = [
         {
@@ -48,25 +51,32 @@ class FakeMcpHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args: Any) -> None:
         pass
 
-    def do_POST(self) -> None:  # noqa: N802
-        length = int(self.headers.get("Content-Length", "0"))
-        body = json.loads(self.rfile.read(length))
-        params = body["params"]
-        self.calls.append(params)
-        tool = params["name"]
-        if tool == "recall_memory":
-            arguments = params["arguments"]
-            response = {"results": self.recall_results if arguments["tags"] else [], "count": 2}
-            content = [{"type": "text", "text": json.dumps(response)}]
-        else:
-            content = [{"type": "text", "text": "ok"}]
-        output = {"jsonrpc": "2.0", "id": body["id"], "result": {"content": content}}
-        encoded = json.dumps(output).encode()
+    def _write_json(self, response: Dict[str, Any]) -> None:
+        encoded = json.dumps(response).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/health":
+            self._write_json({"status": "healthy"})
+            return
+        if self.path.startswith("/recall?"):
+            self.calls.append({"name": "recall_memory", "path": self.path})
+            self._write_json({"results": self.recall_results, "count": 2})
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != "/memory":
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        body = json.loads(self.rfile.read(length))
+        self.calls.append({"name": "store_memory", "body": body})
+        self._write_json({"memory_id": f"mem-{len(self.calls)}"})
 
 
 def _serve(server: Any) -> threading.Thread:
@@ -75,11 +85,48 @@ def _serve(server: Any) -> threading.Thread:
     return thread
 
 
+def _unused_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _wait_for_bridge(base_url: str, process: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            output = process.stdout.read() if process.stdout else ""
+            raise RuntimeError(f"MCP bridge exited during startup: {output}")
+        try:
+            if requests.get(f"{base_url}/health", timeout=0.5).status_code == 200:
+                return
+        except requests.RequestException:
+            time.sleep(0.05)
+    raise RuntimeError("MCP bridge did not become reachable within 10 seconds")
+
+
 def main() -> int:
-    FakeMcpHandler.calls = []
-    fake_mcp = ThreadingHTTPServer(("127.0.0.1", 0), FakeMcpHandler)
-    _serve(fake_mcp)
-    mcp_url = f"http://127.0.0.1:{fake_mcp.server_port}/mcp"
+    FakeAutoMemHandler.calls = []
+    fake_automem = ThreadingHTTPServer(("127.0.0.1", 0), FakeAutoMemHandler)
+    _serve(fake_automem)
+    bridge_port = _unused_port()
+    mcp_url = f"http://127.0.0.1:{bridge_port}/mcp"
+    bridge_env = {
+        **os.environ,
+        "PORT": str(bridge_port),
+        "AUTOMEM_API_URL": f"http://127.0.0.1:{fake_automem.server_port}",
+        "AUTOMEM_API_TOKEN": "upstream-smoke-token",
+        "UPSTREAM_MAX_RETRIES": "0",
+    }
+    bridge = subprocess.Popen(
+        ["node", "server.js"],
+        cwd=ROOT.parents[2] / "mcp-sse-server",
+        env=bridge_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    _wait_for_bridge(f"http://127.0.0.1:{bridge_port}", bridge)
     previous_adapter_key = os.environ.get("AML_ADAPTER_API_KEY")
     os.environ["AML_ADAPTER_API_KEY"] = "public-smoke-key"
     adapter_server = make_server("127.0.0.1", 0, create_app(McpClient(mcp_url)))
@@ -110,24 +157,31 @@ def main() -> int:
         )
         assert unauthorized.status_code == 401
 
-        store_calls = [call for call in FakeMcpHandler.calls if call["name"] == "store_memory"]
-        recall_call = next(call for call in FakeMcpHandler.calls if call["name"] == "recall_memory")
+        store_calls = [call for call in FakeAutoMemHandler.calls if call["name"] == "store_memory"]
+        recall_call = next(
+            call for call in FakeAutoMemHandler.calls if call["name"] == "recall_memory"
+        )
         assert len(store_calls) == 2
-        assert [call["arguments"]["content"] for call in store_calls] == [
+        assert [call["body"]["content"] for call in store_calls] == [
             message["content"] for message in SAMPLE["add"]["messages"]
         ]
-        assert recall_call["arguments"]["limit"] == MCP_RECALL_MAX_LIMIT
-        assert recall_call["arguments"]["tag_match"] == "exact"
-        assert recall_call["arguments"]["scope_fallback"] is False
+        assert f"limit={MCP_RECALL_MAX_LIMIT}" in recall_call["path"]
+        assert "tag_match=exact" in recall_call["path"]
+        assert "scope_fallback=false" in recall_call["path"]
     finally:
         adapter_server.shutdown()
-        fake_mcp.shutdown()
+        bridge.terminate()
+        try:
+            bridge.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            bridge.kill()
+        fake_automem.shutdown()
         if previous_adapter_key is None:
             os.environ.pop("AML_ADAPTER_API_KEY", None)
         else:
             os.environ["AML_ADAPTER_API_KEY"] = previous_adapter_key
 
-    print("PASS: AML public API-guide Add/Search sample completed over HTTP MCP tools/call.")
+    print("PASS: AML public API-guide Add/Search sample completed through the real MCP bridge.")
     print("PASS: Add echoed identifiers after two synchronous store_memory calls.")
     print("PASS: Search returned ranked AML data and enforced exact user scope tag.")
     print("PASS: Bearer authentication was enforced and an invalid X-Api-Key was rejected.")

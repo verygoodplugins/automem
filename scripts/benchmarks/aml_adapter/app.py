@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 import os
 from datetime import UTC, datetime
 from typing import Any, Dict, Iterable, List
@@ -30,9 +31,16 @@ def _scope_tag(user_id: str) -> str:
 def _iso_timestamp(timestamp_ms: Any) -> str | None:
     if timestamp_ms is None:
         return None
-    if not isinstance(timestamp_ms, (int, float)) or isinstance(timestamp_ms, bool):
+    if (
+        not isinstance(timestamp_ms, (int, float))
+        or isinstance(timestamp_ms, bool)
+        or not math.isfinite(timestamp_ms)
+        or int(timestamp_ms) != timestamp_ms
+    ):
         raise ValueError("message timestamp must be a Unix-millisecond number")
-    return datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.fromtimestamp(int(timestamp_ms) / 1000, tz=UTC).isoformat().replace("+00:00", "Z")
+    )
 
 
 def _detail(reason: str, status: int):
@@ -55,8 +63,8 @@ def _message_rows(payload: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
             raise ValueError("each message must be an object")
         role = message.get("role")
         content = message.get("content")
-        if role not in ("user", "assistant"):
-            raise ValueError("message role must be user or assistant")
+        if not isinstance(role, str) or not role.strip():
+            raise ValueError("message role must be a non-empty string")
         if not isinstance(content, str) or not content:
             raise ValueError("message content must be a non-empty string")
         yield {

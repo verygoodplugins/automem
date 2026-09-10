@@ -35,9 +35,11 @@ python scripts/benchmarks/aml_adapter/run_smoke.py
 
 The smoke uses the public request examples reproduced in
 [`public_sample.json`](public_sample.json), since AML's public repository
-deliberately excludes held-out benchmark corpora. It starts a local HTTP MCP
-test seam, calls actual JSON-RPC `tools/call` requests, and validates Add,
-Search, result ordering, response echoes, and MCP scope arguments.
+deliberately excludes held-out benchmark corpora. It starts a local fake
+AutoMem HTTP upstream and the repository's actual `mcp-sse-server` Streamable
+HTTP bridge, then calls real JSON-RPC `tools/call` requests through that MCP
+surface. It validates Add, Search, result ordering, response echoes, and MCP
+scope arguments without using any private AML evaluation data.
 
 ## Current retrieval bound
 

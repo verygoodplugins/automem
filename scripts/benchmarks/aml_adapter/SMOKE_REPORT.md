@@ -23,7 +23,7 @@ the documented `request_id`, ordered user/assistant messages, `user_id`,
 ## Output
 
 ```text
-PASS: AML public API-guide Add/Search sample completed over HTTP MCP tools/call.
+PASS: AML public API-guide Add/Search sample completed through the real MCP bridge.
 PASS: Add echoed identifiers after two synchronous store_memory calls.
 PASS: Search returned ranked AML data and enforced exact user scope tag.
 PASS: Bearer authentication was enforced and an invalid X-Api-Key was rejected.
@@ -38,7 +38,7 @@ PASS: top_k=100 was safely bounded to AutoMem MCP's per-call limit of 50.
 | AML Search | A `top_k: 100` query produced a contract-shaped, relevance-ordered `data` array with non-empty `id` and `content`. |
 | Isolation | The MCP `recall_memory` call carried one SHA-256-derived exact user scope tag, `tag_match: exact`, and `scope_fallback: false`. |
 | Authentication | Valid Bearer authentication succeeded; an invalid `X-Api-Key` was rejected with 401. |
-| MCP transport | The adapter used JSON-RPC `tools/call` over HTTP and decoded `recall_memory`'s `format: json` content response. |
+| MCP transport | The smoke started the repository's actual Streamable HTTP MCP bridge (`mcp-sse-server`), which translated JSON-RPC `tools/call` into the local AutoMem HTTP seam; the adapter decoded `recall_memory`'s `format: json` content response. |
 
 ## Supporting MCP verification
 
