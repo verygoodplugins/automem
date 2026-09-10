@@ -12,6 +12,14 @@
   read-only `check_database_health` MCP tool call and returns 503 if AutoMem is
   not ready.
 
+## Runtime model lock
+
+- AML's current full-evaluation checklist requires `gpt-4o-mini` for memory
+  operations during both Add and Search. Before requesting the official smoke,
+  pin the dedicated AutoMem deployment to that model for every model-backed
+  write/retrieval path, record the deployed configuration hash, and prevent
+  unreviewed model changes for the submitted version.
+
 ## Capacity and rate limits
 
 - AML can configure Add concurrency of 16–64 and Search concurrency of
@@ -41,7 +49,8 @@
 ## Submission gate
 
 Do not submit a formal run until the official AML compatibility smoke passes
-against the deployed endpoint, authenticated capacity testing is complete, and
-the 30-day on-call/backup plan has an assigned owner. Resolve AutoMem MCP's
-current 50-result single-call ceiling if competitive `top_k=100` retrieval is
-required; this adapter remains schema-compliant by returning fewer results.
+against the deployed endpoint, the required `gpt-4o-mini` model lock is
+verified, authenticated capacity testing is complete, and the 30-day
+on-call/backup plan has an assigned owner. Resolve AutoMem MCP's current
+50-result single-call ceiling if competitive `top_k=100` retrieval is required;
+this adapter remains schema-compliant by returning fewer results.

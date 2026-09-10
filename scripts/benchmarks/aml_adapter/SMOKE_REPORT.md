@@ -58,7 +58,8 @@ response schema is compliant, but retrieval breadth may reduce score.
 
 **NO-GO for a formal submission today.** Before Cycle 2 opens on 2026-09-20,
 deploy a stable HTTPS endpoint, obtain/bind the AML key, pass AML's official
-smoke, complete authenticated capacity testing, assign 30-day operations
-ownership, and decide whether the 50-result MCP ceiling is acceptable. **GO**
-only after those gates pass; the local adapter contract itself is ready for that
-preflight.
+smoke, verify AML's required `gpt-4o-mini` model lock for all model-backed
+memory operations, complete authenticated capacity testing, assign 30-day
+operations ownership, and decide whether the 50-result MCP ceiling is
+acceptable. **GO** only after those gates pass; the local adapter contract
+itself is ready for that preflight.
