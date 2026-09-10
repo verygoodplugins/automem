@@ -69,13 +69,25 @@ class McpClient:
         return result
 
     def refresh_submission_tools(self) -> None:
-        """Discover the live MCP surface and validate AML's required tools.
+        """Negotiate and discover the live MCP surface for every request.
 
         The AutoMem Streamable HTTP bridge intentionally uses stateless MCP
-        requests, so discovery is repeated at the start of every AML request.
-        This avoids pinning a stale tool list across a long-lived adapter
-        process while keeping the adapter limited to its three declared tools.
+        requests, so initialization and discovery are repeated at the start of
+        every AML request. This preserves MCP capability negotiation without
+        pinning a stale tool list across a long-lived adapter process.
         """
+        initialized = self._request(
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "automem-aml-adapter", "version": "1.0.0"},
+            },
+        )
+        capabilities = initialized.get("capabilities")
+        if not isinstance(capabilities, dict) or "tools" not in capabilities:
+            raise McpToolError("AutoMem MCP did not negotiate tool capabilities")
+
         result = self._request("tools/list", {})
         tools = result.get("tools")
         if not isinstance(tools, list):

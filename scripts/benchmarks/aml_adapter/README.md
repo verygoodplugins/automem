@@ -27,10 +27,11 @@ fallback, so a caller can only retrieve its own AML scope. It returns AML's
 ordered `{data:[{id,content,score?,created_at?}]}` response and never answers
 the benchmark question.
 
-Before every authenticated Add, Search, or health request, the adapter calls
-MCP `tools/list` and validates the live input schemas of `store_memory`,
-`recall_memory`, and `check_database_health`. This detects upstream tool drift
-without holding an MCP session or logging request content.
+Before every authenticated Add, Search, or health request, the adapter performs
+stateless MCP `initialize` capability negotiation, calls `tools/list`, and
+validates the live input schemas of `store_memory`, `recall_memory`, and
+`check_database_health`. This detects upstream tool drift without holding an
+MCP session or logging request content.
 
 ## Container deployment
 
