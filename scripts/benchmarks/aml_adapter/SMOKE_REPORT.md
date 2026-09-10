@@ -1,6 +1,6 @@
 # AML adapter local smoke report
 
-**Run date:** 2026-09-10 14:15 CEST (12:15 UTC)
+**Run date:** 2026-09-10 14:17 CEST (12:17 UTC)
 
 **Verdict:** PASS — local contract pre-check passed. This is not the official
 AML compatibility smoke; that requires an AML-issued key and public endpoint.
@@ -51,6 +51,19 @@ npm --prefix mcp-sse-server test
 
 Result: **22 passed, 0 failed, 3 skipped**. The skipped parity tests require a
 live AutoMem stack (`AUTOMEM_RUN_PARITY_TESTS=1`).
+
+## Additional local checks
+
+```text
+.venv/bin/black --check scripts/benchmarks/aml_adapter
+4 files would be left unchanged.
+
+.venv/bin/flake8 scripts/benchmarks/aml_adapter
+(passed)
+
+docker build -t automem-aml-adapter:local scripts/benchmarks/aml_adapter
+(passed)
+```
 
 ## Limitation and submission recommendation
 
