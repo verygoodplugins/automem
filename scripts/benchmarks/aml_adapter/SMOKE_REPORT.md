@@ -16,8 +16,7 @@ the documented `request_id`, ordered user/assistant messages, `user_id`,
 ## Command
 
 ```bash
-/Users/jgarturo/Projects/OpenAI/automem/.venv/bin/python \
-  scripts/benchmarks/aml_adapter/run_smoke.py
+.venv/bin/python scripts/benchmarks/aml_adapter/run_smoke.py
 ```
 
 ## Output
