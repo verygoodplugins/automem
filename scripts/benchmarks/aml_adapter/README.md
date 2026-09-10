@@ -21,11 +21,11 @@ local smoke tests; production must bind one of `Authorization: Bearer`,
 `Authorization: Token`, or `X-Api-Key`.
 
 `POST /add` writes every message synchronously before returning 200. It stores
-the original content, role/session metadata, and a SHA-256-derived exact tag
-for the supplied `user_id`. `POST /search` uses that exact tag with no scope
-fallback, so a caller can only retrieve its own AML scope. It returns AML's
-ordered `{data:[{id,content,score?,created_at?}]}` response and never answers
-the benchmark question.
+the original content, exact `user_id` plus role/session metadata, and a
+SHA-256-derived exact tag for the supplied `user_id`. `POST /search` uses that
+exact tag with no scope fallback, so a caller can only retrieve its own AML
+scope. It returns AML's ordered `{data:[{id,content,score?,created_at?}]}`
+response and never answers the benchmark question.
 
 Before every authenticated Add, Search, or health request, the adapter performs
 stateless MCP `initialize` capability negotiation, calls `tools/list`, and

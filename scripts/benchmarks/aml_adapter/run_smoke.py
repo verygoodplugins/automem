@@ -165,6 +165,10 @@ def main() -> int:
         assert [call["body"]["content"] for call in store_calls] == [
             message["content"] for message in SAMPLE["add"]["messages"]
         ]
+        assert all(
+            call["body"]["metadata"]["aml"]["user_id"] == SAMPLE["add"]["user_id"]
+            for call in store_calls
+        )
         assert f"limit={MCP_RECALL_MAX_LIMIT}" in recall_call["path"]
         assert "tag_match=exact" in recall_call["path"]
         assert "scope_fallback=false" in recall_call["path"]
@@ -185,6 +189,7 @@ def main() -> int:
     print("PASS: Add echoed identifiers after two synchronous store_memory calls.")
     print("PASS: Search returned ranked AML data and enforced exact user scope tag.")
     print("PASS: Bearer authentication was enforced and an invalid X-Api-Key was rejected.")
+    print("PASS: Each stored message preserved the exact user_id metadata.")
     print(
         "PASS: Each AML request negotiated, refreshed, and schema-validated the live MCP tool surface."
     )

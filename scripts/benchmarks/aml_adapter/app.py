@@ -164,6 +164,7 @@ def create_app(client: McpClient | None = None) -> Flask:
                     "metadata": {
                         "aml": {
                             "request_id": request_id,
+                            "user_id": user_id,
                             "session_id": session_id,
                             "role": message["role"],
                         }
