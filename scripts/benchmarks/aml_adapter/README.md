@@ -1,7 +1,7 @@
 # AML Add/Search adapter
 
 This service exposes the synchronous [Agent Memory Leaderboard (AML) Add/Search
-contract](https://agentmemoryleaderboard.ai/) while using AutoMem only through
+contract](https://agentmemories.ai/api-guide) while using AutoMem only through
 its Streamable HTTP MCP tools: `store_memory` and `recall_memory`.
 
 ## Run
