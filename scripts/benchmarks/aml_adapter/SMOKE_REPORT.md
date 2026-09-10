@@ -1,6 +1,6 @@
 # AML adapter local smoke report
 
-**Run date:** 2026-09-10 14:48 CEST (12:48 UTC)
+**Run date:** 2026-09-10 14:52 CEST (12:52 UTC)
 
 **Verdict:** PASS — local contract pre-check passed. This is not the official
 AML compatibility smoke; that requires an AML-issued key and public endpoint.
