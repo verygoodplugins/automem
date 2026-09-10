@@ -1,6 +1,6 @@
 # AML adapter local smoke report
 
-**Run date:** 2026-09-10 14:28 CEST (12:28 UTC)
+**Run date:** 2026-09-10 14:37 CEST (12:37 UTC)
 
 **Verdict:** PASS — local contract pre-check passed. This is not the official
 AML compatibility smoke; that requires an AML-issued key and public endpoint.
@@ -12,6 +12,11 @@ questions. The pre-check therefore uses the public Add/Search API Guide example
 payload, preserved in [`public_sample.json`](public_sample.json). It includes
 the documented `request_id`, ordered user/assistant messages, `user_id`,
 `session_id`, choice options, and formal `top_k: 100`.
+
+The public guide was rechecked immediately before this run. It requires a
+synchronous HTTP 200 Add response with exact identifier echoes, exact
+`user_id` retrieval isolation, and an ordered Search `data` array containing
+no more than `top_k` records.
 
 ## Command
 
