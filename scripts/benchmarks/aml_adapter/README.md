@@ -27,6 +27,28 @@ fallback, so a caller can only retrieve its own AML scope. It returns AML's
 ordered `{data:[{id,content,score?,created_at?}]}` response and never answers
 the benchmark question.
 
+Before every authenticated Add, Search, or health request, the adapter calls
+MCP `tools/list` and validates the live input schemas of `store_memory`,
+`recall_memory`, and `check_database_health`. This detects upstream tool drift
+without holding an MCP session or logging request content.
+
+## Container deployment
+
+The included [`Dockerfile`](Dockerfile) runs the adapter under Gunicorn:
+
+```bash
+docker build -t automem-aml-adapter scripts/benchmarks/aml_adapter
+docker run --rm -p 8090:8090 \
+  -e AML_ADAPTER_MCP_URL=https://your-mcp-host/mcp \
+  -e AML_ADAPTER_MCP_TOKEN=your_automem_api_token \
+  -e AML_ADAPTER_API_KEY=the_key_registered_with_aml \
+  automem-aml-adapter
+```
+
+Set `PORT`, `AML_ADAPTER_WORKERS`, `AML_ADAPTER_THREADS`, and
+`AML_ADAPTER_GUNICORN_TIMEOUT_SECONDS` to match the capacity plan in
+[`OPS.md`](OPS.md). The Docker build context must be this adapter directory.
+
 ## Local contract smoke
 
 ```bash

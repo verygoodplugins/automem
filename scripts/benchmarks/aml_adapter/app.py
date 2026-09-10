@@ -130,6 +130,7 @@ def create_app(client: McpClient | None = None) -> Flask:
     @app.get("/health")
     def health():
         try:
+            mcp.refresh_submission_tools()
             mcp.call_tool("check_database_health", {})
         except McpToolError:
             return _detail("AutoMem MCP is not ready", 503)
@@ -152,6 +153,7 @@ def create_app(client: McpClient | None = None) -> Flask:
 
         scope = _scope_tag(user_id)
         try:
+            mcp.refresh_submission_tools()
             for message in messages:
                 arguments: Dict[str, Any] = {
                     "content": message["content"],
@@ -205,6 +207,7 @@ def create_app(client: McpClient | None = None) -> Flask:
             return _detail(str(exc), 422)
 
         try:
+            mcp.refresh_submission_tools()
             recall = mcp.recall_memory(
                 {
                     "query": query,

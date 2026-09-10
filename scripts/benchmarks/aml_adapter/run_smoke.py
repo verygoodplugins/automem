@@ -185,6 +185,7 @@ def main() -> int:
     print("PASS: Add echoed identifiers after two synchronous store_memory calls.")
     print("PASS: Search returned ranked AML data and enforced exact user scope tag.")
     print("PASS: Bearer authentication was enforced and an invalid X-Api-Key was rejected.")
+    print("PASS: Each AML request refreshed and schema-validated the live MCP tool surface.")
     print("PASS: top_k=100 was safely bounded to AutoMem MCP's per-call limit of 50.")
     return 0
 
