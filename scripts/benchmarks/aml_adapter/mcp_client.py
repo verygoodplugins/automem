@@ -99,8 +99,25 @@ class McpClient:
     def _validate_submission_schemas(tools: Iterable[Dict[str, Any]]) -> None:
         """Fail closed if an upstream tool update drops required arguments."""
         required_properties = {
-            "store_memory": {"content", "tags", "metadata", "timestamp", "type"},
-            "recall_memory": {"query", "tags", "limit", "tag_match", "scope_fallback"},
+            "store_memory": {
+                "content",
+                "confidence",
+                "importance",
+                "metadata",
+                "tags",
+                "timestamp",
+                "type",
+            },
+            "recall_memory": {
+                "format",
+                "limit",
+                "query",
+                "scope_fallback",
+                "sort",
+                "tag_match",
+                "tag_mode",
+                "tags",
+            },
             "check_database_health": set(),
         }
         for tool in tools:
