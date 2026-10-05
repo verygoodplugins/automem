@@ -1,4 +1,6 @@
 <p align="center">
+
+[![Deploy to Railyard](https://app.railyard.run/deploy/badge)](https://app.railyard.run/deploy?repo=https://github.com/verygoodplugins/automem)
   <img src="https://automem.ai/img/G_Vd7EYWYAM_3SF.jpeg" alt="AutoMem" width="600" />
 </p>
 
