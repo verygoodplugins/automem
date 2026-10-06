@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AutoMemClient, createApp, formatRecallAsItems } from "../server.js";
+import { AutoMemClient, createApp } from "../server.js";
 
 async function withServer(app, fn) {
   const server = await new Promise((resolve) => {
@@ -13,6 +13,64 @@ async function withServer(app, fn) {
     return await fn(address.port);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+// Boots the bridge against a stubbed AutoMem. `upstream(path)` returns a JSON
+// body for that path, or undefined for a 404. Hands `fn` a tools/call helper
+// and the list of upstream paths requested (health probes excluded).
+async function withStubbedUpstream(upstream, fn) {
+  const prevToken = process.env.AUTOMEM_API_TOKEN;
+  const prevEndpoint = process.env.AUTOMEM_API_URL;
+  process.env.AUTOMEM_API_TOKEN = "test-token";
+  process.env.AUTOMEM_API_URL = "http://upstream.test";
+
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (url, options) => {
+    const target = String(url);
+    if (!target.startsWith("http://upstream.test/")) {
+      return originalFetch(url, options);
+    }
+    const path = target.slice("http://upstream.test".length);
+    if (path !== "/health") requested.push(path);
+    const body = path === "/health" ? { status: "healthy" } : upstream(path);
+    return new Response(JSON.stringify(body ?? { status: "error", code: 404, message: "Not Found" }), {
+      status: body ? 200 : 404,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    await withServer(createApp(), async (port) => {
+      const post = async (path, payload) => {
+        const res = await originalFetch(`http://127.0.0.1:${port}${path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            Authorization: "Bearer test-token",
+          },
+          body: JSON.stringify(payload),
+        });
+        assert.equal(res.status, 200);
+        return res.json();
+      };
+      const callTool = async (name, args) => {
+        const body = await post("/mcp", {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: args },
+        });
+        return body.result;
+      };
+      await fn({ callTool, post, requested });
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.AUTOMEM_API_TOKEN = prevToken;
+    process.env.AUTOMEM_API_URL = prevEndpoint;
   }
 }
 
@@ -49,6 +107,15 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
     context_tags: ["style", "preferences"],
     context_types: ["Style", "Preference"],
     priority_ids: ["abc", "def"],
+    exclude_tags: ["deprecated", "archived"],
+    expand_respect_tags: false,
+    current_only: false,
+    state_mode: "history",
+    state_debug: true,
+    recency_bias: "auto",
+    min_score: 0.3,
+    adaptive_floor: false,
+    offset: 10,
   });
 
   assert.ok(capturedPath.startsWith("recall?"));
@@ -80,233 +147,149 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
   assert.ok(capturedPath.includes("context_types=Preference"));
   assert.ok(capturedPath.includes("priority_ids=abc"));
   assert.ok(capturedPath.includes("priority_ids=def"));
+
+  // Exclusion, current-state filtering, recency and score floors
+  assert.ok(capturedPath.includes("exclude_tags=deprecated"));
+  assert.ok(capturedPath.includes("exclude_tags=archived"));
+  assert.ok(capturedPath.includes("expand_respect_tags=false"));
+  assert.ok(capturedPath.includes("current_only=false"));
+  assert.ok(capturedPath.includes("state_mode=history"));
+  assert.ok(capturedPath.includes("state_debug=true"));
+  assert.ok(capturedPath.includes("recency_bias=auto"));
+  assert.ok(capturedPath.includes("min_score=0.3"));
+  assert.ok(capturedPath.includes("adaptive_floor=false"));
+  assert.ok(capturedPath.includes("offset=10"));
 });
 
-test("formatRecallAsItems supports detailed output including relations", () => {
-  const results = [
-    {
-      final_score: 0.1234,
-      match_type: "relation",
-      source: "graph",
-      relations: [{ type: "RELATES_TO", strength: 0.9, from: "seed-1" }],
-      memory: {
-        id: "mem-1",
-        content: "Hello world",
-        tags: ["automem", "cursor"],
-        timestamp: "2025-12-14T00:00:00Z",
-        updated_at: "2025-12-14T02:00:00Z",
-        last_accessed: "2025-12-14T01:00:00Z",
-        importance: 0.95,
-        confidence: 0.88,
-        type: "Insight",
-        metadata: { created_by: "test-agent", task: "synthetic-task" },
-      },
+// Regression (2026-10-06): the bridge dropped arguments it did not declare, so
+// recall_memory({ memory_id }) ran an unfiltered ranked search and returned five
+// unrelated memories with isError false. Full parity with the stdio package is
+// pinned by test/recall-parity.test.js; this is the reported symptom, end to end.
+test("recall_memory memory_id fetches that one memory instead of a ranked search", async () => {
+  const id = "67c0f41f-3818-48fd-8dac-af659cbb2a4f";
+  await withStubbedUpstream(
+    (path) =>
+      path === `/memory/${id}`
+        ? {
+            status: "success",
+            memory: { id, content: "The memory that was asked for.", tags: ["t"], timestamp: "2026-10-05T09:00:00+00:00" },
+          }
+        : { status: "success", results: [], count: 0 },
+    async ({ callTool, requested }) => {
+      const result = await callTool("recall_memory", { memory_id: id, format: "json", end: "2026-10-06T00:00:00Z" });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(requested, [`/memory/${id}`]);
+      assert.equal(result.structuredContent.mode, "id_fetch");
+      assert.deepEqual(result.structuredContent.results.map((r) => r.memory_id), [id]);
+      assert.equal(result.structuredContent.results[0].content, "The memory that was asked for.");
     },
-  ];
-
-  const detailed = formatRecallAsItems(results, { detailed: true })[0].text;
-  assert.ok(detailed.includes("ID: mem-1"));
-  assert.ok(detailed.includes("Type: Insight"));
-  assert.ok(detailed.includes("Timestamp: 2025-12-14T00:00:00Z"));
-  assert.ok(detailed.includes("Updated: 2025-12-14T02:00:00Z"));
-  assert.ok(detailed.includes("Last accessed: 2025-12-14T01:00:00Z"));
-  assert.ok(detailed.includes("Importance: 0.950"));
-  assert.ok(detailed.includes("Confidence: 0.880"));
-  assert.ok(detailed.includes("Tags: automem, cursor"));
-  assert.ok(detailed.includes('Metadata: {"created_by":"test-agent","task":"synthetic-task"}'));
-  assert.ok(detailed.includes("Score: 0.123"));
-  assert.ok(detailed.includes("Match: relation"));
-  assert.ok(detailed.includes("Source: graph"));
-  assert.ok(detailed.includes("Relations: RELATES_TO(0.90) from seed-1"));
-
-  const compact = formatRecallAsItems(results, { detailed: false })[0].text;
-  assert.ok(compact.includes("score=0.123"));
-  assert.ok(compact.includes("ID: mem-1"));
-  assert.ok(!compact.includes("Metadata:"));
-});
-
-// Regression: the compact (default) block used to drop the stored date entirely, so a
-// caller replaying recall text could not tell a note written today from one written six
-// weeks ago — relative language inside the content read as if it were current.
-test("formatRecallAsItems compact output carries the stored date on its own line", () => {
-  const results = [
-    {
-      final_score: 0.817,
-      memory: {
-        id: "mem-trip",
-        content: "Ground: drive up Aug 1 in Kyle's car. Kyoshk Island Aug 2-9.",
-        tags: ["travel", "canada-trip"],
-        timestamp: "2026-07-28T09:15:00Z",
-      },
-    },
-  ];
-
-  const compact = formatRecallAsItems(results)[0].text;
-  const lines = compact.split("\n");
-
-  // Own line, matching the stdio package's shape (src/recall-memory.ts).
-  assert.ok(
-    lines.some(line => line === "Created: 2026-07-28T09:15:00Z"),
-    `expected a standalone Created line, got:\n${compact}`
   );
-  // The pre-existing trailing metadata must stay on the content line, because
-  // downstream parsers peel score/tags off the last *content* line.
-  assert.ok(lines[0].endsWith("score=0.817"));
-  assert.ok(lines.includes("ID: mem-trip"));
 });
 
-test("formatRecallAsItems accepts created_at as well as timestamp, and omits the line when absent", () => {
-  // id-fetch shapes carry created_at rather than timestamp.
-  const [fromCreatedAt, undated] = formatRecallAsItems([
-    { memory: { id: "mem-a", content: "A", created_at: "2026-01-02T03:04:05Z" } },
-    { memory: { id: "mem-b", content: "B" } },
-  ]).map(x => x.text);
-
-  assert.ok(fromCreatedAt.includes("Created: 2026-01-02T03:04:05Z"));
-  assert.ok(!undated.includes("Created:"), "no date must render no Created line");
-  assert.ok(undated.endsWith("ID: mem-b"), "undated output must not gain a trailing newline");
+test("recall_memory rejects a memory_id that is not a UUID before calling AutoMem", async () => {
+  // Never forwarded: "by-tag" would hit GET /memory/by-tag, and ".." normalizes
+  // to the viewer route at "/".
+  await withStubbedUpstream(
+    () => ({ status: "success", results: [], count: 0 }),
+    async ({ callTool, requested }) => {
+      for (const memoryId of ["67c0f41f", "by-tag", ".."]) {
+        const result = await callTool("recall_memory", { memory_id: memoryId });
+        assert.equal(result.isError, true, memoryId);
+        assert.match(result.content[0].text, /^AutoMem error: memory_id must be a valid UUID \(request_id: /);
+      }
+      assert.deepEqual(requested, []);
+    },
+  );
 });
 
-test("formatRecallAsItems detailed output renders full metadata and omits empty metadata", () => {
-  const bigMetadata = { notes: "x".repeat(400) };
-  const results = [
-    {
-      memory: { id: "mem-big", content: "Big metadata", metadata: bigMetadata },
-    },
-    {
-      memory: { id: "mem-empty", content: "Empty metadata", metadata: {} },
-    },
-    {
-      memory: { id: "mem-none", content: "No metadata" },
-    },
-  ];
-
-  const [big, empty, none] = formatRecallAsItems(results, { detailed: true }).map(x => x.text);
-
-  const metadataLine = big.split("\n").find(line => line.startsWith("Metadata: "));
-  assert.ok(metadataLine, "expected a Metadata line for oversized metadata");
-  const rendered = metadataLine.slice("Metadata: ".length);
-  assert.equal(rendered, JSON.stringify(bigMetadata));
-
-  assert.ok(!empty.includes("Metadata:"));
-  assert.ok(!none.includes("Metadata:"));
-  assert.ok(!big.includes("Updated:"));
-});
-
-test("formatRecallAsItems detailed output truncates oversized metadata previews", () => {
-  const hugeMetadata = { notes: "x".repeat(5000) };
-  const results = [
-    {
-      memory: { id: "mem-huge", content: "Huge metadata", metadata: hugeMetadata },
-    },
-  ];
-
-  const [huge] = formatRecallAsItems(results, { detailed: true }).map(x => x.text);
-
-  const metadataLine = huge.split("\n").find(line => line.startsWith("Metadata: "));
-  assert.ok(metadataLine, "expected a Metadata line for huge metadata");
-  const rendered = metadataLine.slice("Metadata: ".length);
-  const fullJson = JSON.stringify(hugeMetadata);
-  assert.ok(rendered.length < fullJson.length, "preview should be shorter than the full JSON");
-  assert.ok(rendered.includes(`(truncated, ${fullJson.length} chars total)`));
-});
-
-test("recall_memory json format passes through metadata from the API response", async () => {
-  const prevToken = process.env.AUTOMEM_API_TOKEN;
-  const prevEndpoint = process.env.AUTOMEM_API_URL;
-  process.env.AUTOMEM_API_TOKEN = "test-token";
-  process.env.AUTOMEM_API_URL = "http://upstream.test";
-
-  const originalFetch = globalThis.fetch;
-  const upstreamResponse = {
-    status: "success",
-    results: [
-      {
-        id: "mem-json",
-        final_score: 0.9,
-        memory: {
-          id: "mem-json",
-          content: "JSON passthrough",
-          metadata: { created_by: "test-agent", task: "synthetic-task" },
-          updated_at: "2025-12-14T02:00:00Z",
-          last_accessed: "2025-12-14T01:00:00Z",
-        },
-      },
-    ],
-    count: 1,
-  };
-
-  globalThis.fetch = async (url, options) => {
-    if (String(url).startsWith("http://upstream.test/")) {
-      return new Response(JSON.stringify(upstreamResponse), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return originalFetch(url, options);
-  };
-
-  try {
-    const app = createApp();
-    await withServer(app, async (port) => {
-      const res = await originalFetch(`http://127.0.0.1:${port}/mcp`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          Authorization: "Bearer test-token",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: {
-            name: "recall_memory",
-            arguments: { query: "passthrough", format: "json" },
+// Regression (#224): the compact block used to drop the stored date entirely, so a
+// caller replaying recall text could not tell a note written today from one written
+// six weeks ago, and relative language inside the content read as if it were current.
+test("recall_memory text output carries the stored date on its own line", async () => {
+  await withStubbedUpstream(
+    () => ({
+      status: "success",
+      count: 1,
+      results: [
+        {
+          id: "mem-trip",
+          final_score: 0.817,
+          memory: {
+            id: "mem-trip",
+            content: "Ground: drive up Aug 1 in Kyle's car. Kyoshk Island Aug 2-9.",
+            tags: ["travel", "canada-trip"],
+            timestamp: "2026-07-28T09:15:00Z",
           },
-        }),
-      });
+        },
+      ],
+    }),
+    async ({ callTool }) => {
+      const result = await callTool("recall_memory", { query: "trip" });
+      const lines = result.content[0].text.split("\n");
+      assert.ok(
+        lines.some((line) => line.startsWith("   Created: 2026-07-28T09:15:00Z")),
+        `expected a standalone Created line, got:\n${result.content[0].text}`,
+      );
+      assert.ok(lines.includes("   ID: mem-trip"));
+      assert.ok(lines.some((line) => line.startsWith("1. Ground: drive up") && line.endsWith("score=0.817")));
+    },
+  );
+});
 
-      assert.equal(res.status, 200);
-      const body = await res.json();
-      const text = body.result.content[0].text;
-      const parsed = JSON.parse(text);
-      assert.deepEqual(parsed.results[0].memory.metadata, {
+test("recall_memory json format carries full metadata in the structured envelope", async () => {
+  await withStubbedUpstream(
+    () => ({
+      status: "success",
+      results: [
+        {
+          id: "mem-json",
+          final_score: 0.9,
+          memory: {
+            id: "mem-json",
+            content: "JSON passthrough",
+            metadata: { created_by: "test-agent", task: "synthetic-task" },
+            updated_at: "2025-12-14T02:00:00Z",
+            last_accessed: "2025-12-14T01:00:00Z",
+          },
+        },
+      ],
+      count: 1,
+    }),
+    async ({ callTool }) => {
+      const result = await callTool("recall_memory", { query: "passthrough", format: "json" });
+      const parsed = JSON.parse(result.content[0].text);
+      assert.deepEqual(parsed, result.structuredContent);
+      assert.equal(parsed.mode, "ranked");
+      assert.deepEqual(parsed.results[0].metadata, {
         created_by: "test-agent",
         task: "synthetic-task",
       });
-      assert.equal(parsed.results[0].memory.updated_at, "2025-12-14T02:00:00Z");
-      assert.equal(parsed.results[0].memory.last_accessed, "2025-12-14T01:00:00Z");
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    process.env.AUTOMEM_API_TOKEN = prevToken;
-    process.env.AUTOMEM_API_URL = prevEndpoint;
-  }
+      assert.equal(parsed.results[0].updated_at, "2025-12-14T02:00:00Z");
+      assert.equal(parsed.results[0].last_accessed, "2025-12-14T01:00:00Z");
+    },
+  );
 });
 
-test("formatRecallAsItems surfaces outside_tag_scope fills in both formats", () => {
-  const results = [
-    {
-      final_score: 0.42,
-      outside_tag_scope: true,
-      memory: { id: "fill-1", content: "Unscoped fill", tags: ["other"] },
+test("Alexa RecallIntent still speaks recalled content", async () => {
+  await withStubbedUpstream(
+    (path) =>
+      path.startsWith("/recall?")
+        ? {
+            status: "success",
+            count: 1,
+            results: [{ id: "mem-alexa", final_score: 0.8, memory: { id: "mem-alexa", content: "Feed the cat at six." } }],
+          }
+        : undefined,
+    async ({ post }) => {
+      const body = await post("/alexa", {
+        request: {
+          type: "IntentRequest",
+          intent: { name: "RecallIntent", slots: { query: { value: "cat" } } },
+        },
+      });
+      assert.equal(body.response.outputSpeech.text, "Item 1: Feed the cat at six.");
     },
-    {
-      final_score: 0.9,
-      memory: { id: "scoped-1", content: "Scoped result", tags: ["scoped"] },
-    },
-  ];
-
-  const [fillDetailed, scopedDetailed] = formatRecallAsItems(results, { detailed: true }).map(
-    (x) => x.text,
   );
-  assert.ok(fillDetailed.includes("Outside tag scope: true"));
-  assert.ok(!scopedDetailed.includes("Outside tag scope"));
-
-  const [fillCompact, scopedCompact] = formatRecallAsItems(results).map((x) => x.text);
-  assert.ok(fillCompact.includes("[outside tag scope]"));
-  assert.ok(!scopedCompact.includes("[outside tag scope]"));
 });
 
 test("AutoMemClient._request retries transient upstream errors", async () => {

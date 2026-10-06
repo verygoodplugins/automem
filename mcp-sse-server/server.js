@@ -262,6 +262,78 @@ class InMemoryEventStore {
   }
 }
 
+// recall_memory is a port of @verygoodplugins/mcp-automem 0.16.0 so both
+// transports serve one contract: the tool definition (src/mcp-surface.ts),
+// mode routing and request mapping (src/automem-client.ts), and rendering
+// (src/recall-memory.ts). test/recall-parity.test.js runs the stdio package's
+// own code against the same canned API responses and fails on any difference.
+
+// Matches the API's own rejection (automem/api/memory.py _validate_memory_id).
+const INVALID_MEMORY_ID_MESSAGE = 'memory_id must be a valid UUID';
+const CANONICAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// GET /memory/by-tag cannot honor these, so enumeration mode rejects them.
+const RANKED_ONLY_RECALL_PARAMS = [
+  'query',
+  'queries',
+  'embedding',
+  'time_query',
+  'start',
+  'end',
+  'exclude_tags',
+  'expand_relations',
+  'expand_entities',
+  'auto_decompose',
+  'expansion_limit',
+  'relation_limit',
+  'expand_min_importance',
+  'expand_min_strength',
+  'current_only',
+  'state_debug',
+  'state_mode',
+  'recency_bias',
+  'scope_fallback',
+  'expand_respect_tags',
+  'min_score',
+  'adaptive_floor',
+  'sort',
+];
+
+function nonEmptyTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  return tags.map((t) => (typeof t === 'string' ? t.trim() : '')).filter((t) => t.length > 0);
+}
+
+function mapStoredMemory(raw) {
+  return {
+    memory_id: raw?.id || raw?.memory_id || '',
+    content: raw?.content || '',
+    summary: raw?.summary,
+    tags: raw?.tags || [],
+    importance: raw?.importance ?? 0,
+    created_at: raw?.timestamp || raw?.created_at || '',
+    updated_at: raw?.updated_at || raw?.timestamp || '',
+    metadata: raw?.metadata || {},
+    type: raw?.type,
+    confidence: raw?.confidence,
+    last_accessed: raw?.last_accessed,
+  };
+}
+
+// ID fetch and enumeration return stored records, not scored hits; wrap them in
+// the ranked result shape so one renderer serves all three modes.
+function wrapMemoryAsRecallResult(raw) {
+  const memory = mapStoredMemory(raw);
+  return {
+    id: memory.memory_id,
+    match_type: 'direct',
+    final_score: 1,
+    score_components: {},
+    relations: [],
+    memory,
+  };
+}
+
 // Simple AutoMem HTTP client (mirrors the npm package behavior but inline to avoid version conflicts)
 export class AutoMemClient {
   constructor(config) {
@@ -304,41 +376,218 @@ export class AutoMemClient {
     const r = await this._request('POST', 'memory', body, options);
     return { memory_id: r.memory_id || r.id, message: r.message || 'Memory stored successfully' };
   }
-  async recallMemory(args, options) {
+  // Mode routing, validation and request mapping are a port of mcp-automem's
+  // AutoMemClient.recallMemory (src/automem-client.ts). Unknown arguments used
+  // to be dropped here, so an ID fetch fell through to an unfiltered ranked
+  // search and returned unrelated memories without an error.
+  async recallMemory(args = {}, options) {
+    // Mode 1: ID fetch — short-circuit to GET /memory/{id}. Every other param is ignored.
+    if (typeof args.memory_id === 'string' && args.memory_id.trim().length > 0) {
+      const memory = await this.fetchMemoryById(args.memory_id.trim(), options);
+      return {
+        results: memory ? [wrapMemoryAsRecallResult(memory)] : [],
+        count: memory ? 1 : 0,
+        mode: 'id_fetch',
+      };
+    }
+
+    // Mode 2: tag enumeration — GET /memory/by-tag for paginated exact-match listing.
+    if (args.exhaustive === true) {
+      const cleanTags = nonEmptyTags(args.tags);
+      if (cleanTags.length === 0) {
+        throw new Error('recall_memory: `exhaustive: true` requires non-empty `tags`');
+      }
+      if (args.tag_match && args.tag_match !== 'exact') {
+        throw new Error(
+          'recall_memory: enumeration mode (`exhaustive: true`) only supports exact tag matching; remove `tag_match: "prefix"`'
+        );
+      }
+      if (args.tag_mode && args.tag_mode !== 'any') {
+        throw new Error(
+          'recall_memory: enumeration mode (`exhaustive: true`) only supports any-of tag matching; remove `tag_mode: "all"`'
+        );
+      }
+      // A ranked-only param would silently change the meaning of the query:
+      // `{ tags, exhaustive: true, time_query: "last 7 days" }` would list every
+      // tagged memory and ignore the window.
+      const conflicting = RANKED_ONLY_RECALL_PARAMS.filter((key) => {
+        const v = args[key];
+        if (v === undefined || v === null) return false;
+        if (Array.isArray(v)) return v.length > 0;
+        return true;
+      });
+      if (conflicting.length > 0) {
+        throw new Error(
+          `recall_memory: enumeration mode (\`exhaustive: true\`) only accepts \`tags\`, \`limit\`, \`offset\`, \`tag_mode: "any"\`, \`tag_match: "exact"\`, and \`format\`. Remove ranked-only param(s): ${conflicting.join(', ')}.`
+        );
+      }
+      return this.listMemoriesByTag(cleanTags, args.limit, args.offset, options);
+    }
+
+    // Mode 3: ranked retrieval — GET /recall.
     const p = new URLSearchParams();
     if (args.query) p.set('query', args.query);
+    if (Array.isArray(args.queries) && args.queries.length > 0) {
+      args.queries.filter((q) => q && q.trim()).forEach((q) => p.append('queries', q));
+    }
     if (args.limit) p.set('limit', String(args.limit));
-    if (args.per_query_limit) p.set('per_query_limit', String(args.per_query_limit));
-    if (Array.isArray(args.queries)) args.queries.forEach(q => { if (q) p.append('queries', q); });
     if (Array.isArray(args.embedding)) p.set('embedding', args.embedding.join(','));
     if (args.time_query) p.set('time_query', args.time_query);
     if (args.start) p.set('start', args.start);
     if (args.end) p.set('end', args.end);
-    if (args.sort) p.set('sort', args.sort);
-    if (Array.isArray(args.tags)) args.tags.forEach(t => p.append('tags', t));
-    if (args.tag_mode) p.set('tag_mode', args.tag_mode);
-    if (args.tag_match) p.set('tag_match', args.tag_match);
-    if (args.scope_fallback !== undefined) p.set('scope_fallback', String(!!args.scope_fallback));
+    if (Array.isArray(args.tags)) args.tags.forEach((tag) => p.append('tags', tag));
+    if (Array.isArray(args.exclude_tags) && args.exclude_tags.length > 0) {
+      args.exclude_tags.forEach((tag) => p.append('exclude_tags', tag));
+    }
+    if (args.tag_mode === 'any' || args.tag_mode === 'all') p.set('tag_mode', args.tag_mode);
+    if (args.tag_match === 'exact' || args.tag_match === 'prefix') p.set('tag_match', args.tag_match);
 
-    // Advanced recall options (pass-through to AutoMem /recall)
-    if (args.expand_relations !== undefined) p.set('expand_relations', String(!!args.expand_relations));
-    if (args.expand_entities !== undefined) p.set('expand_entities', String(!!args.expand_entities));
-    if (args.auto_decompose !== undefined) p.set('auto_decompose', String(!!args.auto_decompose));
-    if (args.expansion_limit !== undefined) p.set('expansion_limit', String(args.expansion_limit));
-    if (args.relation_limit !== undefined) p.set('relation_limit', String(args.relation_limit));
-    if (args.expand_min_importance !== undefined) p.set('expand_min_importance', String(args.expand_min_importance));
-    if (args.expand_min_strength !== undefined) p.set('expand_min_strength', String(args.expand_min_strength));
+    // Graph expansion
+    if (typeof args.expand_relations === 'boolean') p.set('expand_relations', String(args.expand_relations));
+    if (typeof args.expand_respect_tags === 'boolean') {
+      p.set('expand_respect_tags', String(args.expand_respect_tags));
+    }
+    if (typeof args.expand_entities === 'boolean') p.set('expand_entities', String(args.expand_entities));
+    if (typeof args.auto_decompose === 'boolean') p.set('auto_decompose', String(args.auto_decompose));
+    if (typeof args.expansion_limit === 'number') p.set('expansion_limit', String(args.expansion_limit));
+    if (typeof args.relation_limit === 'number') p.set('relation_limit', String(args.relation_limit));
+    if (typeof args.expand_min_importance === 'number') {
+      p.set('expand_min_importance', String(args.expand_min_importance));
+    }
+    if (typeof args.expand_min_strength === 'number') {
+      p.set('expand_min_strength', String(args.expand_min_strength));
+    }
 
+    // Current-state filtering, recency and score floors
+    if (typeof args.current_only === 'boolean') p.set('current_only', String(args.current_only));
+    if (typeof args.state_debug === 'boolean') p.set('state_debug', String(args.state_debug));
+    if (args.state_mode === 'current' || args.state_mode === 'history') p.set('state_mode', args.state_mode);
+    if (['auto', 'on', 'off'].includes(args.recency_bias)) p.set('recency_bias', args.recency_bias);
+    if (typeof args.scope_fallback === 'boolean') p.set('scope_fallback', String(args.scope_fallback));
+    if (typeof args.min_score === 'number') p.set('min_score', String(args.min_score));
+    if (typeof args.adaptive_floor === 'boolean') p.set('adaptive_floor', String(args.adaptive_floor));
+
+    // Context hints
     if (args.context) p.set('context', args.context);
     if (args.language) p.set('language', args.language);
     if (args.active_path) p.set('active_path', args.active_path);
-    if (Array.isArray(args.context_tags)) args.context_tags.forEach(t => { if (t) p.append('context_tags', t); });
-    if (Array.isArray(args.context_types)) args.context_types.forEach(t => { if (t) p.append('context_types', t); });
-    if (Array.isArray(args.priority_ids)) args.priority_ids.forEach(t => { if (t) p.append('priority_ids', t); });
+    if (Array.isArray(args.context_tags) && args.context_tags.length > 0) {
+      args.context_tags.forEach((tag) => p.append('context_tags', tag));
+    }
+    if (Array.isArray(args.context_types) && args.context_types.length > 0) {
+      args.context_types.forEach((t) => p.append('context_types', t));
+    }
+    if (Array.isArray(args.priority_ids) && args.priority_ids.length > 0) {
+      args.priority_ids.forEach((id) => p.append('priority_ids', id));
+    }
+
+    // Pagination and output control. /recall reads neither `format` nor
+    // `offset` today; both are forwarded exactly as the stdio client does.
+    if (args.per_query_limit !== undefined && args.per_query_limit > 0) {
+      p.set('per_query_limit', String(args.per_query_limit));
+    }
+    if (args.sort) p.set('sort', args.sort);
+    if (args.format) p.set('format', args.format);
+    if (args.offset !== undefined && args.offset > 0) p.set('offset', String(args.offset));
 
     const path = p.toString() ? `recall?${p.toString()}` : 'recall';
-    const r = await this._request('GET', path, undefined, options);
-    return r;
+    const response = await this._request('GET', path, undefined, options);
+    return {
+      results: (response.results || []).map((result) => ({
+        id: result.id,
+        match_type: result.match_type,
+        match_score: result.match_score,
+        relation_score: result.relation_score,
+        final_score: result.final_score ?? result.score ?? 0,
+        score_components: result.score_components || {},
+        source: result.source,
+        // Servers may send either key; normalize to one so the formatter never
+        // serializes the same relation list twice.
+        relations: result.relations || result.related_to || [],
+        deduped_from: result.deduped_from,
+        expanded_from_entity: result.expanded_from_entity,
+        outside_tag_scope: result.outside_tag_scope,
+        jit_enriched: result.jit_enriched,
+        state_replaces: result.state_replaces,
+        memory: {
+          memory_id: result.id,
+          content: result.memory?.content || '',
+          summary: result.memory?.summary,
+          tags: result.memory?.tags || [],
+          importance: result.memory?.importance ?? 0,
+          created_at: result.memory?.timestamp || result.memory?.created_at || '',
+          updated_at: result.memory?.updated_at || result.memory?.timestamp || '',
+          metadata: result.memory?.metadata || {},
+          type: result.memory?.type,
+          confidence: result.memory?.confidence,
+          last_accessed: result.memory?.last_accessed,
+        },
+      })),
+      count: response.count || (response.results ? response.results.length : 0),
+      mode: 'ranked',
+      dedup_removed: response.dedup_removed,
+      query: response.query,
+      sort: response.sort,
+      keywords: response.keywords,
+      time_window: response.time_window,
+      tags: response.tags,
+      exclude_tags: response.exclude_tags,
+      tag_mode: response.tag_mode,
+      tag_match: response.tag_match,
+      state_mode: response.state_mode,
+      tag_scope: response.tag_scope,
+      scope_fallback: response.scope_fallback,
+      recency_bias: response.recency_bias,
+      score_filter: response.score_filter,
+      queries: response.queries,
+      vector_search: response.vector_search,
+      jit_enriched_count: response.jit_enriched_count,
+      query_time_ms: response.query_time_ms,
+      entities: response.entities,
+      expansion: response.expansion,
+      entity_expansion: response.entity_expansion,
+      context_priority: response.context_priority,
+      state_filter: response.state_filter,
+    };
+  }
+  async fetchMemoryById(memoryId, options) {
+    // Checked here, with the API's own message, because ids that are not UUIDs
+    // can resolve to other routes: "by-tag" hits GET /memory/by-tag, and ".."
+    // normalizes to the viewer at "/", whose HTML would be read back as a memory.
+    if (!CANONICAL_UUID_RE.test(memoryId)) {
+      throw new Error(INVALID_MEMORY_ID_MESSAGE);
+    }
+    try {
+      const response = await this._request('GET', `memory/${encodeURIComponent(memoryId)}`, undefined, options);
+      return response?.memory ?? response ?? null;
+    } catch (error) {
+      // A missing ID is an empty result, not an error.
+      if (error?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+  async listMemoriesByTag(tags, limit, offset, options) {
+    const p = new URLSearchParams();
+    tags.forEach((tag) => p.append('tags', tag));
+    if (typeof limit === 'number' && limit > 0) {
+      p.set('limit', String(Math.min(Math.floor(limit), 200)));
+    }
+    if (typeof offset === 'number' && offset > 0) {
+      p.set('offset', String(Math.floor(offset)));
+    }
+    const response = await this._request('GET', `memory/by-tag?${p.toString()}`, undefined, options);
+    const memories = Array.isArray(response.memories) ? response.memories : [];
+    return {
+      results: memories.map((m) => wrapMemoryAsRecallResult(m)),
+      count: typeof response.count === 'number' ? response.count : memories.length,
+      mode: 'enumeration',
+      tags: response.tags ?? tags,
+      limit: response.limit,
+      offset: response.offset,
+      has_more: typeof response.has_more === 'boolean' ? response.has_more : undefined,
+    };
   }
   async associateMemories(args = {}, options) {
     const { associations, ...singleAssociation } = args;
@@ -366,91 +615,794 @@ export class AutoMemClient {
   }
 }
 
-// Detailed text format previews metadata; full payload stays available via json format / memory_id fetch
-const METADATA_PREVIEW_CHARS = 1500;
+// Response budgeting: recall responses must stay comfortably under MCP client
+// tool-response caps (~25k tokens in Claude Code). Budgeted formats
+// (text/items/detailed) show a content preview, keep any stored summary as an
+// additive field, collapse relations to compact stubs, and collapse metadata to
+// its key list. The global budget is measured in estimated tokens; dense recall
+// JSON tokenizes at ~2.5 chars/token. `format: "json"` keeps raw per-field
+// passthrough, but the global budget still applies. ID fetches are never
+// truncated: `memory_id` is the documented way to read a full record.
+const RECALL_CONTENT_PREVIEW_CHARS = 400;
+const RECALL_MAX_RELATIONS = 3;
+const RECALL_RELATION_SUMMARY_CHARS = 100;
+const RECALL_CHARS_PER_TOKEN = 2.5;
+const DEFAULT_RECALL_TOKEN_BUDGET = 18_000;
+const RESPONSE_ENVELOPE_RESERVE_TOKENS = 800;
 
-export function formatRecallAsItems(results, { detailed = false } = {}) {
-  return (results || []).map((it, i) => {
-    const mem = it?.memory || it || {};
-    const id = mem.id || mem.memory_id || it?.id || it?.memory_id || '';
-    const content = mem.content ?? mem.text ?? '';
-
-    const tags = Array.isArray(mem.tags) ? mem.tags.filter(t => typeof t === 'string' && t.trim()) : [];
-    const score = it?.final_score !== undefined ? Number(it.final_score) : undefined;
-    const dedupCount = Array.isArray(it?.deduped_from) ? it.deduped_from.length : 0;
-    // When the memory was stored. Without it a caller replaying recall text has no
-    // way to tell a note written today from one written six weeks ago, and relative
-    // language inside the content ("we leave tomorrow") reads as if it were current.
-    // `timestamp` is what /recall returns; `created_at` covers id-fetch shapes.
-    const storedAt = mem.timestamp || mem.created_at || '';
-
-    if (!detailed) {
-      const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
-      const scoreSuffix = score !== undefined ? ` score=${score.toFixed(3)}` : '';
-      const dedupNote = dedupCount ? ` (deduped x${dedupCount})` : '';
-      const scopeNote = it?.outside_tag_scope ? ' [outside tag scope]' : '';
-      // Own line, matching the stdio package (src/recall-memory.ts) so both
-      // transports render the same shape and downstream parsers see one format.
-      const createdLine = storedAt ? `\nCreated: ${String(storedAt)}` : '';
-      return {
-        type: 'text',
-        text: `${i + 1}. ${String(content)}${tagSuffix}${scoreSuffix}${dedupNote}${scopeNote}\nID: ${id}${createdLine}`,
-      };
-    }
-
-    const lines = [];
-    lines.push(`${i + 1}. ${String(content)}`);
-    if (id) lines.push(`ID: ${id}`);
-    if (mem.type) lines.push(`Type: ${String(mem.type)}`);
-    // Label kept as-is for compatibility; source broadened so id-fetch shapes
-    // (which carry created_at rather than timestamp) also render a date.
-    if (storedAt) lines.push(`Timestamp: ${String(storedAt)}`);
-    if (mem.updated_at) lines.push(`Updated: ${String(mem.updated_at)}`);
-    if (mem.last_accessed) lines.push(`Last accessed: ${String(mem.last_accessed)}`);
-    if (mem.importance !== undefined) {
-      const imp = Number(mem.importance);
-      lines.push(`Importance: ${Number.isFinite(imp) ? imp.toFixed(3) : String(mem.importance)}`);
-    }
-    if (mem.confidence !== undefined) {
-      const conf = Number(mem.confidence);
-      lines.push(`Confidence: ${Number.isFinite(conf) ? conf.toFixed(3) : String(mem.confidence)}`);
-    }
-    if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
-    if (mem.metadata && typeof mem.metadata === 'object' && Object.keys(mem.metadata).length) {
-      let metaJson = '';
-      try {
-        metaJson = JSON.stringify(mem.metadata);
-      } catch (_) {
-        metaJson = '';
-      }
-      if (metaJson && metaJson !== '{}') {
-        if (metaJson.length > METADATA_PREVIEW_CHARS) {
-          metaJson = `${metaJson.slice(0, METADATA_PREVIEW_CHARS)}… (truncated, ${metaJson.length} chars total)`;
-        }
-        lines.push(`Metadata: ${metaJson}`);
-      }
-    }
-    if (score !== undefined) lines.push(`Score: ${score.toFixed(3)}`);
-    if (it?.match_type) lines.push(`Match: ${String(it.match_type)}`);
-    if (it?.source) lines.push(`Source: ${String(it.source)}`);
-    if (it?.outside_tag_scope) lines.push('Outside tag scope: true');
-
-    // Associations (only present on relation-expanded results)
-    const rels = Array.isArray(it?.relations) ? it.relations : [];
-    if (rels.length) {
-      const summarized = rels.slice(0, 5).map(r => {
-        const t = r?.type ? String(r.type) : 'REL';
-        const s = r?.strength !== undefined ? Number(r.strength) : undefined;
-        const from = r?.from ? String(r.from) : '';
-        const ss = s !== undefined && Number.isFinite(s) ? `(${s.toFixed(2)})` : '';
-        return `${t}${ss}${from ? ` from ${from}` : ''}`;
-      });
-      lines.push(`Relations: ${summarized.join('; ')}${rels.length > 5 ? ` (+${rels.length - 5} more)` : ''}`);
-    }
-
-    return { type: 'text', text: lines.join('\n') };
-  });
+function estimateTokens(chars) {
+  return Math.ceil(chars / RECALL_CHARS_PER_TOKEN);
 }
+
+function resolveTokenBudget() {
+  const raw = process.env.AUTOMEM_RECALL_TOKEN_BUDGET;
+  if (raw) {
+    // Strict parse: reject non-numeric suffixes ("1200foo") and fractions.
+    const parsed = Number(raw.trim());
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_RECALL_TOKEN_BUDGET;
+}
+
+function capContent(content, budgeted) {
+  const text = content ?? '';
+  if (!budgeted || text.length <= RECALL_CONTENT_PREVIEW_CHARS) {
+    return { preview: text, truncated: false, chars: text.length };
+  }
+  return {
+    preview: `${text.slice(0, RECALL_CONTENT_PREVIEW_CHARS)}…`,
+    truncated: true,
+    chars: text.length,
+  };
+}
+
+function metadataKeyList(metadata) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const keys = Object.keys(metadata);
+  return keys.length > 0 ? keys : undefined;
+}
+
+// A relation on a recall result embeds a full nested memory record. Budgeted
+// formats keep only what makes the edge meaningful: the target id, edge
+// type/strength, and a short summary of the target.
+function relationStub(rel) {
+  const memory = rel?.memory && typeof rel.memory === 'object' ? rel.memory : undefined;
+  const id = memory?.id ?? rel?.id ?? rel?.memory_id;
+  const rawSummary = memory?.summary ?? memory?.content ?? rel?.summary ?? rel?.content;
+  const summary =
+    typeof rawSummary === 'string' && rawSummary.length > 0
+      ? rawSummary.length > RECALL_RELATION_SUMMARY_CHARS
+        ? `${rawSummary.slice(0, RECALL_RELATION_SUMMARY_CHARS)}…`
+        : rawSummary
+      : undefined;
+  return {
+    ...(id !== undefined ? { id } : {}),
+    ...(rel?.type !== undefined ? { type: rel.type } : {}),
+    ...(typeof rel?.strength === 'number' ? { strength: rel.strength } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+  };
+}
+
+function compactRelations(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return {};
+  }
+  return {
+    relations: value.slice(0, RECALL_MAX_RELATIONS).map(relationStub),
+    ...(value.length > RECALL_MAX_RELATIONS ? { relations_total: value.length } : {}),
+  };
+}
+
+function buildStructuredRecallItem(item, isRichFormat, budgeted, keepScoreComponents) {
+  const memory = item.memory;
+  const summary =
+    typeof memory.summary === 'string' && memory.summary.trim().length > 0
+      ? memory.summary
+      : undefined;
+  const { preview, truncated, chars } = capContent(memory.content, budgeted);
+  // Empty content still happens on some records; fall back to summary so the
+  // text channel is not a blank line. Structured `content` stays the preview
+  // (possibly empty) so callers can tell the fields apart.
+  const displayText = preview.trim().length > 0 ? preview : (summary ?? preview);
+
+  const base = {
+    memory_id: memory.memory_id,
+    content: preview,
+    ...(truncated ? { content_truncated: true, content_chars: chars } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+    tags: memory.tags,
+    importance: memory.importance,
+    created_at: memory.created_at,
+    updated_at: memory.updated_at,
+    final_score: item.final_score,
+    match_type: item.match_type,
+  };
+  if (!isRichFormat) {
+    return { structuredItem: base, displayText, contentTruncated: truncated };
+  }
+
+  const metadataFields = budgeted
+    ? (() => {
+        const keys = metadataKeyList(memory.metadata);
+        return keys ? { metadata_keys: keys } : {};
+      })()
+    : { metadata: memory.metadata };
+
+  const structuredItem = {
+    ...base,
+    last_accessed: memory.last_accessed,
+    ...metadataFields,
+    type: memory.type,
+    confidence: memory.confidence,
+    ...(budgeted
+      ? {}
+      : {
+          match_score: item.match_score,
+          relation_score: item.relation_score,
+          source: item.source,
+        }),
+    ...(keepScoreComponents ? { score_components: item.score_components } : {}),
+    ...(budgeted ? compactRelations(item.relations) : { relations: item.relations }),
+    deduped_from: item.deduped_from,
+    expanded_from_entity: item.expanded_from_entity,
+    outside_tag_scope: item.outside_tag_scope,
+    jit_enriched: item.jit_enriched,
+    state_replaces: item.state_replaces,
+  };
+  return { structuredItem, displayText, contentTruncated: truncated };
+}
+
+function buildStructuredEnvelope(recallResult) {
+  const results = recallResult.results || [];
+  return {
+    count: recallResult.count ?? results.length,
+    ...(recallResult.mode ? { mode: recallResult.mode } : {}),
+    ...(typeof recallResult.has_more === 'boolean' ? { has_more: recallResult.has_more } : {}),
+    ...(typeof recallResult.limit === 'number' ? { limit: recallResult.limit } : {}),
+    ...(typeof recallResult.offset === 'number' ? { offset: recallResult.offset } : {}),
+    ...(typeof recallResult.dedup_removed === 'number'
+      ? { dedup_removed: recallResult.dedup_removed }
+      : {}),
+    ...(recallResult.query ? { query: recallResult.query } : {}),
+    ...(recallResult.sort ? { sort: recallResult.sort } : {}),
+    ...(recallResult.keywords ? { keywords: recallResult.keywords } : {}),
+    ...(recallResult.time_window ? { time_window: recallResult.time_window } : {}),
+    ...(recallResult.tags ? { tags: recallResult.tags } : {}),
+    ...(recallResult.exclude_tags ? { exclude_tags: recallResult.exclude_tags } : {}),
+    ...(recallResult.tag_mode ? { tag_mode: recallResult.tag_mode } : {}),
+    ...(recallResult.tag_match ? { tag_match: recallResult.tag_match } : {}),
+    ...(recallResult.state_mode ? { state_mode: recallResult.state_mode } : {}),
+    ...(recallResult.tag_scope ? { tag_scope: recallResult.tag_scope } : {}),
+    ...(typeof recallResult.scope_fallback === 'boolean'
+      ? { scope_fallback: recallResult.scope_fallback }
+      : {}),
+    ...(recallResult.recency_bias ? { recency_bias: recallResult.recency_bias } : {}),
+    ...(recallResult.score_filter ? { score_filter: recallResult.score_filter } : {}),
+    ...(recallResult.queries ? { queries: recallResult.queries } : {}),
+    ...(recallResult.vector_search ? { vector_search: recallResult.vector_search } : {}),
+    ...(typeof recallResult.jit_enriched_count === 'number'
+      ? { jit_enriched_count: recallResult.jit_enriched_count }
+      : {}),
+    ...(typeof recallResult.query_time_ms === 'number'
+      ? { query_time_ms: recallResult.query_time_ms }
+      : {}),
+    ...(recallResult.entities ? { entities: recallResult.entities } : {}),
+    ...(recallResult.expansion ? { expansion: recallResult.expansion } : {}),
+    ...(recallResult.entity_expansion ? { entity_expansion: recallResult.entity_expansion } : {}),
+    ...(recallResult.context_priority ? { context_priority: recallResult.context_priority } : {}),
+    ...(recallResult.state_filter ? { state_filter: recallResult.state_filter } : {}),
+  };
+}
+
+function renderTextBlock(item, preview, index) {
+  const memory = item.memory;
+  const tags = memory.tags?.length ? ` [${memory.tags.join(', ')}]` : '';
+  const importance =
+    typeof memory.importance === 'number' ? ` (importance: ${memory.importance})` : '';
+  const score = typeof item.final_score === 'number' ? ` score=${item.final_score.toFixed(3)}` : '';
+  const matchType = item.match_type ? ` [${item.match_type}]` : '';
+  const relationNote =
+    Array.isArray(item.relations) && item.relations.length
+      ? ` relations=${item.relations.length}`
+      : '';
+  const dedupNote =
+    Array.isArray(item.deduped_from) && item.deduped_from.length
+      ? ` (deduped x${item.deduped_from.length})`
+      : '';
+  const entityNote = item.expanded_from_entity ? ` [via entity: ${item.expanded_from_entity}]` : '';
+  // The stored date gets its own line: without it a caller replaying recall
+  // text cannot tell a note written today from one written weeks ago.
+  const updatedNote = memory.updated_at ? `  Updated: ${memory.updated_at}` : '';
+  return `${index + 1}. ${preview}${tags}${importance}${score}${matchType}${relationNote}${entityNote}${dedupNote}\n   ID: ${
+    memory.memory_id
+  }\n   Created: ${memory.created_at}${updatedNote}`;
+}
+
+function renderDetailedBlock(item, preview) {
+  const memory = item.memory;
+  const lines = [preview, `  ID: ${memory.memory_id}`];
+  if (memory.type) lines.push(`  Type: ${memory.type}`);
+  lines.push(`  Created: ${memory.created_at}`);
+  if (memory.updated_at) lines.push(`  Updated: ${memory.updated_at}`);
+  if (memory.last_accessed) lines.push(`  Accessed: ${memory.last_accessed}`);
+  if (typeof memory.importance === 'number') {
+    lines.push(`  Importance: ${memory.importance.toFixed(3)}`);
+  }
+  if (typeof memory.confidence === 'number') {
+    lines.push(`  Confidence: ${memory.confidence.toFixed(3)}`);
+  }
+  if (memory.tags?.length) lines.push(`  Tags: ${memory.tags.join(', ')}`);
+  if (typeof item.final_score === 'number') {
+    lines.push(`  Score: ${item.final_score.toFixed(3)}`);
+  }
+  if (item.match_type) lines.push(`  Match: ${item.match_type}`);
+  return lines.join('\n');
+}
+
+async function buildRecallMemoryResponse(client, recallArgs, requestOptions) {
+  const recallResult = await client.recallMemory(recallArgs, requestOptions);
+  const results = recallResult.results || [];
+  const format = recallArgs.format || 'text';
+  const isRichFormat = format === 'detailed' || format === 'json';
+  const isIdFetch = recallResult.mode === 'id_fetch' || Boolean(recallArgs.memory_id);
+  // json keeps raw per-field passthrough; id fetches are never truncated.
+  const budgeted = !isIdFetch && format !== 'json';
+  const keepScoreComponents = format === 'json' || isIdFetch;
+
+  if (results.length === 0) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'No memories found matching your query.',
+        },
+      ],
+      structuredContent: {
+        results: [],
+        ...buildStructuredEnvelope(recallResult),
+      },
+    };
+  }
+
+  const perItem = results.map((item, index) => {
+    const { structuredItem, displayText, contentTruncated } = buildStructuredRecallItem(
+      item,
+      isRichFormat,
+      budgeted,
+      keepScoreComponents
+    );
+    let textBlock = '';
+    if (format === 'items') {
+      textBlock = `[${item.memory.memory_id}] ${displayText}`;
+    } else if (format === 'detailed') {
+      textBlock = renderDetailedBlock(item, displayText);
+    } else if (format !== 'json') {
+      textBlock = renderTextBlock(item, displayText, index);
+    }
+    const structuredLength = JSON.stringify(structuredItem)?.length ?? 0;
+    // json repeats the structured payload in the text channel pretty-printed;
+    // measure that length directly (nesting can inflate it well past 2x).
+    const cost =
+      format === 'json'
+        ? structuredLength + (JSON.stringify(structuredItem, null, 2)?.length ?? 0)
+        : structuredLength + textBlock.length;
+    return { structuredItem, textBlock, cost, contentTruncated };
+  });
+
+  // Global budget: always keep the first result; keep the rest while in budget.
+  const tokenBudget = resolveTokenBudget();
+  const kept = [];
+  let runningTokens = RESPONSE_ENVELOPE_RESERVE_TOKENS;
+  if (isIdFetch) {
+    kept.push(...perItem);
+  } else {
+    for (const entry of perItem) {
+      const entryTokens = estimateTokens(entry.cost);
+      if (kept.length > 0 && runningTokens + entryTokens > tokenBudget) {
+        break;
+      }
+      kept.push(entry);
+      runningTokens += entryTokens;
+    }
+  }
+  const omitted = perItem.length - kept.length;
+
+  const structuredContent = {
+    results: kept.map((entry) => entry.structuredItem),
+    ...buildStructuredEnvelope(recallResult),
+    ...(omitted > 0
+      ? {
+          truncation: {
+            applied: true,
+            omitted_results: omitted,
+            reason: 'response_token_budget',
+          },
+        }
+      : {}),
+  };
+
+  const notes = [];
+  if ((recallResult.dedup_removed || 0) > 0) {
+    notes.push(`${recallResult.dedup_removed} duplicates removed`);
+  }
+  if (recallResult.entity_expansion?.enabled && recallResult.entity_expansion.expanded_count > 0) {
+    notes.push(
+      `${recallResult.entity_expansion.expanded_count} via entity expansion (${
+        recallResult.entity_expansion.entities_found?.join(', ') || 'entities found'
+      })`
+    );
+  }
+  if (recallResult.expansion?.enabled && recallResult.expansion.expanded_count > 0) {
+    notes.push(`${recallResult.expansion.expanded_count} via relation expansion`);
+  }
+  if (recallResult.state_filter) {
+    notes.push(
+      `state filter suppressed ${recallResult.state_filter.suppressed_count}, replacements ${recallResult.state_filter.replacement_count}`
+    );
+  }
+  if (recallResult.scope_fallback) {
+    notes.push('scope fallback included outside-scope results');
+  }
+  const filteredCount = recallResult.score_filter?.filtered_count;
+  if (typeof filteredCount === 'number' && filteredCount > 0) {
+    notes.push(`score filter removed ${filteredCount}`);
+  }
+  if (recallResult.mode === 'enumeration') {
+    const offset = recallResult.offset ?? 0;
+    const limit = recallResult.limit ?? results.length;
+    const pageSuffix = recallResult.has_more ? ' — more pages available' : '';
+    notes.push(`enumeration page: offset ${offset}, limit ${limit}${pageSuffix}`);
+  }
+  const notesSuffix = notes.length > 0 ? ` (${notes.join('; ')})` : '';
+
+  const anyContentTruncated = kept.some((entry) => entry.contentTruncated);
+  const trailerParts = [];
+  if (omitted > 0) {
+    trailerParts.push(
+      `Response budget: showing ${kept.length} of ${perItem.length} results; ${omitted} omitted.`
+    );
+  }
+  if (anyContentTruncated) {
+    trailerParts.push(
+      'Content shown as previews — fetch full records with recall_memory({ memory_id: "<id>" }).'
+    );
+  }
+  const trailer = trailerParts.length > 0 ? `\n\n[${trailerParts.join(' ')}]` : '';
+
+  if (format === 'json') {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(structuredContent, null, 2),
+        },
+      ],
+      structuredContent,
+    };
+  }
+
+  if (format === 'items') {
+    const itemBlocks = kept.map((entry) => ({
+      type: 'text',
+      text: entry.textBlock,
+    }));
+    if (trailer) {
+      itemBlocks.push({ type: 'text', text: trailer.trim() });
+    }
+    return {
+      content: itemBlocks,
+      structuredContent,
+    };
+  }
+
+  const joinedBlocks = kept.map((entry) => entry.textBlock).join('\n\n');
+  const showingSuffix = omitted > 0 ? ` (showing ${kept.length})` : '';
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `Found ${results.length} memories${showingSuffix}${notesSuffix}:\n\n${joinedBlocks}${trailer}`,
+      },
+    ],
+    structuredContent,
+  };
+}
+
+// Copied from mcp-automem's src/mcp-surface.ts. test/recall-parity.test.js
+// deep-compares it with the installed package, so edit it there first.
+const RECALL_MEMORY_TOOL = {
+  name: 'recall_memory',
+  title: 'Recall Memory',
+  description: `Recall memories from AutoMem in one of three modes. The mode is selected by which params you pass.
+
+**Mode 1 — ID fetch:** pass \`memory_id\` to retrieve a single memory by ID. All other params are ignored. Routes to GET /memory/{id} and updates last_accessed.
+
+**Mode 2 — Tag enumeration:** pass \`tags\` + \`exhaustive: true\` for paginated exact-match listing (NOT ranked retrieval). Use this for cleanup/audit workflows where ranked retrieval silently undercounts large tag sets. Pair with \`limit\` (≤200) and \`offset\`. Returns \`has_more\`/\`limit\`/\`offset\` page metadata. Tag matching is exact, case-insensitive, any-of mode — \`tag_match: "prefix"\` and \`tag_mode: "all"\` are rejected in this mode.
+
+**Mode 3 — Ranked retrieval (default):** hybrid search across vector, keyword, tags, recency, and optional graph expansion. The primary tool for finding relevant context. By default, ranked recall requests current active memories only; set \`current_only: false\` for audits.
+
+**When to use ranked (mode 3):**
+- At conversation start: recall context about the current project/topic
+- Before making decisions: check for past decisions on similar topics
+- When debugging: search for similar past errors and their solutions
+- For complex questions: use \`expand_entities\` for multi-hop reasoning
+
+**When to use enumeration (mode 2):** when you need to know *how many* memories carry a tag, or to walk all of them for cleanup/migration. Ranked recall ignores low-importance hits — enumeration does not.
+
+**Examples:**
+- recall_memory({ query: "database architecture decisions", tags: ["my-project"], limit: 5 })
+- recall_memory({ memory_id: "abc123" })  // Mode 1
+- recall_memory({ tags: ["benchmark-test"], exhaustive: true, limit: 50 })  // Mode 2 (add offset for later pages)
+- recall_memory({ query: "auth", exclude_tags: ["deprecated"] })  // Mode 3 with exclusion
+- recall_memory({ query: "What is Sarah's sister's job?", expand_entities: true })  // Mode 3 multi-hop`,
+  annotations: {
+    title: 'Recall Memory',
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  _meta: { 'anthropic/alwaysLoad': true },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      memory_id: {
+        type: 'string',
+        description:
+          'MODE: ID fetch. When set, fetches the single memory by ID and IGNORES all other params. Routes to GET /memory/{id}; updates last_accessed.',
+      },
+      exhaustive: {
+        type: 'boolean',
+        description:
+          'MODE: tag enumeration. When true, requires non-empty `tags`. Routes to GET /memory/by-tag for paginated exact-match listing — NOT ranked retrieval. Use for cleanup/audit workflows where ranked recall undercounts. `limit` is clamped to 200. `tag_match: "prefix"` and `tag_mode: "all"` are rejected in this mode.',
+      },
+      exclude_tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Ranked-mode only. Tags to exclude from results (any match excludes). Independent of `tag_match` — supports both exact and prefix matching internally on the server.',
+      },
+      query: {
+        type: 'string',
+        description: "Semantic search query (natural language). Describe what you're looking for.",
+      },
+      queries: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Multiple queries for broader recall. Results are deduplicated server-side.',
+      },
+      embedding: {
+        type: 'array',
+        items: { type: 'number' },
+        description: 'Optional embedding vector for direct similarity search',
+      },
+      limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 200,
+        default: 5,
+        description:
+          'Max memories to return. Schema allows 1–200; in enumeration mode (`exhaustive: true`) the server honors up to 200, while ranked mode is typically clamped server-side to ~50. Default 5.',
+      },
+      time_query: {
+        type: 'string',
+        description: 'Natural language time filter: "today", "yesterday", "last week", "last 30 days"',
+      },
+      start: {
+        type: 'string',
+        description: 'ISO timestamp lower bound (alternative to time_query)',
+      },
+      end: {
+        type: 'string',
+        description: 'ISO timestamp upper bound',
+      },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Filter by tags. Use project name as first tag for scoping.',
+      },
+      tag_mode: {
+        type: 'string',
+        enum: ['any', 'all'],
+        description: '"any" matches memories with any tag (default), "all" requires all tags',
+      },
+      tag_match: {
+        type: 'string',
+        enum: ['exact', 'prefix'],
+        description: '"exact" for exact tag match (default), "prefix" for starts-with matching',
+      },
+      expand_entities: {
+        type: 'boolean',
+        description:
+          'Enable multi-hop reasoning via entity expansion. Finds memories about people/places mentioned in seed results. Use for "What is X\'s sister\'s job?" type questions.',
+      },
+      expand_relations: {
+        type: 'boolean',
+        description: 'Follow graph relationships from seed results to find related memories.',
+      },
+      expand_respect_tags: {
+        type: 'boolean',
+        description:
+          'Ranked-mode only. When true, graph/entity expansion stays within the original tag scope; when false, expansion may include related context outside the tags.',
+      },
+      auto_decompose: {
+        type: 'boolean',
+        description: 'Auto-extract entities and topics from query to generate supplementary searches.',
+      },
+      expansion_limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 500,
+        default: 25,
+        description: 'Max total expanded memories (default: 25)',
+      },
+      relation_limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 200,
+        default: 5,
+        description: 'Max relations to follow per seed memory (default: 5)',
+      },
+      expand_min_importance: {
+        type: 'number',
+        minimum: 0,
+        maximum: 1,
+        description:
+          'Minimum importance score for expanded results. Filters out low-relevance memories during graph/entity expansion. Recommended: 0.3-0.5 for broad context, 0.6-0.8 for focused results. Seed results are never filtered, only expanded ones.',
+      },
+      expand_min_strength: {
+        type: 'number',
+        minimum: 0,
+        maximum: 1,
+        description:
+          'Minimum relation strength to follow during graph expansion. Only traverses edges above this threshold. Recommended: 0.3 for exploratory, 0.6+ for high-confidence connections only. Does not affect entity expansion.',
+      },
+      current_only: {
+        type: 'boolean',
+        default: true,
+        description:
+          'Ranked-mode only. When true, server suppresses archived, not-yet-valid, expired, invalidated, or superseded memories from active context.',
+      },
+      state_debug: {
+        type: 'boolean',
+        default: false,
+        description:
+          'Ranked-mode only. Include state-filter suppression/replacement IDs and reasons when current_only is true.',
+      },
+      state_mode: {
+        type: 'string',
+        enum: ['current', 'history'],
+        description:
+          'Ranked-mode only. `current` returns active memories; `history` allows superseded/invalidated memories for audit timelines. Prefer this over current_only for new clients.',
+      },
+      recency_bias: {
+        type: 'string',
+        enum: ['auto', 'on', 'off'],
+        description:
+          'Ranked-mode only. Controls service recency boosting: auto lets the service infer, on forces boosting, off disables it.',
+      },
+      scope_fallback: {
+        type: 'boolean',
+        description:
+          'Ranked-mode only. Allow fallback outside the requested tag scope when scoped recall has weak evidence; diagnostics report tag_scope and outside_tag_scope.',
+      },
+      min_score: {
+        type: 'number',
+        minimum: 0,
+        maximum: 1,
+        description: 'Ranked-mode only. Minimum final score threshold before results are returned.',
+      },
+      adaptive_floor: {
+        type: 'boolean',
+        description: "Ranked-mode only. Enable the service's adaptive score floor when filtering weak matches.",
+      },
+      context: {
+        type: 'string',
+        description: 'Context label (e.g., "coding-style", "architecture"). Boosts matching preferences.',
+      },
+      language: {
+        type: 'string',
+        description:
+          'Programming language hint (e.g., "python", "typescript"). Prioritizes language-specific memories.',
+      },
+      active_path: {
+        type: 'string',
+        description: 'Current file path for language auto-detection (e.g., "src/auth.ts")',
+      },
+      context_tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Priority tags to boost in results (e.g., ["coding-style", "preferences"])',
+      },
+      context_types: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Priority memory types to boost (e.g., ["Style", "Preference"])',
+      },
+      priority_ids: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Specific memory IDs to ensure are included in results',
+      },
+      per_query_limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 50,
+        description: 'Per-query result limit when using queries[] (default: 5)',
+      },
+      sort: {
+        type: 'string',
+        enum: ['score', 'time_desc', 'time_asc', 'updated_desc', 'updated_asc'],
+        description: 'Result ordering (use time_* for chronological recaps)',
+      },
+      format: {
+        type: 'string',
+        enum: ['text', 'items', 'detailed', 'json'],
+        default: 'text',
+        description:
+          'Output format: text (default), items (one block per memory), detailed (adds type/confidence/metadata keys/relation stubs), json (raw per-memory fields incl. full content/metadata/relations; whole-response token budget still applies). text/items/detailed show a content preview (default 400 chars) and keep any stored summary as an additive field — fetch a full record via memory_id.',
+      },
+      offset: {
+        type: 'integer',
+        minimum: 0,
+        description: 'Result offset for pagination',
+      },
+    },
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      count: {
+        type: 'integer',
+        description: 'Number of memories returned',
+      },
+      mode: {
+        type: 'string',
+        enum: ['ranked', 'enumeration', 'id_fetch'],
+        description: 'Mode that produced the result.',
+      },
+      has_more: {
+        type: 'boolean',
+        description: 'Enumeration mode only: true if more pages exist past `offset + limit`.',
+      },
+      limit: {
+        type: 'integer',
+        description: 'Enumeration mode only: page size used for this response.',
+      },
+      offset: {
+        type: 'integer',
+        description: 'Enumeration mode only: offset used for this response.',
+      },
+      results: {
+        type: 'array',
+        description: 'Array of matching memories with scores',
+        items: {
+          type: 'object',
+          properties: {
+            memory_id: { type: 'string' },
+            summary: {
+              type: 'string',
+              description:
+                'Stored 1-2 sentence summary when the server provides one. Additive in budgeted formats; does not replace content.',
+            },
+            content: {
+              type: 'string',
+              description: 'Memory content (preview-capped in budgeted formats).',
+            },
+            content_truncated: {
+              type: 'boolean',
+              description:
+                'True when content is a preview; fetch the full record via recall_memory({ memory_id }).',
+            },
+            content_chars: {
+              type: 'integer',
+              description: 'Original content length when content was previewed.',
+            },
+            tags: { type: 'array', items: { type: 'string' } },
+            importance: { type: 'number' },
+            final_score: { type: 'number' },
+            match_type: { type: 'string' },
+            created_at: { type: 'string' },
+            updated_at: { type: 'string' },
+            deduped_from: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Result IDs merged into this result during multi-query deduplication.',
+            },
+            outside_tag_scope: {
+              type: 'boolean',
+              description: 'True when scope_fallback admitted this result outside the requested tag scope.',
+            },
+            jit_enriched: {
+              type: 'boolean',
+              description: 'True when the service enriched the memory during recall.',
+            },
+            state_replaces: {
+              type: 'string',
+              description: 'ID of the suppressed memory this result replaced during current-state filtering.',
+            },
+          },
+        },
+      },
+      truncation: {
+        type: 'object',
+        description:
+          'Present when trailing results were dropped to fit the response budget: { applied, omitted_results, reason }.',
+      },
+      dedup_removed: {
+        type: 'integer',
+        description: 'Number of duplicate results removed (when using multiple queries)',
+      },
+      query: {
+        type: 'string',
+        description: 'Query text executed by ranked recall.',
+      },
+      sort: {
+        type: 'string',
+        description: 'Sort mode applied by the service.',
+      },
+      exclude_tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Tags excluded from ranked recall.',
+      },
+      state_filter: {
+        type: 'object',
+        description:
+          'Current-state filtering diagnostics. Includes aggregate counts by default and detailed IDs/reasons only when state_debug=true.',
+      },
+      state_mode: {
+        type: 'string',
+        enum: ['current', 'history'],
+        description: 'State mode applied by ranked recall.',
+      },
+      tag_scope: {
+        type: 'object',
+        description: 'Tag-scope diagnostics including whether scoped evidence was strong enough.',
+      },
+      scope_fallback: {
+        type: 'boolean',
+        description: 'True when recall allowed outside-scope fallback results.',
+      },
+      recency_bias: {
+        type: 'string',
+        enum: ['auto', 'on', 'off'],
+        description: 'Recency bias mode applied by the service.',
+      },
+      score_filter: {
+        type: 'object',
+        description: 'Score filtering diagnostics such as min_score, adaptive_floor, and filtered_count.',
+      },
+      queries: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Query variants executed by the service.',
+      },
+      vector_search: {
+        type: 'object',
+        description: 'Vector-search diagnostics from the service.',
+      },
+      jit_enriched_count: {
+        type: 'integer',
+        description: 'Number of memories enriched inline during recall.',
+      },
+      query_time_ms: {
+        type: 'number',
+        description: 'Service recall latency in milliseconds.',
+      },
+      entities: {
+        type: 'array',
+        items: { type: 'object' },
+        description: 'Entity identity diagnostics injected by the service.',
+      },
+    },
+    required: ['count', 'results'],
+  },
+};
 
 // Build a new MCP Server instance with AutoMem tool handlers
 export function buildMcpServer(client) {
@@ -490,54 +1442,7 @@ export function buildMcpServer(client) {
         required: ['content']
       }
     },
-    {
-      name: 'recall_memory',
-      description: 'Recall memories with hybrid semantic/keyword search and optional time/tag filters',
-      annotations: { readOnlyHint: true, destructiveHint: false },
-      inputSchema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Text query to search for in memory content' },
-          queries: { type: 'array', items: { type: 'string' }, description: 'Multiple queries (server-side deduplication)' },
-          embedding: { type: 'array', items: { type: 'number' }, description: 'Embedding vector for semantic similarity search' },
-          limit: { type: 'integer', minimum: 1, maximum: 50, default: 5, description: 'Maximum number of memories to return' },
-          per_query_limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Per-query limit when using queries[]' },
-          time_query: { type: 'string', description: 'Natural language time window (e.g. "today", "last week")' },
-          start: { type: 'string', description: 'Explicit ISO timestamp lower bound' },
-          end: { type: 'string', description: 'Explicit ISO timestamp upper bound' },
-          sort: {
-            type: 'string',
-            enum: ['score', 'time_desc', 'time_asc', 'updated_desc', 'updated_asc'],
-            description: 'Result ordering (use time_* for chronological recaps)',
-          },
-          tags: { type: 'array', items: { type: 'string' }, description: 'Hard scope filter: memories without a matching tag are excluded before scoring. Use context_tags for soft boosting instead.' },
-          tag_mode: { type: 'string', enum: ['any', 'all'], description: 'How to combine multiple tags (default: any)' },
-          tag_match: { type: 'string', enum: ['exact', 'prefix'], description: 'How to match tags (default: prefix)' },
-          scope_fallback: { type: 'boolean', description: 'When tag-scoped results fall short of limit, fill remaining slots from an unscoped vector search; fills are appended after scoped results and flagged outside_tag_scope (default: false)' },
-
-          expand_relations: { type: 'boolean', description: 'Enable graph relation expansion' },
-          expand_entities: { type: 'boolean', description: 'Enable entity-based multi-hop expansion' },
-          auto_decompose: { type: 'boolean', description: 'Auto-generate supplementary queries from query text' },
-          expansion_limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Max number of expanded results' },
-          relation_limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Max relations to expand per seed memory' },
-          expand_min_importance: { type: 'number', minimum: 0, maximum: 1, description: 'Filter expanded results by min importance' },
-          expand_min_strength: { type: 'number', minimum: 0, maximum: 1, description: 'Filter expanded results by min relation strength' },
-          context: { type: 'string', description: 'Context label (e.g. coding-style, architecture)' },
-          language: { type: 'string', description: 'Programming language hint (e.g. python, typescript)' },
-          active_path: { type: 'string', description: 'Active file path hint (e.g. src/auth.ts)' },
-          context_tags: { type: 'array', items: { type: 'string' }, description: 'Priority tags to boost in results' },
-          context_types: { type: 'array', items: { type: 'string' }, description: 'Priority memory types to boost (Decision, Pattern, ...)' },
-          priority_ids: { type: 'array', items: { type: 'string' }, description: 'Specific memory IDs to include/boost' },
-
-          format: {
-            type: 'string',
-            enum: ['text', 'items', 'detailed', 'json'],
-            default: 'text',
-            description: 'Output formatting: text (single block), items (one memory per content item), detailed (per-item with timestamps/metadata/relations), json (raw response JSON as text)',
-          }
-        }
-      }
-    },
+    RECALL_MEMORY_TOOL,
     {
       name: 'associate_memories',
       description: 'Create one association or a batch of associations between memories',
@@ -641,77 +1546,7 @@ export function buildMcpServer(client) {
           return { content: [{ type: 'text', text: `Memory stored: ${r.memory_id}` }] };
         }
         case 'recall_memory': {
-          // Unified handler: supports single query OR multiple queries
-          const queries = Array.isArray(args?.queries) ? args.queries.filter(q => !!(q && q.trim())) : [];
-          const isMulti = queries.length > 0;
-
-          const recallArgs = {
-            query: args?.query,
-            queries: isMulti ? queries : undefined,
-            limit: args?.limit || (isMulti ? queries.length * 5 : 5),
-            per_query_limit: isMulti ? Math.min(args?.per_query_limit || args?.limit || 5, 50) : undefined,
-            embedding: args?.embedding,
-            time_query: args?.time_query,
-            start: args?.start,
-            end: args?.end,
-            sort: args?.sort,
-            tags: Array.isArray(args?.tags) ? args.tags : undefined,
-            tag_mode: args?.tag_mode,
-            tag_match: args?.tag_match,
-            scope_fallback: args?.scope_fallback,
-
-            expand_relations: args?.expand_relations,
-            expand_entities: args?.expand_entities,
-            auto_decompose: args?.auto_decompose,
-            expansion_limit: args?.expansion_limit,
-            relation_limit: args?.relation_limit,
-            expand_min_importance: args?.expand_min_importance,
-            expand_min_strength: args?.expand_min_strength,
-            context: args?.context,
-            language: args?.language,
-            active_path: args?.active_path,
-            context_tags: Array.isArray(args?.context_tags) ? args.context_tags : undefined,
-            context_types: Array.isArray(args?.context_types) ? args.context_types : undefined,
-            priority_ids: Array.isArray(args?.priority_ids) ? args.priority_ids : undefined,
-          };
-
-          const r = await client.recallMemory(recallArgs, { requestId });
-          const results = r.results || r.memories || [];
-
-          const count = r.count ?? results.length;
-          const dedupInfo = r.dedup_removed ? ` (${r.dedup_removed} duplicates removed)` : '';
-
-          const format = (args?.format || 'text').toLowerCase();
-          if (format === 'json') {
-            return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] };
-          }
-
-          if (format === 'items') {
-            return {
-              content: count
-                ? [{ type: 'text', text: `Found ${count} memories${dedupInfo}:` }, ...formatRecallAsItems(results)]
-                : [{ type: 'text', text: 'No memories found.' }],
-            };
-          }
-
-          if (format === 'detailed') {
-            return {
-              content: count
-                ? [{ type: 'text', text: `Found ${count} memories${dedupInfo}:` }, ...formatRecallAsItems(results, { detailed: true })]
-                : [{ type: 'text', text: 'No memories found.' }],
-            };
-          }
-
-          // Back-compat: preserve the old single-block text format as default.
-          const itemsText = formatRecallAsItems(results)
-            .map(x => x.text.replace('\nID: ', '\n   ID: ').replace('\nCreated: ', '\n   Created: '))
-            .join('\n\n');
-          return {
-            content: [{
-              type: 'text',
-              text: count ? `Found ${count} memories${dedupInfo}:\n\n${itemsText}` : 'No memories found.'
-            }]
-          };
+          return await buildRecallMemoryResponse(client, args || {}, { requestId });
         }
         case 'associate_memories': {
           const r = await client.associateMemories(args || {}, { requestId });

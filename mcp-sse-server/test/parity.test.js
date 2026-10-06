@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { connectBothTransports } from '../parity/clients.js';
-import { normalizeKeys, redact } from '../parity/normalize.js';
+import { normalizeKeys, redact, stripErrorFraming } from '../parity/normalize.js';
 import { buildScenarios } from '../parity/scenarios.js';
 
 const require = createRequire(import.meta.url);
@@ -55,7 +55,12 @@ async function runScenarios(client, tag) {
       const structured = res.structuredContent
         ? redact(JSON.stringify(normalizeKeys(res.structuredContent)), tag)
         : null;
-      rendered.push({ isError: Boolean(res.isError), text: redact(text, tag), structured });
+      rendered.push({
+        tool: call.tool,
+        isError: Boolean(res.isError),
+        text: redact(text, tag),
+        structured,
+      });
     }
     out.push({ name: scenario.name, rendered });
   }
@@ -66,6 +71,60 @@ const GATE =
   process.env.AUTOMEM_RUN_PARITY_TESTS === '1'
     ? false
     : 'set AUTOMEM_RUN_PARITY_TESTS=1 with a live AutoMem at :8001 (make test-parity)';
+
+// One run of the scenario matrix per transport, shared by the tests that read
+// it. A run costs ~90s, and the recall-only check reads a subset of the same
+// output, so running it twice would only double the wait.
+let matrixRun;
+function runMatrix() {
+  matrixRun ??= (async () => {
+    const { remote, stdio, close } = await connectBothTransports();
+    const remoteTag = `parity-remote-${randomUUID()}`;
+    const stdioTag = `parity-stdio-${randomUUID()}`;
+    try {
+      return { a: await runScenarios(remote, remoteTag), b: await runScenarios(stdio, stdioTag) };
+    } finally {
+      // Every fixture carries its transport's root tag regardless of which
+      // per-scenario namespace it also has, so one bulk delete per namespace is
+      // enough. Bulk delete by tag exists only on the stdio transport for now,
+      // so cleanup for both runs there. Swallowed so a cleanup failure can never
+      // mask an assertion failure.
+      await stdio
+        .callTool({
+          name: 'delete_memory',
+          arguments: { tags: [remoteTag, stdioTag] },
+        })
+        .catch(() => {});
+      await close();
+    }
+  })();
+  return matrixRun;
+}
+
+/**
+ * Collect every mismatch before failing. A run costs ~90s, so reporting one
+ * scenario at a time turns a multi-scenario gap into a fix-one, rerun,
+ * fix-the-next loop.
+ */
+function assertAllMatch(a, b) {
+  const mismatched = [];
+  for (let i = 0; i < a.length; i++) {
+    try {
+      assert.deepStrictEqual(a[i], b[i]);
+    } catch {
+      mismatched.push(i);
+    }
+  }
+  if (mismatched.length) {
+    const names = mismatched.map((i) => a[i].name).join(', ');
+    const first = mismatched[0];
+    assert.deepStrictEqual(
+      a[first],
+      b[first],
+      `${mismatched.length}/${a.length} scenarios differ: ${names}\nFirst mismatch (${a[first].name}) diffed below.`
+    );
+  }
+}
 
 test('tools/list is identical across transports', { skip: GATE }, async () => {
   const { remote, stdio, close } = await connectBothTransports();
@@ -110,45 +169,36 @@ test('server capabilities and instructions match', { skip: GATE }, async () => {
 });
 
 test('tools/call renders identically across transports', { skip: GATE }, async () => {
-  const { remote, stdio, close } = await connectBothTransports();
-  const remoteTag = `parity-remote-${randomUUID()}`;
-  const stdioTag = `parity-stdio-${randomUUID()}`;
-  try {
-    const a = await runScenarios(remote, remoteTag);
-    const b = await runScenarios(stdio, stdioTag);
+  const { a, b } = await runMatrix();
+  assertAllMatch(a, b);
+});
 
-    // Collect every mismatch before failing. A run costs ~90s, so reporting
-    // one scenario at a time turns a multi-scenario gap into a fix-one,
-    // rerun, fix-the-next loop.
-    const mismatched = [];
-    for (let i = 0; i < a.length; i++) {
-      try {
-        assert.deepStrictEqual(a[i], b[i]);
-      } catch {
-        mismatched.push(i);
-      }
-    }
-    if (mismatched.length) {
-      const names = mismatched.map((i) => a[i].name).join(', ');
-      const first = mismatched[0];
-      assert.deepStrictEqual(
-        a[first],
-        b[first],
-        `${mismatched.length}/${a.length} scenarios differ: ${names}\nFirst mismatch (${a[first].name}) diffed below.`
-      );
-    }
+// recall_memory is already on the shared contract (test/recall-parity.test.js
+// pins it without a live stack), so it is held to parity here on its own while
+// the other five tools still differ. Only the recall calls in each scenario are
+// compared: the store calls that seed fixtures render differently today. Error
+// framing is a transport difference; the message inside it is not.
+test('recall_memory renders identically across transports', { skip: GATE }, async () => {
+  const { a, b } = await runMatrix();
+  const recallOnly = (runs) =>
+    runs
+      .map((scenario) => ({
+        name: scenario.name,
+        rendered: scenario.rendered
+          .filter((call) => call.tool === 'recall_memory')
+          .map((call) => (call.isError ? { ...call, text: stripErrorFraming(call.text) } : call)),
+      }))
+      .filter((scenario) => scenario.rendered.length > 0);
+  assertAllMatch(recallOnly(a), recallOnly(b));
+});
+
+test('recall_memory tool definition is identical across transports', { skip: GATE }, async () => {
+  const { remote, stdio, close } = await connectBothTransports();
+  try {
+    const pick = async (client) =>
+      normalizeKeys((await client.listTools()).tools.find((tool) => tool.name === 'recall_memory'));
+    assert.deepStrictEqual(await pick(remote), await pick(stdio));
   } finally {
-    // Every fixture carries its transport's root tag regardless of which
-    // per-scenario namespace it also has, so one bulk delete per namespace is
-    // enough. Bulk delete by tag exists only on the stdio transport for now,
-    // so cleanup for both runs there. Swallowed so a cleanup failure can never
-    // mask an assertion failure.
-    await stdio
-      .callTool({
-        name: 'delete_memory',
-        arguments: { tags: [remoteTag, stdioTag] },
-      })
-      .catch(() => {});
     await close();
   }
 });

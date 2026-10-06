@@ -54,6 +54,16 @@ const JSON_COUNT_RE = new RegExp(
 const LABEL_COUNT_RE = /((?:Memory|Vector) count: )\d+/g;
 
 /**
+ * Strip how a transport frames a tool error, leaving the message itself. The
+ * remote returns an isError result prefixed "AutoMem error: "; stdio prefixes
+ * "Error: ", and its recall handler lets errors escape as JSON-RPC errors,
+ * which the harness records as "THREW: MCP error <code>: ".
+ */
+export function stripErrorFraming(text) {
+  return String(text).replace(/^(?:THREW: )?(?:MCP error -?\d+: |AutoMem error: |Error: )/, '');
+}
+
+/**
  * Replace values that legitimately differ run-to-run so two transports can be
  * compared on the parts that must match.
  *

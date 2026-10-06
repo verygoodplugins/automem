@@ -12,6 +12,6 @@
     "express": "^4.19.2"
   },
   "devDependencies": {
-    "@verygoodplugins/mcp-automem": "^0.15.0"
+    "@verygoodplugins/mcp-automem": "^0.16.0"
   }
 }
