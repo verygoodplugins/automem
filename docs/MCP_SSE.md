@@ -194,6 +194,36 @@ Example:
 { "time_query": "last 7 days", "sort": "time_desc" }
 ```
 
+## Recall Modes
+
+The bridge's `recall_memory` matches the stdio package
+(`@verygoodplugins/mcp-automem`) argument for argument. Which arguments you
+pass decides the mode:
+
+- **ID fetch:** `{ "memory_id": "<uuid>" }` returns that one memory in full
+  and ignores every other argument. An unknown id is an empty result. An id
+  that is not a UUID is an error.
+- **Tag enumeration:** `{ "tags": ["my-project"], "exhaustive": true, "limit": 50, "offset": 0 }`
+  lists every memory carrying any of the tags, using exact matching, and
+  returns `has_more` for paging. Query, time, exclusion, expansion, state,
+  score and sort arguments are rejected in this mode. The context hints
+  (`context`, `language`, `active_path`, `context_tags`, `context_types`,
+  `priority_ids`) and `per_query_limit` are ignored, as in the stdio client.
+- **Ranked recall (default):** hybrid search. These arguments pass through to
+  `GET /recall`:
+  - `exclude_tags`
+  - `current_only` / `state_mode` / `state_debug`
+  - `recency_bias`
+  - `min_score` and `adaptive_floor`
+  - `expand_respect_tags`
+
+The `text`, `items` and `detailed` formats show 400-character previews and stay
+within a response budget of 18,000 estimated tokens by default
+(`AUTOMEM_RECALL_TOKEN_BUDGET`). Fetch the full record by `memory_id`. Every
+successful call also returns `structuredContent`. See
+[MCP_TRANSPORT_PARITY.md](MCP_TRANSPORT_PARITY.md) for how the two transports
+are kept in step.
+
 ---
 
 ## Client Setup
