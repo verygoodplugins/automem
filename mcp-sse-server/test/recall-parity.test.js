@@ -220,7 +220,8 @@ test('ID fetch of an unknown id is an empty result, not an error', async () => {
 
 test('ID fetch of a non-UUID is an error with the API message', async () => {
   // The remote rejects before calling the API (an id like ".." would otherwise
-  // resolve to the viewer route); stdio lets the API reject it. Same message.
+  // normalize to GET / and read as an unknown id); stdio lets the API reject it.
+  // Same message.
   const run = await callBoth({ memory_id: '67c0f41f' });
   assert.deepStrictEqual(run.remoteRequests, []);
   assert.deepStrictEqual(run.stdioRequests, ['GET /memory/67c0f41f']);

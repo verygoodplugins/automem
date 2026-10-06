@@ -574,10 +574,10 @@ export class AutoMemClient {
     };
   }
   async fetchMemoryById(memoryId, options) {
-    // Checked here, with the API's own rule and message, because ids the API
-    // would reject can resolve to other routes first: "by-tag" hits
-    // GET /memory/by-tag, and ".." normalizes to the viewer at "/", whose HTML
-    // would be read back as a memory.
+    // Checked here, with the API's own rule and message, because the id lands in
+    // the URL path, where an id the API would reject can reach another route
+    // first: "by-tag" hits GET /memory/by-tag (a different 400), and ".."
+    // normalizes to GET / (a 404 that reads as an unknown id).
     if (!isUuidAcceptedByApi(memoryId)) {
       throw new Error(INVALID_MEMORY_ID_MESSAGE);
     }

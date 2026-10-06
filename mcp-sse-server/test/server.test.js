@@ -188,7 +188,7 @@ test("recall_memory memory_id fetches that one memory instead of a ranked search
 
 test("recall_memory rejects a memory_id that is not a UUID before calling AutoMem", async () => {
   // Never forwarded: "by-tag" would hit GET /memory/by-tag, and ".." normalizes
-  // to the viewer route at "/". At UUID length, "/" and "." are still refused.
+  // to GET /. At UUID length, "/" and "." are still refused.
   await withStubbedUpstream(
     () => ({ status: "success", results: [], count: 0 }),
     async ({ callTool, requested }) => {

@@ -119,15 +119,19 @@ Two differences remain, both deliberate:
 | Difference                  | remote                                                                 | stdio                                                                                                        |
 | --------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Error framing               | `isError` result, `AutoMem error: <msg> (request_id: …)`               | `Error: <msg>`. Its recall handler returns the builder's promise unawaited, so recall errors currently reach the client as JSON-RPC errors |
-| Non-UUID `memory_id`        | Rejected before calling AutoMem, with the API's own message            | Sent to the API, which rejects it with the same message                                                       |
+| Non-UUID `memory_id`        | Rejected before calling AutoMem, with the API's own message            | Sent to the API, which rejects it with the same message, except route-shaped ids (see below)                  |
 
-The pre-check exists because ids that are not UUIDs can resolve to other
-routes. `by-tag` hits `GET /memory/by-tag`, and `..` normalizes to the viewer
-at `/`. It applies the API's own rule, Python's `uuid.UUID()` and the
-`int(s, 16)` grammar it parses with, so braces, a `urn:uuid:` prefix,
-unhyphenated ids, a `0x` prefix and underscores still go to the API exactly as
-stdio sends them. Nothing that rule accepts can contain `/` or `.`. The message
-inside the framing must match on both sides.
+The pre-check exists because the id lands in the URL path, where an id the API
+would reject can reach another route before the API validates it. `by-tag` hits
+`GET /memory/by-tag` and gets that route's 400 ("'tags' query parameter is
+required"), and `..` normalizes to `GET /`, whose 404 reads as an unknown id.
+Stdio does both today (mcp-automem#231). Neither returns data, but any route
+added under `/memory/` later would be reachable the same way. The pre-check
+applies the API's own rule, Python's `uuid.UUID()` and the `int(s, 16)` grammar
+it parses with, so braces, a `urn:uuid:` prefix, unhyphenated ids, a `0x`
+prefix and underscores still go to the API exactly as stdio sends them. Nothing
+that rule accepts can contain `/` or `.`. The message inside the framing must
+match on both sides.
 
 `mcp-sse-server/test/recall-parity.test.js` enforces this without a live stack,
 so CI's `node-test` job runs it on every PR. It drives the published package's
