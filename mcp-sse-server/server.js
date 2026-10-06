@@ -268,9 +268,32 @@ class InMemoryEventStore {
 // (src/recall-memory.ts). test/recall-parity.test.js runs the stdio package's
 // own code against the same canned API responses and fails on any difference.
 
-// Matches the API's own rejection (automem/api/memory.py _validate_memory_id).
+// The API's own message and rule (automem/api/memory.py _validate_memory_id).
 const INVALID_MEMORY_ID_MESSAGE = 'memory_id must be a valid UUID';
-const CANONICAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// What Python's int(s, 16) parses: optional whitespace on either end, a "+", a
+// "0x" prefix, then hex digits with single underscores between them. Any Unicode
+// decimal digit counts as a digit.
+const PY_SPACE = '[\\t-\\r \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*';
+const PY_HEX_DIGIT = '(?:[a-fA-F]|\\p{Nd})';
+const PY_HEX_INT_RE = new RegExp(
+  `^${PY_SPACE}\\+?(?:0[xX]_?)?${PY_HEX_DIGIT}(?:_?${PY_HEX_DIGIT})*${PY_SPACE}$`,
+  'u'
+);
+
+// Python's uuid.UUID(), which the API validates with: it drops "urn:" and
+// "uuid:", strips braces from both ends and removes every hyphen, then needs 32
+// characters that int(s, 16) parses. Nothing it accepts can contain "/" or ".",
+// so an accepted id cannot reach another route. An accepted id is forwarded
+// exactly as the stdio client forwards it.
+function isUuidAcceptedByApi(value) {
+  const hex = value
+    .replaceAll('urn:', '')
+    .replaceAll('uuid:', '')
+    .replace(/^[{}]+|[{}]+$/g, '')
+    .replaceAll('-', '');
+  return [...hex].length === 32 && PY_HEX_INT_RE.test(hex);
+}
 
 // GET /memory/by-tag cannot honor these, so enumeration mode rejects them.
 const RANKED_ONLY_RECALL_PARAMS = [
@@ -551,10 +574,11 @@ export class AutoMemClient {
     };
   }
   async fetchMemoryById(memoryId, options) {
-    // Checked here, with the API's own message, because ids that are not UUIDs
-    // can resolve to other routes: "by-tag" hits GET /memory/by-tag, and ".."
-    // normalizes to the viewer at "/", whose HTML would be read back as a memory.
-    if (!CANONICAL_UUID_RE.test(memoryId)) {
+    // Checked here, with the API's own rule and message, because ids the API
+    // would reject can resolve to other routes first: "by-tag" hits
+    // GET /memory/by-tag, and ".." normalizes to the viewer at "/", whose HTML
+    // would be read back as a memory.
+    if (!isUuidAcceptedByApi(memoryId)) {
       throw new Error(INVALID_MEMORY_ID_MESSAGE);
     }
     try {

@@ -63,8 +63,10 @@ export const MEMORIES = [
   },
 ];
 
-// Python's uuid.UUID(), which GET /memory/<id> uses to validate: it accepts
-// braces, a urn:uuid: prefix and missing hyphens, and rejects everything else.
+// Python's uuid.UUID(), which GET /memory/<id> uses to validate, accepts braces,
+// a urn:uuid: prefix and missing hyphens. It also takes int(s, 16) grammar (0x,
+// underscores) that no stored id uses; this fake answers those with the 400 and
+// both transports see the same response.
 function isPythonUuid(value) {
   const hex = value
     .replaceAll('urn:', '')

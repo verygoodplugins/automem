@@ -123,7 +123,11 @@ Two differences remain, both deliberate:
 
 The pre-check exists because ids that are not UUIDs can resolve to other
 routes. `by-tag` hits `GET /memory/by-tag`, and `..` normalizes to the viewer
-at `/`. The message inside the framing must match on both sides.
+at `/`. It applies the API's own rule, Python's `uuid.UUID()` and the
+`int(s, 16)` grammar it parses with, so braces, a `urn:uuid:` prefix,
+unhyphenated ids, a `0x` prefix and underscores still go to the API exactly as
+stdio sends them. Nothing that rule accepts can contain `/` or `.`. The message
+inside the framing must match on both sides.
 
 `mcp-sse-server/test/recall-parity.test.js` enforces this without a live stack,
 so CI's `node-test` job runs it on every PR. It drives the published package's

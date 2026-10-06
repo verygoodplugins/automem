@@ -188,16 +188,44 @@ test("recall_memory memory_id fetches that one memory instead of a ranked search
 
 test("recall_memory rejects a memory_id that is not a UUID before calling AutoMem", async () => {
   // Never forwarded: "by-tag" would hit GET /memory/by-tag, and ".." normalizes
-  // to the viewer route at "/".
+  // to the viewer route at "/". At UUID length, "/" and "." are still refused.
   await withStubbedUpstream(
     () => ({ status: "success", results: [], count: 0 }),
     async ({ callTool, requested }) => {
-      for (const memoryId of ["67c0f41f", "by-tag", ".."]) {
+      const routeShaped = ["a".repeat(30) + "..", "a".repeat(31) + "/"];
+      for (const memoryId of ["67c0f41f", "by-tag", "..", ...routeShaped]) {
         const result = await callTool("recall_memory", { memory_id: memoryId });
         assert.equal(result.isError, true, memoryId);
         assert.match(result.content[0].text, /^AutoMem error: memory_id must be a valid UUID \(request_id: /);
       }
       assert.deepEqual(requested, []);
+    },
+  );
+});
+
+test("recall_memory forwards every memory_id the API's uuid.UUID accepts", async () => {
+  const id = "67c0f41f-3818-48fd-8dac-af659cbb2a4f";
+  // uuid.UUID() also parses the rest with int(s, 16), which takes a 0x prefix,
+  // underscores between digits, padding whitespace and any Unicode digit.
+  const intGrammar = [
+    `0x${"a".repeat(30)}`,
+    `${"a".repeat(16)}_${"a".repeat(15)}`,
+    `{ ${"a".repeat(30)} }`,
+    `\u0661${"a".repeat(31)}`,
+  ];
+  const spellings = [`{${id}}`, `urn:uuid:${id}`, id.replaceAll("-", ""), id.toUpperCase(), ...intGrammar];
+  await withStubbedUpstream(
+    () => undefined,
+    async ({ callTool, requested }) => {
+      for (const memoryId of spellings) {
+        const result = await callTool("recall_memory", { memory_id: memoryId });
+        assert.equal(result.isError, undefined, memoryId);
+        assert.equal(result.structuredContent.mode, "id_fetch");
+      }
+      assert.deepEqual(
+        requested,
+        spellings.map((memoryId) => `/memory/${encodeURIComponent(memoryId)}`),
+      );
     },
   );
 });

@@ -230,6 +230,17 @@ test('ID fetch of a non-UUID is an error with the API message', async () => {
   assert.equal(errorCore(run.remoteResult), errorCore(run.stdioResult));
 });
 
+test('ID fetch forwards every UUID spelling the API accepts, as stdio does', async () => {
+  // Python's uuid.UUID() takes braces, a urn:uuid: prefix, missing hyphens and
+  // int(s, 16) grammar such as 0x and underscores. The remote's pre-check must
+  // not be stricter than the API it guards.
+  const intGrammar = [`0x${'a'.repeat(30)}`, `${'a'.repeat(16)}_${'a'.repeat(15)}`];
+  for (const memoryId of [`{${UUID_A}}`, `urn:uuid:${UUID_A}`, UUID_A.replaceAll('-', ''), ...intGrammar]) {
+    const { remoteRequests } = await assertParity({ memory_id: memoryId });
+    assert.deepStrictEqual(remoteRequests, [`GET /memory/${encodeURIComponent(memoryId)}`]);
+  }
+});
+
 test('a blank memory_id means no ID fetch, on both transports', async () => {
   await assertParity({ memory_id: '   ', query: 'parity' });
 });
