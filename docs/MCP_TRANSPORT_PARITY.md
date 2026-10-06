@@ -142,6 +142,17 @@ port them here:
   to `prefix`.
 - The `limit` description says the default is 5. Enumeration actually uses
   `/memory/by-tag`'s default of 20.
+- The response budget always keeps the first ranked result. One oversized
+  result can still exceed it, most likely in `format: "json"`, which keeps
+  full metadata and relations.
+- `format: "json"` and ID fetches drop node state fields such as `t_valid`,
+  `t_invalid` and `archived`. The bridge's previous json output passed the raw
+  `/recall` memory through, so hosted audit callers using `current_only: false`
+  lose those fields with this port.
+- Enumeration ignores `context`, `language`, `active_path`, `context_tags`,
+  `context_types`, `priority_ids` and `per_query_limit` instead of rejecting
+  them, even though its error message lists only `tags`, `limit`, `offset`,
+  `tag_mode`, `tag_match` and `format` as accepted.
 
 ## Accepted transport-level differences
 
