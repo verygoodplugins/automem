@@ -138,25 +138,33 @@ Bumping the `@verygoodplugins/mcp-automem` devDependency re-runs it against the
 new release. If it fails, port the change into `server.js` rather than loosening
 the test.
 
-Known gaps in the shared contract itself. Fix them in `mcp-automem` first, then
-port them here:
+Known gaps in the shared contract itself, each tracked in `mcp-automem`. Fix
+them there first, then port them here:
 
-- `offset` in ranked mode is forwarded to `/recall`, which does not read it.
+- `offset` in ranked mode is forwarded to `/recall`, which does not read it
+  (mcp-automem#228).
 - The `tag_match` description says `exact` is the default; `/recall` defaults
-  to `prefix`.
+  to `prefix` (mcp-automem#228).
 - The `limit` description says the default is 5. Enumeration actually uses
-  `/memory/by-tag`'s default of 20.
+  `/memory/by-tag`'s default of 20 (mcp-automem#228).
 - The response budget always keeps the first ranked result. One oversized
   result can still exceed it, most likely in `format: "json"`, which keeps
-  full metadata and relations.
+  full metadata and relations (mcp-automem#225).
+- The response budget trims enumeration pages but keeps the upstream
+  `has_more` and `offset`, so a loop that follows `has_more` can stop early
+  and skip records (mcp-automem#230).
 - `format: "json"` and ID fetches drop node state fields such as `t_valid`,
   `t_invalid` and `archived`. The bridge's previous json output passed the raw
   `/recall` memory through, so hosted audit callers using `current_only: false`
-  lose those fields with this port.
+  lose those fields with this port (mcp-automem#226).
 - Enumeration ignores `context`, `language`, `active_path`, `context_tags`,
   `context_types`, `priority_ids` and `per_query_limit` instead of rejecting
   them, even though its error message lists only `tags`, `limit`, `offset`,
-  `tag_mode`, `tag_match` and `format` as accepted.
+  `tag_mode`, `tag_match` and `format` as accepted (mcp-automem#227).
+- Text output never marks which results `scope_fallback` pulled from outside
+  the requested tags. `text` and `detailed` carry one header note and `items`
+  carries none; only `structuredContent` flags each result. The bridge's
+  previous renderer marked each one (mcp-automem#229).
 
 ## Accepted transport-level differences
 
