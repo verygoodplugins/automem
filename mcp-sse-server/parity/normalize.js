@@ -29,7 +29,8 @@ export function normalizeKeys(value) {
 const REQUEST_ID_SUFFIX_RE = /\s*\(request_id: [^)]*\)/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
-const SCORE_RE = /(score=|Score: |"final_score":\s*|"score":\s*)[\d.]+/g;
+// `recency` is the one score component that moves with the clock.
+const SCORE_RE = /(score=|Score: |"final_score":\s*|"score":\s*|"recency":\s*)[\d.]+/g;
 const MS_RE = /("query_time_ms":\s*)[\d.]+/g;
 
 // Global service counters. The two transports run their scenario batches
