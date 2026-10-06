@@ -189,7 +189,7 @@ It lives in `mcp-sse-server/parity/` with its entry point at
    - `exclude_tags`;
    - the state and score params.
 
-   These checks hold even while 1–3 are red for the other five tools.
+   These checks hold even while checks 1 to 3 are red for the other five tools.
    Rendering is compared byte for byte in `test/recall-parity.test.js`
    instead. Against a live service the rendered text also picks up background
    work that reaches one transport's fixtures before the other's: enrichment

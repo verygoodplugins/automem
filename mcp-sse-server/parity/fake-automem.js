@@ -4,8 +4,8 @@
  * It answers the three routes recall_memory uses with the shapes automem/api
  * returns, so the remote bridge and the published stdio package can be driven
  * through identical upstream responses without a live stack. Every request is
- * recorded, which is how the guard checks that both clients ask the API the
- * same thing — not only that they render the same answer.
+ * recorded, so the guard can check that both clients ask the API for the same
+ * thing as well as render the same answer.
  *
  * Lives outside test/ because `node --test` runs every file under test/.
  */

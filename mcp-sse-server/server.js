@@ -381,7 +381,7 @@ export class AutoMemClient {
   // to be dropped here, so an ID fetch fell through to an unfiltered ranked
   // search and returned unrelated memories without an error.
   async recallMemory(args = {}, options) {
-    // Mode 1: ID fetch — short-circuit to GET /memory/{id}. Every other param is ignored.
+    // Mode 1, ID fetch: GET /memory/{id}. Every other param is ignored.
     if (typeof args.memory_id === 'string' && args.memory_id.trim().length > 0) {
       const memory = await this.fetchMemoryById(args.memory_id.trim(), options);
       return {
@@ -391,7 +391,7 @@ export class AutoMemClient {
       };
     }
 
-    // Mode 2: tag enumeration — GET /memory/by-tag for paginated exact-match listing.
+    // Mode 2, tag enumeration: GET /memory/by-tag, paginated exact-match listing.
     if (args.exhaustive === true) {
       const cleanTags = nonEmptyTags(args.tags);
       if (cleanTags.length === 0) {
@@ -424,7 +424,7 @@ export class AutoMemClient {
       return this.listMemoriesByTag(cleanTags, args.limit, args.offset, options);
     }
 
-    // Mode 3: ranked retrieval — GET /recall.
+    // Mode 3, ranked retrieval: GET /recall.
     const p = new URLSearchParams();
     if (args.query) p.set('query', args.query);
     if (Array.isArray(args.queries) && args.queries.length > 0) {
