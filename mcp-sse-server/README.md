@@ -12,4 +12,3 @@ Express service that bridges the AutoMem HTTP API to MCP over SSE.
 - `PORT` (optional) – Listener port (default 8080).
 
 > **Note**: `AUTOMEM_ENDPOINT` is still supported as a legacy fallback but `AUTOMEM_API_URL` is preferred.
-
