@@ -12,7 +12,8 @@
 # develop, and release-please-action otherwise opens the Release PR against
 # develop. Merging that PR never tags, because this workflow only runs on main.
 #
-# Docs dispatch is handled separately by docs-dispatch.yml on main pushes.
+# After a release, the docs-dispatch job asks automem-website to document it
+# (docs on automem.ai follow published releases, not every push to main).
 #
 # Commit message format:
 #   feat: add new feature          → minor version bump (0.9.0 → 0.10.0)
@@ -47,3 +48,11 @@ jobs:
           release-type: python
           target-branch: main
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+  docs-dispatch:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/docs-dispatch.yml
+    with:
+      release_tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit
