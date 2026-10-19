@@ -105,7 +105,7 @@ allowlists exactly these and nothing else.
 | Auth mechanisms        | `Authorization: Bearer`, `X-API-Key` / `X-API-Token`, `?api_key=` / `?apiKey=` / `?api_token=` | `Authorization: Bearer` only | Browser and EventSource clients cannot set headers.                                                                    |
 | Error text suffix      | ` (request_id: <uuid>)`                                                                 | none                         | Observability on a hosted service. Same code path — the bridge supplies a `requestIdProvider`, stdio does not.         |
 | Timeout / retry policy | `UPSTREAM_TIMEOUT_MS` (15 s), `UPSTREAM_MAX_RETRIES` (2)                                | 25 s, 3                      | Tuned per deployment; injected via `AutoMemConfig`.                                                                    |
-| Transport surface      | `/mcp`, `/mcp/sse`, `/mcp/messages`, `/health`, `/ready`, `/alexa`                       | stdio only                   | Not part of the MCP tool surface.                                                                                      |
+| Transport surface      | `/mcp`, `/mcp/sse`, `/mcp/messages`, `/health`, `/ready`                                 | stdio only                   | Not part of the MCP tool surface.                                                                                      |
 
 Everything else — tool names, order, `title`, `description`, `inputSchema`,
 `outputSchema`, `annotations`, `_meta`, server `instructions`, and every byte of

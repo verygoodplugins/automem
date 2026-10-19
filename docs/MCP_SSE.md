@@ -394,27 +394,6 @@ retrieve relevant context before answering questions.
 
 ---
 
-## Advanced: Alexa Integration
-
-The MCP bridge also includes an Alexa skill endpoint:
-
-**Endpoint**: `POST /alexa`
-
-**Supported Intents**:
-
-- `RememberIntent`: "Alexa, tell AutoMem to remember {note}"
-- `RecallIntent`: "Alexa, ask AutoMem what I said about {query}"
-
-**Setup**:
-
-1. Create Alexa Custom Skill in developer console
-2. Point HTTPS endpoint to: `https://your-mcp-bridge.up.railway.app/alexa`
-3. Configure intents with sample utterances
-
-See `mcp-sse-server/README.md` for full Alexa configuration.
-
----
-
 ## Security Notes
 
 - **No-token fallback (important)**: the bridge forwards the *client's* token upstream, but when the client sends none it falls back to the bridge service's own `AUTOMEM_API_TOKEN` env var. So **if that env var is set, the bridge is reachable with no client token at all** — the URL alone becomes the credential. A *wrong* client token is still rejected upstream; only a *missing* one triggers the fallback. To **require** a client token (`Authorization: Bearer`, `X-API-Key`, or `?api_token=`), **remove `AUTOMEM_API_TOKEN` from the mcp-sse-server service** — anonymous requests then get `401`. Trade-off: the `/health` upstream probe shares that env var, so removing it makes `/health` report `degraded`/`upstream: unconfigured` (cosmetic — liveness still returns `200` and tokened MCP calls work). A cleaner long-term fix is a dedicated probe token separate from the forwarded client token.
