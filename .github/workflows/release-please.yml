@@ -55,4 +55,4 @@ jobs:
     uses: ./.github/workflows/docs-dispatch.yml
     with:
       release_tag: ${{ needs.release-please.outputs.tag_name }}
-    secrets: inherit
+    secrets: inherit # pragma: allowlist secret
