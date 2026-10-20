@@ -101,37 +101,23 @@ memories back with `isError: false`: the bridge dropped `memory_id` and ran an
 unfiltered ranked search. Agents asking for one memory by ID got plausible
 wrong answers, and in one trial a model invented a cause to fill the gap.
 
-The bridge's `recall_memory` is now a port of `mcp-automem` 0.16.0:
+The bridge's `recall_memory` is now a port of `mcp-automem` 0.17.0:
 
 - **Definition:** `title`, `description`, `annotations`, `_meta`,
   `inputSchema` and `outputSchema` are copied from `src/mcp-surface.ts`.
 - **Routing and request mapping:** from `src/automem-client.ts`.
   - `memory_id` goes to `GET /memory/{id}` and ignores every other argument.
   - `exhaustive` goes to `GET /memory/by-tag`, using stdio's validation.
-  - Ranked recall forwards `exclude_tags`, `offset`, `current_only`,
+  - Ranked recall forwards `exclude_tags`, `current_only`,
     `state_mode`, `state_debug`, `recency_bias`, `min_score`,
     `adaptive_floor` and `expand_respect_tags` with the same type guards.
 - **Rendering:** from `src/recall-memory.ts`. This covers previews, the
   response budget and `structuredContent`.
 
-Two differences remain, both deliberate:
-
-| Difference                  | remote                                                                 | stdio                                                                                                        |
-| --------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Error framing               | `isError` result, `AutoMem error: <msg> (request_id: …)`               | `Error: <msg>`. Its recall handler returns the builder's promise unawaited, so recall errors currently reach the client as JSON-RPC errors |
-| Non-UUID `memory_id`        | Rejected before calling AutoMem, with the API's own message            | Sent to the API, which rejects it with the same message, except route-shaped ids (see below)                  |
-
-The pre-check exists because the id lands in the URL path, where an id the API
-would reject can reach another route before the API validates it. `by-tag` hits
-`GET /memory/by-tag` and gets that route's 400 ("'tags' query parameter is
-required"), and `..` normalizes to `GET /`, whose 404 reads as an unknown id.
-Stdio does both today (mcp-automem#231). Neither returns data, but any route
-added under `/memory/` later would be reachable the same way. The pre-check
-applies the API's own rule, Python's `uuid.UUID()` and the `int(s, 16)` grammar
-it parses with, so braces, a `urn:uuid:` prefix, unhyphenated ids, a `0x`
-prefix and underscores still go to the API exactly as stdio sends them. Nothing
-that rule accepts can contain `/` or `.`. The message inside the framing must
-match on both sides.
+Recall error framing remains transport-specific: the bridge returns
+`AutoMem error: <msg> (request_id: …)` while stdio returns `Error: <msg>`.
+Both return `isError` tool results, and both reject invalid UUID path ids before
+contacting the API, using the same Python-compatible validation.
 
 `mcp-sse-server/test/recall-parity.test.js` enforces this without a live stack,
 so CI's `node-test` job runs it on every PR. It drives the published package's
@@ -142,33 +128,21 @@ Bumping the `@verygoodplugins/mcp-automem` devDependency re-runs it against the
 new release. If it fails, port the change into `server.js` rather than loosening
 the test.
 
-Known gaps in the shared contract itself, each tracked in `mcp-automem`. Fix
-them there first, then port them here:
+The 0.17.0 release fixed the shared recall gaps discovered during review
+(mcp-automem#224–232); the bridge now ports those fixes too:
 
-- `offset` in ranked mode is forwarded to `/recall`, which does not read it
-  (mcp-automem#228).
-- The `tag_match` description says `exact` is the default; `/recall` defaults
-  to `prefix` (mcp-automem#228).
-- The `limit` description says the default is 5. Enumeration actually uses
-  `/memory/by-tag`'s default of 20 (mcp-automem#228).
-- The response budget always keeps the first ranked result. One oversized
-  result can still exceed it, most likely in `format: "json"`, which keeps
-  full metadata and relations (mcp-automem#225).
-- The response budget trims enumeration pages but keeps the upstream
-  `has_more` and `offset`, so a loop that follows `has_more` can stop early
-  and skip records (mcp-automem#230).
-- `format: "json"` and ID fetches drop node state fields such as `t_valid`,
-  `t_invalid` and `archived`. The bridge's previous json output passed the raw
-  `/recall` memory through, so hosted audit callers using `current_only: false`
-  lose those fields with this port (mcp-automem#226).
-- Enumeration ignores `context`, `language`, `active_path`, `context_tags`,
-  `context_types`, `priority_ids` and `per_query_limit` instead of rejecting
-  them, even though its error message lists only `tags`, `limit`, `offset`,
-  `tag_mode`, `tag_match` and `format` as accepted (mcp-automem#227).
-- Text output never marks which results `scope_fallback` pulled from outside
-  the requested tags. `text` and `detailed` carry one header note and `items`
-  carries none; only `structuredContent` flags each result. The bridge's
-  previous renderer marked each one (mcp-automem#229).
+- Ranked `offset` is rejected rather than silently ignored; enumeration rejects
+  all ranked context hints and `per_query_limit`.
+- JSON and ID fetches retain `t_valid`, `t_invalid`, and `archived`.
+- Text marks outside-scope items, and relation stubs retain `from` and `kind`.
+- The budget measures the entire serialized response, including both text and
+  structured diagnostics, and compacts oversized JSON results where possible.
+- Trimmed enumeration pages expose `next_offset` and `has_more: true`; an item
+  that cannot fit produces an actionable error rather than an endless page.
+- Schema examples use UUIDs and describe the actual defaults.
+
+Focused differential tests cover these cases against the published 0.17.0
+package; no deliberate recall contract divergence remains.
 
 ## Accepted transport-level differences
 

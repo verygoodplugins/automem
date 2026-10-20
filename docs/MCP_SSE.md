@@ -205,7 +205,7 @@ pass decides the mode:
   that is not a UUID is an error.
 - **Tag enumeration:** `{ "tags": ["my-project"], "exhaustive": true, "limit": 50, "offset": 0 }`
   lists every memory carrying any of the tags, using exact matching, and
-  returns `has_more` for paging. Query, time, exclusion, expansion, state,
+  returns `has_more` and `next_offset` for paging. Follow `next_offset` when a response is budget-trimmed. Query, time, exclusion, expansion, state,
   score and sort arguments are rejected in this mode. The context hints
   (`context`, `language`, `active_path`, `context_tags`, `context_types`,
   `priority_ids`) and `per_query_limit` are ignored, as in the stdio client.

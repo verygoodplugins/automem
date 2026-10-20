@@ -121,10 +121,8 @@ async function callRecall(client, args) {
   try {
     return onTheWire(await client.callTool({ name: 'recall_memory', arguments: args }));
   } catch (error) {
-    // stdio's handler returns the recall promise without awaiting it
-    // (mcp-automem src/mcp-surface.ts), so its catch never runs and a recall
-    // error reaches the client as a JSON-RPC error. The remote awaits and
-    // returns an isError result, which is what MCP specifies for tool errors.
+    // Preserve transport failures for a useful parity assertion. Tool errors
+    // on both transports are returned as isError results since stdio 0.17.0.
     return { thrown: error.message };
   }
 }
@@ -219,12 +217,10 @@ test('ID fetch of an unknown id is an empty result, not an error', async () => {
 });
 
 test('ID fetch of a non-UUID is an error with the API message', async () => {
-  // The remote rejects before calling the API (an id like ".." would otherwise
-  // normalize to GET / and read as an unknown id); stdio lets the API reject it.
-  // Same message.
+  // Both transports reject invalid path ids before contacting the API.
   const run = await callBoth({ memory_id: '67c0f41f' });
   assert.deepStrictEqual(run.remoteRequests, []);
-  assert.deepStrictEqual(run.stdioRequests, ['GET /memory/67c0f41f']);
+  assert.deepStrictEqual(run.stdioRequests, []);
   assert.equal(run.remoteResult.isError, true);
   assert.ok(run.stdioResult.isError || run.stdioResult.thrown, 'stdio must fail too');
   assert.equal(errorCore(run.remoteResult), 'memory_id must be a valid UUID');
@@ -294,6 +290,7 @@ test('enumeration rejects what GET /memory/by-tag cannot honor, without calling 
     { exhaustive: true, tags: ['parity'], tag_mode: 'all' },
     { exhaustive: true, tags: ['parity'], query: 'x', exclude_tags: ['db'], current_only: false },
     { exhaustive: true, tags: ['parity'], sort: 'time_desc', min_score: 0 },
+    ...['context', 'language', 'active_path', 'context_tags', 'context_types', 'priority_ids', 'per_query_limit'].map((key) => ({ exhaustive: true, tags: ['parity'], [key]: key.endsWith('tags') || key.endsWith('types') || key.endsWith('ids') ? ['x'] : key === 'per_query_limit' ? 1 : 'x' })),
   ];
   for (const args of rejected) {
     const run = await assertParity(args);
@@ -317,11 +314,10 @@ test('ranked recall forwards exclude_tags and the state, recency and score param
     adaptive_floor: false,
     expand_respect_tags: true,
     scope_fallback: true,
-    offset: 3,
   });
   assert.deepStrictEqual(remoteRequests, [
     'GET /recall?adaptive_floor=false&current_only=false&exclude_tags=deprecated&exclude_tags=old' +
-      '&expand_respect_tags=true&min_score=0.25&offset=3&query=database&recency_bias=on' +
+      '&expand_respect_tags=true&min_score=0.25&query=database&recency_bias=on' +
       '&scope_fallback=true&state_debug=true&state_mode=history&tags=parity',
   ]);
 });
@@ -406,4 +402,76 @@ test('ranked recall applies the same response budget', async () => {
     );
     assert.equal(remoteResult.structuredContent.truncation?.applied, true, format);
   }
+});
+
+
+test('ranked recall rejects ignored pagination without contacting the API', async () => {
+  const run = await assertParity({ query: 'database', offset: 3 });
+  assert.equal(run.remoteResult.isError, true);
+  assert.deepStrictEqual(run.remoteRequests, []);
+});
+
+test('json and ID fetch preserve memory state fields', async () => {
+  const record = MEMORIES[0];
+  Object.assign(record, { t_valid: '2026-09-01', t_invalid: '2026-10-01', archived: false });
+  try {
+    for (const args of [{ memory_id: UUID_A, format: 'json' }, { query: 'state', format: 'json' }]) {
+      const run = await assertParity(args);
+      const item = run.remoteResult.structuredContent.results.find((item) => item.memory_id === UUID_A);
+      assert.equal(item.t_valid, record.t_valid);
+      assert.equal(item.t_invalid, record.t_invalid);
+      assert.equal(item.archived, false);
+    }
+  } finally {
+    delete record.t_valid; delete record.t_invalid; delete record.archived;
+  }
+});
+
+test('whole-response budget bounds huge first results and diagnostics', async () => {
+  const recall = structuredClone(richRecallResponse(new URLSearchParams()));
+  recall.results[0].memory.metadata = { huge: 'x'.repeat(100000) };
+  recall.state_filter = { suppressed_count: 1, replacement_count: 0, suppressed: ['y'.repeat(100000)] };
+  for (const format of ['text', 'items', 'detailed', 'json']) {
+    const run = await assertParity({ query: 'budget', state_debug: true, format }, {
+      recall: () => recall, env: { AUTOMEM_RECALL_TOKEN_BUDGET: '2000' },
+    });
+    assert.ok(JSON.stringify(run.remoteResult).length <= 5000, format);
+    assert.ok(run.remoteResult.structuredContent.truncation?.applied, format);
+  }
+});
+
+test('trimmed enumeration pages preserve continuation and cannot loop forever', async () => {
+  const original = MEMORIES.map((memory) => ({ ...memory }));
+  for (const memory of MEMORIES) memory.content = 'long content '.repeat(1000);
+  try {
+    for (const format of ['text', 'items', 'detailed', 'json']) {
+      const run = await assertParity({ tags: ['parity'], exhaustive: true, limit: 200, format }, {
+        env: { AUTOMEM_RECALL_TOKEN_BUDGET: '700' },
+      });
+      const page = run.remoteResult.structuredContent;
+      if (run.remoteResult.isError) {
+        assert.match(errorCore(run.remoteResult), /does not fit the response budget/);
+      } else {
+        assert.ok(JSON.stringify(run.remoteResult).length <= 1750);
+        assert.ok(page.results.length > 0);
+        if (page.truncation?.omitted_results > 0) {
+          assert.equal(page.has_more, true);
+          assert.equal(page.next_offset, page.offset + page.results.length);
+        }
+      }
+    }
+  } finally {
+    MEMORIES.splice(0, MEMORIES.length, ...original);
+  }
+});
+
+
+test('items mark scope fallback and compact relations retain API endpoints', async () => {
+  const recall = structuredClone(richRecallResponse(new URLSearchParams()));
+  recall.results[0].relations = [{ from: UUID_B, type: 'RELATES_TO', strength: 0.8, kind: 'association' }];
+  const run = await assertParity({ query: 'scope', format: 'items' }, { recall: () => recall });
+  assert.ok(run.remoteResult.content.some((block) => block.text.includes('[outside tag scope]')));
+  const detailed = await assertParity({ query: 'scope', format: 'detailed' }, { recall: () => recall });
+  assert.equal(detailed.remoteResult.structuredContent.results[0].relations[0].from, UUID_B);
+  assert.equal(detailed.remoteResult.structuredContent.results[0].relations[0].kind, 'association');
 });

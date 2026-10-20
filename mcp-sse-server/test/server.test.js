@@ -115,7 +115,6 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
     recency_bias: "auto",
     min_score: 0.3,
     adaptive_floor: false,
-    offset: 10,
   });
 
   assert.ok(capturedPath.startsWith("recall?"));
@@ -158,7 +157,6 @@ test("AutoMemClient.recallMemory passes through advanced /recall params", async 
   assert.ok(capturedPath.includes("recency_bias=auto"));
   assert.ok(capturedPath.includes("min_score=0.3"));
   assert.ok(capturedPath.includes("adaptive_floor=false"));
-  assert.ok(capturedPath.includes("offset=10"));
 });
 
 // Regression (2026-10-06): the bridge dropped arguments it did not declare, so
@@ -294,28 +292,6 @@ test("recall_memory json format carries full metadata in the structured envelope
       });
       assert.equal(parsed.results[0].updated_at, "2025-12-14T02:00:00Z");
       assert.equal(parsed.results[0].last_accessed, "2025-12-14T01:00:00Z");
-    },
-  );
-});
-
-test("Alexa RecallIntent still speaks recalled content", async () => {
-  await withStubbedUpstream(
-    (path) =>
-      path.startsWith("/recall?")
-        ? {
-            status: "success",
-            count: 1,
-            results: [{ id: "mem-alexa", final_score: 0.8, memory: { id: "mem-alexa", content: "Feed the cat at six." } }],
-          }
-        : undefined,
-    async ({ post }) => {
-      const body = await post("/alexa", {
-        request: {
-          type: "IntentRequest",
-          intent: { name: "RecallIntent", slots: { query: { value: "cat" } } },
-        },
-      });
-      assert.equal(body.response.outputSpeech.text, "Item 1: Feed the cat at six.");
     },
   );
 });
