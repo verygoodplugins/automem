@@ -93,6 +93,57 @@ generate server-side UUID to prevent collision/overwrite attacks"). Neither
 transport could honor it. Rather than copy the lie into parity, `id` was dropped
 from the shared schema.
 
+## Status: `recall_memory` is at parity
+
+Closed after the audit. On 2026-10-06 AutoHub's agents called the hosted
+bridge with `recall_memory({ memory_id: "<uuid>" })` and got five unrelated
+memories back with `isError: false`: the bridge dropped `memory_id` and ran an
+unfiltered ranked search. Agents asking for one memory by ID got plausible
+wrong answers, and in one trial a model invented a cause to fill the gap.
+
+The bridge's `recall_memory` is now a port of `mcp-automem` 0.17.0:
+
+- **Definition:** `title`, `description`, `annotations`, `_meta`,
+  `inputSchema` and `outputSchema` are copied from `src/mcp-surface.ts`.
+- **Routing and request mapping:** from `src/automem-client.ts`.
+  - `memory_id` goes to `GET /memory/{id}` and ignores every other argument.
+  - `exhaustive` goes to `GET /memory/by-tag`, using stdio's validation.
+  - Ranked recall forwards `exclude_tags`, `current_only`,
+    `state_mode`, `state_debug`, `recency_bias`, `min_score`,
+    `adaptive_floor` and `expand_respect_tags` with the same type guards.
+- **Rendering:** from `src/recall-memory.ts`. This covers previews, the
+  response budget and `structuredContent`.
+
+Recall error framing remains transport-specific: the bridge returns
+`AutoMem error: <msg> (request_id: …)` while stdio returns `Error: <msg>`.
+Both return `isError` tool results, and both reject invalid UUID path ids before
+contacting the API, using the same Python-compatible validation.
+
+`mcp-sse-server/test/recall-parity.test.js` enforces this without a live stack,
+so CI's `node-test` job runs it on every PR. It drives the published package's
+own MCP server and client next to the bridge, against a canned AutoMem API
+(`mcp-sse-server/parity/fake-automem.js`), and requires the same tool
+definition, the same upstream requests, and the same client-visible result.
+Bumping the `@verygoodplugins/mcp-automem` devDependency re-runs it against the
+new release. If it fails, port the change into `server.js` rather than loosening
+the test.
+
+The 0.17.0 release fixed the shared recall gaps discovered during review
+(mcp-automem#224–232); the bridge now ports those fixes too:
+
+- Ranked `offset` is rejected rather than silently ignored; enumeration rejects
+  all ranked context hints and `per_query_limit`.
+- JSON and ID fetches retain `t_valid`, `t_invalid`, and `archived`.
+- Text marks outside-scope items, and relation stubs retain `from` and `kind`.
+- The budget measures the entire serialized response, including both text and
+  structured diagnostics, and compacts oversized JSON results where possible.
+- Trimmed enumeration pages expose `next_offset` and `has_more: true`; an item
+  that cannot fit produces an actionable error rather than an endless page.
+- Schema examples use UUIDs and describe the actual defaults.
+
+Focused differential tests cover these cases against the published 0.17.0
+package; no deliberate recall contract divergence remains.
+
 ## Accepted transport-level differences
 
 These are intentional and are **not** parity violations. The differential harness
@@ -121,14 +172,30 @@ make test-parity
 ```
 
 It lives in `mcp-sse-server/parity/` with its entry point at
-`mcp-sse-server/test/parity.test.js`, and it asserts three things:
+`mcp-sse-server/test/parity.test.js`, and it asserts these things:
 
 1. `tools/list` is deep-equal across transports after key-order normalization.
 2. Server capabilities and `instructions` match; `serverInfo.name` is allowlisted
    to differ.
-3. A 19-scenario `tools/call` matrix renders identical text on both, after
+3. A 27-scenario `tools/call` matrix renders identical text on both, after
    redacting values that legitimately vary per run (UUIDs, timestamps, scores,
    `query_time_ms`, and the per-transport tag namespace).
+4. The `recall_memory` entry in `tools/list` is identical, and every
+   `recall_memory` call in that matrix gets the same outcome on both
+   transports. An outcome is the error message, or the mode, the paging, and
+   which of the scenario's fixtures came back in what order. This covers:
+   - ID fetch: valid, unknown and non-UUID ids, and `memory_id` overriding
+     every other argument;
+   - enumeration paging and rejections;
+   - `exclude_tags`;
+   - the state and score params.
+
+   These checks hold even while checks 1 to 3 are red for the other five tools.
+   Rendering is compared byte for byte in `test/recall-parity.test.js`
+   instead. Against a live service the rendered text also picks up background
+   work that reaches one transport's fixtures before the other's: enrichment
+   summaries, JIT enrichment, temporal edges, and the clock-driven recency
+   score.
 
 The harness is gated on `AUTOMEM_RUN_PARITY_TESTS=1` because it needs a live
 service. Without the gate it skips cleanly, which is what CI's `node-test` job

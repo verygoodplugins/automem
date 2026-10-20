@@ -237,6 +237,95 @@ const SCENARIOS = [
     name: 'error: unknown tool',
     calls: [{ tool: 'no_such_tool', args: {} }],
   }),
+
+  // recall_memory modes. Appended rather than grouped with the recall
+  // scenarios above so the existing `<tag>-sN` namespaces keep their indices.
+
+  () => ({
+    // The 2026-10-06 report: an 8-char prefix ran a ranked search on the remote.
+    name: 'error: recall id fetch with a non-UUID id',
+    calls: [{ tool: 'recall_memory', args: { memory_id: '67c0f41f' } }],
+  }),
+
+  () => ({
+    name: 'recall id fetch of an unknown id',
+    calls: [{ tool: 'recall_memory', args: { memory_id: '00000000-0000-4000-8000-000000000000' } }],
+  }),
+
+  (s, t) => ({
+    // memory_id wins over every other param, including exhaustive without tags.
+    name: 'recall id fetch ignores other params',
+    calls: [
+      { tool: 'store_memory', args: { content: 'Parity id-fetch precedence target.', tags: [t, s], importance: 0.7 } },
+      {
+        tool: 'recall_memory',
+        args: {
+          memory_id: '$PREV.0.memory_id',
+          query: 'zzz-unrelated',
+          tags: [`${s}-absent`],
+          exhaustive: true,
+          limit: 1,
+        },
+      },
+    ],
+  }),
+
+  (s, t) => ({
+    // Distinct importance keeps by-tag ordering deterministic (see 'recall exhaustive').
+    name: 'recall exhaustive second page',
+    calls: [
+      { tool: 'store_memory', args: { content: 'Parity page one.', tags: [t, s], importance: 0.9 } },
+      { tool: 'store_memory', args: { content: 'Parity page two.', tags: [t, s], importance: 0.7 } },
+      { tool: 'store_memory', args: { content: 'Parity page three.', tags: [t, s], importance: 0.5 } },
+      { tool: 'recall_memory', args: { tags: [s], exhaustive: true, limit: 2, offset: 2 } },
+    ],
+  }),
+
+  (s) => ({
+    name: 'error: exhaustive with prefix tag_match',
+    calls: [{ tool: 'recall_memory', args: { tags: [s], exhaustive: true, tag_match: 'prefix' } }],
+  }),
+
+  (s) => ({
+    name: 'error: exhaustive with a ranked-only param',
+    calls: [{ tool: 'recall_memory', args: { tags: [s], exhaustive: true, query: 'Parity' } }],
+  }),
+
+  (s, t) => ({
+    // Exactly one fixture survives the exclusion, so ranking cannot reorder anything.
+    name: 'recall exclude_tags',
+    calls: [
+      { tool: 'store_memory', args: { content: 'Parity exclude keep.', tags: [t, s], importance: 0.9 } },
+      {
+        tool: 'store_memory',
+        args: { content: 'Parity exclude drop.', tags: [t, s, `${s}-drop`], importance: 0.7 },
+      },
+      {
+        tool: 'recall_memory',
+        args: { query: 'Parity exclude', tags: [s], exclude_tags: [`${s}-drop`] },
+      },
+    ],
+  }),
+
+  (s, t) => ({
+    name: 'recall state and score params',
+    calls: [
+      { tool: 'store_memory', args: { content: 'Parity state fixture.', tags: [t, s], importance: 0.7 } },
+      {
+        tool: 'recall_memory',
+        args: {
+          query: 'Parity state',
+          tags: [s],
+          current_only: false,
+          state_debug: true,
+          recency_bias: 'off',
+          min_score: 0,
+          adaptive_floor: false,
+          expand_respect_tags: true,
+        },
+      },
+    ],
+  }),
 ];
 
 export function buildScenarios(tag) {
