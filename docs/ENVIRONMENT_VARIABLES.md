@@ -614,3 +614,27 @@ After the full run, verify the service health and run a representative recall. `
 - [Railway Deployment Guide](./RAILWAY_DEPLOYMENT.md)
 - [Post-Deploy Checklist](./RAILWAY_DEPLOYMENT.md#post-deploy-checklist)
 - [Installation Guide](../INSTALLATION.md)
+
+### Background embedding retries
+
+`EMBEDDING_MAX_ATTEMPTS` defaults to `3`, including the initial attempt.
+`EMBEDDING_RETRY_BACKOFF_SECONDS` defaults to `1`; failed items wait 1, then
+2 seconds before subsequent attempts. Generated vectors are reused when only
+Qdrant storage fails, and successful items are not replayed. Failed items stay
+inflight until success or exhaustion, so duplicate API enqueues do not create
+concurrent retries. `/health.embedding` exposes successes, failed attempts,
+retries, exhausted memories, skipped deleted memories, last error and queue counts.
+A process restart resets these counters. Exhausted jobs remain eligible for the
+existing sync repair or an explicit `/admin/sync`.
+
+All vector writers preserve graph temporal bounds, archive state, relevance and
+hierarchical tag prefixes. Existing incomplete vector payloads are not repaired
+just by upgrading: run `POST /admin/reembed` with `{"force": true}` or
+`scripts/reembed_embeddings.py` against the intended deployment after taking a
+backup. `/admin/sync` only repairs missing points, so it cannot backfill payload
+fields on existing points. Reembedding preserves archived/expired state and
+recomputes prefixes from graph tags.
+
+Background retries suppress automatic placeholder fallback after a real provider
+fails, allowing the failure to be retried and counted. An explicitly configured
+`EMBEDDING_PROVIDER=placeholder` continues to work for local/dev installations.

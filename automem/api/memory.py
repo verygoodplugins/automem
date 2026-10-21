@@ -16,6 +16,7 @@ from automem.config import (
     MEMORY_CONTENT_SOFT_LIMIT,
     MEMORY_SUMMARY_TARGET_LENGTH,
 )
+from automem.stores.vector_payload import build_qdrant_payload
 from automem.utils.text import should_summarize_content, summarize_content
 
 
@@ -691,20 +692,22 @@ def create_memory_blueprint_full(
                             point_struct(
                                 id=memory_id,
                                 vector=embedding,
-                                payload={
-                                    "content": content,
-                                    "tags": tags,
-                                    "tag_prefixes": tag_prefixes,
-                                    "importance": importance,
-                                    "timestamp": created_at,
-                                    "type": memory_type,
-                                    "confidence": type_confidence,
-                                    "t_valid": t_valid or created_at,
-                                    "t_invalid": t_invalid,
-                                    "updated_at": updated_at,
-                                    "last_accessed": last_accessed,
-                                    "metadata": metadata,
-                                },
+                                payload=build_qdrant_payload(
+                                    {
+                                        "content": content,
+                                        "tags": tags,
+                                        "tag_prefixes": tag_prefixes,
+                                        "importance": importance,
+                                        "timestamp": created_at,
+                                        "type": memory_type,
+                                        "confidence": type_confidence,
+                                        "t_valid": t_valid or created_at,
+                                        "t_invalid": t_invalid,
+                                        "updated_at": updated_at,
+                                        "last_accessed": last_accessed,
+                                        "metadata": metadata,
+                                    }
+                                ),
                             )
                         ],
                     )
@@ -952,20 +955,24 @@ def create_memory_blueprint_full(
                     vector = generate_real_embedding(new_content)
 
             if vector is not None:
-                payload = {
-                    "content": new_content,
-                    "tags": tags,
-                    "tag_prefixes": tag_prefixes,
-                    "importance": importance,
-                    "timestamp": timestamp,
-                    "type": memory_type,
-                    "confidence": confidence,
-                    "t_valid": t_valid,
-                    "t_invalid": t_invalid,
-                    "updated_at": updated_at,
-                    "last_accessed": last_accessed,
-                    "metadata": metadata,
-                }
+                payload = build_qdrant_payload(
+                    {
+                        "archived": current.get("archived", False),
+                        "relevance_score": current.get("relevance_score"),
+                        "content": new_content,
+                        "tags": tags,
+                        "tag_prefixes": tag_prefixes,
+                        "importance": importance,
+                        "timestamp": timestamp,
+                        "type": memory_type,
+                        "confidence": confidence,
+                        "t_valid": t_valid,
+                        "t_invalid": t_invalid,
+                        "updated_at": updated_at,
+                        "last_accessed": last_accessed,
+                        "metadata": metadata,
+                    }
+                )
                 try:
                     qdrant_client.upsert(
                         collection_name=collection_name,
@@ -1393,18 +1400,7 @@ def create_memory_blueprint_full(
                         point_struct(
                             id=v["id"],
                             vector=emb,
-                            payload={
-                                "content": v["content"],
-                                "tags": v["tags"],
-                                "tag_prefixes": v["tag_prefixes"],
-                                "importance": v["importance"],
-                                "timestamp": v["timestamp"],
-                                "type": v["type"],
-                                "confidence": v["confidence"],
-                                "updated_at": v["updated_at"],
-                                "last_accessed": v["last_accessed"],
-                                "metadata": v["metadata_dict"],
-                            },
+                            payload=build_qdrant_payload(v),
                         )
                     )
             # Enqueue embedding retry for items that failed individually

@@ -105,6 +105,12 @@ def create_health_blueprint(
                 "processed": state.enrichment_stats.successes,
                 "failed": state.enrichment_stats.failures,
             },
+            "embedding": {
+                **state.embedding_stats,
+                "queue_depth": state.embedding_queue.qsize() if state.embedding_queue else 0,
+                "pending": len(state.embedding_pending),
+                "inflight": len(state.embedding_inflight),
+            },
             "timestamp": utc_now(),
             "graph": graph_name,
         }

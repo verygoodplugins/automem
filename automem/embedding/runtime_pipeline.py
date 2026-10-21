@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import json
+import time
 from typing import Any, Callable, List, Tuple
+
+from automem.stores.vector_payload import build_qdrant_payload
 
 
 def init_embedding_pipeline(
@@ -90,36 +92,73 @@ def process_embedding_batch(
     batch: List[Tuple[str, str]],
     logger: Any,
     generate_real_embeddings_batch_fn: Callable[[List[str]], List[List[float]]],
-    store_embedding_in_qdrant_fn: Callable[[str, str, List[float]], None],
+    store_embedding_in_qdrant_fn: Callable[[str, str, List[float]], Any],
+    max_attempts: int = 3,
+    retry_backoff_seconds: float = 1.0,
+    sleep_fn: Callable[[float], None] | None = None,
 ) -> None:
-    """Process a batch of embeddings efficiently."""
+    """Retry failed items only, retaining ownership until success or exhaustion.
+
+    Generated vectors are cached during storage retries. Queue task accounting and
+    duplicate suppression cover all attempts, including backoff.
+    """
     if not batch:
         return
-
-    memory_ids = [item[0] for item in batch]
-    contents = [item[1] for item in batch]
-
+    sleep = sleep_fn or time.sleep
+    remaining = list(batch)
+    vectors: dict[str, List[float]] = {}
     with state.embedding_lock:
-        for memory_id in memory_ids:
+        for memory_id, _ in batch:
             state.embedding_pending.discard(memory_id)
             state.embedding_inflight.add(memory_id)
 
-    try:
-        embeddings = generate_real_embeddings_batch_fn(contents)
+    def count(key: str, amount: int = 1, error: Exception | None = None) -> None:
+        with state.embedding_lock:
+            state.embedding_stats[key] += amount
+            if error is not None:
+                state.embedding_stats["last_error"] = str(error)
 
-        for memory_id, content, embedding in zip(memory_ids, contents, embeddings, strict=True):
-            try:
-                store_embedding_in_qdrant_fn(memory_id, content, embedding)
-                logger.debug("Generated and stored embedding for %s", memory_id)
-            except Exception:  # pragma: no cover
-                logger.exception("Failed to store embedding for %s", memory_id)
-    except Exception:  # pragma: no cover
-        logger.exception("Failed to generate batch embeddings")
+    try:
+        for attempt in range(max(1, max_attempts)):
+            if attempt:
+                count("retries", len(remaining))
+                sleep(max(0, retry_backoff_seconds) * (2 ** (attempt - 1)))
+            need_vectors = [(mid, content) for mid, content in remaining if mid not in vectors]
+            if need_vectors:
+                try:
+                    generated = generate_real_embeddings_batch_fn([c for _, c in need_vectors])
+                    if len(generated) != len(need_vectors):
+                        raise ValueError("Embedding provider returned an unexpected vector count")
+                    vectors.update(
+                        (mid, vector) for (mid, _), vector in zip(need_vectors, generated)
+                    )
+                except Exception as exc:
+                    count("failures", len(need_vectors), exc)
+                    logger.exception(
+                        "Failed to generate batch embeddings (attempt %d)", attempt + 1
+                    )
+                    continue
+            failed = []
+            for memory_id, content in remaining:
+                try:
+                    stored = store_embedding_in_qdrant_fn(memory_id, content, vectors[memory_id])
+                    count("skipped" if stored is False else "successes")
+                except Exception as exc:
+                    count("failures", error=exc)
+                    failed.append((memory_id, content))
+                    logger.exception(
+                        "Failed to store embedding for %s (attempt %d)", memory_id, attempt + 1
+                    )
+            remaining = failed
+            if not remaining:
+                break
+        if remaining:
+            count("exhausted", len(remaining))
+            logger.error("Embedding retries exhausted for %s", [mid for mid, _ in remaining])
     finally:
         with state.embedding_lock:
-            for memory_id in memory_ids:
+            for memory_id, _ in batch:
                 state.embedding_inflight.discard(memory_id)
-
         for _ in batch:
             state.embedding_queue.task_done()
 
@@ -135,55 +174,30 @@ def store_embedding_in_qdrant(
     point_struct_cls: Any,
     utc_now_fn: Callable[[], str],
     logger: Any,
-) -> None:
+) -> bool:
     """Store a pre-generated embedding in Qdrant with memory metadata."""
     qdrant_client = get_qdrant_client_fn()
     if qdrant_client is None:
-        return
+        raise RuntimeError("Qdrant is unavailable")
 
     graph = get_memory_graph_fn()
     if graph is None:
-        return
+        raise RuntimeError("FalkorDB is unavailable")
 
     result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
     if not getattr(result, "result_set", None):
         logger.warning("Memory %s not found in FalkorDB, skipping Qdrant update", memory_id)
-        return
+        return False
 
     node = result.result_set[0][0]
     properties = getattr(node, "properties", {})
-    try:
-        metadata_payload = json.loads(properties.get("metadata", "{}"))
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("Malformed metadata JSON for %s; defaulting to empty object", memory_id)
-        metadata_payload = {}
-
-    try:
-        qdrant_client.upsert(
-            collection_name=collection_name,
-            points=[
-                point_struct_cls(
-                    id=memory_id,
-                    vector=embedding,
-                    payload={
-                        "content": properties.get("content", content),
-                        "tags": properties.get("tags", []),
-                        "tag_prefixes": properties.get("tag_prefixes", []),
-                        "importance": properties.get("importance", 0.5),
-                        "timestamp": properties.get("timestamp", utc_now_fn()),
-                        "type": properties.get("type", "Memory"),
-                        "confidence": properties.get("confidence", 0.5),
-                        "updated_at": properties.get("updated_at", utc_now_fn()),
-                        "last_accessed": properties.get("last_accessed", utc_now_fn()),
-                        "metadata": metadata_payload,
-                        "relevance_score": properties.get("relevance_score"),
-                    },
-                )
-            ],
-        )
-        logger.info("Stored embedding for %s in Qdrant", memory_id)
-    except Exception:  # pragma: no cover
-        logger.exception("Qdrant upsert failed for %s", memory_id)
+    payload = build_qdrant_payload({"content": content, **properties})
+    qdrant_client.upsert(
+        collection_name=collection_name,
+        points=[point_struct_cls(id=memory_id, vector=embedding, payload=payload)],
+    )
+    logger.info("Stored embedding for %s in Qdrant", memory_id)
+    return True
 
 
 def generate_and_store_embedding(
