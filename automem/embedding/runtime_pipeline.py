@@ -6,6 +6,14 @@ from typing import Any, Callable, List, Tuple
 from automem.stores.vector_payload import build_qdrant_payload
 
 
+class EmbeddingContentChanged(RuntimeError):
+    """The graph changed after this job's vector source text was captured."""
+
+    def __init__(self, memory_id: str, current_content: str) -> None:
+        super().__init__(f"Memory {memory_id} content changed before vector storage")
+        self.current_content = current_content
+
+
 def init_embedding_pipeline(
     *,
     state: Any,
@@ -143,6 +151,13 @@ def process_embedding_batch(
                 try:
                     stored = store_embedding_in_qdrant_fn(memory_id, content, vectors[memory_id])
                     count("skipped" if stored is False else "successes")
+                except EmbeddingContentChanged as exc:
+                    # The cached vector belongs to an older text version. Do not
+                    # overwrite a completed PATCH with that vector and new payload.
+                    count("failures", error=exc)
+                    vectors.pop(memory_id, None)
+                    failed.append((memory_id, exc.current_content))
+                    logger.info("Refreshing stale embedding job for %s", memory_id)
                 except Exception as exc:
                     count("failures", error=exc)
                     failed.append((memory_id, content))
@@ -191,6 +206,11 @@ def store_embedding_in_qdrant(
 
     node = result.result_set[0][0]
     properties = getattr(node, "properties", {})
+    current_content = properties.get("content", content)
+    if current_content != content:
+        if not isinstance(current_content, str):
+            raise RuntimeError(f"Memory {memory_id} has invalid content")
+        raise EmbeddingContentChanged(memory_id, current_content)
     payload = build_qdrant_payload({"content": content, **properties})
     qdrant_client.upsert(
         collection_name=collection_name,

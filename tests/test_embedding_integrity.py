@@ -302,3 +302,65 @@ def test_inflight_duplicate_enqueue_is_suppressed_during_backoff():
     )
     assert attempts.call_count == 2
     assert state.embedding_queue.unfinished_tasks == 0
+
+
+def test_content_edit_during_backoff_never_overwrites_correct_patch_vector():
+    """Use the real store helper: PATCH finishes while the old job is retrying."""
+    properties = {}
+    qdrant = Mock()
+    point_store = {}
+    successful_writes = []
+    failures = 0
+
+    def upsert(*, collection_name, points):
+        nonlocal failures
+        point = points[0]
+        if point.id == "a" and failures == 0:
+            failures += 1
+            raise RuntimeError("temporary Qdrant failure")
+        successful_writes.append((point.id, point.payload["content"], point.vector))
+        point_store[point.id] = {"content": point.payload["content"], "vector": point.vector}
+
+    qdrant.upsert.side_effect = upsert
+    patched = False
+
+    def backoff(_):
+        nonlocal patched
+        if not patched:
+            # Simulate PATCH's graph update and completed synchronous vector upsert.
+            properties["content"] = "updated alpha"
+            point_store["a"] = {"content": "updated alpha", "vector": [3.0]}
+            patched = True
+        assert point_store["a"] == {"content": "updated alpha", "vector": [3.0]}
+
+    generate = Mock(side_effect=[[[1.0], [2.0]], [[3.0]]])
+    state, _ = run_batch(qdrant, properties, generate, sleep_fn=backoff)
+    assert successful_writes == [("b", "beta", [2.0]), ("a", "updated alpha", [3.0])]
+    assert generate.call_args_list[1].args == (["updated alpha"],)
+    assert state.embedding_stats["successes"] == 2
+    assert point_store["a"] == {"content": "updated alpha", "vector": [3.0]}
+
+
+def test_stale_queued_text_regenerates_from_current_graph_content():
+    state = ServiceState()
+    state.embedding_queue = Queue()
+    batch = [("a", "old queued text")]
+    state.embedding_queue.put(batch[0])
+    state.embedding_queue.get()
+    qdrant = Mock()
+    generate = Mock(side_effect=[[[1.0]], [[2.0]]])
+    process_embedding_batch(
+        state=state,
+        batch=batch,
+        logger=LOG,
+        generate_real_embeddings_batch_fn=generate,
+        store_embedding_in_qdrant_fn=store(qdrant, {"content": "current graph text"}),
+        sleep_fn=lambda _: None,
+    )
+    assert qdrant.upsert.call_count == 1
+    point = qdrant.upsert.call_args.kwargs["points"][0]
+    assert point.vector == [2.0]
+    assert point.payload["content"] == "current graph text"
+    assert generate.call_args_list[1].args == (["current graph text"],)
+    assert state.embedding_stats["successes"] == 1
+    assert state.embedding_queue.unfinished_tasks == 0
