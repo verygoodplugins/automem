@@ -135,11 +135,13 @@ memory using an atomic graph comparison, so a concurrent PATCH does not lose cal
 fields. A content edit during extraction cancels the stale result; background
 enrichment reports a retryable conflict and JIT skips that write. Qdrant updates
 touch only derived metadata keys and guard tag replacement against the source tags.
-Background relationship mutations are planned before the content comparison and
-applied only after it succeeds, with a content guard on each write. Completion is
-marked after those writes finish. Temporal counts and pattern observation/confidence
+Background relationship mutations are planned before the content comparison. The
+source guard, relationship mutations, derived graph fields and completion flag then
+commit in one graph query, so a PATCH cannot interleave between them. A planned
+neighbor disappearing before commit is skipped without dropping the source row.
+Temporal counts and pattern observation/confidence
 increments represent unique per-memory evidence, so retries and forced reprocessing
-do not inflate them. A late content edit leaves the memory eligible for enrichment.
+do not inflate them. A content edit before commit rejects the obsolete plan.
 Graph and vector writes remain separate: a content edit after the graph commit can
 leave derived entity/enrichment metadata stale in Qdrant until payload repair or
 re-embedding, but does not replace the caller's content, tags or unrelated metadata

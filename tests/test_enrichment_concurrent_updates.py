@@ -267,6 +267,7 @@ def test_duplicate_source_tags_cannot_hide_new_caller_tag(jit):
 
 def test_rejected_content_guard_has_no_relationship_side_effects():
     graph = InterleavingGraph()
+    original = copy.deepcopy(graph.memories["memory"])
     graph.temporal_related_ids = ["older"]
     graph.pattern_source_rows = [[f"other-{i}", "Related project content"] for i in range(3)]
 
@@ -278,14 +279,44 @@ def test_rejected_content_guard_has_no_relationship_side_effects():
     assert graph.temporal_calls == []
     assert graph.pattern_calls == []
     assert graph.exemplifies_calls == []
+    assert graph.memories["memory"] == {**original, "content": "Updated source"}
 
 
-def test_partial_write_failure_does_not_mark_memory_processed():
+def test_relationships_and_derived_fields_share_one_atomic_commit():
+    class RecordingGraph(InterleavingGraph):
+        def __init__(self):
+            super().__init__()
+            self.write_snapshots = []
+
+        def query(self, query, params=None, **kwargs):
+            if (
+                "SET m.metadata" in query
+                or "MERGE (m1)-[r:PRECEDED_BY]" in query
+                or "MERGE (p:Pattern" in query
+            ):
+                self.write_snapshots.append((query, copy.deepcopy(self.memories["memory"])))
+            return super().query(query, params, **kwargs)
+
+    graph = RecordingGraph()
+    graph.temporal_related_ids = ["older"]
+    graph.pattern_source_rows = [[f"other-{i}", "Related content"] for i in range(3)]
+    original = copy.deepcopy(graph.memories["memory"])
+    assert perform_enrichment(graph, real_helpers=True)
+    assert len(graph.write_snapshots) == 1
+    query, snapshot = graph.write_snapshots[0]
+    assert snapshot == original
+    assert "MERGE (p:Pattern" in query
+    assert "MERGE (m1)-[r:PRECEDED_BY]" in query
+    assert "SET m.metadata" in query
+    assert "m.processed = true" in query
+
+
+def test_atomic_commit_failure_does_not_mark_memory_processed():
     class FailingGraph(InterleavingGraph):
         fail = True
 
         def query(self, query, params=None, **kwargs):
-            if self.fail and params and "__enrichment_content" in params:
+            if self.fail and params and any(key.startswith("enrichment_") for key in params):
                 self.fail = False
                 raise ConnectionError("planned relationship write failed")
             return super().query(query, params, **kwargs)
@@ -295,7 +326,7 @@ def test_partial_write_failure_does_not_mark_memory_processed():
     with pytest.raises(ConnectionError, match="planned relationship write failed"):
         perform_enrichment(graph, real_helpers=True)
     assert graph.memories["memory"]["processed"] is False
-    assert graph.memories["memory"]["enriched"] is False
+    assert graph.memories["memory"].get("enriched", False) is False
     assert perform_enrichment(graph, real_helpers=True)
     assert graph.memories["memory"]["processed"] is True
     assert graph.memories["memory"]["enriched"] is True
@@ -306,15 +337,16 @@ def test_late_content_change_suppresses_effects_and_remains_eligible():
         edit = True
 
         def query(self, query, params=None, **kwargs):
-            if self.edit and params and "__enrichment_content" in params:
+            if self.edit and params and any(key.startswith("enrichment_") for key in params):
                 self.edit = False
                 self.memories["memory"]["content"] = "Caller edit after CAS"
             return super().query(query, params, **kwargs)
 
     graph = EditingGraph()
     graph.temporal_related_ids = ["older"]
-    assert perform_enrichment(graph, real_helpers=True) is False
+    with pytest.raises(RuntimeError, match="changed during enrichment"):
+        perform_enrichment(graph, real_helpers=True)
     assert graph.temporal_calls == []
     assert graph.pattern_calls == []
     assert graph.memories["memory"]["processed"] is False
-    assert graph.memories["memory"]["enriched"] is False
+    assert graph.memories["memory"].get("enriched", False) is False

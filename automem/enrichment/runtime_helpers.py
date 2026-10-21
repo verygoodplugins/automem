@@ -10,10 +10,8 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 class EnrichmentWritePlan:
     """Keep explicit helper mutations pending until the memory CAS succeeds."""
 
-    def __init__(self, graph: Any, memory_id: str, content: str):
+    def __init__(self, graph: Any):
         self.graph = graph
-        self.memory_id = memory_id
-        self.content = content
         self.writes: List[Tuple[str, Dict[str, Any]]] = []
 
     def __getattr__(self, name: str) -> Any:
@@ -22,19 +20,18 @@ class EnrichmentWritePlan:
     def write_enrichment(self, query: str, params: Dict[str, Any]) -> None:
         self.writes.append((query, dict(params)))
 
-    def apply(self) -> None:
-        for query, params in self.writes:
-            # Check and mutation share one graph query, so late source edits cannot
-            # introduce relationships derived from an obsolete content snapshot.
-            self.graph.query(
-                """
-                MATCH (__enrichment_source:Memory {id: $__enrichment_id})
-                WHERE coalesce(__enrichment_source.content, '') = $__enrichment_content
-                WITH __enrichment_source
-                """
-                + query,
-                {**params, "__enrichment_id": self.memory_id, "__enrichment_content": self.content},
-            )
+    def compile(self) -> Tuple[str, Dict[str, Any]]:
+        """Compose known helper clauses inside the source CAS, preserving its row."""
+        clauses, parameters = [], {}
+        for index, (query, params) in enumerate(self.writes):
+            names = {key: f"enrichment_{index}_{key}" for key in params}
+            # Rewrite parameter tokens only; mutation sites are explicit, not parsed
+            # or classified from arbitrary Cypher. Separate namespaces avoid aliases
+            # like helper `id` and the source CAS `id` sharing parameter values.
+            query = re.sub(r"\$([A-Za-z_]\w*)", lambda match: "$" + names[match[1]], query)
+            clauses.append("WITH m\n" + query)
+            parameters.update({names[key]: value for key, value in params.items()})
+        return ("\n".join(clauses) + "\nWITH m\n" if clauses else ""), parameters
 
 
 def _write_enrichment(graph: Any, query: str, params: Dict[str, Any]) -> None:
@@ -86,10 +83,12 @@ def find_temporal_relationships(
                     graph,
                     """
                     MATCH (m1:Memory {id: $id1})
-                    MATCH (m2:Memory {id: $id2})
-                    MERGE (m1)-[r:PRECEDED_BY]->(m2)
-                    ON CREATE SET r.count = 1
-                    SET r.updated_at = $timestamp
+                    OPTIONAL MATCH (m2:Memory {id: $id2})
+                    FOREACH (_ IN CASE WHEN m2 IS NULL THEN [] ELSE [1] END |
+                        MERGE (m1)-[r:PRECEDED_BY]->(m2)
+                        ON CREATE SET r.count = 1
+                        SET r.updated_at = $timestamp
+                    )
                     """,
                     {"id1": memory_id, "id2": related_id, "timestamp": timestamp},
                 )
@@ -166,7 +165,7 @@ def detect_patterns(
                     p.created_at = $timestamp
                 MERGE (m)-[r:EXEMPLIFIES]->(p)
                 ON CREATE SET r.observation_counted = false
-                WITH p, r, coalesce(r.observation_counted, true) AS counted,
+                WITH m, p, r, coalesce(r.observation_counted, true) AS counted,
                      coalesce(p.observations, 0) AS observations
                 SET p.confidence = CASE
                         WHEN counted THEN p.confidence
@@ -270,13 +269,15 @@ def link_semantic_neighbors(
             graph,
             """
             MATCH (a:Memory {id: $id1})
-            MATCH (b:Memory {id: $id2})
-            MERGE (a)-[r1:SIMILAR_TO]->(b)
-            MERGE (b)-[r2:SIMILAR_TO]->(a)
-            SET r1.score = $score,
-                r2.score = $score,
-                r1.updated_at = $timestamp,
-                r2.updated_at = $timestamp
+            OPTIONAL MATCH (b:Memory {id: $id2})
+            FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                MERGE (a)-[r1:SIMILAR_TO]->(b)
+                MERGE (b)-[r2:SIMILAR_TO]->(a)
+                SET r1.score = $score,
+                    r2.score = $score,
+                    r1.updated_at = $timestamp,
+                    r2.updated_at = $timestamp
+            )
             """,
             params,
         )

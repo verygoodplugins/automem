@@ -155,10 +155,6 @@ class FakeGraph:
         self.query_kwargs.append(dict(kwargs))
         params = params or {}
         self.queries.append((query, params))
-        if "__enrichment_content" in params:
-            source = self.memories.get(params["__enrichment_id"])
-            if source is None or (source.get("content") or "") != params["__enrichment_content"]:
-                return FakeResult([])
 
         # Consolidation engine query patterns
         if "COUNT(DISTINCT r)" in query:
@@ -215,38 +211,6 @@ class FakeGraph:
                 return FakeResult([])
             return FakeResult([[bool(memory.get("enriched")), bool(memory.get("processed"))]])
 
-        # Enrichment patterns
-        if "RETURN m2.id" in query and "PRECEDED_BY" not in query:
-            return FakeResult([[memory_id] for memory_id in self.temporal_related_ids])
-
-        if "MERGE (m1)-[r:PRECEDED_BY]" in query:
-            self.temporal_calls.append(dict(params))
-            return FakeResult([])
-
-        if (
-            "MATCH (m:Memory)" in query
-            and "m.type = $type" in query
-            and "RETURN m.id, m.content" in query
-        ):
-            return FakeResult(self.pattern_source_rows)
-
-        if "MERGE (p:Pattern" in query:
-            self.pattern_calls.append(dict(params))
-            if "MERGE (m)-[r:EXEMPLIFIES]" in query:
-                self.exemplifies_calls.append(dict(params))
-            return FakeResult([])
-
-        if "MERGE (m)-[r:EXEMPLIFIES]" in query:
-            self.exemplifies_calls.append(dict(params))
-            return FakeResult([])
-
-        if "SET m.enriched = true, m.processed = true" in query:
-            memory = self.memories.get(str(params["id"]))
-            if memory is None or (memory.get("content") or "") != params["expected_content"]:
-                return FakeResult([])
-            memory.update(enriched=True, processed=True)
-            return FakeResult([[FakeNode(memory)]])
-
         if "SET m.metadata" in query and (
             "m.enriched = true" in query or "m.enriched = $enriched" in query
         ):
@@ -257,6 +221,13 @@ class FakeGraph:
                     default = [] if field == "tags" else ""
                     if (memory.get(field) or default) != params[f"expected_{field}"]:
                         return FakeResult([])
+            if any(key.startswith("enrichment_") for key in params):
+                if "MERGE (m1)-[r:PRECEDED_BY]" in query:
+                    self.temporal_calls.append(dict(params))
+                if "MERGE (p:Pattern" in query:
+                    self.pattern_calls.append(dict(params))
+                if "MERGE (m)-[r:EXEMPLIFIES]" in query:
+                    self.exemplifies_calls.append(dict(params))
             self.update_calls.append(dict(params))
             if memory is not None:
                 memory.update(
@@ -283,6 +254,31 @@ class FakeGraph:
                 if "RETURN m" in query and memory is not None
                 else FakeResult([])
             )
+
+        # Enrichment patterns
+        if "RETURN m2.id" in query and "PRECEDED_BY" not in query:
+            return FakeResult([[memory_id] for memory_id in self.temporal_related_ids])
+
+        if "MERGE (m1)-[r:PRECEDED_BY]" in query:
+            self.temporal_calls.append(dict(params))
+            return FakeResult([])
+
+        if (
+            "MATCH (m:Memory)" in query
+            and "m.type = $type" in query
+            and "RETURN m.id, m.content" in query
+        ):
+            return FakeResult(self.pattern_source_rows)
+
+        if "MERGE (p:Pattern" in query:
+            self.pattern_calls.append(dict(params))
+            if "MERGE (m)-[r:EXEMPLIFIES]" in query:
+                self.exemplifies_calls.append(dict(params))
+            return FakeResult([])
+
+        if "MERGE (m)-[r:EXEMPLIFIES]" in query:
+            self.exemplifies_calls.append(dict(params))
+            return FakeResult([])
 
         # Full graph backup export
         if "RETURN max(id(n))" in query:
