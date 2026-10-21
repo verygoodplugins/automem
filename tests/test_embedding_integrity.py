@@ -312,7 +312,7 @@ def test_content_edit_during_backoff_never_overwrites_correct_patch_vector():
     successful_writes = []
     failures = 0
 
-    def upsert(*, collection_name, points):
+    def upsert(*, collection_name, points, wait):
         nonlocal failures
         point = points[0]
         if point.id == "a" and failures == 0:
@@ -363,4 +363,64 @@ def test_stale_queued_text_regenerates_from_current_graph_content():
     assert point.payload["content"] == "current graph text"
     assert generate.call_args_list[1].args == (["current graph text"],)
     assert state.embedding_stats["successes"] == 1
+    assert state.embedding_queue.unfinished_tasks == 0
+
+
+@pytest.mark.parametrize("max_attempts", [1, 3])
+def test_patch_between_source_read_and_upsert_is_detected_and_repaired(max_attempts):
+    """PATCH wins the graph race while the old Qdrant write is in progress."""
+    state = ServiceState()
+    state.embedding_queue = Queue()
+    job = ("a", "alpha")
+    state.embedding_queue.put(job)
+    state.embedding_queue.get()
+    current = {"content": "alpha"}
+    stored = {}
+    upserts = 0
+
+    def read_graph(*args):
+        # Return a snapshot, as FalkorDB does, rather than a mutable shared dict.
+        return SimpleNamespace(result_set=[[SimpleNamespace(properties=dict(current))]])
+
+    def upsert(*, collection_name, points, **kwargs):
+        nonlocal upserts
+        upserts += 1
+        point = points[0]
+        if upserts == 1:
+            # PATCH commits both stores after the old read, then the delayed old
+            # background upsert lands over the PATCH point.
+            current["content"] = "new alpha"
+            stored.update(content="new alpha", vector=[2.0])
+        stored.update(content=point.payload["content"], vector=point.vector)
+
+    qdrant = Mock()
+    qdrant.upsert.side_effect = upsert
+    graph = SimpleNamespace(query=read_graph)
+    impl = partial(
+        store_embedding_in_qdrant,
+        get_qdrant_client_fn=lambda: qdrant,
+        get_memory_graph_fn=lambda: graph,
+        collection_name="custom",
+        point_struct_cls=lambda **kw: SimpleNamespace(**kw),
+        utc_now_fn=lambda: "now",
+        logger=LOG,
+    )
+    process_embedding_batch(
+        state=state,
+        batch=[job],
+        logger=LOG,
+        generate_real_embeddings_batch_fn=Mock(side_effect=[[[1.0]], [[2.0]]]),
+        store_embedding_in_qdrant_fn=lambda mid, text, vector: impl(
+            memory_id=mid, content=text, embedding=vector
+        ),
+        sleep_fn=lambda _: None,
+        max_attempts=max_attempts,
+    )
+    if max_attempts == 1:
+        assert state.embedding_stats["successes"] == 0
+        assert state.embedding_stats["exhausted"] == 1
+    else:
+        assert stored == {"content": "new alpha", "vector": [2.0]}
+        assert upserts == 2
+        assert state.embedding_stats["successes"] == 1
     assert state.embedding_queue.unfinished_tasks == 0

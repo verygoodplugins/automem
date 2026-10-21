@@ -215,7 +215,19 @@ def store_embedding_in_qdrant(
     qdrant_client.upsert(
         collection_name=collection_name,
         points=[point_struct_cls(id=memory_id, vector=embedding, payload=payload)],
+        wait=True,
     )
+    # Wait for application before re-reading the source. A PATCH can commit after
+    # the first read while Qdrant is applying this request, even if it was issued
+    # earlier. Revalidate after our write so that race triggers a fresh retry.
+    latest = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
+    if getattr(latest, "result_set", None):
+        latest_properties = getattr(latest.result_set[0][0], "properties", {})
+        latest_content = latest_properties.get("content", content)
+        if latest_content != content:
+            if not isinstance(latest_content, str):
+                raise RuntimeError(f"Memory {memory_id} has invalid content")
+            raise EmbeddingContentChanged(memory_id, latest_content)
     logger.info("Stored embedding for %s in Qdrant", memory_id)
     return True
 

@@ -638,3 +638,10 @@ recomputes prefixes from graph tags.
 Background retries suppress automatic placeholder fallback after a real provider
 fails, allowing the failure to be retried and counted. An explicitly configured
 `EMBEDDING_PROVIDER=placeholder` continues to work for local/dev installations.
+
+The background worker checks graph content before storage and again after Qdrant
+confirms the write. A content change invalidates that vector and retries with the
+current text. These refreshes share the configured attempt limit; repeated edits
+or a concurrent edit on the final attempt can exhaust the job. Such a write is
+counted as failed/exhausted, never successful. If the point already exists, use
+forced reembedding to repair it; missing-point sync alone cannot detect stale text.
