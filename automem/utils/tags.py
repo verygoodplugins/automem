@@ -53,3 +53,8 @@ def _prepare_tag_filters(tag_filters: Optional[List[str]]) -> List[str]:
     return [
         tag.strip().lower() for tag in (tag_filters or []) if isinstance(tag, str) and tag.strip()
     ]
+
+
+def _canonicalize_prefix_filters(tag_filters: List[str]) -> List[str]:
+    """Use the same hierarchy representation as persisted ``tag_prefixes``."""
+    return [prefixes[-1] if (prefixes := _expand_tag_prefixes(tag)) else tag for tag in tag_filters]

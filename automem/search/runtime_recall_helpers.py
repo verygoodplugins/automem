@@ -9,6 +9,7 @@ from flask import abort, request
 from qdrant_client import QdrantClient
 
 from automem.config import RECALL_EXCLUDED_TYPES
+from automem.utils.tags import _canonicalize_prefix_filters, _compute_tag_prefixes
 
 _parse_iso_datetime: Optional[Callable[[Any], Optional[Any]]] = None
 _prepare_tag_filters: Optional[Callable[[Optional[List[str]]], List[str]]] = None
@@ -419,6 +420,8 @@ def _result_passes_filters(
 
     if tag_filters:
         normalized_filters = prepare_tag_filters(tag_filters)
+        if tag_match == "prefix":
+            normalized_filters = _canonicalize_prefix_filters(normalized_filters)
         if normalized_filters:
             normalized_mode = "all" if tag_mode == "all" else "any"
             normalized_match = "prefix" if tag_match == "prefix" else "exact"
@@ -444,30 +447,14 @@ def _result_passes_filters(
                     if isinstance(prefix, str) and str(prefix).strip()
                 }
 
-                def _tags_start_with() -> bool:
-                    if not lowered_tags:
+                if not prefix_set:
+                    # Keep legacy nodes searchable before the prefix backfill runs.
+                    prefix_set = set(_compute_tag_prefixes(lowered_tags))
+                if normalized_mode == "all":
+                    if not all(filter_tag in prefix_set for filter_tag in normalized_filters):
                         return False
-                    if normalized_mode == "all":
-                        return all(
-                            any(tag.startswith(filter_tag) for tag in lowered_tags)
-                            for filter_tag in normalized_filters
-                        )
-                    return any(
-                        tag.startswith(filter_tag)
-                        for filter_tag in normalized_filters
-                        for tag in lowered_tags
-                    )
-
-                if prefix_set:
-                    if normalized_mode == "all":
-                        if not all(filter_tag in prefix_set for filter_tag in normalized_filters):
-                            return False
-                    else:
-                        if not any(filter_tag in prefix_set for filter_tag in normalized_filters):
-                            return False
-                else:
-                    if not _tags_start_with():
-                        return False
+                elif not any(filter_tag in prefix_set for filter_tag in normalized_filters):
+                    return False
 
     if exclude_tags:
         normalized_exclude = prepare_tag_filters(exclude_tags)
@@ -563,6 +550,8 @@ def _graph_trending_results(
             params["end_time"] = end_time
         if tag_filters:
             normalized_filters = prepare_tag_filters(tag_filters)
+            if tag_match == "prefix":
+                normalized_filters = _canonicalize_prefix_filters(normalized_filters)
             if normalized_filters:
                 where_clauses.append(build_graph_tag_predicate(tag_mode, tag_match))
                 params["tag_filters"] = normalized_filters
@@ -645,6 +634,8 @@ def _graph_keyword_search(
             params["end_time"] = end_time
         if tag_filters:
             normalized_filters = prepare_tag_filters(tag_filters)
+            if tag_match == "prefix":
+                normalized_filters = _canonicalize_prefix_filters(normalized_filters)
             if normalized_filters:
                 base_where.append(build_graph_tag_predicate(tag_mode, tag_match))
                 params["tag_filters"] = normalized_filters
@@ -779,6 +770,8 @@ def _metadata_keyword_search(
             params["end_time"] = end_time
         if tag_filters:
             normalized_filters = prepare_tag_filters(tag_filters)
+            if tag_match == "prefix":
+                normalized_filters = _canonicalize_prefix_filters(normalized_filters)
             if normalized_filters:
                 base_where.append(build_graph_tag_predicate(tag_mode, tag_match))
                 params["tag_filters"] = normalized_filters
