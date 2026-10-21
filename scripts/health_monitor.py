@@ -234,6 +234,11 @@ class HealthMonitor:
             logger.warning("   python scripts/recover_from_qdrant.py")
             return False
 
+        logger.warning(
+            "Qdrant recovery inserts missing memories only and preserves existing graph data. "
+            "It cannot restore lost relationships or entities; use a FalkorDB backup "
+            "for a full graph restore."
+        )
         # Auto-recovery enabled - send alert and recover
         self.send_alert(
             level="critical",
@@ -249,7 +254,7 @@ class HealthMonitor:
             import subprocess
 
             result = subprocess.run(
-                [sys.executable, "scripts/recover_from_qdrant.py"],
+                [sys.executable, str(Path(__file__).resolve().with_name("recover_from_qdrant.py"))],
                 capture_output=True,
                 text=True,
                 timeout=3600,  # 1 hour timeout
@@ -260,7 +265,7 @@ class HealthMonitor:
                 self.send_alert(
                     level="info",
                     title="Auto-Recovery Completed",
-                    message="All memories restored successfully",
+                    message="Missing memory salvage completed; original relationships require a graph backup",
                     details={"stdout": result.stdout[-500:] if result.stdout else ""},
                 )
                 return True
@@ -315,7 +320,15 @@ class HealthMonitor:
             if severity == "critical":
                 # Critical data loss detected
                 logger.warning(f"⚠️  CRITICAL: FalkorDB has {drift_percent:.1f}% drift from Qdrant")
-                self.trigger_recovery("Major data loss detected", drift_percent)
+                if consistency["falkordb_count"] < consistency["qdrant_count"]:
+                    self.trigger_recovery("Missing graph memories detected", drift_percent)
+                else:
+                    self.send_alert(
+                        level="critical",
+                        title="Vector Store Deficit - Manual Repair Required",
+                        message="Qdrant has fewer memories than FalkorDB; graph recovery skipped",
+                        details=consistency,
+                    )
             elif severity == "warning":
                 # Minor drift - alert but don't recover
                 self.send_alert(
@@ -383,22 +396,22 @@ Examples:
     parser.add_argument(
         "--drift-threshold",
         type=float,
-        default=5.0,
-        help="Warning drift threshold percentage (default: 5.0)",
+        default=None,
+        help="Warning drift threshold percentage (CLI > env > default 5.0)",
     )
     parser.add_argument(
         "--critical-threshold",
         type=float,
-        default=50.0,
-        help="Critical drift threshold percentage for recovery (default: 50.0)",
+        default=None,
+        help="Critical drift threshold percentage for recovery (CLI > env > default 50.0)",
     )
 
     args = parser.parse_args()
 
     # Set thresholds via env if provided via args
-    if args.drift_threshold:
+    if args.drift_threshold is not None:
         os.environ["HEALTH_MONITOR_DRIFT_THRESHOLD"] = str(args.drift_threshold)
-    if args.critical_threshold:
+    if args.critical_threshold is not None:
         os.environ["HEALTH_MONITOR_CRITICAL_THRESHOLD"] = str(args.critical_threshold)
 
     monitor = HealthMonitor(auto_recover=args.auto_recover, alert_webhook=args.webhook)
