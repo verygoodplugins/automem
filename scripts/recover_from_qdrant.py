@@ -115,7 +115,10 @@ def memory_properties(memory: Dict[str, Any]) -> Dict[str, Any]:
         "updated_at": updated_at,
         "last_accessed": last_accessed,
         "archived": payload.get("archived", False),
-        "relevance_score": payload.get("relevance_score", 1.0),
+        # New memories have no decay score yet; vector writers persist JSON null.
+        "relevance_score": (
+            1.0 if payload.get("relevance_score") is None else payload["relevance_score"]
+        ),
         "processed": False,
     }
     for name in ("importance", "confidence", "relevance_score"):

@@ -157,6 +157,8 @@ def test_recovery_success_and_unconfirmed_write(monkeypatch):
         memory(metadata=[]),
         memory(metadata="not json"),
         memory(importance=float("nan")),
+        memory(relevance_score="0.2"),
+        memory(relevance_score=float("nan")),
         memory(archived="false"),
     ],
 )
@@ -190,3 +192,36 @@ def test_recovery_closes_source_client_after_fetch_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="source down"):
         recovery.get_all_memories()
     client.close.assert_called_once()
+
+
+def test_recovery_accepts_canonical_vector_payload_with_unset_relevance():
+    """Normal memories have a null relevance score until consolidation computes it."""
+    recovery = load_recovery_module()
+    client = FakeFalkorDB()
+    # Shape emitted by the canonical vector payload builder (including JSON nulls).
+    payload = {
+        "content": "Normal memory before first decay",
+        "tags": ["auth/login"],
+        "tag_prefixes": ["auth", "auth:login"],
+        "importance": 0.5,
+        "timestamp": "2026-10-20T12:00:00Z",
+        "type": "Memory",
+        "confidence": 0.5,
+        "t_valid": "2026-10-20T12:00:00Z",
+        "t_invalid": None,
+        "archived": False,
+        "updated_at": None,
+        "last_accessed": None,
+        "metadata": {},
+        "relevance_score": None,
+    }
+    assert recovery.restore_memory_to_graph_only({"id": "canonical", "payload": payload}, client)
+    properties = client.graph.nodes["canonical"]
+    assert properties["relevance_score"] == 1.0
+    assert properties["t_valid"] == "2026-10-20T12:00:00+00:00"
+    assert properties["t_invalid"] is None
+    assert properties["tag_prefixes"] == ["auth", "auth:login"]
+    payload["relevance_score"] = 0.0
+    assert (
+        recovery.memory_properties({"id": "decayed", "payload": payload})["relevance_score"] == 0.0
+    )
