@@ -133,6 +133,10 @@ def test_debug_vector_search_does_not_log_query(log_output, monkeypatch):
 
     logger, stream = log_output
     monkeypatch.setattr(logger, "level", logging.DEBUG)
+    monkeypatch.setattr(helpers, "_logger", logger)
+    monkeypatch.setattr(helpers, "_build_qdrant_tag_filter", lambda *args, **kwargs: None)
+    monkeypatch.setattr(helpers, "_coerce_embedding", lambda value: value)
+    monkeypatch.setattr(helpers, "_collection_name", "test-memories")
     monkeypatch.setattr(helpers, "_generate_real_embedding", lambda _: [0.1, 0.2])
     result = helpers._vector_search(
         SimpleNamespace(search=lambda **kwargs: []),
