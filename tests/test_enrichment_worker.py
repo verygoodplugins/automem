@@ -19,6 +19,7 @@ class DrainQueue(Queue):
     def __init__(self):
         super().__init__()
         self.completed_counts = []
+        self.on_task_done = lambda: None
 
     def get(self, *args, **kwargs):
         try:
@@ -29,9 +30,25 @@ class DrainQueue(Queue):
     def task_done(self):
         super().task_done()
         self.completed_counts.append(self.unfinished_tasks)
+        self.on_task_done()
 
 
-def run_jobs(*, forced=False, failures=1, max_attempts=3):
+class InterleavingLock:
+    """Run a competing enqueue immediately after the protected transition."""
+
+    def __init__(self, after_release):
+        self.lock = Lock()
+        self.after_release = after_release
+
+    def __enter__(self):
+        self.lock.acquire()
+
+    def __exit__(self, *args):
+        self.lock.release()
+        self.after_release()
+
+
+def run_jobs(*, forced=False, failures=1, max_attempts=3, interleave_retry=False):
     state = SimpleNamespace(
         enrichment_queue=DrainQueue(),
         enrichment_pending=set(),
@@ -40,6 +57,7 @@ def run_jobs(*, forced=False, failures=1, max_attempts=3):
         enrichment_stats=EnrichmentStats(),
     )
     calls, events, sleeps = [], [], []
+    retry_transition = {"armed": False}
 
     def enqueue(memory_id, forced=False, attempt=0):
         enqueue_enrichment(
@@ -60,6 +78,24 @@ def run_jobs(*, forced=False, failures=1, max_attempts=3):
             raise RuntimeError("temporary provider failure")
         return True
 
+    def compete_at_retry_gap():
+        if (
+            retry_transition["armed"]
+            and "memory-1" not in state.enrichment_pending
+            and "memory-1" not in state.enrichment_inflight
+        ):
+            retry_transition["armed"] = False
+            enqueue("memory-1")
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if interleave_retry and len(sleeps) == 1:
+            retry_transition["armed"] = True
+
+    if interleave_retry:
+        state.enrichment_lock = InterleavingLock(compete_at_retry_gap)
+        state.enrichment_queue.on_task_done = lambda: retry_transition.update(armed=False)
+
     enqueue("memory-1", forced=forced)
     enqueue("memory-1")
     assert state.enrichment_queue.qsize() == 1
@@ -76,7 +112,7 @@ def run_jobs(*, forced=False, failures=1, max_attempts=3):
             utc_now_fn=lambda: "2026-10-20T00:00:00Z",
             enqueue_enrichment_fn=enqueue,
             perf_counter_fn=lambda: 0,
-            sleep_fn=sleeps.append,
+            sleep_fn=sleep,
         )
     assert state.enrichment_pending == set()
     assert state.enrichment_inflight == set()
@@ -116,3 +152,14 @@ def test_no_retry_after_configured_single_attempt():
     assert len(calls) == 1
     assert stats.failures == 1
     assert sleeps == []
+
+
+def test_competing_enqueue_cannot_reset_attempt_counter_during_retry_transition():
+    stats, calls, events, sleeps = run_jobs(failures=10, interleave_retry=True)
+    assert len(calls) == 3
+    assert stats.failures == 3
+    assert [payload["attempt"] for name, payload in events if name == "enrichment.start"] == [
+        1,
+        2,
+        3,
+    ]
