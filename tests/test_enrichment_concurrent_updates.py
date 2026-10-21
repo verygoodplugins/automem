@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from automem.enrichment import runtime_helpers
 from automem.enrichment.runtime_orchestration import enrich_memory, jit_enrich_lightweight
 from automem.utils.tags import _compute_tag_prefixes, _normalize_tag_list
 from tests.support.fake_graph import FakeGraph, FakeNode, FakeResult
@@ -36,10 +37,22 @@ class InterleavingGraph(FakeGraph):
         return super().query(query, params, **kwargs)
 
 
-def perform_enrichment(graph, *, jit=False, during_extraction=lambda: None, qdrant=None):
+def perform_enrichment(
+    graph,
+    *,
+    jit=False,
+    during_extraction=lambda: None,
+    qdrant=None,
+    real_helpers=False,
+    during_summary=lambda: None,
+):
     def extract(content):
         during_extraction()
         return {"projects": ["Launchpad"]}
+
+    def summary(content, previous):
+        during_summary()
+        return "Generated summary"
 
     kwargs = dict(
         memory_id="memory",
@@ -51,18 +64,44 @@ def perform_enrichment(graph, *, jit=False, during_extraction=lambda: None, qdra
         slugify_fn=lambda value: value.lower(),
         compute_tag_prefixes_fn=_compute_tag_prefixes,
         enrichment_enable_summaries=True,
-        generate_summary_fn=lambda content, previous: "Generated summary",
+        generate_summary_fn=summary,
         utc_now_fn=lambda: "2026-10-20T00:00:00Z",
         collection_name="test",
         logger=MagicMock(),
     )
     if jit:
         return jit_enrich_lightweight(properties=copy.deepcopy(graph.memories["memory"]), **kwargs)
+    helpers = (
+        dict(
+            find_temporal_relationships_fn=lambda graph, mid: runtime_helpers.find_temporal_relationships(
+                graph=graph,
+                memory_id=mid,
+                limit=5,
+                cutoff_fn=lambda: "2020-01-01",
+                utc_now_fn=lambda: "2026-10-20",
+                logger=MagicMock(),
+            ),
+            detect_patterns_fn=lambda graph, mid, content: runtime_helpers.detect_patterns(
+                graph=graph,
+                memory_id=mid,
+                content=content,
+                classify_fn=lambda content: ("Memory", 0.8),
+                search_stopwords=set(),
+                utc_now_fn=lambda: "2026-10-20",
+                logger=MagicMock(),
+            ),
+            link_semantic_neighbors_fn=lambda *args: [],
+        )
+        if real_helpers
+        else dict(
+            find_temporal_relationships_fn=lambda *args: 0,
+            detect_patterns_fn=lambda *args: [],
+            link_semantic_neighbors_fn=lambda *args: [],
+        )
+    )
     return enrich_memory(
         forced=False,
-        find_temporal_relationships_fn=lambda *args: 0,
-        detect_patterns_fn=lambda *args: [],
-        link_semantic_neighbors_fn=lambda *args: [],
+        **helpers,
         unexpected_response_exc=RuntimeError,
         **kwargs,
     )
@@ -162,6 +201,9 @@ class InterleavingVector:
                 "metadata": {"status": "patched"},
             }
         if not isinstance(points, list):
+            for condition in points.must_not or []:
+                if any(tag not in condition.match.except_values for tag in self.payload["tags"]):
+                    return
             conditions = points.must
             for condition in conditions:
                 if getattr(condition, "key", None) is not None:
@@ -210,3 +252,69 @@ def test_vector_sync_preserves_caller_fields_after_late_content_patch(jit):
     assert vector.payload["content"] == "Updated source"
     assert vector.payload["tags"] == ["new"]
     assert vector.payload["metadata"]["status"] == "patched"
+
+
+@pytest.mark.parametrize("jit", [False, True])
+def test_duplicate_source_tags_cannot_hide_new_caller_tag(jit):
+    graph = InterleavingGraph()
+    graph.memories["memory"]["tags"] = ["old", "old"]
+    vector = InterleavingVector()
+    vector.first = False
+    vector.payload["tags"] = ["old", "new"]
+    assert perform_enrichment(graph, jit=jit, qdrant=vector)
+    assert vector.payload["tags"] == ["old", "new"]
+
+
+def test_rejected_content_guard_has_no_relationship_side_effects():
+    graph = InterleavingGraph()
+    graph.temporal_related_ids = ["older"]
+    graph.pattern_source_rows = [[f"other-{i}", "Related project content"] for i in range(3)]
+
+    def edit():
+        graph.memories["memory"]["content"] = "Updated source"
+
+    with pytest.raises(RuntimeError, match="changed during enrichment"):
+        perform_enrichment(graph, real_helpers=True, during_summary=edit)
+    assert graph.temporal_calls == []
+    assert graph.pattern_calls == []
+    assert graph.exemplifies_calls == []
+
+
+def test_partial_write_failure_does_not_mark_memory_processed():
+    class FailingGraph(InterleavingGraph):
+        fail = True
+
+        def query(self, query, params=None, **kwargs):
+            if self.fail and params and "__enrichment_content" in params:
+                self.fail = False
+                raise ConnectionError("planned relationship write failed")
+            return super().query(query, params, **kwargs)
+
+    graph = FailingGraph()
+    graph.temporal_related_ids = ["older"]
+    with pytest.raises(ConnectionError, match="planned relationship write failed"):
+        perform_enrichment(graph, real_helpers=True)
+    assert graph.memories["memory"]["processed"] is False
+    assert graph.memories["memory"]["enriched"] is False
+    assert perform_enrichment(graph, real_helpers=True)
+    assert graph.memories["memory"]["processed"] is True
+    assert graph.memories["memory"]["enriched"] is True
+
+
+def test_late_content_change_suppresses_effects_and_remains_eligible():
+    class EditingGraph(InterleavingGraph):
+        edit = True
+
+        def query(self, query, params=None, **kwargs):
+            if self.edit and params and "__enrichment_content" in params:
+                self.edit = False
+                self.memories["memory"]["content"] = "Caller edit after CAS"
+            return super().query(query, params, **kwargs)
+
+    graph = EditingGraph()
+    graph.temporal_related_ids = ["older"]
+    assert perform_enrichment(graph, real_helpers=True) is False
+    assert graph.temporal_calls == []
+    assert graph.pattern_calls == []
+    assert graph.memories["memory"]["processed"] is False
+    assert graph.memories["memory"]["enriched"] is False

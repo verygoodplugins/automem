@@ -155,6 +155,10 @@ class FakeGraph:
         self.query_kwargs.append(dict(kwargs))
         params = params or {}
         self.queries.append((query, params))
+        if "__enrichment_content" in params:
+            source = self.memories.get(params["__enrichment_id"])
+            if source is None or (source.get("content") or "") != params["__enrichment_content"]:
+                return FakeResult([])
 
         # Consolidation engine query patterns
         if "COUNT(DISTINCT r)" in query:
@@ -228,13 +232,24 @@ class FakeGraph:
 
         if "MERGE (p:Pattern" in query:
             self.pattern_calls.append(dict(params))
+            if "MERGE (m)-[r:EXEMPLIFIES]" in query:
+                self.exemplifies_calls.append(dict(params))
             return FakeResult([])
 
         if "MERGE (m)-[r:EXEMPLIFIES]" in query:
             self.exemplifies_calls.append(dict(params))
             return FakeResult([])
 
-        if "SET m.metadata" in query and "m.enriched = true" in query:
+        if "SET m.enriched = true, m.processed = true" in query:
+            memory = self.memories.get(str(params["id"]))
+            if memory is None or (memory.get("content") or "") != params["expected_content"]:
+                return FakeResult([])
+            memory.update(enriched=True, processed=True)
+            return FakeResult([[FakeNode(memory)]])
+
+        if "SET m.metadata" in query and (
+            "m.enriched = true" in query or "m.enriched = $enriched" in query
+        ):
             memory_id = str(params.get("id") or "")
             memory = self.memories.get(memory_id)
             if "expected_content" in params and memory is not None:
@@ -250,11 +265,15 @@ class FakeGraph:
                         "tags": params.get("tags", memory.get("tags", [])),
                         "tag_prefixes": params.get("tag_prefixes", memory.get("tag_prefixes", [])),
                         "summary": params.get("summary", memory.get("summary")),
-                        "enriched": True,
+                        "enriched": params.get("enriched", True),
                         "processed": (
                             True
                             if "m.processed = true" in query
-                            else memory.get("processed", False)
+                            else (
+                                False
+                                if "m.processed = false" in query
+                                else memory.get("processed", False)
+                            )
                         ),
                         "enriched_at": params.get("enriched_at", memory.get("enriched_at")),
                     }

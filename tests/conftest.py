@@ -89,6 +89,10 @@ def _install_qdrant_stub() -> None:
         def __init__(self, value):
             self.value = value
 
+    class MatchExcept:
+        def __init__(self, **kwargs):
+            self.except_values = kwargs["except"]
+
     class FieldCondition:
         def __init__(self, key: str, match=None, values_count=None):
             self.key = key
@@ -121,6 +125,7 @@ def _install_qdrant_stub() -> None:
     models_module.PointStruct = PointStruct
     models_module.MatchAny = MatchAny
     models_module.MatchValue = MatchValue
+    models_module.MatchExcept = MatchExcept
     models_module.FieldCondition = FieldCondition
     models_module.HasIdCondition = HasIdCondition
     models_module.ValuesCount = ValuesCount

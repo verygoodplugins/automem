@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from automem.enrichment.runtime_helpers import EnrichmentWritePlan
 from automem.utils.entity_quality import validate_entity_value
 
 
@@ -48,6 +49,7 @@ def _persist_enrichment(
     slugify_fn: Callable[[str], str],
     compute_tag_prefixes_fn: Callable[[List[str]], List[str]],
     enriched_at: str,
+    pending_effects: bool = False,
 ) -> Optional[Tuple[Dict[str, Any], List[str]]]:
     """Merge derived fields into a fresh snapshot, committing only if it is current.
 
@@ -98,12 +100,17 @@ def _persist_enrichment(
             "tag_prefixes": tag_prefixes,
             "summary": saved_summary,
             "enriched_at": enriched_at,
+            "enriched": not pending_effects,
             "expected_content": content,
             "expected_tags": source_tags,
             "expected_metadata": current.get("metadata") or "",
             "expected_summary": current.get("summary") or "",
         }
-        processed_clause = ", m.processed = true" if processed else ""
+        processed_clause = (
+            ", m.processed = false"
+            if pending_effects
+            else ", m.processed = true" if processed else ""
+        )
         result = graph.query(
             """
             MATCH (m:Memory {id: $id})
@@ -115,7 +122,7 @@ def _persist_enrichment(
                 m.tags = $tags,
                 m.tag_prefixes = $tag_prefixes,
                 m.summary = $summary,
-                m.enriched = true,
+                m.enriched = $enriched,
                 m.enriched_at = $enriched_at
             """
             + processed_clause
@@ -130,11 +137,13 @@ def _persist_enrichment(
                 tags=tags,
                 tag_prefixes=tag_prefixes,
                 summary=saved_summary,
-                enriched=True,
+                enriched=not pending_effects,
                 enriched_at=enriched_at,
             )
             if processed:
                 updated["processed"] = True
+            elif pending_effects:
+                updated["processed"] = False
             return updated, source_tags
     raise EnrichmentConflictError(f"Memory {memory_id} kept changing during enrichment")
 
@@ -175,7 +184,13 @@ def _sync_enrichment_payload(
             client.set_payload(
                 collection_name=collection_name,
                 points=models.Filter(
-                    must=[models.HasIdCondition(has_id=[memory_id]), *tag_conditions]
+                    must=[models.HasIdCondition(has_id=[memory_id]), *tag_conditions],
+                    must_not=[
+                        models.FieldCondition(
+                            key="tags",
+                            match=models.MatchExcept(**{"except": list(set(source_tags))}),
+                        )
+                    ],
                 ),
                 payload={"tags": updated["tags"], "tag_prefixes": updated["tag_prefixes"]},
             )
@@ -326,9 +341,10 @@ def enrich_memory(
     content = properties.get("content", "") or ""
     entities = _validated_entities(extract_entities_fn(content), content)
 
-    temporal_links = find_temporal_relationships_fn(graph, memory_id)
-    pattern_info = detect_patterns_fn(graph, memory_id, content)
-    semantic_neighbors = link_semantic_neighbors_fn(graph, memory_id)
+    write_plan = EnrichmentWritePlan(graph, memory_id, content)
+    temporal_links = find_temporal_relationships_fn(write_plan, memory_id)
+    pattern_info = detect_patterns_fn(write_plan, memory_id, content)
+    semantic_neighbors = link_semantic_neighbors_fn(write_plan, memory_id)
 
     if enrichment_enable_summaries:
         existing_summary = properties.get("summary")
@@ -354,7 +370,8 @@ def enrich_memory(
         summary=summary,
         previous_summary=properties.get("summary"),
         enrichment_updates=enrichment_updates,
-        processed=True,
+        processed=False,
+        pending_effects=True,
         parse_metadata_field_fn=parse_metadata_field_fn,
         normalize_tag_list_fn=normalize_tag_list_fn,
         slugify_fn=slugify_fn,
@@ -362,6 +379,22 @@ def enrich_memory(
         enriched_at=enriched_at,
     )
     if persisted is None:
+        return False
+    # No helper writes run before the content CAS. Per-memory evidence writes are
+    # idempotent so a partial graph failure can safely retry without inflated counts.
+    write_plan.apply()
+    completion = graph.query(
+        """
+        MATCH (m:Memory {id: $id})
+        WHERE coalesce(m.content, '') = $expected_content
+        SET m.enriched = true, m.processed = true
+        RETURN m
+        """,
+        {"id": memory_id, "expected_content": content},
+    )
+    if not getattr(completion, "result_set", None):
+        # A late edit remains eligible for enrichment. Do not raise a retryable
+        # content conflict after applying effects to the previous snapshot.
         return False
     updated, source_tags = persisted
     _sync_enrichment_payload(
