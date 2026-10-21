@@ -357,6 +357,7 @@ enrichment_worker = _enrichment_queue_runtime.enrichment_worker
 _consolidation_runtime = create_consolidation_runtime(
     state=state,
     logger=logger,
+    collection_name=COLLECTION_NAME,
     get_memory_graph_fn=get_memory_graph,
     get_qdrant_client_fn=get_qdrant_client,
     emit_event_fn=emit_event,

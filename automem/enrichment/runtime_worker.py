@@ -115,6 +115,7 @@ def enrichment_worker(
                 utc_now_fn,
             )
 
+            retry_attempt = None
             try:
                 processed = enrich_memory_fn(job.memory_id, forced=job.forced)
                 state.enrichment_stats.record_success(job.memory_id)
@@ -148,7 +149,7 @@ def enrichment_worker(
                 logger.exception("Failed to enrich memory %s", job.memory_id)
                 if job.attempt + 1 < enrichment_max_attempts:
                     sleep_fn(enrichment_failure_backoff_seconds)
-                    enqueue_enrichment_fn(job.memory_id, forced=job.forced, attempt=job.attempt + 1)
+                    retry_attempt = job.attempt + 1
                 else:
                     logger.error(
                         "Giving up on enrichment for %s after %s attempts",
@@ -158,7 +159,16 @@ def enrichment_worker(
             finally:
                 with state.enrichment_lock:
                     state.enrichment_inflight.discard(job.memory_id)
-                state.enrichment_queue.task_done()
+                try:
+                    if retry_attempt is not None:
+                        # Release the inflight guard before using the normal deduplicating
+                        # enqueue path. Queue the retry before task_done so join() cannot
+                        # report completion while a retry is still being scheduled.
+                        enqueue_enrichment_fn(
+                            job.memory_id, forced=job.forced, attempt=retry_attempt
+                        )
+                finally:
+                    state.enrichment_queue.task_done()
         except Exception:  # pragma: no cover - defensive catch-all
             logger.exception("Error in enrichment worker loop")
             sleep_fn(enrichment_failure_backoff_seconds)

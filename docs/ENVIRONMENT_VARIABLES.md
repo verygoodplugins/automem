@@ -171,7 +171,7 @@ See [Voyage pricing](https://docs.voyageai.com/docs/pricing) for current free-ti
 | `QDRANT_HOST` | Qdrant hostname; auto-constructs `http://<host>:<port>` | - | `qdrant` (Railway) or `localhost` |
 | `QDRANT_PORT` | Qdrant port (used with `QDRANT_HOST`) | `6333` | `6333` |
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
-| `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
+| `QDRANT_COLLECTION` | Collection used by the API, background workers and consolidation | `memories` | `memories` |
 | `QDRANT_ENSURE_PAYLOAD_INDEXES` | Create payload indexes on startup for faster filtered search | `true` | set `false` for read-only Qdrant credentials |
 | `VECTOR_SIZE` | Embedding dimension | `1024` | `1024` (voyage-4 or Ollama bge-m3), `3072` (OpenAI large), `768` (truncated OpenAI small) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
@@ -183,7 +183,7 @@ See [Voyage pricing](https://docs.voyageai.com/docs/pricing) for current free-ti
 **Notes**:
 - Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
 - **Existing deployments on 3072d or 768d**: `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts the existing collection dimension on startup. This avoids a dimension-startup failure; it does **not** migrate vectors to a new model.
-- To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The server will exit with a clear error message and fix instructions.
+- To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The default `python app.py` server exits with a clear error message and fix instructions. WSGI servers importing `app:app` validate lazily and return an error when a request first initializes Qdrant.
 - When creating a new collection, the configured `VECTOR_SIZE` (default 1024 for voyage-4) is used.
 - Changing embedding provider or model always requires a clean collection and a full re-embed, even when the old and new outputs are both 1024d.
 
@@ -345,7 +345,7 @@ Controls entity extraction and relationship linking.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ENRICHMENT_MAX_ATTEMPTS` | Max retry attempts | `3` |
+| `ENRICHMENT_MAX_ATTEMPTS` | Total attempts per enrichment job, including the first attempt | `3` |
 | `ENRICHMENT_SIMILARITY_LIMIT` | Max similar memories to link | `5` |
 | `ENRICHMENT_SIMILARITY_THRESHOLD` | Min similarity for linking | `0.8` |
 | `ENRICHMENT_IDLE_SLEEP_SECONDS` | Sleep when queue empty | `2` |
