@@ -1759,15 +1759,18 @@ export function createApp() {
   // In-memory session store for legacy SSE only.
   const sessions = new Map();
 
-  // Sweep abandoned SSE sessions every 5 minutes (1-hour TTL)
+  // Sweep abandoned SSE sessions every 5 minutes (1-hour idle TTL).
+  // A quiet but connected stream is still live; disconnects clean up immediately.
   const SESSION_TTL_MS = 60 * 60 * 1000;
   const sessionSweep = setInterval(() => {
     const now = Date.now();
     for (const [sid, session] of sessions.entries()) {
-      if (session.type === 'sse' && now - (session.lastAccess || 0) > SESSION_TTL_MS) {
+      const connected = session.res && !session.res.writableEnded && !session.res.destroyed;
+      if (session.type === 'sse' && !connected && now - session.lastAccess > SESSION_TTL_MS) {
         log('info', 'mcp_session_swept', { sessionId: sid, transport: 'sse' });
         // Delete first so transport.onclose guard (sessions.has) becomes a no-op
         sessions.delete(sid);
+        clearInterval(session.heartbeat);
         // close() returns a Promise — catch async rejections to avoid unhandled rejection crashes
         if (session.transport) {
           Promise.resolve(session.transport.close()).catch(() => {});
@@ -1983,7 +1986,7 @@ function getAuthToken(req) {
       clearInterval(heartbeat);
       sessions.delete(transport.sessionId);
     });
-    sessions.set(transport.sessionId, { transport, server, res, heartbeat, type: 'sse' });
+    sessions.set(transport.sessionId, { transport, server, res, heartbeat, type: 'sse', lastAccess: Date.now() });
     log('info', 'mcp_session_initialized', { reqId: req.requestId, sessionId: transport.sessionId, transport: 'sse' });
 
     // Server.connect() starts the SSE transport in current MCP SDK versions.
@@ -2002,6 +2005,7 @@ function getAuthToken(req) {
     log('warn', 'mcp_unknown_session', { reqId: req.requestId, sessionId });
     return res.status(404).send('Session not found');
   }
+  s.lastAccess = Date.now();
   try {
     await s.transport.handlePostMessage(req, res, req.body);
   } catch (e) {
