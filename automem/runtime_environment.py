@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from copy import copy
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,26 @@ class StructuredFormatter(logging.Formatter):
     """Retain human-readable logs and append JSON for application record fields."""
 
     def format(self, record: logging.LogRecord) -> str:
+        if (
+            record.name == "werkzeug"
+            and isinstance(record.msg, str)
+            and record.msg.rstrip().endswith('"%s" %s %s')
+            and isinstance(record.args, tuple)
+            and len(record.args) == 3
+            and isinstance(record.args[0], str)
+        ):
+            # Werkzeug supplies (request line, status, size) as access-log args.
+            # Preserve its method/path/protocol and optional ANSI styling, while
+            # omitting query values (which can include recall text or API keys).
+            request_line = record.args[0]
+            query_start = request_line.find("?", request_line.find(" ") + 1)
+            protocol_start = request_line.rfind(" HTTP/")
+            if query_start >= 0 and protocol_start > query_start:
+                record = copy(record)
+                record.args = (
+                    request_line[:query_start] + "?[REDACTED]" + request_line[protocol_start:],
+                    *record.args[1:],
+                )
         message = super().format(record)
         extras = {}
         for key, value in record.__dict__.items():

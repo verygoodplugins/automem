@@ -977,7 +977,7 @@ def _vector_search(
         except ValueError as exc:
             abort(400, description=str(exc))
     elif normalized:
-        logger.debug("Generating embedding for query: %s", normalized)
+        logger.debug("Generating embedding for recall query")
         embedding = generate_real_embedding(normalized)
 
     if not embedding:

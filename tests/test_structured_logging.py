@@ -87,3 +87,70 @@ def test_preconfigured_root_handler_receives_structured_fields(log_output, monke
     configure_logging()
     logger.info("existing handler", extra={"results": 4})
     assert '"results": 4' in stream.getvalue()
+
+
+@pytest.mark.parametrize("status", [200, 400, 404, 500])
+def test_werkzeug_access_logs_redact_query_preserving_request_details(log_output, status):
+    from werkzeug.serving import WSGIRequestHandler
+
+    # Use Werkzeug's own access-log argument construction. Flask's test client
+    # does not exercise this boundary, which is used by `python app.py`.
+    handler = object.__new__(WSGIRequestHandler)
+    handler.path = "/recall?query=PRIVATE_ACCESS_SECRET&api_key=PRIVATE_TOKEN"
+    handler.command = "GET"
+    handler.request_version = "HTTP/1.1"
+    handler.address_string = lambda: "127.0.0.1"
+    handler.log_date_time_string = lambda: "20/Oct/2026 20:00:00"
+    handler.log_request(status, 123)
+    emitted = log_output[1].getvalue()
+    assert "PRIVATE_ACCESS_SECRET" not in emitted
+    assert "PRIVATE_TOKEN" not in emitted
+    assert "GET /recall?" in emitted
+    assert "HTTP/1.1" in emitted
+    assert f'" {status} 123' in emitted
+
+
+def test_werkzeug_non_query_access_and_framework_messages_are_preserved(log_output):
+    from werkzeug.serving import WSGIRequestHandler
+
+    handler = object.__new__(WSGIRequestHandler)
+    handler.path = "/health"
+    handler.command = "HEAD"
+    handler.request_version = "HTTP/1.1"
+    handler.address_string = lambda: "127.0.0.1"
+    handler.log_date_time_string = lambda: "20/Oct/2026 20:00:00"
+    handler.log_request(200, 0)
+    logging.getLogger("werkzeug").warning("unrelated framework warning: %s", "details?")
+    emitted = log_output[1].getvalue()
+    assert '"HEAD /health HTTP/1.1" 200 0' in emitted
+    assert "unrelated framework warning: details?" in emitted
+
+
+def test_debug_vector_search_does_not_log_query(log_output, monkeypatch):
+    from types import SimpleNamespace
+
+    from automem.search import runtime_recall_helpers as helpers
+
+    logger, stream = log_output
+    monkeypatch.setattr(logger, "level", logging.DEBUG)
+    monkeypatch.setattr(helpers, "_generate_real_embedding", lambda _: [0.1, 0.2])
+    result = helpers._vector_search(
+        SimpleNamespace(search=lambda **kwargs: []),
+        None,
+        "PRIVATE_VECTOR_QUERY",
+        None,
+        5,
+        set(),
+    )
+    assert result == []
+    assert "Generating embedding" in stream.getvalue()
+    assert "PRIVATE_VECTOR_QUERY" not in stream.getvalue()
+
+
+def test_access_log_redaction_does_not_mutate_the_original_record(log_output):
+    args = ("GET /recall?query=PRIVATE_RECORD_QUERY HTTP/1.1", "200", "123")
+    record = logging.LogRecord("werkzeug", logging.INFO, __file__, 0, '"%s" %s %s', args, None)
+    logging.getLogger("werkzeug").handle(record)
+    assert "PRIVATE_RECORD_QUERY" not in log_output[1].getvalue()
+    assert record.args is args
+    assert "PRIVATE_RECORD_QUERY" in record.getMessage()

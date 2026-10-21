@@ -196,5 +196,7 @@ Operational logging
 - Application events such as `memory_stored`, `batch_stored` and `recall_complete`
   append JSON fields to the existing timestamp/level/logger/message format.
   Fields include counts, latency and storage status; recall query text is omitted.
+- Werkzeug access logs redact URL query strings while retaining request methods,
+  paths, protocols and response statuses. Vector-search debug logs omit query text.
 - Records without extra fields keep the plain format. Unsupported extra values
   use placeholders, and exception logs retain their tracebacks.
