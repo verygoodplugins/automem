@@ -90,9 +90,19 @@ def _install_qdrant_stub() -> None:
             self.value = value
 
     class FieldCondition:
-        def __init__(self, key: str, match):
+        def __init__(self, key: str, match=None, values_count=None):
             self.key = key
             self.match = match
+            self.values_count = values_count
+
+    class HasIdCondition:
+        def __init__(self, has_id):
+            self.has_id = has_id
+
+    class ValuesCount:
+        def __init__(self, gte=None, lte=None):
+            self.gte = gte
+            self.lte = lte
 
     class Filter:
         def __init__(self, must=None, should=None, must_not=None):
@@ -112,6 +122,8 @@ def _install_qdrant_stub() -> None:
     models_module.MatchAny = MatchAny
     models_module.MatchValue = MatchValue
     models_module.FieldCondition = FieldCondition
+    models_module.HasIdCondition = HasIdCondition
+    models_module.ValuesCount = ValuesCount
     models_module.Filter = Filter
     models_module.PointIdsList = PointIdsList
     sys.modules.setdefault("qdrant_client.models", models_module)

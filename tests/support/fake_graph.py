@@ -235,9 +235,14 @@ class FakeGraph:
             return FakeResult([])
 
         if "SET m.metadata" in query and "m.enriched = true" in query:
-            self.update_calls.append(dict(params))
             memory_id = str(params.get("id") or "")
             memory = self.memories.get(memory_id)
+            if "expected_content" in params and memory is not None:
+                for field in ("content", "tags", "metadata", "summary"):
+                    default = [] if field == "tags" else ""
+                    if (memory.get(field) or default) != params[f"expected_{field}"]:
+                        return FakeResult([])
+            self.update_calls.append(dict(params))
             if memory is not None:
                 memory.update(
                     {
@@ -246,11 +251,19 @@ class FakeGraph:
                         "tag_prefixes": params.get("tag_prefixes", memory.get("tag_prefixes", [])),
                         "summary": params.get("summary", memory.get("summary")),
                         "enriched": True,
-                        "processed": True,
+                        "processed": (
+                            True
+                            if "m.processed = true" in query
+                            else memory.get("processed", False)
+                        ),
                         "enriched_at": params.get("enriched_at", memory.get("enriched_at")),
                     }
                 )
-            return FakeResult([])
+            return (
+                FakeResult([[FakeNode(memory)]])
+                if "RETURN m" in query and memory is not None
+                else FakeResult([])
+            )
 
         # Full graph backup export
         if "RETURN max(id(n))" in query:

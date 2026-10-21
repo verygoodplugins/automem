@@ -130,6 +130,16 @@ GET /recall?query=project%20plan&state_mode=history
 
 Enrichment
 
+Background and JIT enrichment merge derived tags and metadata into the latest stored
+memory using an atomic graph comparison, so a concurrent PATCH does not lose caller
+fields. A content edit during extraction cancels the stale result; background
+enrichment reports a retryable conflict and JIT skips that write. Qdrant updates
+touch only derived metadata keys and guard tag replacement against the source tags.
+Graph and vector writes remain separate: a content edit after the graph commit can
+leave derived entity/enrichment metadata stale in Qdrant until payload repair or
+re-embedding, but does not replace the caller's content, tags or unrelated metadata
+keys.
+
 - GET `/enrichment/status`
   - Response: queue size, inflight/pending, stats, plus a `classification` block with type-classification counters (`llm_attempts`, `llm_successes`, `fallbacks`, `pattern_classifications`, `last_error`, `last_error_at`) for monitoring LLM-classification fallback rate, and a `circuit` block with `open`, `circuit_open_skips`, and `recoveries` for monitoring quota-circuit state.
 
