@@ -311,6 +311,26 @@ def test_relationships_and_derived_fields_share_one_atomic_commit():
     assert "m.processed = true" in query
 
 
+@pytest.mark.parametrize("phase", ["planning", "commit"])
+def test_timestamp_edit_rejects_obsolete_temporal_plan(phase):
+    graph = InterleavingGraph()
+    graph.memories["memory"]["timestamp"] = "2026-10-20T01:00:00Z"
+    graph.temporal_related_ids = ["older"]
+    original = copy.deepcopy(graph.memories["memory"])
+
+    def edit():
+        graph.memories["memory"]["timestamp"] = "2026-10-19T01:00:00Z"
+
+    if phase == "commit":
+        graph.before_commit = edit
+    with pytest.raises(RuntimeError, match="timestamp changed during enrichment"):
+        perform_enrichment(
+            graph, real_helpers=True, during_summary=edit if phase == "planning" else lambda: None
+        )
+    assert graph.temporal_calls == []
+    assert graph.memories["memory"] == {**original, "timestamp": "2026-10-19T01:00:00Z"}
+
+
 def test_atomic_commit_failure_does_not_mark_memory_processed():
     class FailingGraph(InterleavingGraph):
         fail = True

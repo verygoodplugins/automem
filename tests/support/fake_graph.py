@@ -221,6 +221,11 @@ class FakeGraph:
                     default = [] if field == "tags" else ""
                     if (memory.get(field) or default) != params[f"expected_{field}"]:
                         return FakeResult([])
+                if (
+                    "expected_timestamp" in params
+                    and (memory.get("timestamp") or "") != params["expected_timestamp"]
+                ):
+                    return FakeResult([])
             if any(key.startswith("enrichment_") for key in params):
                 if "MERGE (m1)-[r:PRECEDED_BY]" in query:
                     self.temporal_calls.append(dict(params))

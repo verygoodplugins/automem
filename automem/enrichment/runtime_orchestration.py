@@ -50,6 +50,7 @@ def _persist_enrichment(
     compute_tag_prefixes_fn: Callable[[List[str]], List[str]],
     enriched_at: str,
     write_plan: Optional[EnrichmentWritePlan] = None,
+    source_timestamp: Any = None,
 ) -> Optional[Tuple[Dict[str, Any], List[str]]]:
     """Merge derived fields into a fresh snapshot, committing only if it is current.
 
@@ -65,6 +66,8 @@ def _persist_enrichment(
         current = dict(getattr(node, "properties", {}))
         if (current.get("content") or "") != content:
             raise EnrichmentConflictError(f"Memory {memory_id} changed during enrichment")
+        if write_plan is not None and current.get("timestamp") != source_timestamp:
+            raise EnrichmentConflictError(f"Memory {memory_id} timestamp changed during enrichment")
 
         metadata = deepcopy(parse_metadata_field_fn(current.get("metadata")) or {})
         if not isinstance(metadata, dict):
@@ -106,6 +109,7 @@ def _persist_enrichment(
             "expected_tags": source_tags,
             "expected_metadata": current.get("metadata") or "",
             "expected_summary": current.get("summary") or "",
+            "expected_timestamp": current.get("timestamp") or "",
         }
         processed_clause = ", m.processed = true" if processed else ""
         result = graph.query(
@@ -115,6 +119,7 @@ def _persist_enrichment(
               AND coalesce(m.tags, []) = $expected_tags
               AND coalesce(m.metadata, '') = $expected_metadata
               AND coalesce(m.summary, '') = $expected_summary
+              AND coalesce(m.timestamp, '') = $expected_timestamp
             """
             + write_clauses
             + """
@@ -370,6 +375,7 @@ def enrich_memory(
         enrichment_updates=enrichment_updates,
         processed=True,
         write_plan=write_plan,
+        source_timestamp=properties.get("timestamp"),
         parse_metadata_field_fn=parse_metadata_field_fn,
         normalize_tag_list_fn=normalize_tag_list_fn,
         slugify_fn=slugify_fn,
