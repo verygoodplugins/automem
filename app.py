@@ -414,7 +414,9 @@ _embedding_runtime = create_embedding_runtime(
     point_struct_cls=PointStruct,
     utc_now_fn=utc_now,
     generate_real_embedding_fn=lambda content: _generate_real_embedding(content),
-    generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(contents),
+    generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(
+        contents, allow_placeholder_fallback=False, allow_placeholder_provider=True
+    ),
 )
 
 init_embedding_pipeline = _embedding_runtime.init_embedding_pipeline

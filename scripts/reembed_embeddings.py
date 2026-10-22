@@ -35,6 +35,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from automem.config import EMBEDDING_MODEL, VECTOR_SIZE
+from automem.stores.vector_payload import build_qdrant_payload
 
 logger = logging.getLogger("reembed")
 logging.basicConfig(
@@ -125,7 +126,11 @@ def fetch_memories(graph: Any, limit: Optional[int] = None) -> List[Dict[str, An
                m.confidence AS confidence,
                m.metadata AS metadata,
                m.updated_at AS updated_at,
-               m.last_accessed AS last_accessed
+               m.last_accessed AS last_accessed,
+               m.t_valid AS t_valid,
+               m.t_invalid AS t_invalid,
+               m.archived AS archived,
+               m.relevance_score AS relevance_score
         ORDER BY m.timestamp
     """
     params: Dict[str, Any] = {}
@@ -149,6 +154,10 @@ def fetch_memories(graph: Any, limit: Optional[int] = None) -> List[Dict[str, An
                 "metadata": row[7],
                 "updated_at": row[8],
                 "last_accessed": row[9],
+                "t_valid": row[10] if len(row) > 10 else row[4],
+                "t_invalid": row[11] if len(row) > 11 else None,
+                "archived": row[12] if len(row) > 12 else False,
+                "relevance_score": row[13] if len(row) > 13 else None,
             }
         )
     logger.info("Loaded %d memories from FalkorDB", len(memories))
@@ -202,17 +211,7 @@ def reembed_memories(memories: List[Dict[str, Any]], batch_size: int, provider: 
 
         points: List[PointStruct] = []
         for mem, vector in zip(batch, vectors, strict=True):
-            payload = {
-                "content": mem["content"],
-                "tags": mem["tags"],
-                "importance": mem["importance"],
-                "timestamp": mem["timestamp"],
-                "type": mem["type"],
-                "confidence": mem["confidence"],
-                "updated_at": mem["updated_at"],
-                "last_accessed": mem["last_accessed"],
-                "metadata": parse_metadata(mem["metadata"]),
-            }
+            payload = build_qdrant_payload(mem)
             points.append(PointStruct(id=mem["id"], vector=vector, payload=payload))
         qdrant.upsert(collection_name=collection, points=points)
         processed += len(batch)
