@@ -2582,7 +2582,6 @@ def handle_recall(
     logger.info(
         "recall_complete",
         extra={
-            "query": query_text[:100] if query_text else "",
             "results": len(deduped_results),
             "latency_ms": response["query_time_ms"],
             "vector_enabled": qdrant_client is not None,

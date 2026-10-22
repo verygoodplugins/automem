@@ -8,7 +8,7 @@ Authentication
   - `Authorization: Bearer <AUTOMEM_API_TOKEN>` header (recommended)
   - `X-API-Key: <AUTOMEM_API_TOKEN>` header
   - `?api_key=<AUTOMEM_API_TOKEN>` query parameter
-- Admin endpoints additionally require `X-Admin-Token: <ADMIN_API_TOKEN>` header.
+- Admin endpoints additionally require `X-Admin-Token: <ADMIN_API_TOKEN>` or `X-Admin-Api-Key: <ADMIN_API_TOKEN>`. Both headers are allowed by browser CORS preflight; configured `VIEWER_ALLOWED_ORIGINS` restrictions and admin authorization still apply.
 - `GET /backup` is admin-only and does not accept the regular API token by itself.
 
 Health
@@ -17,6 +17,13 @@ Health
   - Returns overall status and service connectivity.
 
 Memory
+
+Explicit `type` values on POST, PATCH and batch writes must be non-empty strings.
+Known aliases normalize to canonical types (for example, `insight` → `Insight`,
+`decision` → `Decision`, `analysis` → `Insight`). Unknown custom strings remain
+unchanged for compatibility and produce a warning. Omit `type` to classify a new
+memory automatically or preserve an existing type on PATCH. Existing stored types
+are not migrated by this change.
 
 - POST `/memory`
   - Body: `{ "content": "...", "tags": ["tag"], "importance": 0.7, "metadata": {} }`
@@ -201,3 +208,13 @@ Notes
 - Exclusion filtering (`exclude_tags`) removes any memory containing ANY of the excluded tags, supporting both exact and prefix matching.
 - Time filtering accepts ISO timestamps (`start`, `end`) or a natural expression via `time_query`.
 - Context hints boost matching preferences (e.g., Python coding style) and guarantee at least one anchor memory when applicable; responses echo what was applied via `context_priority`.
+
+Operational logging
+
+- Application events such as `memory_stored`, `batch_stored` and `recall_complete`
+  append JSON fields to the existing timestamp/level/logger/message format.
+  Fields include counts, latency and storage status; recall query text is omitted.
+- Werkzeug access logs redact URL query strings while retaining request methods,
+  paths, protocols and response statuses. Vector-search debug logs omit query text.
+- Records without extra fields keep the plain format. Unsupported extra values
+  use placeholders, and exception logs retain their tracebacks.

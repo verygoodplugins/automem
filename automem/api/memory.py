@@ -15,9 +15,22 @@ from automem.config import (
     MEMORY_CONTENT_HARD_LIMIT,
     MEMORY_CONTENT_SOFT_LIMIT,
     MEMORY_SUMMARY_TARGET_LENGTH,
+    normalize_memory_type,
 )
 from automem.stores.vector_payload import build_qdrant_payload
 from automem.utils.text import should_summarize_content, summarize_content
+
+
+def _explicit_memory_type(raw_type: Any, logger: Any) -> str:
+    """Canonicalize known aliases while retaining existing custom string types."""
+    if not isinstance(raw_type, str) or not raw_type.strip():
+        abort(400, description="'type' must be a non-empty string")
+
+    normalized, _ = normalize_memory_type(raw_type.strip())
+    if normalized:
+        return normalized
+    logger.warning("Preserving custom memory type", extra={"memory_type": raw_type})
+    return raw_type
 
 
 def _validate_memory_id(memory_id: str) -> None:
@@ -560,11 +573,9 @@ def create_memory_blueprint_full(
         metadata_json = json.dumps(metadata, default=str)
 
         # Accept explicit type/confidence or classify automatically
-        memory_type = payload.get("type")
         type_confidence = payload.get("confidence")
-        if memory_type:
-            # Validate explicit type
-            # (Memory types are validated by the classifier caller; keep permissive here)
+        if "type" in payload:
+            memory_type = _explicit_memory_type(payload["type"], logger)
             if type_confidence is None:
                 type_confidence = 0.9
             else:
@@ -854,6 +865,8 @@ def create_memory_blueprint_full(
         tag_prefixes = compute_tag_prefixes(tags_lower)
         importance = payload.get("importance", current.get("importance"))
         memory_type = payload.get("type", current.get("type"))
+        if "type" in payload:
+            memory_type = _explicit_memory_type(payload["type"], logger)
         confidence = payload.get("confidence", current.get("confidence"))
         timestamp = payload.get("timestamp", current.get("timestamp"))
         t_valid = payload.get("t_valid", current.get("t_valid"))
@@ -1288,9 +1301,9 @@ def create_memory_blueprint_full(
             metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
             metadata_json = json.dumps(metadata, default=str)
 
-            memory_type = mem.get("type")
             type_confidence = mem.get("confidence")
-            if memory_type:
+            if "type" in mem:
+                memory_type = _explicit_memory_type(mem["type"], logger)
                 type_confidence = (
                     coerce_importance(type_confidence) if type_confidence is not None else 0.9
                 )

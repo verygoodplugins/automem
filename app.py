@@ -120,7 +120,13 @@ CORS(
     resources={
         r"/*": {
             "origins": _parse_viewer_allowed_origins(),
-            "allow_headers": ["Content-Type", "X-API-Key", "Authorization"],
+            "allow_headers": [
+                "Content-Type",
+                "X-API-Key",
+                "Authorization",
+                "X-Admin-Token",
+                "X-Admin-Api-Key",
+            ],
         }
     },
 )
