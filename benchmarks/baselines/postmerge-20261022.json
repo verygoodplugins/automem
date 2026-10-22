@@ -77,7 +77,15 @@
     "enrichment": false,
     "jit": false,
     "consolidation": false,
-    "python_hash_seed": 0
+    "python_hash_seed": 0,
+    "answerer_applies_to": "LongMemEval",
+    "locomo_scoring": {
+      "answering": "canonical retrieval/extraction pipeline",
+      "llm_extraction": false,
+      "embedding_similarity": true,
+      "auxiliary_embedding_model": "text-embedding-3-small",
+      "category_5_judge": "gpt-5.4-mini-2026-03-17"
+    }
   },
   "status": "incomplete_provider_blocked",
   "ingestion_modes": {

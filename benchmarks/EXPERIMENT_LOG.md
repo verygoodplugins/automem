@@ -149,7 +149,7 @@ results, retrieval coverage and LongMemEval task-average remain null until
 complete healthy runs exist. Task-average is the mean of all six per-type
 accuracies, reported alongside total correct/500. Exploratory local diagnostics,
 legacy-payload repair probes and the selected inline-relation lifecycle follow-up
-are in the [decision report](https://github.com/verygoodplugins/automem-evals/blob/test/postmerge-baseline/docs/session_20261022_postmerge_baseline.md).
+are in the [decision report](https://github.com/verygoodplugins/automem-evals/pull/72).
 Production repair is outside this batch; the late enrichment vector race in
 [#270](https://github.com/verygoodplugins/automem/issues/270) remains open.
 
