@@ -204,8 +204,9 @@ Stream
 
 Notes
 
-- Tag matching supports exact and prefix semantics; vector searches are filtered by tag conditions when provided.
-- Exclusion filtering (`exclude_tags`) removes any memory containing ANY of the excluded tags, supporting both exact and prefix matching.
+- Inclusion tag matching (`tags`) supports exact and prefix semantics; vector searches are filtered by tag conditions when provided. Inclusion prefix matching follows hierarchy segments separated by `:` or `/`: `auth/login` matches `auth:login:password`, while `auth` does not match `auth-login`. Exact matching retains delimiter spelling (`auth/login` and `auth:login` are distinct exact tags).
+- Legacy graph nodes without `tag_prefixes` retain a hierarchy-aware fallback. Legacy Qdrant points require their prefix payload to be backfilled for vector prefix filtering: run `python scripts/backfill_tag_prefixes.py --dry-run`, review the changes, then run without `--dry-run` against the intended graph and Qdrant collection. Use `--force-qdrant` if graph prefixes already exist but vector payloads need repair. No backfill runs automatically.
+- Exclusion filtering (`exclude_tags`) removes any memory containing ANY of the excluded tags. Exclusions retain raw string-prefix matching regardless of `tag_match`: `exclude_tags=auth` removes both `auth:login` and `auth-login`, and slash/colon spelling is not normalized for exclusions.
 - Time filtering accepts ISO timestamps (`start`, `end`) or a natural expression via `time_query`.
 - Context hints boost matching preferences (e.g., Python coding style) and guarantee at least one anchor memory when applicable; responses echo what was applied via `context_priority`.
 

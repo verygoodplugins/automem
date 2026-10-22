@@ -18,12 +18,12 @@ def _build_graph_tag_predicate(tag_mode: str, tag_match: str) -> str:
     prefixes_expr = "coalesce(m.tag_prefixes, [])"
     prefix_any = f"ANY(req IN $tag_filters WHERE req IN {prefixes_expr})"
     prefix_all = f"ALL(req IN $tag_filters WHERE req IN {prefixes_expr})"
-    fallback_any = (
-        f"ANY(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
-    )
-    fallback_all = (
-        f"ALL(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE tag STARTS WITH req))"
-    )
+    # Legacy nodes have no prefix index yet. Match complete hierarchy segments,
+    # with either delimiter, rather than arbitrary string prefixes across hyphens.
+    legacy_tag = "replace(tag, '/', ':')"
+    legacy_match = f"({legacy_tag} = req OR {legacy_tag} STARTS WITH (req + ':'))"
+    fallback_any = f"ANY(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE {legacy_match}))"
+    fallback_all = f"ALL(req IN $tag_filters WHERE ANY(tag IN {tags_expr} WHERE {legacy_match}))"
 
     if normalized_mode == "all":
         return (

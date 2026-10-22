@@ -125,6 +125,38 @@ Detailed experiment history:
 | 2026-06-11 | Ranking release (develop) | develop @ 0b522a9 | -- | -- | **43.3% (13/30)**, recall@5 30/30 | **86.00% (430/500)**, recall@5 **96.60% (483/500)** | Full judged run, ship config (`RECALL_RECENCY_BIAS=auto`, harness `temporal-answer`); `gpt-5-mini` answerer + pinned `gpt-5.4-mini-2026-03-17` judge; `judge_errors=0`, `memory_ingest_failures=0`. Artifact `lme_full_ship_20260611.json` (sha256 `1e53f71…`). **Recall is the deterministic signal**; the accuracy delta vs the 2026-05-17 run (87.00%) is within answerer noise (±1pp replicate). Churn attribution shows the April 97.2% recall floor is stale — current main at defaults measures ~97.0% (485/500 est). Mini-floor row (43.3%) is the judge-off develop canary, not comparable to judged rows. → full forensic breakdown: [2026-06-11 ranking release: recall churn attribution](#2026-06-11-ranking-release-recall-churn-attribution). |
 | 2026-07-04 | PR #205 infra-gated validation | fix/recall-overfetch-and-artifact-exclusion @ b9d89c2 | -- | **83.98% (1295/1542)** | -- | -- | Candidate-pool sizing + artifact exclusion validation on an isolated production-clone worktree. Directionally above prior main judge-off baseline `81.58% (1258/1542)`, but not a same-run A/B. Recall Quality Lab was non-regressing, not improving: `fix_v1` vs `baseline_pr205_legacy` both NDCG@10 **0.029**, Recall@10 **0.045**, distractor@10 **0.000**; latency 189ms vs 204ms. Sweep `RECALL_VECTOR_OVERFETCH=1,2,4,8`: 1/2/4 tied on quality, 8 slightly lower NDCG **0.028**. Local smoke excluded `MetaPattern` rows, but failed the unscoped positive-id check (`ee830782` absent up to limit 100; rank 2 when scoped to `tags=lennard`). Live PR validation skipped because Railway production was `f207a40` from PR #213 and did not contain `b9d89c2`. |
 | 2026-07-07 | #200 evidence-answer prompt probe | fix/200-longmemeval-answer-construction | -- | -- | control `temporal-answer` **80.00% (24/30)**, recall@5 30/30; best `evidence-answer` **73.33% (22/30)**, recall@5 30/30 | -- | Harness-only answer-construction experiment; no server recall/vector/graph changes. Direct Python harness used against healthy local API because the shell wrapper's Docker guard failed while `localhost:8001/health` was healthy. Evidence prompt variants were worse than same-day temporal control (`66.67%`, `66.67%`, then `73.33%`), so full LongMemEval was skipped and #200 should stay open. LLM diagnosis: temporal control answer-construction **5/6** failed-but-retrieved; best evidence prompt **7/8**, with rank-1 abstentions down 2→1 but total misses up. Ignored artifacts under `benchmarks/results/issue200/`. |
+| 2026-10-21 | PR #266 control (no judge) | main @ 3caa9d5 | **82.98% (195/235)** | **78.47% (1210/1542)** | -- | -- | Fresh isolated snapshot evaluation, Voyage `voyage-4` 1024d, current official harness; 69/444 category-5 questions excluded. Baseline mini/full wall times 140.622s/671.313s. See [comparison receipt](baselines/pr266-tag-prefix-20261021.json). |
+| 2026-10-21 | PR #266 prefix filters (no judge) | fix/tag-prefix-filtering @ e360619 | **82.98% (195/235)** | **78.27% (1207/1542)** | -- | -- | Same settings and fresh snapshots: mini **0.00pp**, full **-0.19pp** (four lost/one gained QA rows). Candidate mini/full 147.051s/685.356s. Controlled shared-store replay with identical Python hash seed matches both refs on all five changed rows; the original full delta accompanies preexisting process-dependent query decomposition. Details below. |
+
+### 2026-10-21 PR #266: prefix-filter comparison
+
+The before/after comparison uses main `3caa9d5d396ba4cb303df1fb39da7602126f60c9`
+and candidate `e360619f148bef310abb057192aa925fe0a5dc29`, with the candidate's
+unmodified official LoCoMo harness for both. Each ref/tier restores the existing
+March snapshots into disposable graph/vector stores. The current harness is
+scoped through a temporary `conversation` manifest to match legacy snapshot tags;
+`--eval-only --no-cleanup --conversations N` runs at most three official processes
+concurrently, and totals are weighted by scored questions. No reingestion, judge,
+or OpenAI embedding-similarity scorer is used. Voyage query embeddings remain
+`voyage-4`, 1024d. Background workers and JIT enrichment are disabled for both refs;
+ordinary recall access timestamp updates remain enabled. Mini restores contain
+1576 graph rows/1654 vector points (a preexisting mismatch); full restores contain
+5882/5882. These no-judge scores are directional and do not replace judged baselines.
+
+The full run changed five QA rows while mini changed none. The existing
+`_extract_query_entities` returns `list(set(entities))`, and decomposition takes
+only its first two entries. Separate unseeded server processes therefore chose
+different supplementary queries. On the same stores, the Tim question used
+`California`/`Potter` on main versus `Harry`/`Tim` on the candidate. With
+`PYTHONHASHSEED=0` on both server processes, all five changed QA verdicts agree across
+refs in three paired repetitions; request traces confirm exact tag matching and
+no entity-expansion results. This diagnoses existing hash-order variability,
+without changing ranking policy or claiming the original full scores are equal.
+
+The [small comparison receipt](baselines/pr266-tag-prefix-20261021.json) records
+refs, snapshot/dataset hashes, settings, totals, and controlled replay results.
+Official raw shard outputs, request/order diagnostics, and the disposable runner
+are retained under ignored `benchmarks/results/pr266-20261021/`.
 
 ### 2026-06-11 ranking release: recall churn attribution
 

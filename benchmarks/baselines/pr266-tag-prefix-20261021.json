@@ -1,0 +1,97 @@
+{
+  "date": "2026-10-21",
+  "pull_request": 266,
+  "baseline_ref": "main",
+  "baseline_sha": "3caa9d5d396ba4cb303df1fb39da7602126f60c9",
+  "candidate_sha": "e360619f148bef310abb057192aa925fe0a5dc29",
+  "harness_sha": "e360619f148bef310abb057192aa925fe0a5dc29",
+  "mode": "snapshot eval-only; fresh isolated stores per ref and tier",
+  "embedding_provider": "voyage",
+  "embedding_model": "voyage-4",
+  "embedding_dimensions": 1024,
+  "judge_requested": false,
+  "openai_similarity_enabled": false,
+  "scorer": "official deterministic word/date/evidence matching; category 5 without ground truth excluded",
+  "max_concurrent_official_conversation_processes": 3,
+  "scope_prefix": "conversation",
+  "scope_note": "Temporary manifest adapts current harness to legacy snapshot conversation:conv-N tags; no data reingestion.",
+  "server_lifecycle": "Stores/provider only; no background workers; JIT enrichment disabled. Ordinary recall access timestamp updates retained.",
+  "command_template": "python tests/benchmarks/test_locomo.py --base-url http://127.0.0.1:18066 --api-token test-token --data-file <copied-locomo10.json> --eval-only --no-cleanup --conversations N --output <shard.json>",
+  "raw_artifacts": "benchmarks/results/pr266-20261021/",
+  "caveat": "Same-run directional regression comparison, not comparable to historical judged/configured scores. LoCoMo uses exact tag scoping; prefix behavior has separate focused tests.",
+  "source_sha256": {
+    "benchmarks/snapshots/locomo-mini/falkordb.tar.gz": "a0c6b00ff1bc5097c022e9aab4ccb2368ce2dbea0d37f35d7c49479ca6c7b526",
+    "benchmarks/snapshots/locomo-mini/qdrant.tar.gz": "f6273e15201dfec5bf718cb1c71a023cc5e71a379b1d7b5a01388545416007a8",
+    "benchmarks/snapshots/locomo/falkordb.tar.gz": "aacfba76090651abb63b11ef7fff28829d158b4010af5869f0acbc3896a6972c",
+    "benchmarks/snapshots/locomo/qdrant.tar.gz": "6c85bd50b7ec3eb1254023d267720245a93649395d8f06d363b11f6149231828",
+    "tests/benchmarks/locomo/data/locomo10.json": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
+  },
+  "results": {
+    "mini": {
+      "main": {
+        "correct": 195,
+        "scored": 235,
+        "category5_skipped": 69,
+        "accuracy_percent": 82.9787,
+        "elapsed_seconds": 140.622,
+        "graph_rows": 1576,
+        "vector_points": 1654
+      },
+      "candidate": {
+        "correct": 195,
+        "scored": 235,
+        "category5_skipped": 69,
+        "accuracy_percent": 82.9787,
+        "elapsed_seconds": 147.051,
+        "graph_rows": 1576,
+        "vector_points": 1654
+      },
+      "question_scoring_changes": 0,
+      "accuracy_delta_percentage_points": 0.0
+    },
+    "full": {
+      "main": {
+        "correct": 1210,
+        "scored": 1542,
+        "category5_skipped": 444,
+        "accuracy_percent": 78.4695,
+        "elapsed_seconds": 671.313,
+        "graph_rows": 5882,
+        "vector_points": 5882
+      },
+      "candidate": {
+        "correct": 1207,
+        "scored": 1542,
+        "category5_skipped": 444,
+        "accuracy_percent": 78.275,
+        "elapsed_seconds": 685.356,
+        "graph_rows": 5882,
+        "vector_points": 5882
+      },
+      "question_scoring_changes": 5,
+      "accuracy_delta_percentage_points": -0.1945
+    }
+  },
+  "controlled_replay": {
+    "changed_qa_rows": 5,
+    "repetitions_per_ref": 3,
+    "paired_comparisons": 15,
+    "python_hash_seed": 0,
+    "shared_graph_and_vector_stores": true,
+    "verdict_mismatches": 0,
+    "decomposed_query_list_mismatches": 0,
+    "ordered_context_id_mismatches": 10,
+    "request_tag_matches": [
+      "exact"
+    ],
+    "entity_expanded_counts": [
+      0
+    ],
+    "mechanism": "Existing list(set(entities)) in _extract_query_entities feeds entities[:2]; unfixed per-process hash ordering changes supplementary query selection. Fixed-seed paired replay matches graded outcomes, not all context ordering. Original full delta is retained."
+  },
+  "single_semantic_recall_probes_seconds": {
+    "main": 0.306359,
+    "candidate": 0.322345,
+    "note": "One HTTP200 probe each; not a latency benchmark."
+  }
+}
