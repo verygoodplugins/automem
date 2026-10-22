@@ -135,6 +135,7 @@ class MemoryConsolidator:
         graph: GraphLike,
         vector_store: Optional[VectorStoreProtocol] = None,
         *,
+        collection_name: str = "memories",
         delete_threshold: float = 0.05,
         archive_threshold: float = 0.2,
         grace_period_days: int = 90,
@@ -145,6 +146,7 @@ class MemoryConsolidator:
     ):
         self.graph = graph
         self.vector_store = vector_store
+        self.collection_name = collection_name
         self._graph_id = id(graph)  # Unique ID for cache invalidation
 
         # Decay parameters (tunable)
@@ -372,7 +374,7 @@ class MemoryConsolidator:
             mem_ids = [m.id for m in memories]
             try:
                 points = self.vector_store.retrieve(
-                    collection_name="memories",
+                    collection_name=self.collection_name,
                     ids=mem_ids,
                     with_vectors=True,
                     with_payload=False,
@@ -495,7 +497,7 @@ class MemoryConsolidator:
                 offset = None
                 while True:
                     scroll_kwargs: Dict[str, Any] = {
-                        "collection_name": "memories",
+                        "collection_name": self.collection_name,
                         "limit": 500,
                         "with_vectors": True,
                         "with_payload": False,
@@ -712,11 +714,13 @@ class MemoryConsolidator:
                                 selector = {"points": [memory["id"]]}
 
                             self.vector_store.delete(
-                                collection_name="memories",
+                                collection_name=self.collection_name,
                                 points_selector=selector,
                             )
                         except Exception:
-                            logger.exception("Vector store deletion failed for %s", memory["id"])
+                            logger.warning(
+                                "Vector store deletion failed for %s", memory["id"], exc_info=True
+                            )
 
             elif relevance < self.archive_threshold:
                 if should_protect:
@@ -740,12 +744,16 @@ class MemoryConsolidator:
                         if self.vector_store:
                             try:
                                 self.vector_store.set_payload(
-                                    collection_name="memories",
+                                    collection_name=self.collection_name,
                                     points=[memory["id"]],
                                     payload={"relevance_score": relevance},
                                 )
                             except Exception:
-                                pass
+                                logger.warning(
+                                    "Vector store relevance sync failed for %s",
+                                    memory["id"],
+                                    exc_info=True,
+                                )
                     continue
 
                 stats["archived"].append(
@@ -776,7 +784,7 @@ class MemoryConsolidator:
                     if self.vector_store:
                         try:
                             self.vector_store.set_payload(
-                                collection_name="memories",
+                                collection_name=self.collection_name,
                                 points=[memory["id"]],
                                 payload={
                                     "relevance_score": relevance,
@@ -784,7 +792,11 @@ class MemoryConsolidator:
                                 },
                             )
                         except Exception:
-                            pass
+                            logger.warning(
+                                "Vector store archive sync failed for %s",
+                                memory["id"],
+                                exc_info=True,
+                            )
             else:
                 stats["preserved"] += 1
 
@@ -798,12 +810,16 @@ class MemoryConsolidator:
                     if self.vector_store:
                         try:
                             self.vector_store.set_payload(
-                                collection_name="memories",
+                                collection_name=self.collection_name,
                                 points=[memory["id"]],
                                 payload={"relevance_score": relevance},
                             )
                         except Exception:
-                            pass
+                            logger.warning(
+                                "Vector store relevance sync failed for %s",
+                                memory["id"],
+                                exc_info=True,
+                            )
 
         if stats["protected"]:
             logger.info(
@@ -1101,12 +1117,14 @@ class MemoryConsolidator:
             if self.vector_store:
                 try:
                     self.vector_store.set_payload(
-                        collection_name="memories",
+                        collection_name=self.collection_name,
                         points=[memory["id"]],
                         payload={"relevance_score": new_score},
                     )
                 except Exception:
-                    logger.debug("Qdrant relevance sync skipped for %s", memory["id"][:8])
+                    logger.warning(
+                        "Vector store relevance sync failed for %s", memory["id"], exc_info=True
+                    )
 
         if stats["processed"] > 0:
             stats["avg_relevance_before"] = total_before / stats["processed"]

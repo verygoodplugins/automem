@@ -212,6 +212,7 @@ def build_consolidator_from_config(
     vector_store: Any,
     *,
     memory_consolidator_cls: Any,
+    collection_name: str = "memories",
     delete_threshold: float,
     archive_threshold: float,
     grace_period_days: int,
@@ -225,6 +226,7 @@ def build_consolidator_from_config(
     consolidator = memory_consolidator_cls(
         graph,
         vector_store,
+        collection_name=collection_name,
         delete_threshold=delete_threshold,
         archive_threshold=archive_threshold,
         grace_period_days=grace_period_days,
