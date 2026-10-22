@@ -401,6 +401,7 @@ def test_jit_enrich_lightweight_basic(reset_state: FakeGraph) -> None:
         "tags": ["test"],
         "metadata": {},
     }
+    reset_state.memories["mem-jit-1"] = dict(properties)
 
     updated = app.jit_enrich_lightweight("mem-jit-1", properties)
 
@@ -469,8 +470,9 @@ def test_recall_jit_enriches_unenriched(
 
     # Recall - the recall blueprint was created at import time,
     # so we test jit_enrich_lightweight directly instead
-    props = {"id": "test-id", "content": "Test JIT recall", "tags": ["test"], "metadata": {}}
-    result = app.jit_enrich_lightweight("test-id", props)
+    memory_id = resp.get_json()["memory_id"]
+    props = {"id": memory_id, "content": "Test JIT recall", "tags": ["test"], "metadata": {}}
+    result = app.jit_enrich_lightweight(memory_id, props)
     assert result is not None
     assert result["enriched"] is True
 

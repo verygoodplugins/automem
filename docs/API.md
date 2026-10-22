@@ -130,6 +130,24 @@ GET /recall?query=project%20plan&state_mode=history
 
 Enrichment
 
+Background and JIT enrichment merge derived tags and metadata into the latest stored
+memory using an atomic graph comparison, so a concurrent PATCH does not lose caller
+fields. A content edit during extraction cancels the stale result; background
+enrichment reports a retryable conflict and JIT skips that write. Qdrant updates
+touch only derived metadata keys and guard tag replacement against the source tags.
+Background relationship mutations are planned before the content/timestamp comparison. The
+source guard, relationship mutations, derived graph fields and completion flag then
+commit in one graph query, so a PATCH cannot interleave between them. A planned
+neighbor disappearing before commit is skipped without dropping the source row.
+Temporal counts and pattern observation/confidence
+increments represent unique per-memory evidence, so retries and forced reprocessing
+do not inflate them. A content or timestamp edit before commit rejects the obsolete plan.
+Graph and vector writes remain separate: a content edit after the graph commit can
+leave derived entity/enrichment metadata stale in Qdrant until payload repair or
+re-embedding, but does not replace the caller's content, tags or unrelated metadata
+keys.
+The remaining cross-store consistency work is tracked in [#270](https://github.com/verygoodplugins/automem/issues/270).
+
 - GET `/enrichment/status`
   - Response: queue size, inflight/pending, stats, plus a `classification` block with type-classification counters (`llm_attempts`, `llm_successes`, `fallbacks`, `pattern_classifications`, `last_error`, `last_error_at`) for monitoring LLM-classification fallback rate, and a `circuit` block with `open`, `circuit_open_skips`, and `recoveries` for monitoring quota-circuit state.
 
