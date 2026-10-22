@@ -1,0 +1,212 @@
+{
+  "id": "postmerge-20261022",
+  "created_at": "2026-10-22T18:39:45.572244+00:00",
+  "control": "01a17aa38e678924c07a51015ef705b8474e2193",
+  "candidate": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+  "harness_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+  "datasets": {
+    "longmemeval": {
+      "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+      "bytes": 277383467,
+      "question_count": 500,
+      "category_counts": {
+        "knowledge-update": 78,
+        "multi-session": 133,
+        "single-session-assistant": 56,
+        "single-session-preference": 30,
+        "single-session-user": 70,
+        "temporal-reasoning": 133
+      },
+      "canary_selection": {
+        "strategy": "first5 per question_type in source order; canonical --per-type 5",
+        "question_ids": [
+          "e47becba",
+          "118b2229",
+          "51a45a95",
+          "58bf7951",
+          "1e043500",
+          "0a995998",
+          "6d550036",
+          "gpt4_59c863d7",
+          "b5ef892d",
+          "e831120c",
+          "8a2466db",
+          "06878be2",
+          "75832dbd",
+          "0edc2aef",
+          "35a27287",
+          "gpt4_59149c77",
+          "gpt4_f49edff3",
+          "71017276",
+          "b46e15ed",
+          "gpt4_fa19884c",
+          "6a1eabeb",
+          "6aeb4375",
+          "830ce83f",
+          "852ce960",
+          "945e3d21",
+          "7161e7e2",
+          "c4f10528",
+          "89527b6b",
+          "e9327a54",
+          "4c36ccef"
+        ],
+        "count": 30,
+        "category_counts": {
+          "knowledge-update": 5,
+          "multi-session": 5,
+          "single-session-assistant": 5,
+          "single-session-preference": 5,
+          "single-session-user": 5,
+          "temporal-reasoning": 5
+        }
+      }
+    },
+    "locomo": {
+      "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+      "bytes": 2805274
+    }
+  },
+  "budget_usd": 20,
+  "profile": {
+    "embedding_model": "voyage-4",
+    "dimensions": 1024,
+    "answerer": "gpt-5-mini",
+    "judge": "gpt-5.4-mini-2026-03-17",
+    "maturation": "cold",
+    "enrichment": false,
+    "jit": false,
+    "consolidation": false,
+    "python_hash_seed": 0
+  },
+  "status": "incomplete_provider_blocked",
+  "ingestion_modes": {
+    "free": "fresh HTTP writes; local BGE-small-en-v1.5 /384d; cold",
+    "repair": "four disposable fresh fixtures with lifecycle payload keys deliberately removed, then forced reembedding",
+    "enrichment": "deterministic extractor interleaves real HTTP PATCH; real graph/vector persistence; background and JIT functions",
+    "paid": "not started; fresh Voyage-4/1024d ingestion planned; existing snapshots not reused"
+  },
+  "free_adapters": {
+    "forgeteval": "4723034d2d5fe7a29f448ee4fed9d93e838c2724",
+    "lethe": "b6053b7bdacc78a91b9ea4bb25f32edad278c495",
+    "precisionmembench_adapter": "9b3e7cb5c964295714a561f2c86f3c4be75c7cc7",
+    "precisionmembench_upstream": "61a712a1754e7d27b6dee42da32a2c214b003ece"
+  },
+  "free_runtime": {
+    "falkordb": "v4.18.10",
+    "qdrant": "v1.11.3",
+    "api_image": "sha256:668fccdfd77afba9be262df8b1ef944da072b72834da098bdd5fc87c7feb722d",
+    "paid_credentials": "absent",
+    "jit": "off except separately labelled local-JIT graph probe"
+  },
+  "accounting": {
+    "cap_nusd": 20000000000,
+    "reserved_or_spent_nusd": 1689750,
+    "remaining_nusd": 19998310250,
+    "actual_spend_usd": null,
+    "note": "3 failed preflights; retain full reservations; actual billed usage unavailable. All ledgers halted. Any future rollover cap must subtract every prior liability.",
+    "ledgers": [
+      {
+        "path": "paid/budget.sqlite3",
+        "cap_nusd": 20000000000,
+        "halt_reason": "accounting_error",
+        "attempts": [
+          {
+            "model": "gpt-5-mini",
+            "reserved_nusd": 563250,
+            "charged_nusd": 563250,
+            "state": "reserved",
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        ]
+      },
+      {
+        "path": "paid/budget-02.sqlite3",
+        "cap_nusd": 19999436750,
+        "halt_reason": "accounting_error",
+        "attempts": [
+          {
+            "model": "gpt-5-mini",
+            "reserved_nusd": 563250,
+            "charged_nusd": 563250,
+            "state": "reserved",
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        ]
+      },
+      {
+        "path": "paid/budget-03.sqlite3",
+        "cap_nusd": 19998873500,
+        "halt_reason": "accounting_error",
+        "attempts": [
+          {
+            "model": "gpt-5-mini",
+            "reserved_nusd": 563250,
+            "charged_nusd": 563250,
+            "state": "reserved",
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        ]
+      }
+    ]
+  },
+  "paid_stages": {
+    "control_canary": {
+      "completed": 0,
+      "expected": 30,
+      "accuracy": null,
+      "publishable": false,
+      "status": "blocked before benchmark execution"
+    },
+    "candidate_canary": {
+      "completed": 0,
+      "expected": 30,
+      "accuracy": null,
+      "publishable": false,
+      "status": "blocked before benchmark execution"
+    },
+    "candidate_longmemeval_s": {
+      "completed": 0,
+      "expected": 500,
+      "accuracy": null,
+      "publishable": false,
+      "status": "blocked before benchmark execution",
+      "task_averaged_accuracy": null,
+      "task_average_formula": "mean(correct_in_type / total_in_type) across all six types; emit only when all six complete and infrastructure healthy"
+    },
+    "candidate_locomo": {
+      "completed": 0,
+      "expected": 1986,
+      "accuracy": null,
+      "publishable": false,
+      "status": "blocked before benchmark execution"
+    }
+  },
+  "pricing_sources": {
+    "gpt-5-mini": "https://developers.openai.com/api/docs/models/gpt-5-mini",
+    "gpt-5.4-mini-2026-03-17": "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+    "voyage-4": "https://docs.voyageai.com/docs/pricing",
+    "text-embedding-3-small": "https://developers.openai.com/api/docs/models/text-embedding-3-small"
+  },
+  "prices_usd_per_million": {
+    "gpt-5-mini": {
+      "input_usd_per_million": "0.25",
+      "output_usd_per_million": "2"
+    },
+    "gpt-5.4-mini-2026-03-17": {
+      "input_usd_per_million": "0.75",
+      "output_usd_per_million": "4.5"
+    },
+    "voyage-4": {
+      "input_usd_per_million": "0.06",
+      "output_usd_per_million": "0"
+    },
+    "text-embedding-3-small": {
+      "input_usd_per_million": "0.02",
+      "output_usd_per_million": "0"
+    }
+  }
+}

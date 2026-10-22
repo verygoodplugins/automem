@@ -128,6 +128,31 @@ Detailed experiment history:
 | 2026-10-21 | PR #266 control (no judge) | main @ 3caa9d5 | **82.98% (195/235)** | **78.47% (1210/1542)** | -- | -- | Fresh isolated snapshot evaluation, Voyage `voyage-4` 1024d, current official harness; 69/444 category-5 questions excluded. Baseline mini/full wall times 140.622s/671.313s. See [comparison receipt](baselines/pr266-tag-prefix-20261021.json). |
 | 2026-10-21 | PR #266 prefix filters (no judge) | fix/tag-prefix-filtering @ e360619 | **82.98% (195/235)** | **78.27% (1207/1542)** | -- | -- | Same settings and fresh snapshots: mini **0.00pp**, full **-0.19pp** (four lost/one gained QA rows). Candidate mini/full 147.051s/685.356s. Controlled shared-store replay with identical Python hash seed matches both refs on all five changed rows; the original full delta accompanies preexisting process-dependent query decomposition. Details below. |
 
+### 2026-10-22 combined post-merge baseline: incomplete
+
+Control `01a17aa38e678924c07a51015ef705b8474e2193` and candidate
+`3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876` are frozen for a fresh-ingestion
+comparison using the candidate official harness on both arms. The intended
+engineering profile is Voyage-4/1024d, LongMemEval `baseline`, `gpt-5-mini`
+answerer and `gpt-5.4-mini-2026-03-17` judge, with enrichment/JIT/consolidation
+disabled. Existing snapshot results above retain their original configurations.
+
+**No new score:** OpenAI HTTP 429 blocked preflight before any benchmark question.
+Completed counts are control/candidate canary **0/30 each**, candidate
+LongMemEval-S **0/500**, and candidate LoCoMo with judged category 5 **0/1986**.
+Three ambiguous preflight reservations total **$0.00168975** against the shared
+**$20** ceiling; retain them on resume. Actual billed usage is unavailable.
+
+[Run manifest](baselines/postmerge-20261022.json) records full revisions, dataset
+hashes, the exact stratified sample, pricing and ledgers. Accuracy, six-category
+results, retrieval coverage and LongMemEval task-average remain null until
+complete healthy runs exist. Task-average is the mean of all six per-type
+accuracies, reported alongside total correct/500. Exploratory local diagnostics,
+legacy-payload repair probes and the selected inline-relation lifecycle follow-up
+are in the [decision report](https://github.com/verygoodplugins/automem-evals/blob/test/postmerge-baseline/docs/session_20261022_postmerge_baseline.md).
+Production repair is outside this batch; the late enrichment vector race in
+[#270](https://github.com/verygoodplugins/automem/issues/270) remains open.
+
 ### 2026-10-21 PR #266: prefix-filter comparison
 
 The before/after comparison uses main `3caa9d5d396ba4cb303df1fb39da7602126f60c9`
