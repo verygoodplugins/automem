@@ -110,7 +110,7 @@ Only reach for these after data loss or corruption. See
 | Script | When to use it | Start here |
 |---|---|---|
 | [`restore_from_backup.py`](restore_from_backup.py) | Restoring one or both stores from a tested local backup or API-exported tarball. | Always preview first: `python scripts/restore_from_backup.py --dry-run`. Then select `--backup-timestamp` or `--backup-dir`, optionally `--falkordb-only` / `--qdrant-only`, and use `--force` only after review. |
-| [`recover_from_qdrant.py`](recover_from_qdrant.py) | FalkorDB is lost or corrupt while Qdrant is known-good and complete. | **Destructive:** it clears the configured FalkorDB graph, then rebuilds it from Qdrant. Back up and verify Qdrant before `python scripts/recover_from_qdrant.py`. |
+| [`recover_from_qdrant.py`](recover_from_qdrant.py) | FalkorDB is lost or corrupt while Qdrant is known-good and complete. | `python scripts/recover_from_qdrant.py` validates Qdrant payloads, then inserts missing Memory nodes with original IDs and API-compatible properties. Existing nodes and edges are preserved. Lost relationships and Entity nodes require a FalkorDB backup; Qdrant alone cannot restore them. |
 | [`deduplicate_qdrant.py`](deduplicate_qdrant.py) | Qdrant contains duplicates, commonly after a failed recovery or manual import. | `python scripts/deduplicate_qdrant.py --dry-run`; review, then rerun with `--yes` to delete. |
 
 ---

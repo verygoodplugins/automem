@@ -224,7 +224,7 @@ operational tools that consume these values.
 
 | Variable | Description | Default | Used By |
 |----------|-------------|---------|---------|
-| `AUTOMEM_API_URL` | AutoMem API endpoint | `http://localhost:8001` | `recover_from_qdrant.py`, `health_monitor.py` |
+| `AUTOMEM_API_URL` | AutoMem API endpoint | `http://localhost:8001` | `health_monitor.py` |
 
 **Backward Compatibility**: `MCP_MEMORY_HTTP_ENDPOINT` is deprecated but still supported (falls back to this if `AUTOMEM_API_URL` not set).
 
@@ -247,7 +247,9 @@ Use this with `QDRANT_RESTORE_VECTOR_ON_DISK=true` and `QDRANT_RESTORE_ON_DISK_P
 | `HEALTH_MONITOR_DRIFT_THRESHOLD` | Warning threshold (%) | `5` |
 | `HEALTH_MONITOR_CRITICAL_THRESHOLD` | Critical threshold (%) for recovery | `50` |
 
-**Note**: Auto-recovery is **disabled by default**. Use `--auto-recover` flag to enable (not recommended without testing).
+Threshold precedence is explicit CLI flag, then environment variable, then the defaults above. Zero is a valid explicit threshold.
+
+**Note**: Auto-recovery is **disabled by default**. `--auto-recover` enables missing-memory salvage only when FalkorDB has fewer memories than Qdrant. It preserves existing graph data and cannot recover lost relationships; prefer a FalkorDB backup for a full restore.
 
 ---
 
