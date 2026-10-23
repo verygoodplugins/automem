@@ -128,6 +128,57 @@ Detailed experiment history:
 | 2026-10-21 | PR #266 control (no judge) | main @ 3caa9d5 | **82.98% (195/235)** | **78.47% (1210/1542)** | -- | -- | Fresh isolated snapshot evaluation, Voyage `voyage-4` 1024d, current official harness; 69/444 category-5 questions excluded. Baseline mini/full wall times 140.622s/671.313s. See [comparison receipt](baselines/pr266-tag-prefix-20261021.json). |
 | 2026-10-21 | PR #266 prefix filters (no judge) | fix/tag-prefix-filtering @ e360619 | **82.98% (195/235)** | **78.27% (1207/1542)** | -- | -- | Same settings and fresh snapshots: mini **0.00pp**, full **-0.19pp** (four lost/one gained QA rows). Candidate mini/full 147.051s/685.356s. Controlled shared-store replay with identical Python hash seed matches both refs on all five changed rows; the original full delta accompanies preexisting process-dependent query decomposition. Details below. |
 
+### 2026-10-22 combined post-merge baseline: complete 23 October
+
+Fresh-ingestion engineering baseline: control `01a17aa38e678924c07a51015ef705b8474e2193`,
+candidate and official harness `3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876`.
+Voyage-4/1024d; LongMemEval canonical `baseline`, `gpt-5-mini` answerer,
+`gpt-5.4-mini-2026-03-17` judge; enrichment/JIT/consolidation disabled.
+LoCoMo retains canonical retrieval/extraction, auxiliary `text-embedding-3-small`
+and category-5 judging. These are internal engineering results; historical and
+neutral AMB results above retain their original dates and configurations.
+
+| Stage | Correct / total | Accuracy | Additional result |
+| --- | ---: | ---: | --- |
+| Control stratified LongMemEval canary | 21/30 | 70.00% | First five questions per type |
+| Candidate stratified LongMemEval canary | 21/30 | 70.00% | Identical question IDs and ranked retrieved session IDs |
+| Candidate LongMemEval-S | 427/500 | 85.40% | Six-task macro accuracy **83.60%** |
+| Candidate LoCoMo | 1690/1986 | 85.10% | All five categories; 444 judge calls, zero errors/skips |
+
+LongMemEval types: knowledge 65/78, multi-session 108/133, assistant 55/56,
+preference 17/30, user 67/70, temporal 115/133. Task average is the unweighted
+mean of those six accuracies. Any-support Recall@5 is 488/500 (97.6%);
+full unique session IDs cover 904/948 labelled support sessions (95.36%).
+Of 73 wrong answers, 51 retrieve all labels, 17 some and 5 none. Label precision
+904/5000 is a support-label overlap proxy, not exhaustive relevance or noise.
+LoCoMo support coverage and paid stale exposure were unmeasured.
+
+Server recall processing over 501 LongMemEval endpoint calls (including one
+unscored retry) has mean 730.36 ms, p50 795.27 ms and p95 939.24 ms. This excludes
+answers/judges and client transport. Control and recovered LoCoMo recall timing
+are unavailable. Resumed native elapsed timers cover only their final attempt
+scopes; the manifest preserves those limits and separate attempt receipts.
+
+All native results pass exact-ID, launch-contract and checkpoint validation.
+After a storage shutdown, LoCoMo retained an unchanged 497-row prefix and reran
+the quarantined 260-row conversation. Both finalized accepted log windows,
+497+1489 questions, contain zero AutoMem errors; the completed driver exited 0.
+The shutdown actor is unproven. Original failed evidence and every charge remain
+retained; no partial or failed attempt is promoted to a headline score.
+
+Total accounted **$9.809397650**, including **$0.073130570** retained ambiguous
+liability, leaves **$10.190602350** of the original shared **$20** ceiling.
+All 12 closed ledgers pass integrity and rollover-cap checks; their retained
+copies match byte-for-byte. Accounted cost is not a provider invoice.
+
+The [run manifest](baselines/postmerge-20261022.json) binds full revisions,
+datasets, model/profile/helper hashes, results, timing, accounting and sealed
+local evidence in automem-evals. The [decision report](https://github.com/verygoodplugins/automem-evals/pull/72)
+selects [inline obsolete-relation filtering](https://github.com/verygoodplugins/automem-evals/issues/31)
+as the next bounded fix, then one precision experiment and matched graph on/off.
+Production repair is separate; [#270](https://github.com/verygoodplugins/automem/issues/270)
+remains open. New adapters, AMB/BEAM refresh and architecture work stay parked.
+
 ### 2026-10-21 PR #266: prefix-filter comparison
 
 The before/after comparison uses main `3caa9d5d396ba4cb303df1fb39da7602126f60c9`
