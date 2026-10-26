@@ -1727,6 +1727,84 @@ def test_recall_current_only_filters_relation_expansion(client, mock_state, auth
     assert data["state_filter"]["suppressed_count"] == 1
 
 
+@pytest.mark.parametrize(
+    "state", ["expired", "future", "archived", "INVALIDATED_BY", "EVOLVED_INTO"]
+)
+@pytest.mark.parametrize("mode", ["", "&state_mode=history", "&current_only=false"])
+@pytest.mark.parametrize("use_summary", [False, True])
+@pytest.mark.parametrize("source", ["graph", "qdrant"])
+def test_recall_inline_relations_respect_state(
+    client, mock_state, auth_headers, state, mode, use_summary, source
+):
+    graph = mock_state.memory_graph
+    graph.memories.clear()
+    graph.relationships.clear()
+    _store_memory(mock_state, "seed", "Current seed", ["seed"], 0.9)
+    _store_memory(mock_state, "obsolete", "Obsolete inline secret", ["other"], 0.8)
+    _store_memory(mock_state, "active", "Active inline fact", ["other"], 0.7)
+    now = datetime.now(timezone.utc)
+    if state == "expired":
+        graph.memories["obsolete"]["t_invalid"] = (now - timedelta(days=1)).isoformat()
+    elif state == "future":
+        graph.memories["obsolete"]["t_valid"] = (now + timedelta(days=1)).isoformat()
+    elif state == "archived":
+        graph.memories["obsolete"]["archived"] = True
+    else:
+        graph.relationships.append(
+            {"id1": "obsolete", "id2": "active", "type": state, "strength": 0.9}
+        )
+    if use_summary:
+        graph.memories["obsolete"]["summary"] = "Obsolete inline secret"
+    for target in ("obsolete", "active"):
+        graph.relationships.append(
+            {"id1": "seed", "id2": target, "type": "RELATES_TO", "strength": 0.8}
+        )
+
+    query = ""
+    if source == "qdrant":
+        mock_state.qdrant.search = lambda **_kwargs: [
+            SimpleNamespace(id="seed", score=0.99, payload=dict(graph.memories["seed"]))
+        ]
+        query = "&query=Current%20seed"
+    response = client.get(f"/recall?tags=seed&limit=1{mode}{query}", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == ["seed"]
+    assert data["results"][0]["source"] == source
+    relations = {rel["memory"]["id"]: rel for rel in data["results"][0]["relations"]}
+    assert relations["active"]["memory"]["content"] == "Active inline fact"
+    assert relations["obsolete"]["type"] == "RELATES_TO"
+    assert relations["obsolete"]["strength"] == 0.8
+    if mode:
+        assert "Obsolete inline secret" in response.get_data(as_text=True)
+    else:
+        assert relations["obsolete"]["memory"] == {"id": "obsolete"}
+        assert "Obsolete inline secret" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_inline_relation_state_keeps_provenance_without_unverified_payload(unavailable):
+    results = [
+        {
+            "relations": [
+                {"type": "INVALIDATED_BY", "from": "original", "strength": 0.9},
+                {"type": "RELATES_TO", "memory": {"id": "missing", "summary": "Old summary"}},
+            ]
+        }
+    ]
+    graph = Mock()
+    if unavailable:
+        graph.query.side_effect = RuntimeError("graph unavailable")
+    else:
+        graph.query.return_value = FakeResult([])
+    recall_module._filter_inline_relation_state(results, graph, Mock())
+    assert results[0]["relations"] == [
+        {"type": "INVALIDATED_BY", "from": "original", "strength": 0.9},
+        {"type": "RELATES_TO", "memory": {"id": "missing"}},
+    ]
+
+
 def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
     """Ensure coding-style memories rise to the top when editing Python."""
     mock_state.memory_graph.memories.clear()
