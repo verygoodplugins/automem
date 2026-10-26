@@ -444,6 +444,22 @@ class FakeGraph:
                 rows.append([str(memory_id), memory.get("summary")])
             return FakeResult(rows)
 
+        if "RETURN m, collect(replacement) AS state_replacements" in query:
+            rows = []
+            for memory_id in params.get("ids") or []:
+                memory = self.memories.get(memory_id)
+                if memory is None:
+                    continue
+                replacements = [
+                    FakeNode(self.memories[rel["id2"]])
+                    for rel in self.relationships
+                    if rel.get("id1") == memory_id
+                    and rel.get("type") in params["types"]
+                    and rel.get("id2") in self.memories
+                ]
+                rows.append([FakeNode(memory), replacements])
+            return FakeResult(rows)
+
         # Search by exact tag pattern
         if "MATCH (m:Memory)" in query and "$tag IN m.tags" in query:
             tag = str(params.get("tag") or "").strip().lower()

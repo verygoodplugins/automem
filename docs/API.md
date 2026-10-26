@@ -74,6 +74,7 @@ Recall
     - `state_mode=current|history` controls whether recall returns only currently valid state or full state history. Default: `current`.
     - `current` is equivalent to `current_only=true`: suppresses memories that are expired, not yet valid, archived, or invalidated/evolved by active replacements. Supersession chains (`INVALIDATED_BY`/`EVOLVED_INTO`) are resolved to their *head* — A→B→C surfaces C — bounded at 5 hops and cycle-safe; the surfaced head's `state_replaces`/`relations[].from` provenance still points at the originally suppressed memory.
     - `history` is equivalent to `current_only=false`: returns stale and future state when it matches the query/filter.
+    - In `current` mode, inline `relations[].memory` payloads follow the same lifecycle rules. Obsolete or unverifiable targets retain only their `id`; edge type, strength, and provenance remain available. Use `history` mode to retrieve historical inline content.
     - `current_only` remains supported for backward compatibility and wins over `state_mode` when both resolve to a value. A malformed `state_mode` is still rejected with `400` even when `current_only` is supplied — the value is validated before precedence is applied.
     - `state_debug=true` includes suppression/replacement details in `state_filter`.
   - **Context hints**: `context`, `language`, `active_path`, `context_tags`, `context_types`, `priority_ids`

@@ -450,6 +450,58 @@ def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[
     return None
 
 
+def _filter_inline_relation_state(results: List[Dict[str, Any]], graph: Any, logger: Any) -> None:
+    """Keep edge provenance, but expose payloads only for current relation targets.
+
+    Inline summaries omit lifecycle fields, so check authoritative graph nodes
+    after all result paths have hydrated their relations. Missing/unverifiable
+    targets retain only their ID, including when the graph lookup fails.
+    """
+    relations = [
+        relation
+        for result in results
+        for relation in result.get("relations") or []
+        if isinstance(relation.get("memory"), dict)
+    ]
+    ids = sorted({str(rel["memory"].get("id") or "") for rel in relations} - {""})
+    if not relations:
+        return
+
+    active_ids: Set[str] = set()
+    now = datetime.now(timezone.utc)
+    if graph is not None and ids:
+        try:
+            records = graph.query(
+                """
+                MATCH (m:Memory)
+                WHERE m.id IN $ids
+                OPTIONAL MATCH (m)-[r]->(replacement:Memory)
+                WHERE type(r) IN $types
+                RETURN m, collect(replacement) AS state_replacements
+                """,
+                {"ids": ids, "types": sorted(STATE_SUPPRESSING_RELATIONS)},
+            )
+            for node, replacements in getattr(records, "result_set", []) or []:
+                memory = _serialize_node(node)
+                if _state_reason_for_memory(memory, now) is not None:
+                    continue
+                if any(
+                    _state_reason_for_memory(_serialize_node(replacement), now) is None
+                    for replacement in replacements or []
+                    if replacement is not None
+                ):
+                    continue
+                active_ids.add(str(memory.get("id") or ""))
+        except Exception:
+            active_ids.clear()
+            logger.exception("Failed to verify inline relation state for %d memories", len(ids))
+
+    for relation in relations:
+        memory_id = str(relation["memory"].get("id") or "")
+        if memory_id not in active_ids:
+            relation["memory"] = {"id": memory_id} if memory_id else {}
+
+
 def _query_state_replacements(
     graph: Any,
     ordered_ids: List[str],
@@ -2435,6 +2487,9 @@ def handle_recall(
     # Hydrate vector relations after trimming/selection so over-fetched candidates
     # do not fan out into graph relation queries before most of them are dropped.
     _hydrate_vector_relations(graph, results, logger)
+
+    if current_only:
+        _filter_inline_relation_state(results, graph, logger)
 
     # Hydrate after scope-fallback fills so appended results get summaries too
     _hydrate_missing_summaries_from_graph(results, graph, logger)
