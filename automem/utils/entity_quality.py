@@ -356,7 +356,10 @@ def normalize_entity_category(category: str) -> str:
 
 
 def _canonicalize_slug(category: str, slug: str) -> str:
-    canonical = re.sub(r"-+", "-", (slug or "").strip().lower()).strip("-")
+    canonical = (slug or "").strip().lower()
+    if "--" in canonical:
+        canonical = re.sub(r"-+", "-", canonical)
+    canonical = canonical.strip("-")
     if category == "people":
         parts = canonical.split("-")
         if len(parts) >= 3 and parts[-1] in {"s", "a"}:
@@ -369,17 +372,18 @@ def _tokens(slug: str) -> list[str]:
 
 
 def _looks_like_unicode_escape_slug(slug: str) -> bool:
-    parts = _tokens(slug)
-    if not parts:
-        return False
-    return all(re.fullmatch(r"u?[0-9a-f]{4,6}", part) for part in parts)
+    # One match over the whole slug checks that every token is an escape code.
+    return bool(re.fullmatch(r"u?[0-9a-f]{4,6}(-u?[0-9a-f]{4,6})*", slug))
 
 
-def _contains_unicode_escape_token(slug: str) -> bool:
-    return any(re.fullmatch(r"u[0-9a-f]{4,6}", part) for part in _tokens(slug))
+def _contains_unicode_escape_token(parts: list[str]) -> bool:
+    return any(part.startswith("u") and re.fullmatch(r"u[0-9a-f]{4,6}", part) for part in parts)
 
 
 def _looks_like_duration_or_count_slug(slug: str) -> bool:
+    # Every pattern below starts with a digit.
+    if not slug[:1].isdigit():
+        return False
     if re.fullmatch(r"\d+(ms|s|sec|secs|m|min|mins|h|hr|hrs)", slug):
         return True
     if re.fullmatch(r"\d+[a-z]?", slug):
@@ -391,50 +395,58 @@ def _looks_like_duration_or_count_slug(slug: str) -> bool:
     return False
 
 
-def _looks_like_action_status_slug(slug: str) -> bool:
-    parts = _tokens(slug)
+def _looks_like_action_status_slug(parts: list[str]) -> bool:
     if len(parts) != 1:
         return False
 
     token = parts[0]
-    for root in _ACTION_STATUS_ROOTS:
-        variants = {root, f"{root}s", f"{root}ed", f"{root}ing"}
-        if root.endswith("e"):
-            variants.add(f"{root}d")
-            variants.add(f"{root[:-1]}ing")
-        if root.endswith("y"):
-            variants.add(f"{root[:-1]}ied")
-        if token in variants:
-            return True
+    # Undo each inflection to find the candidate root, e.g. "approving" -> "approve".
+    inflections = (
+        ("", ""),
+        ("s", ""),
+        ("ed", ""),
+        ("ed", "e"),
+        ("ing", ""),
+        ("ing", "e"),
+        ("ied", "y"),
+    )
+    for suffix, root_ending in inflections:
+        if token.endswith(suffix):
+            stem = token[: len(token) - len(suffix)]
+            if stem + root_ending in _ACTION_STATUS_ROOTS:
+                return True
     return False
 
 
-def _looks_like_abstract_singleton_slug(slug: str) -> bool:
-    parts = _tokens(slug)
+def _looks_like_abstract_singleton_slug(parts: list[str]) -> bool:
     if len(parts) != 1:
         return False
     token = parts[0]
     return len(token) >= 6 and token.endswith(_ABSTRACT_SINGLETON_SUFFIXES)
 
 
-def _looks_like_generated_fragment_slug(slug: str) -> bool:
-    parts = _tokens(slug)
-    if any(re.fullmatch(r"[0-9a-f]{6,}", token) for token in parts):
-        return True
-    if any(re.fullmatch(r"[a-z]\d[a-z0-9]{5,}", token) for token in parts):
-        return True
-    return False
+def _looks_like_generated_fragment_slug(parts: list[str]) -> bool:
+    # Both patterns need at least six characters; the second needs a digit in second place.
+    return any(
+        len(token) >= 6
+        and (
+            re.fullmatch(r"[0-9a-f]{6,}", token)
+            or (token[1].isdigit() and re.fullmatch(r"[a-z]\d[a-z0-9]{5,}", token))
+        )
+        for token in parts
+    )
 
 
 def _looks_like_markdown_or_code_fragment(tokens: list[str]) -> bool:
     if len(tokens) < 2:
         return False
-    if any(token in _MARKDOWN_OR_CODE_TOKENS for token in tokens):
+    if not _MARKDOWN_OR_CODE_TOKENS.isdisjoint(tokens):
         return True
     code_token_count = sum(
         1
         for token in tokens
-        if token in _MARKDOWN_OR_CODE_SECONDARY_TOKENS or re.fullmatch(r"[a-z]+\d+", token)
+        if token in _MARKDOWN_OR_CODE_SECONDARY_TOKENS
+        or (token[-1:].isdigit() and re.fullmatch(r"[a-z]+\d+", token))
     )
     return code_token_count >= 2
 
@@ -453,17 +465,21 @@ def _looks_like_generated_phrase_slug(category: str, tokens: list[str]) -> bool:
 
 
 def _has_internal_camelcase(value: str) -> bool:
+    # Camel case needs an uppercase letter.
+    if (value or "").islower():
+        return False
     compact = re.sub(r"[^A-Za-z0-9]", "", value or "")
     if not compact or " " in (value or "").strip():
         return False
     return bool(re.search(r"[a-z][A-Z]", compact))
 
 
-def _looks_tool_or_org_like(value: str, slug: str, context: Optional[str]) -> bool:
-    parts = _tokens(slug)
+def _looks_tool_or_org_like(
+    value: str, slug: str, parts: list[str], context: Optional[str]
+) -> bool:
     if _has_internal_camelcase(value):
         return True
-    if parts and any(parts[-1].endswith(suffix) for suffix in _TOOL_OR_ORG_SUFFIXES):
+    if parts and parts[-1].endswith(_TOOL_OR_ORG_SUFFIXES):
         return True
 
     # Context hints are too weak to condemn a multi-token person-shaped name:
@@ -547,7 +563,11 @@ def validate_entity_slug(
     context: Optional[str] = None,
 ) -> EntityValidationResult:
     normalized_category = normalize_entity_category(category)
-    original_slug = slugify_entity(slug)
+    # Stored tags are usually clean already, so skip re-slugifying them.
+    if type(slug) is str and re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
+        original_slug = slug
+    else:
+        original_slug = slugify_entity(slug)
     canonical_slug = _canonicalize_slug(normalized_category, original_slug)
     display_name = (
         name_from_slug(canonical_slug)
@@ -571,27 +591,26 @@ def validate_entity_slug(
     if not canonical_slug or len(canonical_slug) < 3:
         return reject("too_short")
 
-    if _looks_like_unicode_escape_slug(canonical_slug) or _contains_unicode_escape_token(
-        canonical_slug
-    ):
-        return reject("unicode_escape_slug")
+    # The canonical slug is already slugified, so it has no empty tokens.
+    tokens = canonical_slug.split("-")
 
-    tokens = _tokens(canonical_slug)
+    if _looks_like_unicode_escape_slug(canonical_slug) or _contains_unicode_escape_token(tokens):
+        return reject("unicode_escape_slug")
 
     if _looks_like_duration_or_count_slug(canonical_slug):
         return reject("duration_or_count_slug")
 
-    if _looks_like_action_status_slug(canonical_slug):
+    if _looks_like_action_status_slug(tokens):
         return reject(
             "low_signal_people_slug" if normalized_category == "people" else "generic_entity_slug"
         )
 
-    if _looks_like_abstract_singleton_slug(canonical_slug):
+    if _looks_like_abstract_singleton_slug(tokens):
         return reject(
             "low_signal_people_slug" if normalized_category == "people" else "generic_entity_slug"
         )
 
-    if _looks_like_generated_fragment_slug(canonical_slug):
+    if _looks_like_generated_fragment_slug(tokens):
         return reject("generated_fragment_slug")
 
     if _looks_like_markdown_or_code_fragment(tokens):
@@ -603,7 +622,7 @@ def validate_entity_slug(
     if (
         canonical_slug in _GENERIC_ENTITY_SLUGS
         or (tokens and tokens[0] in _ARTICLE_PREFIXES)
-        or (tokens and all(token in _GENERIC_ENTITY_TOKENS for token in tokens))
+        or (tokens and _GENERIC_ENTITY_TOKENS.issuperset(tokens))
         or (
             normalized_category in {"organizations", "tools", "projects", "concepts"}
             and tokens
@@ -615,22 +634,25 @@ def validate_entity_slug(
         )
 
     if normalized_category == "people":
-        if any(not re.fullmatch(r"[a-z]+", token) for token in tokens):
+        # The canonical slug has no empty tokens, so one match covers every token.
+        if not re.fullmatch(r"[a-z]+(-[a-z]+)*", canonical_slug):
             return reject("non_name_people_slug")
-        if any(
-            token in _ACTION_PREFIXES
-            or token in _GENERIC_ENTITY_TOKENS
-            or token in _GENERATED_PHRASE_TOKENS
-            or token in _MARKDOWN_OR_CODE_TOKENS
-            or token in _MARKDOWN_OR_CODE_SECONDARY_TOKENS
-            or token in _NON_PERSON_TECH_TOKENS
-            or token in _NON_PERSON_COMMON_TOKENS
-            for token in tokens
+        for vocabulary in (
+            _ACTION_PREFIXES,
+            _GENERIC_ENTITY_TOKENS,
+            _GENERATED_PHRASE_TOKENS,
+            _MARKDOWN_OR_CODE_TOKENS,
+            _MARKDOWN_OR_CODE_SECONDARY_TOKENS,
+            _NON_PERSON_TECH_TOKENS,
+            _NON_PERSON_COMMON_TOKENS,
         ):
-            return reject("low_signal_people_slug")
+            if not vocabulary.isdisjoint(tokens):
+                return reject("low_signal_people_slug")
         if not _has_person_name_shape(tokens):
             return reject("non_name_people_slug")
-        if _looks_tool_or_org_like(original_value or canonical_slug, canonical_slug, context):
+        if _looks_tool_or_org_like(
+            original_value or canonical_slug, canonical_slug, tokens, context
+        ):
             return reject("tool_or_organization_looking_people")
 
     return _accepted(
