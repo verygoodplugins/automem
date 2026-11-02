@@ -1268,7 +1268,7 @@ const RECALL_MEMORY_TOOL = {
             tag_match: {
                 type: 'string',
                 enum: ['exact', 'prefix'],
-                description: '"prefix" (ranked default) matches tags that start with the value, so `tags: ["automem"]` also matches `automem-evals`; "exact" matches whole tags only. Enumeration mode is always exact.',
+                description: '"prefix" (ranked default) also matches child tags split at ":" or "/", so `tags: ["auth"]` matches `auth:login`; it does not match across hyphens (`automem` does not match `automem-evals`). "exact" matches whole tags only. Enumeration mode is always exact.',
             },
             expand_entities: {
                 type: 'boolean',
@@ -1661,7 +1661,7 @@ export function buildMcpServer(client) {
           confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Updated classification confidence (0-1)' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Updated tags (replaces existing)' },
           importance: { type: 'number', minimum: 0, maximum: 1, description: 'Updated importance score (0-1)' },
-          metadata: { type: 'object', description: 'Updated metadata (merged with existing)' },
+          metadata: { type: 'object', description: 'Replaces the stored metadata object. To change one key, fetch the memory first and send the full object. Omit metadata to preserve it.' },
           timestamp: { type: 'string', description: 'Updated ISO 8601 creation timestamp' },
           embedding: { type: 'array', items: { type: 'number' }, description: 'Updated embedding vector' },
           updated_at: { type: 'string', description: 'ISO 8601 last-updated timestamp' },
