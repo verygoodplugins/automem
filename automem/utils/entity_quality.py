@@ -22,7 +22,7 @@ _CATEGORY_ALIASES = {
     "opportunities": "opportunities",
 }
 
-_ALLOWED_CATEGORIES = set(_CATEGORY_ALIASES.values())
+ENTITY_CATEGORIES = frozenset(_CATEGORY_ALIASES.values())
 
 _ARTICLE_PREFIXES = {"a", "an", "the"}
 
@@ -585,7 +585,7 @@ def validate_entity_slug(
             original_value=original_value,
         )
 
-    if normalized_category not in _ALLOWED_CATEGORIES:
+    if normalized_category not in ENTITY_CATEGORIES:
         return reject("unknown_category")
 
     if not canonical_slug or len(canonical_slug) < 3:
