@@ -6,7 +6,7 @@ Scans all Memory nodes for `entity:{category}:{slug}` tags, creates Entity nodes
 and links them via REFERENCED_IN relationships. Idempotent (safe to re-run).
 
 Usage:
-    python scripts/migrate_entity_nodes.py [--dry-run]
+    python scripts/migrate_entity_nodes.py [--dry-run] [--categories LIST] [--min-references N]
 """
 
 from __future__ import annotations
@@ -28,7 +28,11 @@ if str(ROOT) not in sys.path:
 
 from dotenv import load_dotenv
 
-from automem.utils.entity_quality import validate_entity_tag
+from automem.utils.entity_quality import (
+    ENTITY_CATEGORIES,
+    normalize_entity_category,
+    validate_entity_tag,
+)
 
 load_dotenv()
 load_dotenv(Path.home() / ".config" / "automem" / ".env")
@@ -173,9 +177,14 @@ def _dedup_memory_ids(memory_ids: list[str]) -> list[str]:
 
 
 def run_migration(
-    graph, entity_to_memories: dict[str, list[str]], *, dry_run: bool
+    graph,
+    entity_to_memories: dict[str, list[str]],
+    *,
+    dry_run: bool,
+    categories: frozenset[str] | None = None,
+    min_references: int | None = None,
 ) -> dict[str, Any]:
-    """Create Entity nodes and REFERENCED_IN edges."""
+    """Create Entity nodes and REFERENCED_IN edges within the requested scope."""
     now = datetime.now(timezone.utc).isoformat()
     created_entities = 0
     created_edges = 0
@@ -262,7 +271,28 @@ def run_migration(
         entry["memory_ids"] = _dedup_memory_ids(entry["memory_ids"] + memory_ids)
         entry["source_tags"] = sorted(set(entry["source_tags"] + [entity_tag]))
 
-    accepted_items = sorted(accepted.values(), key=lambda item: item["id"])
+    accepted_items = []
+    skipped_entities = []
+    for entry in sorted(accepted.values(), key=lambda item: item["id"]):
+        references = len(entry["memory_ids"])
+        if categories is not None and entry["category"] not in categories:
+            reason = "outside_category_scope"
+        elif min_references is not None and references < min_references:
+            reason = "below_min_references"
+        else:
+            accepted_items.append(entry)
+            continue
+        skipped_entities.append(
+            {
+                "id": entry["id"],
+                "category": entry["category"],
+                "references": references,
+                "reason": reason,
+            }
+        )
+        logger.info(
+            "Skipped Entity: %s (reason=%s, references=%d)", entry["id"], reason, references
+        )
 
     for entry in accepted_items:
         entity_tag = entry["id"]
@@ -333,7 +363,7 @@ def run_migration(
         created_edges,
         " (dry run)" if dry_run else " created",
     )
-    return {
+    result = {
         "accepted_entities": len(accepted_items),
         "rejected_entity_count": len(rejected_entities),
         "created_entities": created_entities,
@@ -353,11 +383,46 @@ def run_migration(
         "rejected_entities": rejected_entities,
         "readiness_blockers": [],
     }
+    if categories is not None or min_references is not None:
+        logger.info("Migration scope skipped %d accepted entities", len(skipped_entities))
+        result["skipped_entity_count"] = len(skipped_entities)
+        result["skipped_entities"] = skipped_entities
+    return result
+
+
+def _parse_categories(value: str) -> frozenset[str]:
+    categories = frozenset(normalize_entity_category(part) for part in value.split(","))
+    if not categories <= ENTITY_CATEGORIES:
+        allowed = ", ".join(sorted(ENTITY_CATEGORIES))
+        raise argparse.ArgumentTypeError(
+            f"categories must be a comma-separated list from: {allowed}"
+        )
+    return categories
+
+
+def _positive_references(value: str) -> int:
+    try:
+        references = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("minimum references must be a positive integer") from error
+    if references < 1:
+        raise argparse.ArgumentTypeError("minimum references must be a positive integer")
+    return references
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Migrate entity tags to Entity nodes")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be created")
+    parser.add_argument(
+        "--categories",
+        type=_parse_categories,
+        help="Only migrate accepted entities in these comma-separated categories",
+    )
+    parser.add_argument(
+        "--min-references",
+        type=_positive_references,
+        help="Only migrate accepted entities referenced by at least this many distinct memories",
+    )
     args = parser.parse_args()
 
     graph = connect_falkordb()
@@ -368,7 +433,13 @@ def main() -> None:
         logger.info("Nothing to migrate.")
         return
 
-    run_migration(graph, entity_to_memories, dry_run=args.dry_run)
+    run_migration(
+        graph,
+        entity_to_memories,
+        dry_run=args.dry_run,
+        categories=args.categories,
+        min_references=args.min_references,
+    )
 
 
 if __name__ == "__main__":
