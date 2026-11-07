@@ -252,6 +252,21 @@ python scripts/migrate_entity_nodes.py --dry-run   # preview
 python scripts/migrate_entity_nodes.py             # apply (idempotent)
 ```
 
+For a staged migration, preview and apply the same scope:
+
+```bash
+python scripts/migrate_entity_nodes.py --dry-run --categories organizations,tools --min-references 2
+python scripts/migrate_entity_nodes.py --categories organizations,tools --min-references 2
+```
+
+`--categories` accepts a comma-separated list of entity categories (including
+their supported singular aliases). `--min-references` counts distinct Memory
+nodes after equivalent entity tags are canonicalized. The log distinguishes
+entities skipped by these scope filters from tags rejected by validation.
+These filters limit which entities the command processes; they do not remove
+nodes created by an earlier run, and repeated references do not prove that an
+entity is correctly classified. Review the dry-run output before applying.
+
 > First-class entity-node **synthesis** (`IDENTITY_SYNTHESIS_ENABLED`) is
 > experimental and gated **off** by default while people-entity word-pair noise
 > is addressed ([#181](https://github.com/verygoodplugins/automem/issues/181)).

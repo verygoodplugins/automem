@@ -92,7 +92,7 @@ are not routine operations; back up first and follow the linked runbook.
 | Script | When to use it | Start here |
 |---|---|---|
 | [`migrate_mcp_sqlite.py`](migrate_mcp_sqlite.py) | Moving from the legacy MCP `sqlite_vec.db` store into AutoMem. | Preview first: `python scripts/migrate_mcp_sqlite.py --dry-run`; then pass `--db`, `--automem-url`, and `--api-token`. |
-| [`migrate_entity_nodes.py`](migrate_entity_nodes.py) | Adopting first-class `Entity` nodes for legacy `entity:{category}:{slug}` tags. | `python scripts/migrate_entity_nodes.py --dry-run`, then rerun without the flag. |
+| [`migrate_entity_nodes.py`](migrate_entity_nodes.py) | Adopting first-class `Entity` nodes for legacy `entity:{category}:{slug}` tags. | `python scripts/migrate_entity_nodes.py --dry-run`, then rerun without the flag. Use `--categories` and `--min-references` to stage a subset; see [migration guidance](../docs/MIGRATIONS.md#promote-entity-tags-to-first-class-entity-nodes). |
 | [`backfill_tag_prefixes.py`](backfill_tag_prefixes.py) | Restoring or introducing `tag_prefixes` so prefix recall remains consistent. | `python scripts/backfill_tag_prefixes.py --dry-run`; apply after review. Use `--no-qdrant` only when vector payload sync is intentionally deferred. |
 | [`rescore_relevance.py`](rescore_relevance.py) | Repairing relevance scores produced with the previous over-aggressive decay formula. | `python scripts/rescore_relevance.py --dry-run`, then choose the intended `--target` before applying. |
 | [`cleanup_memory_types.py`](cleanup_memory_types.py) | Repairing legacy invalid types such as `session_start` or `interaction`. | Back up, verify `.env` targets the intended instance, then run `python scripts/cleanup_memory_types.py`. It has no preview mode. |
