@@ -23,6 +23,26 @@ nano .env
 | `FALKORDB_PASSWORD` | FalkorDB password (optional) | - | `your-secure-password` |
 | `FALKORDB_GRAPH` | Graph database name | `memories` | `memories` |
 
+### Local Docker Compose host ports
+
+These variables affect host-side port publishing in `docker-compose.yml`, not
+connections between the Compose services.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AUTOMEM_DB_BIND_ADDRESS` | Host address for FalkorDB, its browser, and Qdrant | `127.0.0.1` |
+| `FALKORDB_HOST_PORT` | FalkorDB host port | `6379` |
+| `FALKORDB_BROWSER_HOST_PORT` | FalkorDB browser host port | `3000` |
+| `QDRANT_HOST_PORT` | Qdrant HTTP host port | `6333` |
+| `QDRANT_GRPC_HOST_PORT` | Qdrant gRPC host port | `6334` |
+
+Set `AUTOMEM_DB_BIND_ADDRESS` only when a different host address is needed;
+use brackets around an IPv6 address, such as `[::1]`. `0.0.0.0` makes these
+ports available on all IPv4 interfaces, so configure authentication and
+network controls first. The AutoMem API uses its existing host-port binding.
+See [Docker Compose setup](../INSTALLATION.md#docker-compose-local) for how to
+apply a changed binding to an existing installation.
+
 ### Authentication
 
 | Variable | Description | Required | Example |
