@@ -154,6 +154,8 @@ make dev
 | Qdrant | `localhost:6333` | Vector database |
 | FalkorDB Browser | `http://localhost:3000` | Local graph inspection UI |
 
+Database and browser ports bind to localhost by default; the API binding is unchanged.
+
 → Full setup: [INSTALLATION.md](INSTALLATION.md#docker-compose-local)
 
 ### Python (development)
