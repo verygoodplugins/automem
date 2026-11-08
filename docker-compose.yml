@@ -4,8 +4,8 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "${FALKORDB_HOST_PORT:-6379}:6379" # Redis/FalkorDB
-      - "${FALKORDB_BROWSER_HOST_PORT:-3000}:3000" # Official local graph browser UI (FalkorDB built-in)
+      - "${AUTOMEM_DB_BIND_ADDRESS:-127.0.0.1}:${FALKORDB_HOST_PORT:-6379}:6379" # Redis/FalkorDB
+      - "${AUTOMEM_DB_BIND_ADDRESS:-127.0.0.1}:${FALKORDB_BROWSER_HOST_PORT:-3000}:3000" # FalkorDB browser
     volumes:
       - falkordb_data:/data # Persistent data
       - ./backups/falkordb:/backups # Local backups
@@ -27,8 +27,8 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.11.3
     ports:
-      - "${QDRANT_HOST_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_HOST_PORT:-6334}:6334"
+      - "${AUTOMEM_DB_BIND_ADDRESS:-127.0.0.1}:${QDRANT_HOST_PORT:-6333}:6333"
+      - "${AUTOMEM_DB_BIND_ADDRESS:-127.0.0.1}:${QDRANT_GRPC_HOST_PORT:-6334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
       - ./backups/qdrant:/backups
