@@ -97,6 +97,8 @@ Once your services are running, Railway pulls new images automatically — no `g
 | `falkordb` | `falkordb/falkordb:latest` | Template default; pin in production |
 
 > **Production recommendation:** For stateful services such as Qdrant and FalkorDB, prefer pinned image versions over mutable tags like `:latest` so Railway redeploys do not unexpectedly roll your database to a new release.
+>
+> **FalkorDB 6.0:** the `latest` tag moved to the 6.0 Rust engine on 2026-09-29, and a volume written by 4.x does not load on it. Stay on a `v4.x` tag until you have a backup and have tested the move on a copy of your data.
 ### How `:stable` is built
 
 Two GitHub Actions workflows publish to GHCR:
@@ -226,7 +228,7 @@ Your tokens were auto-generated during deployment. Find them in:
 
    - Click "+ New Service"
    - Select "Docker Image"
-   - Image: `falkordb/falkordb:latest`
+   - Image: `falkordb/falkordb:v4.20.7`
 
 2. **Add persistent volume** (CRITICAL!)
 

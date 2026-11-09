@@ -177,7 +177,7 @@ railway init
 
 1. Create new Railway service:
 
-   - Image: `falkordb/falkordb:latest`
+   - Image: `falkordb/falkordb:v4.20.7`
    - Add persistent volume (critical for data persistence)
 
 2. Note the internal connection details (shown in service settings)
