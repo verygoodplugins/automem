@@ -305,10 +305,14 @@ Memory UUIDs and ingestion timestamps differed across stores.
 By category, both arms scored 27/43, 59/63, 4/13, 105/114, and 2/2
 (category 5 also skipped 69). The dataset SHA-256 was
 `79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4`.
-This is the native harness's **unjudged retrieval proxy**: no answerer or judge
-was invoked, and 69 judge-dependent questions were skipped. It is not an
-answer-quality score, a leaderboard result, or directly comparable to the
-Voyage/judged baselines above. No paid provider calls were made. A matched,
+This is the native harness's **unjudged, evidence-augmented diagnostic**: no
+answerer or judge was invoked, and 69 judge-dependent questions were skipped.
+When recall is nonempty, the harness performs a separate scoped tag-only
+search, filters by gold dialogue IDs, and combines that evidence with retrieved
+context. These verdicts can therefore
+mask retrieval misses. This is not a pure retrieval-accuracy or answer-quality
+score, a leaderboard result, or directly comparable to the Voyage/judged
+baselines above. No paid provider calls were made. A matched,
 full-corpus no-provider LoCoMo run is in progress; its result is not yet
 available and remains a separate pre-merge check.
 
