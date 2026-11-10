@@ -312,9 +312,19 @@ search, filters by gold dialogue IDs, and combines that evidence with retrieved
 context. These verdicts can therefore
 mask retrieval misses. This is not a pure retrieval-accuracy or answer-quality
 score, a leaderboard result, or directly comparable to the Voyage/judged
-baselines above. No paid provider calls were made. A matched,
-full-corpus no-provider LoCoMo run is in progress; its result is not yet
-available and remains a separate pre-merge check.
+baselines above. No paid provider calls were made.
+
+The same unjudged method was repeated over all 10 conversations (1,986
+questions), using 5,882 matched content, tag, metadata, and vector records per
+arm with identical Qdrant index configuration and no memory relations. Generated
+IDs and ingestion timestamps differed. Both baseline and candidate scored
+1,206/1,542 (78.21%); all 1,542 scored question verdicts matched and the 444
+remaining judge-dependent questions were skipped. Category totals were
+123/282, 280/321, 30/96, 771/841, and 2/2 plus the 444 skips. API and driver
+logs contained no recorded errors. This full-corpus result has the same gold
+support injection and no-judge caveats as the mini run. It is not the judged
+Voyage release baseline; a comparable judged release-gate evaluation remains
+outstanding.
 
 ## Exploratory and Historical Benchmarks
 
