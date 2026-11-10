@@ -385,11 +385,11 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             )
             if choose_new:
                 buckets[existing_key]["item"] = res
-            buckets[existing_key]["sources"].append(mid or str(fp) or "unknown")
+            buckets[existing_key]["sources"].append(mid or "unknown")
             if mid:
                 id_to_key[mid] = existing_key
         else:
-            buckets[key] = {"item": res, "sources": [mid or str(fp) or "unknown"]}
+            buckets[key] = {"item": res, "sources": [mid or "unknown"]}
             if mid:
                 id_to_key[mid] = key
             # Track this fingerprint -> key mapping

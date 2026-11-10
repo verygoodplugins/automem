@@ -64,3 +64,13 @@ def test_json_metadata_preserves_distinct_originals():
     deduped, removed = _dedupe_results(rows)
     assert removed == 0
     assert len(deduped) == 2
+
+
+def test_idless_duplicates_do_not_expose_original_in_dedup_metadata():
+    rows = [
+        {"memory": {"content": "same", "metadata": {"original_content": "private detail"}}},
+        {"memory": {"content": "same", "metadata": {"original_content": "private detail"}}},
+    ]
+    deduped, removed = _dedupe_results(rows)
+    assert removed == 1
+    assert "private detail" not in str(deduped[0].get("deduped_from"))
