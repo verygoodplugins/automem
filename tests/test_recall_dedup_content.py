@@ -74,3 +74,18 @@ def test_idless_duplicates_do_not_expose_original_in_dedup_metadata():
     deduped, removed = _dedupe_results(rows)
     assert removed == 1
     assert "private detail" not in str(deduped[0].get("deduped_from"))
+
+
+def test_repeated_id_registers_new_content_fingerprint_for_later_duplicates():
+    rows, removed = _dedupe_results(
+        [
+            result("a", "first form", score=0.6),
+            result("b", "first form", score=0.7),
+            result("b", "second form", score=0.8),
+            result("c", "second form", score=0.9),
+        ]
+    )
+    assert removed == 3
+    assert len(rows) == 1
+    assert rows[0]["id"] == "c"
+    assert rows[0]["deduped_from"] == ["a", "b", "c"]

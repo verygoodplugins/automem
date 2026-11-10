@@ -388,6 +388,8 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             buckets[existing_key]["sources"].append(mid or "unknown")
             if mid:
                 id_to_key[mid] = existing_key
+            if fp:
+                fp_to_key.setdefault(fp, existing_key)
         else:
             buckets[key] = {"item": res, "sources": [mid or "unknown"]}
             if mid:
