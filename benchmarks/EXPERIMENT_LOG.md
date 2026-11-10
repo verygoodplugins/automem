@@ -288,6 +288,30 @@ Failure split from the result-analysis helper: 54 wrong answers had the answer
 session retrieved at recall@5; 11 wrong answers were retrieval misses. This is the basis for
 follow-up issues #158 and #159.
 
+## Deduplication candidate — paired LoCoMo-mini, 2026-11-10
+
+The native LoCoMo-mini harness was run on two fresh, isolated stores with the
+same 788 ingested records and matching content, metadata, and vector hashes.
+The baseline was `1a7ba1a6afe69835f62ad7f6013e33301d1ab83e`; candidate code
+was `0920146d13d77bf55bad7228bc12ca359cc227bc` (PR #282). Both used the same
+cached FastEmbed `BAAI/bge-base-en-v1.5` 768d model and Qdrant configuration.
+Memory UUIDs and ingestion timestamps differed across stores.
+
+| Arm | Scored correct | Questions skipped | Paired verdict changes |
+|-----|----------------|-------------------|------------------------|
+| Baseline | 197/235 (83.83%) | 69/304 | — |
+| Candidate | 197/235 (83.83%) | 69/304 | 0/235 |
+
+By category, both arms scored 27/43, 59/63, 4/13, 105/114, and 2/2
+(category 5 also skipped 69). The dataset SHA-256 was
+`79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4`.
+This is the native harness's **unjudged retrieval proxy**: no answerer or judge
+was invoked, and 69 judge-dependent questions were skipped. It is not an
+answer-quality score, a leaderboard result, or directly comparable to the
+Voyage/judged baselines above. No paid provider calls were made. A matched,
+full-corpus no-provider LoCoMo run is in progress; its result is not yet
+available and remains a separate pre-merge check.
+
 ## Exploratory and Historical Benchmarks
 
 These results are useful validation signals, but they are not current headline
