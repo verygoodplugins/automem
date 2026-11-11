@@ -736,12 +736,23 @@ def _apply_current_state_filter(
                 "final_score": float(result.get("final_score") or result.get("score") or 0.0),
                 "score_components": dict(result.get("score_components") or {}),
             }
-            if result.get("match_type") == "vector":
-                vector_score = result.get("match_score")
-                if isinstance(vector_score, (int, float)):
-                    candidate["score_components"]["inherited_vector"] = min(
-                        1.0, max(0.0, vector_score)
-                    )
+            # Preserve only query-topical signals actually scored for the
+            # superseded memory. Their inherited names identify their origin;
+            # query-independent metadata and graph relations are not copied as
+            # evidence about the replacement.
+            components = candidate["score_components"]
+            direct_channel = {
+                "vector": "vector",
+                "keyword": "keyword",
+                "trending": "keyword",
+                "metadata": "metadata",
+            }.get(result.get("match_type"))
+            for component in ("vector", "keyword", "metadata", "exact"):
+                value = components.get(component)
+                if value is None and component == direct_channel:
+                    value = result.get("match_score")
+                if isinstance(value, (int, float)) and value > 0:
+                    components[f"inherited_{component}"] = min(1.0, value)
             if relation.get("kind"):
                 candidate["relations"][0]["kind"] = relation["kind"]
 

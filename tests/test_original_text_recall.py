@@ -600,3 +600,82 @@ def test_vector_replacement_keeps_evidence_after_context_injection_rerank(monkey
     assert current["score_components"]["vector"] == 1.0
     assert current["score_components"]["inherited_vector"] == 1.0
     assert "private-obsolete-fact" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("channel", ["keyword", "metadata", "exact"])
+def test_replacement_retains_other_topical_evidence_after_rerank(monkeypatch, channel):
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_KEYWORD", 0.35)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_METADATA", 0.35)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_EXACT", 0.2)
+    monkeypatch.setattr(recall_api, "RECALL_METADATA_SEARCH_ENABLED", True)
+    stale = {
+        "id": "stale",
+        "memory": {"id": "stale", "content": "private-obsolete-fact"},
+        "source": "graph",
+        "match_type": "metadata" if channel == "metadata" else "keyword",
+        "match_score": 0.0 if channel == "exact" else 1.0,
+        "score": 0.0 if channel == "exact" else 1.0,
+    }
+    if channel == "exact":
+        stale["memory"]["metadata"] = {"topic": "needle"}
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _graph, ids, _now, _logger: (
+            {
+                "stale": {
+                    "id": "current",
+                    "content": "corrected fact",
+                    "tags": [],
+                    "_state_relation": {"type": "INVALIDATED_BY"},
+                }
+            }
+            if "stale" in ids
+            else {}
+        ),
+    )
+    injected = []
+
+    def inject(results, *_args):
+        injected.append(True)
+        results.append(
+            {
+                "id": "context",
+                "memory": {"id": "context", "content": "unrelated", "tags": ["priority"]},
+                "match_type": "keyword",
+                "match_score": 0.05,
+                "score": 0.05,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(recall_api, "_inject_priority_memories", inject)
+    min_score = 0.15 if channel == "exact" else 0.3
+    with app.app.test_request_context(
+        f"/recall?query=needle&limit=2&min_score={min_score}&context_tags=priority&state_mode=current&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: object(),
+            get_qdrant_client=lambda: None,
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=_compute_metadata_score,
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [] if channel == "metadata" else [stale],
+            metadata_keyword_search=lambda *_a, **_k: [stale] if channel == "metadata" else [],
+            vector_search=lambda *_a, **_k: [],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+    assert injected
+    result = next(item for item in response.get_json()["results"] if item["id"] == "current")
+    assert result["score_components"][channel] == 1.0
+    assert result["score_components"][f"inherited_{channel}"] == 1.0
+    assert result["score_components"]["vector"] == 0.0
+    for other in {"keyword", "metadata", "exact"} - {channel}:
+        assert result["score_components"][other] == 0.0
+        assert f"inherited_{other}" not in result["score_components"]
+    assert "private-obsolete-fact" not in response.get_data(as_text=True)

@@ -195,7 +195,13 @@ def _compute_metadata_score(
                 content_hits = sum(1 for token in tokens if token in content_tokens)
                 keyword_component = content_hits / len(tokens)
 
-    # A current replacement can inherit lexical evidence from the superseded
+    metadata_component = (
+        float(result.get("match_score", 0.0) or 0.0)
+        if result.get("match_type") == "metadata"
+        else 0.0
+    )
+
+    # A current replacement can inherit topical evidence from the superseded
     # memory that led to it. The original-text channel records that evidence
     # separately; retain it without treating it as a vector match or exposing
     # the superseded text in the result.
@@ -209,12 +215,15 @@ def _compute_metadata_score(
         inherited_vector = inherited_components.get("inherited_vector")
         if isinstance(inherited_vector, (int, float)):
             vector_component = min(1.0, max(0.0, inherited_vector))
-
-    metadata_component = (
-        float(result.get("match_score", 0.0) or 0.0)
-        if result.get("match_type") == "metadata"
-        else 0.0
-    )
+        inherited_keyword = inherited_components.get("inherited_keyword")
+        if isinstance(inherited_keyword, (int, float)):
+            keyword_component = max(keyword_component, min(1.0, max(0.0, inherited_keyword)))
+        inherited_metadata = inherited_components.get("inherited_metadata")
+        if isinstance(inherited_metadata, (int, float)):
+            metadata_component = min(1.0, max(0.0, inherited_metadata))
+        inherited_exact = inherited_components.get("inherited_exact")
+        if isinstance(inherited_exact, (int, float)):
+            exact_match = max(exact_match, min(1.0, max(0.0, inherited_exact)))
 
     # Query-topical evidence: the strongest signal that this result is about
     # the query itself. Tag overlap is excluded even though it is computed
