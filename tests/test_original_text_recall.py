@@ -1,0 +1,199 @@
+"""Original-text fulltext recall is scoped, ranked, state-aware, and hidden."""
+
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import app
+import automem.api.recall as recall_api
+import automem.search.runtime_recall_helpers as helper
+from automem.api.recall import handle_recall
+from automem.utils.text import _extract_keywords
+
+
+class Node:
+    def __init__(self, memory_id, text, tags=None):
+        self.properties = {
+            "id": memory_id,
+            "content": "short summary",
+            "tags": tags or ["scope"],
+            "original_search_text": text,
+        }
+
+
+class Graph:
+    def __init__(self, nodes):
+        self.nodes = nodes
+        self.calls = []
+
+    def query(self, query, params):
+        self.calls.append((query, dict(params)))
+        offset, batch = params["offset"], params["batch"]
+        return SimpleNamespace(
+            result_set=[[node, 9.0] for node in self.nodes[offset : offset + batch]]
+        )
+
+
+def configure(monkeypatch):
+    monkeypatch.setattr(helper, "_serialize_node", lambda node: dict(node.properties))
+    monkeypatch.setattr(helper, "_fetch_relations", lambda _graph, _id: [])
+    monkeypatch.setattr(helper, "_prepare_tag_filters", lambda tags: tags or [])
+    monkeypatch.setattr(helper, "_build_graph_tag_predicate", lambda *_: "m.tags IS NOT NULL")
+    monkeypatch.setattr(helper, "_parse_iso_datetime", lambda value: None)
+    monkeypatch.setattr(helper, "_logger", Mock())
+
+
+def test_query_terms_do_not_allow_redisearch_operators():
+    terms = helper._original_text_query_tokens('abc-987 | * @secret:李四 "(value)"')
+    assert terms == ["abc", "987", "secret", "李四", "value"]
+    assert not any(char in term for term in terms for char in '|*@:()"-')
+
+
+def test_original_search_pages_past_excluded_and_state_filtered_candidates(monkeypatch):
+    configure(monkeypatch)
+    nodes = [Node(f"stale-{i}", "needle 123", ["scope"]) for i in range(40)]
+    nodes += [Node("wrong", "needle 123", ["different"]), Node("hit", "needle 123", ["scope"])]
+    graph = Graph(nodes)
+    result = helper._original_text_search(
+        graph,
+        "needle 123",
+        1,
+        set(),
+        tag_filters=["scope"],
+        tag_match="exact",
+        candidate_filter=lambda page: [r for r in page if not r["id"].startswith("stale-")],
+    )
+    assert [r["id"] for r in result] == ["hit"]
+    assert len(graph.calls) == 2
+    assert graph.calls[0][1]["query"] == '"needle" | "123"'
+    assert "m.tags IS NOT NULL" in graph.calls[0][0]
+    assert "original_search_text" not in result[0]["memory"]
+    assert result[0]["score_components"]["original_text"] == 1
+
+
+def test_original_search_can_upgrade_vector_seen_id(monkeypatch):
+    configure(monkeypatch)
+    graph = Graph([Node("seen", "needle 123")])
+    results = helper._original_text_search(
+        graph, "needle 123", 5, {"seen"}, include_seen_ids={"seen"}
+    )
+    assert [item["id"] for item in results] == ["seen"]
+    assert results[0]["match_score"] == 1.0
+
+
+def test_upgrades_do_not_starve_novel_candidates_across_pages(monkeypatch):
+    configure(monkeypatch)
+    nodes = [Node(f"seen-{i}", "needle") for i in range(320)] + [Node("novel", "needle")]
+    seen = {node.properties["id"] for node in nodes[:-1]}
+    graph = Graph(nodes)
+    results = helper._original_text_search(graph, "needle", 1, seen, include_seen_ids=seen)
+    assert {r["id"] for r in results} == seen | {"novel"}
+    assert len(graph.calls) == 11
+
+
+def test_scan_cap_logs_incomplete_results(monkeypatch):
+    configure(monkeypatch)
+    monkeypatch.setattr(helper, "_ORIGINAL_TEXT_MAX_SCAN", 40)
+    graph = Graph([Node(f"stale-{i}", "needle") for i in range(50)])
+    results = helper._original_text_search(
+        graph, "needle", 1, set(), candidate_filter=lambda _page: []
+    )
+    assert results == []
+    assert sum(call[1]["batch"] for call in graph.calls) == 40
+    assert helper._logger.warning.call_count == 1
+    assert "truncated" in helper._logger.warning.call_args[0][0]
+
+
+def test_current_state_replacement_filter_runs_before_cap_across_pages(monkeypatch):
+    configure(monkeypatch)
+    graph = Graph(
+        [Node(f"superseded-{i}", "needle") for i in range(40)] + [Node("current", "needle")]
+    )
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _g, ids, _now, _logger: {
+            memory_id: {"id": "other-scope", "tags": ["different"]}
+            for memory_id in ids
+            if memory_id.startswith("superseded-")
+        },
+    )
+
+    def current_only(page):
+        return recall_api._apply_current_state_filter(
+            results=page,
+            graph=graph,
+            result_passes_filters=helper._result_passes_filters,
+            start_time=None,
+            end_time=None,
+            tag_filters=["scope"],
+            tag_mode="any",
+            tag_match="exact",
+            exclude_tags=None,
+            logger=Mock(),
+        )[0]
+
+    results = helper._original_text_search(
+        graph,
+        "needle",
+        1,
+        set(),
+        tag_filters=["scope"],
+        tag_match="exact",
+        candidate_filter=current_only,
+    )
+    assert [r["id"] for r in results] == ["current"]
+    assert len(graph.calls) == 2
+
+
+def test_missing_index_fails_safe(monkeypatch):
+    configure(monkeypatch)
+    graph = SimpleNamespace(query=Mock(side_effect=RuntimeError("index unavailable")))
+    assert helper._original_text_search(graph, "needle", 5, set()) == []
+    helper._logger.exception.assert_called_once()
+
+
+def test_original_channel_runs_with_full_vector_pool_and_history_mode(monkeypatch):
+    vector = {
+        "id": "same",
+        "memory": {"id": "same", "content": "short"},
+        "match_type": "vector",
+        "match_score": 0.2,
+        "score": 0.2,
+    }
+    lexical = {
+        "id": "same",
+        "memory": {"id": "same", "content": "short"},
+        "match_type": "keyword",
+        "match_score": 0.9,
+        "score": 0.9,
+    }
+    calls = []
+
+    def original(_graph, _query, _limit, _seen, **kwargs):
+        calls.append(kwargs)
+        return kwargs["candidate_filter"]([lexical])
+
+    monkeypatch.setattr(
+        recall_api, "_apply_current_state_filter", lambda **kwargs: (kwargs["results"], {})
+    )
+    with app.app.test_request_context(
+        "/recall?query=needle&limit=1&state_mode=history&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: object(),
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, *_args: (float(result.get("match_score", 0)), {}),
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [vector],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+            original_text_search=original,
+        )
+    assert calls and calls[0]["include_seen_ids"] == {"same"}
+    assert response.get_json()["results"][0]["match_type"] == "keyword"

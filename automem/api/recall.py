@@ -1787,6 +1787,7 @@ def handle_recall(
     on_access: Optional[Callable[[List[str]], None]] = None,
     jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
     metadata_keyword_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    original_text_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -2091,6 +2092,48 @@ def handle_recall(
                 include_seen_ids=metadata_upgrade_ids,
             )
             local_results.extend(metadata_matches)
+
+        if graph is not None and original_text_search is not None and query_str:
+            # Run independently of the vector pool: the desired fact may occur
+            # only in the preserved original and therefore lack vector evidence.
+            existing_ids = {
+                memory_id
+                for memory_id in (_result_memory_id(result) for result in local_results)
+                if memory_id
+            }
+
+            def filter_original_state(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                if not current_only:
+                    return candidates
+                filtered, _ = _apply_current_state_filter(
+                    results=candidates,
+                    graph=graph,
+                    result_passes_filters=result_passes_filters,
+                    start_time=start_time,
+                    end_time=end_time,
+                    tag_filters=tag_filters,
+                    tag_mode=tag_mode,
+                    tag_match=tag_match,
+                    exclude_tags=exclude_tags,
+                    logger=logger,
+                )
+                return filtered
+
+            original_matches = original_text_search(
+                graph,
+                query_str,
+                per_query_limit,
+                set(existing_ids),
+                start_time=start_time,
+                end_time=end_time,
+                tag_filters=tag_filters,
+                tag_mode=tag_mode,
+                tag_match=tag_match,
+                exclude_tags=exclude_tags,
+                include_seen_ids=existing_ids,
+                candidate_filter=filter_original_state,
+            )
+            local_results.extend(original_matches)
 
         local_seen.update(
             str(result.get("id") or (result.get("memory") or {}).get("id") or "")
@@ -2713,6 +2756,7 @@ def create_recall_blueprint(
     on_access: Optional[Callable[[List[str]], None]] = None,
     jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
     metadata_keyword_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    original_text_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
 ) -> Blueprint:
     bp = Blueprint("recall", __name__)
 
@@ -2745,6 +2789,7 @@ def create_recall_blueprint(
             on_access=on_access,
             jit_enrich_fn=jit_enrich_fn,
             metadata_keyword_search=metadata_keyword_search,
+            original_text_search=original_text_search,
         )
 
     @bp.route("/startup-recall", methods=["GET"])

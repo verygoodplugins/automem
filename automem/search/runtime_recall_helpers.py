@@ -715,6 +715,172 @@ def _graph_keyword_search(
     return matches
 
 
+def _original_text_query_tokens(query: str) -> List[str]:
+    """Extract operator-free terms before building a RediSearch OR query."""
+    from automem.utils.text import SEARCH_STOPWORDS
+
+    terms: List[str] = []
+    seen: set[str] = set()
+    for term in re.findall(r"[^\W_]+", query.casefold(), flags=re.UNICODE):
+        if term in SEARCH_STOPWORDS or term in seen:
+            continue
+        if len(term) < 2 and term.isascii():
+            continue
+        seen.add(term)
+        terms.append(term)
+        if len(terms) == 12:
+            break
+    return terms
+
+
+_ORIGINAL_TEXT_MAX_SCAN = 5000
+
+
+def _original_text_search(
+    graph: Any,
+    query_text: str,
+    limit: int,
+    seen_ids: set[str],
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    tag_filters: Optional[List[str]] = None,
+    tag_mode: str = "any",
+    tag_match: str = "prefix",
+    exclude_tags: Optional[List[str]] = None,
+    include_seen_ids: Optional[set[str]] = None,
+    candidate_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+) -> List[Dict[str, Any]]:
+    """Search the dedicated index; scope and current-state filtering precede the result cap.
+
+    The indexed original is examined transiently for lexical relevance but never
+    placed into a response. Vector-seen IDs remain eligible for a score upgrade.
+    """
+    if limit <= 0 or graph is None:
+        return []
+    if (
+        _prepare_tag_filters is None
+        or _build_graph_tag_predicate is None
+        or _serialize_node is None
+        or _fetch_relations is None
+        or _logger is None
+    ):
+        raise RuntimeError("recall helpers are not configured")
+    terms = _original_text_query_tokens(query_text)
+    if not terms:
+        return []
+    # Each token consists solely of Unicode alphanumerics. Operators and syntax
+    # from untrusted queries cannot reach RediSearch's query parser.
+    search_query = " | ".join('"' + token + '"' for token in terms)
+    where = [
+        "m:Memory",
+        "m.original_search_text IS NOT NULL",
+        "coalesce(m.archived, false) = false",
+    ]
+    params: Dict[str, Any] = {
+        "query": search_query,
+        "offset": 0,
+        "batch": max(32, min(200, limit * 4)),
+    }
+    if RECALL_EXCLUDED_TYPES:
+        where.append("NOT coalesce(m.type, '') IN $excluded_types")
+        params["excluded_types"] = list(RECALL_EXCLUDED_TYPES)
+    if start_time:
+        where.append("m.timestamp >= $start_time")
+        params["start_time"] = start_time
+    if end_time:
+        where.append("m.timestamp <= $end_time")
+        params["end_time"] = end_time
+    if tag_filters:
+        normalized = _prepare_tag_filters(tag_filters)
+        if tag_match == "prefix":
+            normalized = _canonicalize_prefix_filters(normalized)
+        if normalized:
+            where.append(_build_graph_tag_predicate(tag_mode, tag_match))
+            params["tag_filters"] = normalized
+    query = f"""
+        CALL db.idx.fulltext.queryNodes('MemoryOriginalText', $query) YIELD node AS m, score
+        WHERE {' AND '.join(where)}
+        RETURN m, score ORDER BY score DESC, m.id ASC SKIP $offset LIMIT $batch
+    """
+    upgrades = {str(mid) for mid in (include_seen_ids or set())}
+    emitted: set[str] = set()
+    matches: List[Dict[str, Any]] = []
+    novel_count = 0
+    try:
+        while novel_count < limit:
+            if params["offset"] >= _ORIGINAL_TEXT_MAX_SCAN:
+                _logger.warning(
+                    "Original-text search truncated after %d candidates; recall may be incomplete",
+                    _ORIGINAL_TEXT_MAX_SCAN,
+                )
+                break
+            params["batch"] = min(params["batch"], _ORIGINAL_TEXT_MAX_SCAN - params["offset"])
+            rows = getattr(graph.query(query, params), "result_set", []) or []
+            if not rows:
+                break
+            page: List[Dict[str, Any]] = []
+            for node, _raw_score in rows:
+                raw = getattr(node, "properties", node)
+                if not isinstance(raw, dict):
+                    continue
+                text = raw.get("original_search_text")
+                if not isinstance(text, str):
+                    continue
+                data = _serialize_node(node)
+                # Defend against alternate serializers leaking the index source.
+                data.pop("original_search_text", None)
+                memory_id = str(data.get("id") or "")
+                if (
+                    not memory_id
+                    or memory_id in emitted
+                    or (memory_id in seen_ids and memory_id not in upgrades)
+                ):
+                    continue
+                source_terms = set(re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE))
+                score = len(set(terms) & source_terms) / len(terms)
+                if not score:
+                    continue
+                record = {
+                    "id": memory_id,
+                    "score": score,
+                    "match_score": score,
+                    "match_type": "keyword",
+                    "source": "graph",
+                    "memory": data,
+                    "relations": [],
+                    "score_components": {"original_text": score},
+                }
+                if not _result_passes_filters(
+                    record, start_time, end_time, tag_filters, tag_mode, tag_match, exclude_tags
+                ):
+                    continue
+                page.append(record)
+            if candidate_filter is not None and page:
+                page = candidate_filter(page)
+            for record in page:
+                memory_id = str(record.get("id") or (record.get("memory") or {}).get("id") or "")
+                if not memory_id or memory_id in emitted:
+                    continue
+                if memory_id in seen_ids and memory_id not in upgrades:
+                    continue
+                record["relations"] = record.get("relations") or _fetch_relations(graph, memory_id)
+                emitted.add(memory_id)
+                matches.append(record)
+                if memory_id not in seen_ids:
+                    novel_count += 1
+                if novel_count >= limit:
+                    break
+            if len(rows) < params["batch"]:
+                break
+            params["offset"] += len(rows)
+    except Exception:
+        _logger.exception(
+            "Original-text full-text search failed; other recall channels remain available"
+        )
+        return []
+    return matches
+
+
 def _metadata_keyword_search(
     graph: Any,
     query_text: str,
