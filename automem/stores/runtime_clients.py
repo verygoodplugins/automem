@@ -45,6 +45,16 @@ def init_falkordb(
             "FalkorDB connection established (auth: %s)",
             "enabled" if password else "disabled",
         )
+        # Index setup is fail-soft: preserve the ordinary recall service if the
+        # backend is temporarily unavailable or does not support full-text.
+        from automem.stores.original_text_index import ensure_original_text_index
+
+        try:
+            state.original_text_index_status = ensure_original_text_index(state.memory_graph)
+            logger.info("Original-text index status: %s", state.original_text_index_status)
+        except Exception:
+            state.original_text_index_status = "unavailable"
+            logger.exception("Original-text full-text index unavailable")
     except Exception:  # pragma: no cover
         logger.exception("Failed to initialize FalkorDB connection")
         state.falkordb = None

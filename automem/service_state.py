@@ -155,6 +155,7 @@ class EnrichmentJob:
 class ServiceState:
     falkordb: Optional[FalkorDB] = None
     memory_graph: Any = None
+    original_text_index_status: str = "unknown"
     qdrant: Optional[QdrantClient] = None
     openai_client: Any = None  # Keep for backward compatibility (type classification, etc.)
     embedding_provider: Optional[EmbeddingProvider] = None
