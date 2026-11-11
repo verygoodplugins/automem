@@ -79,6 +79,7 @@ def test_index_status_is_read_only_and_recovers_from_building():
 
 def test_falkordb_initialization_keeps_graph_available_when_index_creation_fails(monkeypatch):
     from unittest.mock import Mock
+
     from automem.stores.runtime_clients import init_falkordb
 
     class UnavailableGraph:
@@ -102,7 +103,9 @@ def test_falkordb_initialization_keeps_graph_available_when_index_creation_fails
 
 def test_health_refreshes_index_readiness_and_marks_failure_degraded(monkeypatch):
     from threading import Lock
+
     from flask import Flask
+
     from automem.api.health import create_health_blueprint
 
     graph = Graph(["BUILDING", "OPERATIONAL", None])
