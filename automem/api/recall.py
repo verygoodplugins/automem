@@ -671,6 +671,7 @@ def _apply_current_state_filter(
     logger: Any,
     state_debug: bool = False,
     existing_ids: Optional[Set[str]] = None,
+    dedupe_replacements: bool = True,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     now = datetime.now(timezone.utc)
     filtered_results: List[Dict[str, Any]] = []
@@ -740,7 +741,7 @@ def _apply_current_state_filter(
 
             if (
                 replacement_id
-                and replacement_id not in seen_ids
+                and (not dedupe_replacements or replacement_id not in seen_ids)
                 and result_passes_filters(
                     candidate,
                     start_time,
@@ -1974,7 +1975,9 @@ def handle_recall(
     state_suppressed: Dict[str, Dict[str, Any]] = {}
     state_replacements: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
-    def _filter_current_and_record(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _filter_current_and_record(
+        candidates: List[Dict[str, Any]], *, dedupe_replacements: bool = True
+    ) -> List[Dict[str, Any]]:
         if not current_only:
             return candidates
         checked = [candidate for candidate in candidates if candidate.get("_current_state_checked")]
@@ -1996,6 +1999,7 @@ def handle_recall(
             logger=logger,
             state_debug=True,
             existing_ids={_result_memory_id(candidate) for candidate in checked},
+            dedupe_replacements=dedupe_replacements,
         )
         for item in info.get("suppressed", []):
             state_suppressed[str(item.get("id") or "")] = item
@@ -2140,7 +2144,9 @@ def handle_recall(
             }
 
             def filter_original_state(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-                return _filter_current_and_record(candidates)
+                # Preserve multiple hits that resolve to one replacement until
+                # the original channel has compared their lexical evidence.
+                return _filter_current_and_record(candidates, dedupe_replacements=False)
 
             original_matches = original_text_search(
                 graph,

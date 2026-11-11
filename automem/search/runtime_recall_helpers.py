@@ -803,7 +803,7 @@ def _original_text_search(
         RETURN m, score ORDER BY score DESC, m.id ASC SKIP $offset LIMIT $batch
     """
     upgrades = {str(mid) for mid in (include_seen_ids or set())}
-    emitted: set[str] = set()
+    emitted: Dict[str, int] = {}
     matches: List[Dict[str, Any]] = []
     novel_count = 0
     # Index order is not the same as bounded lexical coverage. Overfetch a
@@ -834,11 +834,7 @@ def _original_text_search(
                 # Defend against alternate serializers leaking the index source.
                 data.pop("original_search_text", None)
                 memory_id = str(data.get("id") or "")
-                if (
-                    not memory_id
-                    or memory_id in emitted
-                    or (memory_id in seen_ids and memory_id not in upgrades)
-                ):
+                if not memory_id or (memory_id in seen_ids and memory_id not in upgrades):
                     continue
                 source_terms = set(re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE))
                 score = len(set(terms) & source_terms) / len(terms)
@@ -864,16 +860,21 @@ def _original_text_search(
                 page = candidate_filter(page)
             for record in page:
                 memory_id = str(record.get("id") or (record.get("memory") or {}).get("id") or "")
-                if not memory_id or memory_id in emitted:
+                if not memory_id:
                     continue
                 if memory_id in seen_ids and memory_id not in upgrades:
                     continue
-                emitted.add(memory_id)
+                if memory_id in emitted:
+                    previous = matches[emitted[memory_id]]
+                    if float(record.get("match_score") or 0.0) > float(
+                        previous.get("match_score") or 0.0
+                    ):
+                        matches[emitted[memory_id]] = record
+                    continue
+                emitted[memory_id] = len(matches)
                 matches.append(record)
                 if memory_id not in seen_ids:
                     novel_count += 1
-                if novel_count >= novel_budget:
-                    break
             if len(rows) < params["batch"]:
                 break
             params["offset"] += len(rows)

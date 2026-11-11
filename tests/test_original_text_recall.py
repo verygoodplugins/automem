@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import app
+import pytest
 import automem.api.recall as recall_api
 import automem.search.runtime_recall_helpers as helper
 import automem.utils.scoring as scoring
@@ -476,3 +477,56 @@ def test_state_replacement_inherited_evidence_is_bounded_and_channel_specific():
     _, components = _compute_metadata_score(replacement, "needle", ["needle"])
     assert components["keyword"] == 0.0
     assert components["vector"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("weak_count", "direct_current"),
+    [(1, False), (32, False), (1, True)],
+    ids=["same-page", "cross-page", "replacement-also-matched"],
+)
+def test_superseded_hits_keep_strongest_original_evidence(monkeypatch, weak_count, direct_current):
+    configure(monkeypatch)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_KEYWORD", 0.35)
+    nodes = [Node(f"weak-{i}", "needle") for i in range(weak_count)]
+    if direct_current:
+        nodes[0].properties["id"] = "current"
+    nodes.append(Node("strong", "needle 123 private-obsolete-fact"))
+    graph = Graph(nodes)
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _graph, ids, _now, _logger: {
+            memory_id: {
+                "id": "current",
+                "content": "corrected fact",
+                "tags": ["scope"],
+                "_state_relation": {"type": "INVALIDATED_BY"},
+            }
+            for memory_id in ids
+            if memory_id != "current"
+        },
+    )
+    with app.app.test_request_context(
+        "/recall?query=needle%20123&limit=1&min_score=0.3&state_mode=current&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: graph,
+            get_qdrant_client=lambda: None,
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=_compute_metadata_score,
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+            original_text_search=helper._original_text_search,
+        )
+    body = response.get_json()
+    assert [r["id"] for r in body["results"]] == ["current"]
+    assert body["results"][0]["state_replaces"] == "strong"
+    assert body["results"][0]["score_components"]["original_text"] == 1.0
+    assert "private-obsolete-fact" not in response.get_data(as_text=True)
