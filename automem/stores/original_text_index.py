@@ -34,7 +34,7 @@ def original_text_index_status(graph: Any) -> str:
     status = _read_status(graph)
     if status == "OPERATIONAL":
         return "ready"
-    if status in {"PENDING", "BUILDING"}:
+    if status in {"PENDING", "BUILDING"} or (status and "UNDER CONSTRUCTION" in status):
         return "building"
     return "unavailable" if status is None else "failed"
 
@@ -57,6 +57,6 @@ def ensure_original_text_index(graph: Any) -> str:
             status = _read_status(graph)
     if status == "OPERATIONAL":
         return "ready"
-    if status in {"PENDING", "BUILDING"}:
+    if status in {"PENDING", "BUILDING"} or (status and "UNDER CONSTRUCTION" in status):
         return "building"
     return "failed"

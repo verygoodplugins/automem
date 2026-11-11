@@ -59,6 +59,12 @@ def test_race_is_accepted_only_after_verifying_other_creator():
 
 def test_pending_and_failed_states_are_visible():
     assert ensure_original_text_index(Graph(["PENDING"])) == "building"
+    assert (
+        ensure_original_text_index(Graph(["[Indexing] 100/1000: UNDER CONSTRUCTION"])) == "building"
+    )
+    assert (
+        original_text_index_status(Graph(["[Indexing] 100/1000: UNDER CONSTRUCTION"])) == "building"
+    )
     assert ensure_original_text_index(Graph(["FAILED"])) == "failed"
     assert ensure_original_text_index(Graph([None, None])) == "failed"
 
