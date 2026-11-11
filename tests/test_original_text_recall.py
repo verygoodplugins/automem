@@ -3,8 +3,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import app
 import pytest
+
+import app
 import automem.api.recall as recall_api
 import automem.search.runtime_recall_helpers as helper
 import automem.utils.scoring as scoring
@@ -700,6 +701,14 @@ def test_checked_lexical_replacement_competes_with_vector_replacement(
         "match_score": vector_score,
         "score": vector_score,
     }
+    competitor = {
+        "id": "competitor",
+        "memory": {"id": "competitor", "content": "other current fact", "tags": ["scope"]},
+        "source": "qdrant",
+        "match_type": "vector",
+        "match_score": 0.75,
+        "score": 0.75,
+    }
     monkeypatch.setattr(
         recall_api,
         "_active_replacements_for_memories",
@@ -727,7 +736,11 @@ def test_checked_lexical_replacement_competes_with_vector_replacement(
             compute_metadata_score=_compute_metadata_score,
             result_passes_filters=lambda *_args: True,
             graph_keyword_search=lambda *_a, **_k: [],
-            vector_search=lambda *_a, **_k: [stale_vector],
+            # In the stronger-vector case, the corrected replacement must
+            # actually beat a live competitor for the single available slot.
+            vector_search=lambda *_a, **_k: (
+                [stale_vector, competitor] if vector_score == 1.0 else [stale_vector]
+            ),
             vector_filter_only_tag_search=lambda *_a, **_k: [],
             recall_max_limit=50,
             logger=Mock(),
