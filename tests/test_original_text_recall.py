@@ -320,3 +320,91 @@ def test_expanded_stale_memory_does_not_duplicate_checked_replacement(monkeypatc
     assert [result["id"] for result in body["results"]] == ["current"]
     assert body["state_filter"]["suppressed_count"] == 1
     assert body["state_filter"]["replacement_count"] == 0
+
+
+def test_only_selected_original_candidate_hydrates_relations(monkeypatch):
+    configure(monkeypatch)
+    nodes = [Node(f"seen-{i}", "needle") for i in range(40)] + [Node("novel", "needle")]
+    for node in nodes:
+        node.properties["content"] = node.properties["id"]
+
+    class RecallGraph(Graph):
+        def query(self, query, params):
+            if "db.idx.fulltext.queryNodes" in query:
+                return super().query(query, params)
+            return SimpleNamespace(result_set=[])
+
+    graph = RecallGraph(nodes)
+    fetch_relations = Mock(
+        return_value=[{"type": "RELATED_TO", "memory": {"id": "obsolete", "content": "old fact"}}]
+    )
+    monkeypatch.setattr(helper, "_fetch_relations", fetch_relations)
+    monkeypatch.setattr(recall_api, "_active_replacements_for_memories", lambda *_args: {})
+    expansion_seeds = []
+
+    def expand(**kwargs):
+        expansion_seeds.extend(kwargs["seed_results"])
+        return []
+
+    monkeypatch.setattr(recall_api, "_expand_related_memories", expand)
+    vector = [
+        {
+            "id": n.properties["id"],
+            "memory": {"id": n.properties["id"], "content": n.properties["id"]},
+            "source": "qdrant",
+            "match_type": "vector",
+            "match_score": 0.2,
+            "score": 0.2,
+        }
+        for n in nodes[:-1]
+    ]
+    with app.app.test_request_context(
+        "/recall?query=needle&limit=1&expand_relations=true&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: graph,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, *_args: (float(result.get("match_score", 0)), {}),
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: vector,
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+            original_text_search=helper._original_text_search,
+        )
+    body = response.get_json()
+    assert len(body["results"]) == 1
+    selected = body["results"][0]
+    assert len(expansion_seeds) == 1 and expansion_seeds[0]["id"] == selected["id"]
+    fetch_relations.assert_called_once_with(graph, selected["id"])
+    assert selected["relations"] == [{"type": "RELATED_TO", "memory": {"id": "obsolete"}}]
+    assert "_hydrate_original_text_relations" not in selected
+
+
+def test_state_replacement_retains_existing_provenance(monkeypatch):
+    configure(monkeypatch)
+    graph = Graph([Node("old", "needle")])
+    provenance = [{"type": "INVALIDATED_BY", "from": "old"}]
+    fetch = Mock(return_value=[])
+    monkeypatch.setattr(helper, "_fetch_relations", fetch)
+
+    def replace(_page):
+        return [
+            {
+                "id": "new",
+                "memory": {"id": "new"},
+                "match_score": 1.0,
+                "match_type": "state_replacement",
+                "relations": provenance,
+            }
+        ]
+
+    results = helper._original_text_search(graph, "needle", 1, set(), candidate_filter=replace)
+    helper._hydrate_vector_relations(graph, results)
+    assert results[0]["relations"] == provenance
+    fetch.assert_not_called()

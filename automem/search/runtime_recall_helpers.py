@@ -852,6 +852,7 @@ def _original_text_search(
                     "source": "graph",
                     "memory": data,
                     "relations": [],
+                    "_hydrate_original_text_relations": True,
                     "score_components": {"original_text": score},
                 }
                 if not _result_passes_filters(
@@ -890,11 +891,6 @@ def _original_text_search(
             if novel_count >= limit:
                 continue
             novel_count += 1
-        try:
-            record["relations"] = record.get("relations") or _fetch_relations(graph, memory_id)
-        except Exception:
-            _logger.exception("Original-text relation lookup failed for memory %s", memory_id)
-            record["relations"] = []
         selected.append(record)
     return selected
 
@@ -1211,11 +1207,12 @@ def _hydrate_vector_relations(
     graph: Any, results: List[Dict[str, Any]], logger: Any = None
 ) -> None:
     fetch_relations = _fetch_relations
-    if graph is None or fetch_relations is None:
-        return
-
     for result in results:
-        if result.get("source") != "qdrant" or result.get("match_type") != "vector":
+        original_text_match = result.pop("_hydrate_original_text_relations", False)
+        vector_match = result.get("source") == "qdrant" and result.get("match_type") == "vector"
+        if not original_text_match and not vector_match:
+            continue
+        if graph is None or fetch_relations is None:
             continue
         if result.get("relations"):
             continue
@@ -1231,5 +1228,5 @@ def _hydrate_vector_relations(
             result["relations"] = fetch_relations(graph, memory_id)
         except Exception:
             if logger is not None:
-                logger.exception("Failed to hydrate vector relations for %s", memory_id)
+                logger.exception("Failed to hydrate recall relations for %s", memory_id)
             result.setdefault("relations", [])
