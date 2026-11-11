@@ -127,7 +127,7 @@ Detailed experiment history:
 | 2026-07-07 | #200 evidence-answer prompt probe | fix/200-longmemeval-answer-construction | -- | -- | control `temporal-answer` **80.00% (24/30)**, recall@5 30/30; best `evidence-answer` **73.33% (22/30)**, recall@5 30/30 | -- | Harness-only answer-construction experiment; no server recall/vector/graph changes. Direct Python harness used against healthy local API because the shell wrapper's Docker guard failed while `localhost:8001/health` was healthy. Evidence prompt variants were worse than same-day temporal control (`66.67%`, `66.67%`, then `73.33%`), so full LongMemEval was skipped and #200 should stay open. LLM diagnosis: temporal control answer-construction **5/6** failed-but-retrieved; best evidence prompt **7/8**, with rank-1 abstentions down 2→1 but total misses up. Ignored artifacts under `benchmarks/results/issue200/`. |
 | 2026-10-21 | PR #266 control (no judge) | main @ 3caa9d5 | **82.98% (195/235)** | **78.47% (1210/1542)** | -- | -- | Fresh isolated snapshot evaluation, Voyage `voyage-4` 1024d, current official harness; 69/444 category-5 questions excluded. Baseline mini/full wall times 140.622s/671.313s. See [comparison receipt](baselines/pr266-tag-prefix-20261021.json). |
 | 2026-10-21 | PR #266 prefix filters (no judge) | fix/tag-prefix-filtering @ e360619 | **82.98% (195/235)** | **78.27% (1207/1542)** | -- | -- | Same settings and fresh snapshots: mini **0.00pp**, full **-0.19pp** (four lost/one gained QA rows). Candidate mini/full 147.051s/685.356s. Controlled shared-store replay with identical Python hash seed matches both refs on all five changed rows; the original full delta accompanies preexisting process-dependent query decomposition. Details below. |
-| 2026-11-11 | PR #285 original text (no judge) | develop `1a7ba1a` / candidate `b3beabc` | **197/235 both** | in progress | -- | -- | Isolated, freshly ingested local BGE-768; 69 judge-dependent mini questions skipped, no paired verdict changes. Native scorer augments recalled context with labeled evidence. This is a directional diagnostic, not an official judged score or a buried-text test. |
+| 2026-11-11 | PR #285 original text (no judge) | develop `1a7ba1a` / candidate `4431d20` mini, `8fb5621` full | **197/235 both** | **1206/1542 → 1207/1542** | -- | -- | Fresh isolated local BGE-768; 69/444 judge-dependent questions skipped, respectively. Strict API and driver audits passed, including zero replacement-query failures or timeouts. Native scorer augments recalled context with labeled evidence. These are directional diagnostics, not official judged scores or buried-text tests. |
 
 ### 2026-11-11 original-text index: no-provider mini comparison
 
@@ -140,8 +140,18 @@ workers, the judge and answer embedding scoring, and made no paid provider
 calls. The product harness adds labeled evidence to nonempty recall context;
 therefore the resulting answer scores are not a pure retrieval measure. It
 does not exercise ingest-time summarization. Each arm scored 197/235, skipped
-69 judge-dependent questions and had no paired verdict changes. A matched
-ten-conversation run is in progress.
+69 judge-dependent questions and had no paired verdict changes. A subsequent
+full ten-conversation run compared baseline `1a7ba1a6afe69835f62ad7f6013e33301d1ab83e`
+with candidate `8fb56211ba7d7e3d146ae067e575bcafa98eeec0`, which differs from
+the mini candidate only in a test fixture. Baseline scored 1206/1542 and the
+candidate 1207/1542, with 444 judge-dependent questions skipped in each arm;
+there was one paired win and no losses. Both fresh 5,882-record corpora had
+matching content and vectors, no memory-to-memory relations, and differing
+ingestion timestamps. Strict API and driver audits found no replacement-query
+failures, timeouts, exceptions, or unexpected HTTP errors in either arm. This
+does not test supersession relationships or establish a judged answer-quality
+gain. The earlier full `b3beabc` run remains degraded by two query timeouts;
+the clean rerun does not retroactively repair it.
 
 The baseline, intermediate candidate and optimized candidate took 107.4,
 240.1 and 137.0 seconds respectively for the mini evaluation, under different
