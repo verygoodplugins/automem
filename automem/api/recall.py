@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
+from werkzeug.exceptions import ServiceUnavailable
 
 from automem.api.stream import emit_event, preview_text
 from automem.config import (
@@ -512,9 +513,9 @@ def _query_state_replacements(
     try:
         records = graph.query(
             """
-            UNWIND $ids AS source_id
-            MATCH (m:Memory {id: source_id})-[r]->(related:Memory)
-            WHERE type(r) IN $types
+            MATCH (m:Memory)-[r]->(related:Memory)
+            WHERE m.id IN $ids AND type(r) IN $types
+            WITH m.id AS source_id, r, related
             RETURN source_id,
                    type(r) as relation_type,
                    coalesce(
@@ -531,11 +532,13 @@ def _query_state_replacements(
             """,
             {"ids": ordered_ids, "types": sorted(STATE_SUPPRESSING_RELATIONS)},
         )
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Failed to load current-state replacements for %d memories", len(ordered_ids)
         )
-        return {}
+        # A failed lookup cannot distinguish current from superseded memories.
+        # Do not return a successful response that may contain stale facts.
+        raise ServiceUnavailable("Current memory state could not be verified") from exc
 
     replacements: Dict[str, Dict[str, Any]] = {}
     for row in getattr(records, "result_set", []) or []:

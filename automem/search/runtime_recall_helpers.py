@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from flask import abort, request
 from qdrant_client import QdrantClient
+from werkzeug.exceptions import HTTPException
 
 from automem.config import RECALL_EXCLUDED_TYPES
 from automem.utils.tags import _canonicalize_prefix_filters, _compute_tag_prefixes
@@ -878,6 +879,10 @@ def _original_text_search(
             if len(rows) < params["batch"]:
                 break
             params["offset"] += len(rows)
+    except HTTPException:
+        # The current-state callback can reject recall when it cannot verify
+        # supersession. Do not hide that failure behind the optional channel.
+        raise
     except Exception:
         _logger.exception(
             "Original-text full-text search failed; other recall channels remain available"
