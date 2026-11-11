@@ -675,6 +675,7 @@ def _apply_current_state_filter(
     state_debug: bool = False,
     existing_ids: Optional[Set[str]] = None,
     dedupe_replacements: bool = True,
+    priority_aliases: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     now = datetime.now(timezone.utc)
     filtered_results: List[Dict[str, Any]] = []
@@ -759,9 +760,13 @@ def _apply_current_state_filter(
             if relation.get("kind"):
                 candidate["relations"][0]["kind"] = relation["kind"]
 
-            if (
+            replacement_passes_filters = bool(
                 replacement_id
-                and (not dedupe_replacements or replacement_id not in seen_ids)
+                and (
+                    not dedupe_replacements
+                    or replacement_id not in seen_ids
+                    or priority_aliases is not None
+                )
                 and result_passes_filters(
                     candidate,
                     start_time,
@@ -771,6 +776,15 @@ def _apply_current_state_filter(
                     tag_match,
                     exclude_tags,
                 )
+            )
+            if replacement_passes_filters and priority_aliases is not None:
+                # The current head may already be in the pool, in which case
+                # no synthetic state_replaces result is emitted. Keep this
+                # validated alias in request-local selection state only.
+                priority_aliases[memory_id] = replacement_id
+
+            if replacement_passes_filters and (
+                not dedupe_replacements or replacement_id not in seen_ids
             ):
                 filtered_results.append(candidate)
                 seen_ids.add(replacement_id)
@@ -1350,6 +1364,7 @@ def _guarantee_priority_results(
     results: List[Dict[str, Any]],
     context_profile: Optional[Dict[str, Any]],
     limit: int,
+    priority_aliases: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     if not context_profile:
         return results[:limit]
@@ -1359,15 +1374,34 @@ def _guarantee_priority_results(
         return results[:limit]
 
     by_id: Dict[str, Dict[str, Any]] = {}
+    by_replaced_id: Dict[str, Dict[str, Any]] = {}
     ordered_results: List[Dict[str, Any]] = []
     for result in results:
         memory = result.get("memory") or {}
         memory_id = str(result.get("id") or memory.get("id") or "").strip()
         if memory_id and memory_id not in by_id:
             by_id[memory_id] = result
+        replaced_id = str(result.get("state_replaces") or "").strip()
+        if replaced_id and replaced_id not in by_replaced_id:
+            by_replaced_id[replaced_id] = result
         ordered_results.append(result)
 
-    guaranteed = [by_id[memory_id] for memory_id in priority_id_order if memory_id in by_id]
+    guaranteed: List[Dict[str, Any]] = []
+    guaranteed_ids: Set[str] = set()
+    for priority_id in priority_id_order:
+        # A current-state replacement represents the requested priority memory,
+        # but may only compete after it has passed the regular state and scope filters.
+        result = (
+            by_id.get(priority_id)
+            or by_replaced_id.get(priority_id)
+            or by_id.get((priority_aliases or {}).get(priority_id, ""))
+        )
+        if result is None:
+            continue
+        memory_id = _result_memory_id(result)
+        if memory_id and memory_id not in guaranteed_ids:
+            guaranteed.append(result)
+            guaranteed_ids.add(memory_id)
     if len(guaranteed) >= limit:
         return guaranteed[:limit]
 
@@ -1994,6 +2028,7 @@ def handle_recall(
     qdrant_client = get_qdrant_client()
     state_suppressed: Dict[str, Dict[str, Any]] = {}
     state_replacements: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    state_priority_aliases: Dict[str, str] = {}
 
     def _filter_current_and_record(
         candidates: List[Dict[str, Any]], *, dedupe_replacements: bool = True
@@ -2020,6 +2055,11 @@ def handle_recall(
             state_debug=True,
             existing_ids={_result_memory_id(candidate) for candidate in checked},
             dedupe_replacements=dedupe_replacements,
+            priority_aliases=(
+                state_priority_aliases
+                if (expand_relations or expand_entities) and priority_ids_input
+                else None
+            ),
         )
         for item in info.get("suppressed", []):
             state_suppressed[str(item.get("id") or "")] = item
@@ -2258,7 +2298,10 @@ def handle_recall(
         context_injected = False
         if context_profile:
             returnable_results = _guarantee_priority_results(
-                local_results, context_profile, per_query_limit
+                local_results,
+                context_profile,
+                per_query_limit,
+                priority_aliases=state_priority_aliases,
             )
             priority_ids_missing = not _results_have_priority_ids(
                 returnable_results, context_profile
@@ -2292,7 +2335,9 @@ def handle_recall(
                 if context_injected:
                     local_results = _rank_local_results(local_results)
 
-        local_results = _guarantee_priority_results(local_results, context_profile, per_query_limit)
+        local_results = _guarantee_priority_results(
+            local_results, context_profile, per_query_limit, priority_aliases=state_priority_aliases
+        )
 
         # Track originating query for debugging/clients
         for res in local_results:
@@ -2372,7 +2417,9 @@ def handle_recall(
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "time_desc"))
     elif sort_param in {"updated_desc", "updated_asc"}:
         deduped_results.sort(key=_time_sort_key, reverse=(sort_param == "updated_desc"))
-    deduped_results = _guarantee_priority_results(deduped_results, any_context_profile, limit)
+    deduped_results = _guarantee_priority_results(
+        deduped_results, any_context_profile, limit, priority_aliases=state_priority_aliases
+    )
 
     # Graph expansion feature (from upstream branch)
     seed_results = list(deduped_results)
@@ -2530,6 +2577,19 @@ def handle_recall(
     # so `score_filter.filtered_count` keeps describing the score filters only.
     score_filtered_count = pre_filter_count - len(results)
 
+    # Expansion produces additional candidates, not additional response slots.
+    # Re-rank the combined pool with the caller's sort before applying the
+    # existing priority guarantee, so strong expanded evidence can compete with
+    # seed results instead of being silently starved by a full seed pool.
+    if expand_relations or expand_entities:
+        if sort_param == "score":
+            results.sort(key=_score_sort_key)
+        elif sort_param in {"time_desc", "time_asc", "updated_desc", "updated_asc"}:
+            results.sort(key=_time_sort_key, reverse=sort_param.endswith("desc"))
+        results = _guarantee_priority_results(
+            results, any_context_profile, limit, priority_aliases=state_priority_aliases
+        )
+
     # fallback_query/has_semantic_query serve both the scope-fallback fill
     # search below and the tag_scope diagnostics in the response assembly.
     fallback_query = query_text or next((q for q in queries_to_run if q), "")
@@ -2657,11 +2717,24 @@ def handle_recall(
             "matched": bool(total_vector_matches),
         },
     }
+
+    def _returned_expansion_count(candidates: List[Dict[str, Any]]) -> int:
+        candidate_ids = {_result_memory_id(candidate) for candidate in candidates} - {""}
+        return sum(
+            1
+            for result in results
+            if not result.get("outside_tag_scope")
+            and str(result.get("state_replaces") or _result_memory_id(result)) in candidate_ids
+        )
+
     if expand_relations:
         response["expansion"] = {
             "enabled": True,
             "seed_count": len(seed_results),
-            "expanded_count": len(expansion_results),
+            # Existing clients describe expanded_count as returned evidence.
+            # Keep the pre-filter pool visible separately for diagnostics.
+            "expanded_count": _returned_expansion_count(expansion_results),
+            "candidate_count": len(expansion_results),
             "relation_limit": relation_limit,
             "expansion_limit": expansion_limit,
             "respect_tags": expand_respect_tags,
@@ -2669,7 +2742,8 @@ def handle_recall(
     if expand_entities:
         response["entity_expansion"] = {
             "enabled": True,
-            "expanded_count": len(entity_expansion_results),
+            "expanded_count": _returned_expansion_count(entity_expansion_results),
+            "candidate_count": len(entity_expansion_results),
             "entities_found": list(
                 _extract_entities_from_results(seed_results + expansion_results)
             )[:10],
@@ -2765,11 +2839,18 @@ def handle_recall(
 
     # Update last_accessed for direct matches (not expanded related memories)
     if on_access and seed_results:
-        accessed_ids = [
-            str(r.get("id") or (r.get("memory") or {}).get("id"))
-            for r in seed_results
-            if r.get("id") or (r.get("memory") or {}).get("id")
-        ]
+        if expand_relations or expand_entities:
+            seed_ids = {_result_memory_id(seed) for seed in seed_results} - {""}
+            accessed_ids = [
+                _result_memory_id(result)
+                for result in results
+                if _result_memory_id(result)
+                and str(result.get("state_replaces") or _result_memory_id(result)) in seed_ids
+            ]
+        else:
+            accessed_ids = [
+                _result_memory_id(seed) for seed in seed_results if _result_memory_id(seed)
+            ]
         if accessed_ids:
             on_access(accessed_ids)
 
