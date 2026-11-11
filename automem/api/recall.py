@@ -2234,7 +2234,10 @@ def handle_recall(
             # Filter the whole combined candidate pool before deduplication and
             # per-query trimming: stale vector hits must not crowd out current
             # original-text candidates.
-            ranked = _filter_current_and_record(ranked)
+            # Resolve all sources before deduplication. A checked original-text
+            # replacement may share an ID with a stronger vector replacement;
+            # suppressing the latter here would prevent score-based selection.
+            ranked = _filter_current_and_record(ranked, dedupe_replacements=False)
             ranked, _local_dedup_removed = _dedupe_results(ranked)
 
             if sort_param == "score":

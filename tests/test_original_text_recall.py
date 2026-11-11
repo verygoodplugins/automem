@@ -679,3 +679,68 @@ def test_replacement_retains_other_topical_evidence_after_rerank(monkeypatch, ch
         assert result["score_components"][other] == 0.0
         assert f"inherited_{other}" not in result["score_components"]
     assert "private-obsolete-fact" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("vector_score,expected_winner", [(1.0, "vector"), (0.1, "keyword")])
+@pytest.mark.parametrize("same_origin", [True, False], ids=["same-source", "distinct-sources"])
+def test_checked_lexical_replacement_competes_with_vector_replacement(
+    monkeypatch, vector_score, expected_winner, same_origin
+):
+    configure(monkeypatch)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_VECTOR", 0.35)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_KEYWORD", 0.35)
+    lexical_id = "stale-lexical"
+    vector_id = lexical_id if same_origin else "stale-vector"
+    graph = Graph([Node(lexical_id, "needle private-obsolete-fact")])
+    stale_vector = {
+        "id": vector_id,
+        "memory": {"id": vector_id, "content": "short summary", "tags": ["scope"]},
+        "source": "qdrant",
+        "match_type": "vector",
+        "match_score": vector_score,
+        "score": vector_score,
+    }
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _graph, ids, _now, _logger: {
+            memory_id: {
+                "id": "current",
+                "content": "corrected fact",
+                "tags": ["scope"],
+                "_state_relation": {"type": "INVALIDATED_BY"},
+            }
+            for memory_id in ids
+            if memory_id in {lexical_id, vector_id}
+        },
+    )
+    with app.app.test_request_context(
+        "/recall?query=needle%20identifier&limit=1&min_score=0.01&state_mode=current&state_debug=true&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: graph,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=_compute_metadata_score,
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [stale_vector],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+            original_text_search=helper._original_text_search,
+        )
+    body = response.get_json()
+    assert [result["id"] for result in body["results"]] == ["current"]
+    result = body["results"][0]
+    assert result["state_replaces"] == (vector_id if expected_winner == "vector" else lexical_id)
+    assert result["score_components"][expected_winner] == pytest.approx(
+        vector_score if expected_winner == "vector" else 0.5
+    )
+    assert result["score_components"][f"inherited_{expected_winner}"] == pytest.approx(
+        vector_score if expected_winner == "vector" else 0.5
+    )
+    assert "private-obsolete-fact" not in response.get_data(as_text=True)
