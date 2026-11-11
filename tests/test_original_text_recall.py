@@ -530,3 +530,73 @@ def test_superseded_hits_keep_strongest_original_evidence(monkeypatch, weak_coun
     assert body["results"][0]["state_replaces"] == "strong"
     assert body["results"][0]["score_components"]["original_text"] == 1.0
     assert "private-obsolete-fact" not in response.get_data(as_text=True)
+
+
+def test_vector_replacement_keeps_evidence_after_context_injection_rerank(monkeypatch):
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_VECTOR", 0.35)
+    stale = {
+        "id": "stale",
+        "memory": {"id": "stale", "content": "private-obsolete-fact"},
+        "source": "qdrant",
+        "match_type": "vector",
+        "match_score": 1.0,
+        "score": 1.0,
+    }
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _graph, ids, _now, _logger: (
+            {
+                "stale": {
+                    "id": "current",
+                    "content": "corrected fact",
+                    "tags": [],
+                    "_state_relation": {"type": "INVALIDATED_BY"},
+                }
+            }
+            if "stale" in ids
+            else {}
+        ),
+    )
+    injected = []
+
+    def inject(results, *_args):
+        injected.append(True)
+        results.append(
+            {
+                "id": "context",
+                "memory": {"id": "context", "content": "unrelated", "tags": ["priority"]},
+                "match_type": "keyword",
+                "match_score": 0.05,
+                "score": 0.05,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(recall_api, "_inject_priority_memories", inject)
+    with app.app.test_request_context(
+        "/recall?query=needle&limit=2&min_score=0.3&context_tags=priority&state_mode=current&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: object(),
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=_compute_metadata_score,
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [stale],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+    body = response.get_json()
+    assert injected
+    current = next(item for item in body["results"] if item["id"] == "current")
+    assert current["match_type"] == "state_replacement"
+    assert current["state_replaces"] == "stale"
+    assert current["score_components"]["vector"] == 1.0
+    assert current["score_components"]["inherited_vector"] == 1.0
+    assert "private-obsolete-fact" not in response.get_data(as_text=True)

@@ -200,9 +200,15 @@ def _compute_metadata_score(
     # separately; retain it without treating it as a vector match or exposing
     # the superseded text in the result.
     if result.get("match_type") == "state_replacement" and result.get("state_replaces"):
-        original_text_score = (result.get("score_components") or {}).get("original_text")
+        inherited_components = result.get("score_components") or {}
+        original_text_score = inherited_components.get("original_text")
         if isinstance(original_text_score, (int, float)):
             keyword_component = max(keyword_component, min(1.0, max(0.0, original_text_score)))
+        # This was the actual vector match for the superseded memory, not an
+        # embedding comparison against the replacement's content.
+        inherited_vector = inherited_components.get("inherited_vector")
+        if isinstance(inherited_vector, (int, float)):
+            vector_component = min(1.0, max(0.0, inherited_vector))
 
     metadata_component = (
         float(result.get("match_score", 0.0) or 0.0)

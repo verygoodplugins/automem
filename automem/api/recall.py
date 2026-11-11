@@ -736,6 +736,12 @@ def _apply_current_state_filter(
                 "final_score": float(result.get("final_score") or result.get("score") or 0.0),
                 "score_components": dict(result.get("score_components") or {}),
             }
+            if result.get("match_type") == "vector":
+                vector_score = result.get("match_score")
+                if isinstance(vector_score, (int, float)):
+                    candidate["score_components"]["inherited_vector"] = min(
+                        1.0, max(0.0, vector_score)
+                    )
             if relation.get("kind"):
                 candidate["relations"][0]["kind"] = relation["kind"]
 
