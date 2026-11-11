@@ -103,6 +103,14 @@ def test_scan_cap_logs_incomplete_results(monkeypatch):
     assert "truncated" in helper._logger.warning.call_args[0][0]
 
 
+def test_coverage_reranks_index_candidates_before_limit(monkeypatch):
+    configure(monkeypatch)
+    graph = Graph([Node("partial", "needle"), Node("full", "needle 123")])
+    result = helper._original_text_search(graph, "needle 123", 1, set())
+    assert [r["id"] for r in result] == ["full"]
+    assert result[0]["match_score"] == 1.0
+
+
 def test_current_state_replacement_filter_runs_before_cap_across_pages(monkeypatch):
     configure(monkeypatch)
     graph = Graph(
@@ -197,3 +205,62 @@ def test_original_channel_runs_with_full_vector_pool_and_history_mode(monkeypatc
         )
     assert calls and calls[0]["include_seen_ids"] == {"same"}
     assert response.get_json()["results"][0]["match_type"] == "keyword"
+
+
+def test_current_pool_filters_before_limit_and_reports_original_suppressions(monkeypatch):
+    monkeypatch.setattr(recall_api, "_active_replacements_for_memories", lambda *_args: {})
+    stale = {
+        "id": "stale",
+        "memory": {"id": "stale", "content": "stale", "t_invalid": "2020-01-01T00:00:00+00:00"},
+        "match_type": "vector",
+        "match_score": 0.99,
+        "score": 0.99,
+    }
+    original_stale = {
+        "id": "original-stale",
+        "memory": {
+            "id": "original-stale",
+            "content": "stale original",
+            "t_invalid": "2020-01-01T00:00:00+00:00",
+        },
+        "match_type": "keyword",
+        "match_score": 0.95,
+        "score": 0.95,
+    }
+    current = {
+        "id": "current",
+        "memory": {"id": "current", "content": "current"},
+        "match_type": "keyword",
+        "match_score": 0.8,
+        "score": 0.8,
+    }
+
+    def original(_graph, _query, _limit, _seen, **kwargs):
+        return kwargs["candidate_filter"]([original_stale, current])
+
+    with app.app.test_request_context(
+        "/recall?query=needle&limit=1&state_debug=true&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: object(),
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, *_args: (float(result.get("match_score", 0)), {}),
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [stale],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+            original_text_search=original,
+        )
+    body = response.get_json()
+    assert [r["id"] for r in body["results"]] == ["current"]
+    assert body["state_filter"]["suppressed_count"] == 2
+    assert {item["id"] for item in body["state_filter"]["suppressed"]} == {
+        "stale",
+        "original-stale",
+    }

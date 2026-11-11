@@ -806,8 +806,12 @@ def _original_text_search(
     emitted: set[str] = set()
     matches: List[Dict[str, Any]] = []
     novel_count = 0
+    # Index order is not the same as bounded lexical coverage. Overfetch a
+    # bounded pool before choosing novel hits so an early partial match cannot
+    # displace a stronger match from the same page.
+    novel_budget = max(limit, min(200, max(32, limit * 4)))
     try:
-        while novel_count < limit:
+        while novel_count < novel_budget:
             if params["offset"] >= _ORIGINAL_TEXT_MAX_SCAN:
                 _logger.warning(
                     "Original-text search truncated after %d candidates; recall may be incomplete",
@@ -863,12 +867,11 @@ def _original_text_search(
                     continue
                 if memory_id in seen_ids and memory_id not in upgrades:
                     continue
-                record["relations"] = record.get("relations") or _fetch_relations(graph, memory_id)
                 emitted.add(memory_id)
                 matches.append(record)
                 if memory_id not in seen_ids:
                     novel_count += 1
-                if novel_count >= limit:
+                if novel_count >= novel_budget:
                     break
             if len(rows) < params["batch"]:
                 break
@@ -878,7 +881,22 @@ def _original_text_search(
             "Original-text full-text search failed; other recall channels remain available"
         )
         return []
-    return matches
+    matches.sort(key=lambda record: float(record.get("match_score") or 0.0), reverse=True)
+    selected: List[Dict[str, Any]] = []
+    novel_count = 0
+    for record in matches:
+        memory_id = str(record.get("id") or "")
+        if memory_id not in seen_ids:
+            if novel_count >= limit:
+                continue
+            novel_count += 1
+        try:
+            record["relations"] = record.get("relations") or _fetch_relations(graph, memory_id)
+        except Exception:
+            _logger.exception("Original-text relation lookup failed for memory %s", memory_id)
+            record["relations"] = []
+        selected.append(record)
+    return selected
 
 
 def _metadata_keyword_search(

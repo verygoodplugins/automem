@@ -1969,6 +1969,40 @@ def handle_recall(
     context_tags = normalize_tag_list(context_tags_input)
     graph = get_memory_graph()
     qdrant_client = get_qdrant_client()
+    state_suppressed: Dict[str, Dict[str, Any]] = {}
+    state_replacements: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def _filter_current_and_record(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not current_only:
+            return candidates
+        checked = [candidate for candidate in candidates if candidate.get("_current_state_checked")]
+        unchecked = [
+            candidate for candidate in candidates if not candidate.get("_current_state_checked")
+        ]
+        if not unchecked:
+            return checked
+        filtered, info = _apply_current_state_filter(
+            results=unchecked,
+            graph=graph,
+            result_passes_filters=result_passes_filters,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_filters,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            exclude_tags=exclude_tags,
+            logger=logger,
+            state_debug=True,
+        )
+        for item in info.get("suppressed", []):
+            state_suppressed[str(item.get("id") or "")] = item
+        for item in info.get("replacements", []):
+            state_replacements[(str(item.get("replaces_id") or ""), str(item.get("id") or ""))] = (
+                item
+            )
+        for candidate in filtered:
+            candidate["_current_state_checked"] = True
+        return checked + filtered
 
     def _parse_iso_for_sort(value: Any) -> str:
         """
@@ -2103,21 +2137,7 @@ def handle_recall(
             }
 
             def filter_original_state(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-                if not current_only:
-                    return candidates
-                filtered, _ = _apply_current_state_filter(
-                    results=candidates,
-                    graph=graph,
-                    result_passes_filters=result_passes_filters,
-                    start_time=start_time,
-                    end_time=end_time,
-                    tag_filters=tag_filters,
-                    tag_mode=tag_mode,
-                    tag_match=tag_match,
-                    exclude_tags=exclude_tags,
-                    logger=logger,
-                )
-                return filtered
+                return _filter_current_and_record(candidates)
 
             original_matches = original_text_search(
                 graph,
@@ -2185,6 +2205,10 @@ def handle_recall(
             if min_score is not None and min_score > 0:
                 ranked = [res for res in ranked if float(res.get("final_score", 0.0)) >= min_score]
 
+            # Filter the whole combined candidate pool before deduplication and
+            # per-query trimming: stale vector hits must not crowd out current
+            # original-text candidates.
+            ranked = _filter_current_and_record(ranked)
             ranked, _local_dedup_removed = _dedupe_results(ranked)
 
             if sort_param == "score":
@@ -2394,19 +2418,15 @@ def handle_recall(
 
     state_filter_info: Optional[Dict[str, Any]] = None
     if current_only:
-        results, state_filter_info = _apply_current_state_filter(
-            results=results,
-            graph=graph,
-            result_passes_filters=result_passes_filters,
-            start_time=start_time,
-            end_time=end_time,
-            tag_filters=tag_filters,
-            tag_mode=tag_mode,
-            tag_match=tag_match,
-            exclude_tags=exclude_tags,
-            logger=logger,
-            state_debug=state_debug,
-        )
+        results = _filter_current_and_record(results)
+        state_filter_info = {
+            "current_only": True,
+            "suppressed_count": len(state_suppressed),
+            "replacement_count": len(state_replacements),
+        }
+        if state_debug:
+            state_filter_info["suppressed"] = list(state_suppressed.values())
+            state_filter_info["replacements"] = list(state_replacements.values())
 
     # Relative-recency re-rank (issues #158/#159): when active, min-max
     # normalize candidate timestamps across the CURRENT candidate set and add
@@ -2588,6 +2608,9 @@ def handle_recall(
                 logger.debug("Entity identity batch lookup failed for slugs %s", slug_list)
         except Exception:
             logger.debug("Entity identity injection failed")
+
+    for result in results:
+        result.pop("_current_state_checked", None)
 
     response = {
         "status": "success",
