@@ -67,6 +67,7 @@ def test_format_analysis_includes_compact_failure_rows() -> None:
                 "recall_total": 1,
                 "recall_at_5": 1.0,
             },
+            "task_averaged": {"accuracy": None},
             "by_type": {
                 "multi-session": {
                     "total": 1,
