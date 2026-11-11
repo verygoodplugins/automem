@@ -670,10 +670,12 @@ def _apply_current_state_filter(
     exclude_tags: Optional[List[str]],
     logger: Any,
     state_debug: bool = False,
+    existing_ids: Optional[Set[str]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     now = datetime.now(timezone.utc)
     filtered_results: List[Dict[str, Any]] = []
-    seen_ids = {_result_memory_id(result) for result in results if _result_memory_id(result)}
+    seen_ids = set(existing_ids or ())
+    seen_ids.update(_result_memory_id(result) for result in results if _result_memory_id(result))
     replacements_by_id = _active_replacements_for_memories(
         graph,
         [_result_memory_id(result) for result in results],
@@ -1993,6 +1995,7 @@ def handle_recall(
             exclude_tags=exclude_tags,
             logger=logger,
             state_debug=True,
+            existing_ids={_result_memory_id(candidate) for candidate in checked},
         )
         for item in info.get("suppressed", []):
             state_suppressed[str(item.get("id") or "")] = item

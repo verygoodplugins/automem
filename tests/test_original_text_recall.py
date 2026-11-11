@@ -264,3 +264,59 @@ def test_current_pool_filters_before_limit_and_reports_original_suppressions(mon
         "stale",
         "original-stale",
     }
+
+
+def test_expanded_stale_memory_does_not_duplicate_checked_replacement(monkeypatch):
+    current = {
+        "id": "current",
+        "memory": {"id": "current", "content": "current fact"},
+        "match_type": "vector",
+        "match_score": 0.9,
+        "score": 0.9,
+    }
+    stale = {
+        "id": "stale",
+        "memory": {"id": "stale", "content": "old fact"},
+        "match_type": "relation",
+        "match_score": 0.8,
+        "score": 0.8,
+        "final_score": 0.8,
+    }
+    monkeypatch.setattr(recall_api, "_expand_related_memories", lambda **_kwargs: [stale])
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _graph, ids, _now, _logger: (
+            {
+                "stale": {
+                    "id": "current",
+                    "content": "current fact",
+                    "_state_relation": {"type": "INVALIDATED_BY"},
+                }
+            }
+            if "stale" in ids
+            else {}
+        ),
+    )
+    with app.app.test_request_context(
+        "/recall?query=needle&limit=2&expand_relations=true&state_debug=true&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: object(),
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=lambda result, *_args: (float(result.get("match_score", 0)), {}),
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [current],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+        )
+    body = response.get_json()
+    assert [result["id"] for result in body["results"]] == ["current"]
+    assert body["state_filter"]["suppressed_count"] == 1
+    assert body["state_filter"]["replacement_count"] == 0
