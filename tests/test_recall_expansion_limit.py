@@ -270,6 +270,23 @@ def test_only_returned_direct_seeds_are_marked_accessed(run_recall):
     on_access.assert_called_once_with(["seed-a"])
 
 
+def test_access_tracks_direct_seed_replaced_before_expansion(run_recall):
+    run_recall.graph.memories.update(
+        {"old": {"id": "old", "content": "old"}, "new": {"id": "new", "content": "new"}}
+    )
+    run_recall.graph.relationships.append(
+        {"id1": "old", "id2": "new", "type": "INVALIDATED_BY", "strength": 0.9}
+    )
+    on_access = Mock()
+    body, _ = run_recall(
+        "/recall?query=needle&limit=1&expand_relations=true&adaptive_floor=false",
+        [record("old", 0.4)],
+        on_access=on_access,
+    )
+    assert [result["id"] for result in body["results"]] == ["new"]
+    on_access.assert_called_once_with(["new"])
+
+
 def test_real_relation_expansion_is_ranked_and_reported_as_returned(run_recall):
     run_recall.graph.memories.update(
         {

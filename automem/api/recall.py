@@ -2845,7 +2845,10 @@ def handle_recall(
                 _result_memory_id(result)
                 for result in results
                 if _result_memory_id(result)
-                and str(result.get("state_replaces") or _result_memory_id(result)) in seed_ids
+                and (
+                    _result_memory_id(result) in seed_ids
+                    or str(result.get("state_replaces") or "") in seed_ids
+                )
             ]
         else:
             accessed_ids = [
