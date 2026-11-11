@@ -195,6 +195,15 @@ def _compute_metadata_score(
                 content_hits = sum(1 for token in tokens if token in content_tokens)
                 keyword_component = content_hits / len(tokens)
 
+    # A current replacement can inherit lexical evidence from the superseded
+    # memory that led to it. The original-text channel records that evidence
+    # separately; retain it without treating it as a vector match or exposing
+    # the superseded text in the result.
+    if result.get("match_type") == "state_replacement" and result.get("state_replaces"):
+        original_text_score = (result.get("score_components") or {}).get("original_text")
+        if isinstance(original_text_score, (int, float)):
+            keyword_component = max(keyword_component, min(1.0, max(0.0, original_text_score)))
+
     metadata_component = (
         float(result.get("match_score", 0.0) or 0.0)
         if result.get("match_type") == "metadata"

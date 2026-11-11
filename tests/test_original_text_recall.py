@@ -6,7 +6,9 @@ from unittest.mock import Mock
 import app
 import automem.api.recall as recall_api
 import automem.search.runtime_recall_helpers as helper
+import automem.utils.scoring as scoring
 from automem.api.recall import handle_recall
+from automem.utils.scoring import _compute_metadata_score
 from automem.utils.text import _extract_keywords
 
 
@@ -408,3 +410,69 @@ def test_state_replacement_retains_existing_provenance(monkeypatch):
     helper._hydrate_vector_relations(graph, results)
     assert results[0]["relations"] == provenance
     fetch.assert_not_called()
+
+
+def test_original_text_evidence_survives_supersession_and_min_score(monkeypatch):
+    configure(monkeypatch)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_KEYWORD", 0.35)
+    graph = Graph([Node("stale", "needle obsolete-private-fact")])
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _graph, ids, _now, _logger: (
+            {
+                "stale": {
+                    "id": "current",
+                    "content": "corrected fact",
+                    "tags": ["scope"],
+                    "_state_relation": {"type": "INVALIDATED_BY"},
+                }
+            }
+            if "stale" in ids
+            else {}
+        ),
+    )
+    with app.app.test_request_context(
+        "/recall?query=needle&limit=1&min_score=0.3&state_mode=current&adaptive_floor=false"
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: graph,
+            get_qdrant_client=lambda: None,
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=_compute_metadata_score,
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+            original_text_search=helper._original_text_search,
+        )
+    body = response.get_json()
+    assert [r["id"] for r in body["results"]] == ["current"]
+    result = body["results"][0]
+    assert result["match_type"] == "state_replacement"
+    assert result["state_replaces"] == "stale"
+    assert result["score_components"]["keyword"] == 1.0
+    assert result["score_components"]["vector"] == 0.0
+    assert "obsolete-private-fact" not in response.get_data(as_text=True)
+
+
+def test_state_replacement_inherited_evidence_is_bounded_and_channel_specific():
+    replacement = {
+        "memory": {"id": "current", "content": "corrected fact"},
+        "match_type": "state_replacement",
+        "state_replaces": "stale",
+        "match_score": 1.0,
+        "score_components": {"original_text": 7.0},
+    }
+    _, components = _compute_metadata_score(replacement, "needle", ["needle"])
+    assert components["keyword"] == 1.0
+    assert components["vector"] == 0.0
+    replacement["score_components"] = {}
+    _, components = _compute_metadata_score(replacement, "needle", ["needle"])
+    assert components["keyword"] == 0.0
+    assert components["vector"] == 0.0
