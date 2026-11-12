@@ -62,8 +62,9 @@ def generate_real_embedding(
     state: Any,
     logger: Any,
     placeholder_embedding: Callable[[str], List[float]],
+    query: bool = False,
 ) -> List[float]:
-    """Generate an embedding using the configured provider."""
+    """Generate an embedding using the configured provider (query=True for search queries)."""
     init_embedding_provider()
 
     if state.embedding_provider is None:
@@ -72,7 +73,11 @@ def generate_real_embedding(
 
     expected_dim = state.effective_vector_size
     try:
-        embedding = state.embedding_provider.generate_embedding(content)
+        provider = state.embedding_provider
+        if query and hasattr(provider, "generate_query_embedding"):
+            embedding = provider.generate_query_embedding(content)
+        else:
+            embedding = provider.generate_embedding(content)
         if not isinstance(embedding, list) or len(embedding) != expected_dim:
             logger.warning(
                 "Provider %s returned %s dims (expected %d); falling back to placeholder",

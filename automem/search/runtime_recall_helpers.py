@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import unicodedata
@@ -103,6 +104,17 @@ METADATA_SCAN_LIMIT_MIN = 200
 METADATA_SCAN_LIMIT_MAX = 1000
 MAX_METADATA_STRING_LENGTH = 96
 MAX_METADATA_ARRAY_LENGTH = 12
+
+
+def _embed_query(embed_fn: Callable[..., List[float]], text: str) -> List[float]:
+    """Embed a recall query, passing query=True when the embedder accepts it."""
+    try:
+        params = inspect.signature(embed_fn).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "query" in params:
+        return embed_fn(text, query=True)
+    return embed_fn(text)
 
 
 def _normalize_tags(tags: List[Any]) -> List[str]:
@@ -971,7 +983,7 @@ def _vector_search(
             abort(400, description=str(exc))
     elif normalized:
         logger.debug("Generating embedding for recall query")
-        embedding = generate_real_embedding(normalized)
+        embedding = _embed_query(generate_real_embedding, normalized)
 
     if not embedding:
         return []
