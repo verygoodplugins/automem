@@ -317,3 +317,28 @@ benchmark policy.
 |----------|---------|---------|-----------|----------|
 | locomo-mini | 2026-03-02 | main @ 80a6f93 | voyage:voyage-4 1024d | 788 (2 convos) |
 | locomo | 2026-03-02 | main @ 80a6f93 | voyage:voyage-4 1024d | 5828 (10 convos) |
+
+### 2026-11-13 inline relation scope: no-provider diagnostics
+
+| Run | Baseline `2a52c482` | #287 merge-equivalent `5647694` | Paired changes |
+|-----|---------------------:|---------------------------------:|---------------:|
+| LoCoMo mini (304 questions) | 197/235 | 197/235 | 0 |
+| LoCoMo full (1,986 questions) | 1,206/1,542 | 1,206/1,542 | 0 |
+
+Both isolated, internal-only runs used local FastEmbed BGE 768-dimensional
+embeddings, no enrichment or paid provider, and no judge. They skipped 69 mini
+and 444 full judge-dependent questions per arm. The candidate is the tested
+integration commit `5647694b29dcae922121189b0d0e6802b9266db6`, whose tree
+matches the three-way merge of `develop` at
+`2a52c4824ca20ed5ee84fb7860838ce9fdbf5307` and the #287 code head
+`092b3d8023cbe334153586fc6e683e826e511db6`; it is not the PR head itself.
+
+The 788-record mini and 5,882-record full corpora matched content and vectors
+between arms, with different ingest timestamps and zero memory-to-memory
+relations. Strict API and driver audits found no timeouts, replacement failures,
+exceptions or unexpected HTTP errors. The native scorer adds labeled evidence
+to recalled context and can mask retrieval misses. These are directional
+no-judge regression checks, not judged answer-quality or graph-value scores.
+The concurrent benchmark workloads make elapsed times unsuitable for latency
+comparisons. Scoped graph behavior was tested separately in the combined
+[graph diagnostic](https://github.com/verygoodplugins/automem-evals/pull/99).
