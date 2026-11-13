@@ -49,3 +49,14 @@ RUN_ORIGINAL_INDEX_DOCKER_TESTS=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 ```
 
 The disposable integration test exercises actual FalkorDB keyset traversal, null-aware compare-and-set, label creation, native full-text indexing and updates, idempotent reruns, explicit legacy opt-in, and duplicate-ID rejection. It never connects to an existing AutoMem stack.
+
+## Current-state verification
+
+For current-only recall, an error while querying replacement relationships now
+returns HTTP 503 rather than assuming that no replacement exists. History-mode
+recall does not perform this replacement check. This prevents a graph query
+timeout from silently returning an unverified superseded memory as current.
+The existing vector-only fallback when the graph itself is unavailable remains
+unchanged: it can filter lifecycle timestamps in vector payloads, but cannot
+verify supersession relationships. Consumers that require verified current
+state should ensure the graph is available.

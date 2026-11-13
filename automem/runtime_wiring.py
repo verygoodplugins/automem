@@ -75,6 +75,7 @@ def wire_recall_and_blueprints(
         consolidation_history_limit=module.CONSOLIDATION_HISTORY_LIMIT,
         require_api_token_fn=module.require_api_token,
         metadata_keyword_search_fn=module._metadata_keyword_search,
+        original_text_search_fn=getattr(module, "_original_text_search", None),
     )
 
 

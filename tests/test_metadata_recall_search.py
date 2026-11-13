@@ -60,7 +60,7 @@ def test_handle_recall_runs_metadata_sidecar_for_strong_non_field_queries() -> N
 
     with app.app.test_request_context("/recall?query=hub-developer%20run%20notes&limit=5"):
         response = handle_recall(
-            get_memory_graph=lambda: object(),
+            get_memory_graph=lambda: FakeGraph(),
             get_qdrant_client=lambda: None,
             normalize_tag_list=lambda value: value if isinstance(value, list) else [],
             normalize_timestamp=lambda value: value,

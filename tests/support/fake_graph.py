@@ -689,7 +689,8 @@ class FakeGraph:
             return FakeResult(rows[: int(params.get("limit") or len(rows) or 1)])
 
         if (
-            "UNWIND $ids AS source_id" in query
+            "MATCH (m:Memory)-[r]->(related:Memory)" in query
+            and "m.id IN $ids" in query
             and "RETURN source_id" in query
             and "related" in query
         ):

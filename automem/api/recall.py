@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from flask import Blueprint, abort, jsonify, request
+from werkzeug.exceptions import ServiceUnavailable
 
 from automem.api.stream import emit_event, preview_text
 from automem.config import (
@@ -512,9 +513,9 @@ def _query_state_replacements(
     try:
         records = graph.query(
             """
-            UNWIND $ids AS source_id
-            MATCH (m:Memory {id: source_id})-[r]->(related:Memory)
-            WHERE type(r) IN $types
+            MATCH (m:Memory)-[r]->(related:Memory)
+            WHERE m.id IN $ids AND type(r) IN $types
+            WITH m.id AS source_id, r, related
             RETURN source_id,
                    type(r) as relation_type,
                    coalesce(
@@ -531,11 +532,13 @@ def _query_state_replacements(
             """,
             {"ids": ordered_ids, "types": sorted(STATE_SUPPRESSING_RELATIONS)},
         )
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Failed to load current-state replacements for %d memories", len(ordered_ids)
         )
-        return {}
+        # A failed lookup cannot distinguish current from superseded memories.
+        # Do not return a successful response that may contain stale facts.
+        raise ServiceUnavailable("Current memory state could not be verified") from exc
 
     replacements: Dict[str, Dict[str, Any]] = {}
     for row in getattr(records, "result_set", []) or []:
@@ -670,10 +673,13 @@ def _apply_current_state_filter(
     exclude_tags: Optional[List[str]],
     logger: Any,
     state_debug: bool = False,
+    existing_ids: Optional[Set[str]] = None,
+    dedupe_replacements: bool = True,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     now = datetime.now(timezone.utc)
     filtered_results: List[Dict[str, Any]] = []
-    seen_ids = {_result_memory_id(result) for result in results if _result_memory_id(result)}
+    seen_ids = set(existing_ids or ())
+    seen_ids.update(_result_memory_id(result) for result in results if _result_memory_id(result))
     replacements_by_id = _active_replacements_for_memories(
         graph,
         [_result_memory_id(result) for result in results],
@@ -733,12 +739,29 @@ def _apply_current_state_filter(
                 "final_score": float(result.get("final_score") or result.get("score") or 0.0),
                 "score_components": dict(result.get("score_components") or {}),
             }
+            # Preserve only query-topical signals actually scored for the
+            # superseded memory. Their inherited names identify their origin;
+            # query-independent metadata and graph relations are not copied as
+            # evidence about the replacement.
+            components = candidate["score_components"]
+            direct_channel = {
+                "vector": "vector",
+                "keyword": "keyword",
+                "trending": "keyword",
+                "metadata": "metadata",
+            }.get(result.get("match_type"))
+            for component in ("vector", "keyword", "metadata", "exact"):
+                value = components.get(component)
+                if value is None and component == direct_channel:
+                    value = result.get("match_score")
+                if isinstance(value, (int, float)) and value > 0:
+                    components[f"inherited_{component}"] = min(1.0, value)
             if relation.get("kind"):
                 candidate["relations"][0]["kind"] = relation["kind"]
 
             if (
                 replacement_id
-                and replacement_id not in seen_ids
+                and (not dedupe_replacements or replacement_id not in seen_ids)
                 and result_passes_filters(
                     candidate,
                     start_time,
@@ -1787,6 +1810,7 @@ def handle_recall(
     on_access: Optional[Callable[[List[str]], None]] = None,
     jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
     metadata_keyword_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    original_text_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
 ):
     query_start = time.perf_counter()
     query_text = (request.args.get("query") or "").strip()
@@ -1968,6 +1992,44 @@ def handle_recall(
     context_tags = normalize_tag_list(context_tags_input)
     graph = get_memory_graph()
     qdrant_client = get_qdrant_client()
+    state_suppressed: Dict[str, Dict[str, Any]] = {}
+    state_replacements: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def _filter_current_and_record(
+        candidates: List[Dict[str, Any]], *, dedupe_replacements: bool = True
+    ) -> List[Dict[str, Any]]:
+        if not current_only:
+            return candidates
+        checked = [candidate for candidate in candidates if candidate.get("_current_state_checked")]
+        unchecked = [
+            candidate for candidate in candidates if not candidate.get("_current_state_checked")
+        ]
+        if not unchecked:
+            return checked
+        filtered, info = _apply_current_state_filter(
+            results=unchecked,
+            graph=graph,
+            result_passes_filters=result_passes_filters,
+            start_time=start_time,
+            end_time=end_time,
+            tag_filters=tag_filters,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            exclude_tags=exclude_tags,
+            logger=logger,
+            state_debug=True,
+            existing_ids={_result_memory_id(candidate) for candidate in checked},
+            dedupe_replacements=dedupe_replacements,
+        )
+        for item in info.get("suppressed", []):
+            state_suppressed[str(item.get("id") or "")] = item
+        for item in info.get("replacements", []):
+            state_replacements[(str(item.get("replaces_id") or ""), str(item.get("id") or ""))] = (
+                item
+            )
+        for candidate in filtered:
+            candidate["_current_state_checked"] = True
+        return checked + filtered
 
     def _parse_iso_for_sort(value: Any) -> str:
         """
@@ -2092,6 +2154,36 @@ def handle_recall(
             )
             local_results.extend(metadata_matches)
 
+        if graph is not None and original_text_search is not None and query_str:
+            # Run independently of the vector pool: the desired fact may occur
+            # only in the preserved original and therefore lack vector evidence.
+            existing_ids = {
+                memory_id
+                for memory_id in (_result_memory_id(result) for result in local_results)
+                if memory_id
+            }
+
+            def filter_original_state(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                # Preserve multiple hits that resolve to one replacement until
+                # the original channel has compared their lexical evidence.
+                return _filter_current_and_record(candidates, dedupe_replacements=False)
+
+            original_matches = original_text_search(
+                graph,
+                query_str,
+                per_query_limit,
+                set(existing_ids),
+                start_time=start_time,
+                end_time=end_time,
+                tag_filters=tag_filters,
+                tag_mode=tag_mode,
+                tag_match=tag_match,
+                exclude_tags=exclude_tags,
+                include_seen_ids=existing_ids,
+                candidate_filter=filter_original_state,
+            )
+            local_results.extend(original_matches)
+
         local_seen.update(
             str(result.get("id") or (result.get("memory") or {}).get("id") or "")
             for result in local_results
@@ -2142,6 +2234,13 @@ def handle_recall(
             if min_score is not None and min_score > 0:
                 ranked = [res for res in ranked if float(res.get("final_score", 0.0)) >= min_score]
 
+            # Filter the whole combined candidate pool before deduplication and
+            # per-query trimming: stale vector hits must not crowd out current
+            # original-text candidates.
+            # Resolve all sources before deduplication. A checked original-text
+            # replacement may share an ID with a stronger vector replacement;
+            # suppressing the latter here would prevent score-based selection.
+            ranked = _filter_current_and_record(ranked, dedupe_replacements=False)
             ranked, _local_dedup_removed = _dedupe_results(ranked)
 
             if sort_param == "score":
@@ -2351,19 +2450,15 @@ def handle_recall(
 
     state_filter_info: Optional[Dict[str, Any]] = None
     if current_only:
-        results, state_filter_info = _apply_current_state_filter(
-            results=results,
-            graph=graph,
-            result_passes_filters=result_passes_filters,
-            start_time=start_time,
-            end_time=end_time,
-            tag_filters=tag_filters,
-            tag_mode=tag_mode,
-            tag_match=tag_match,
-            exclude_tags=exclude_tags,
-            logger=logger,
-            state_debug=state_debug,
-        )
+        results = _filter_current_and_record(results)
+        state_filter_info = {
+            "current_only": True,
+            "suppressed_count": len(state_suppressed),
+            "replacement_count": len(state_replacements),
+        }
+        if state_debug:
+            state_filter_info["suppressed"] = list(state_suppressed.values())
+            state_filter_info["replacements"] = list(state_replacements.values())
 
     # Relative-recency re-rank (issues #158/#159): when active, min-max
     # normalize candidate timestamps across the CURRENT candidate set and add
@@ -2546,6 +2641,9 @@ def handle_recall(
         except Exception:
             logger.debug("Entity identity injection failed")
 
+    for result in results:
+        result.pop("_current_state_checked", None)
+
     response = {
         "status": "success",
         "query": query_text,
@@ -2713,6 +2811,7 @@ def create_recall_blueprint(
     on_access: Optional[Callable[[List[str]], None]] = None,
     jit_enrich_fn: Optional[Callable[[str, Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
     metadata_keyword_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    original_text_search: Optional[Callable[..., List[Dict[str, Any]]]] = None,
 ) -> Blueprint:
     bp = Blueprint("recall", __name__)
 
@@ -2745,6 +2844,7 @@ def create_recall_blueprint(
             on_access=on_access,
             jit_enrich_fn=jit_enrich_fn,
             metadata_keyword_search=metadata_keyword_search,
+            original_text_search=original_text_search,
         )
 
     @bp.route("/startup-recall", methods=["GET"])
