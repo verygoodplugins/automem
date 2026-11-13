@@ -128,6 +128,40 @@ Detailed experiment history:
 | 2026-10-21 | PR #266 control (no judge) | main @ 3caa9d5 | **82.98% (195/235)** | **78.47% (1210/1542)** | -- | -- | Fresh isolated snapshot evaluation, Voyage `voyage-4` 1024d, current official harness; 69/444 category-5 questions excluded. Baseline mini/full wall times 140.622s/671.313s. See [comparison receipt](baselines/pr266-tag-prefix-20261021.json). |
 | 2026-10-21 | PR #266 prefix filters (no judge) | fix/tag-prefix-filtering @ e360619 | **82.98% (195/235)** | **78.27% (1207/1542)** | -- | -- | Same settings and fresh snapshots: mini **0.00pp**, full **-0.19pp** (four lost/one gained QA rows). Candidate mini/full 147.051s/685.356s. Controlled shared-store replay with identical Python hash seed matches both refs on all five changed rows; the original full delta accompanies preexisting process-dependent query decomposition. Details below. |
 | 2026-11-11 | PR #285 original text (no judge) | develop `1a7ba1a` / candidate `4431d20` mini, `8fb5621` full | **197/235 both** | **1206/1542 → 1207/1542** | -- | -- | Fresh isolated local BGE-768; 69/444 judge-dependent questions skipped, respectively. Strict API and driver audits passed, including zero replacement-query failures or timeouts. Native scorer augments recalled context with labeled evidence. These are directional diagnostics, not official judged scores or buried-text tests. |
+| 2026-11-13 | PR #288 expansion limit (no judge) | develop `2a52c48` / candidate `281ac19` | **197/235 both** | **1206/1542 both** | -- | -- | Matched isolated local BGE-768 runs; no paired verdict changes, with 69/444 judge-dependent questions skipped. Strict API and driver audits passed. Gold evidence augmentation and absence of memory relations limit interpretation; see details below. |
+
+### 2026-11-13 expansion limit: isolated no-provider comparison
+
+The baseline `2a52c4824ca20ed5ee84fb7860838ce9fdbf5307` and candidate
+`281ac19846e3e942ffa7ce4e75e54a7868d115e2` used separate, fresh,
+internal-only stacks and the native LoCoMo evaluator with local FastEmbed BGE
+`bge-base-en-v1.5` (768 dimensions), enrichment and judge disabled, and no
+paid provider calls. Mini scored 197/235 on each arm, with 69 questions skipped;
+full scored 1206/1542 on each arm, with 444 skipped. There were no paired
+verdict changes. Full category counts were identical: single-hop 123/282,
+temporal 279/321, multi-hop 31/96, open-domain 771/841, and complex 2/2
+(444 skipped).
+
+Mini and full corpora matched for 788 and 5,882 content/vector records,
+respectively, with no memory-to-memory relations; fresh ingestion timestamps
+differed. Both arms passed strict API and driver log audits, including zero
+replacement-query failures, timeouts, exceptions, or unexpected HTTP errors.
+The evaluator appends labeled evidence to nonempty recalled context, and the
+judge-dependent questions are skipped. These scores are directional no-judge
+diagnostics, not ranked-retrieval or agent-answer quality measures. A separate
+[graph diagnostic](https://github.com/verygoodplugins/automem-evals/pull/99)
+tests expansion, scope and history controls; it evaluated combined changes,
+not this PR in isolation. The full runs shared the host with another benchmark,
+so their durations do not support a latency or performance comparison.
+
+The dataset SHA-256 was
+`79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4`;
+the model revision was `199291fdd1aa89faf9c20b722dc72ad5e17aa0d0` (model
+SHA-256 `4e556722bc4f65716c544c8a931f1e90fb3f866e5741fd93a96f051d673339c7`).
+The isolated wrapper SHA-256 was
+`23cfb95b5820ae955c6dece08d0238b7c24d0e6036758fc05d1e82ef9ff682e3`;
+the exact wrapper, runner sources and aggregate audit receipts are retained
+locally in `/tmp/automem-eval-resume-20261113-current/limit-{mini,full}`.
 
 ### 2026-11-11 original-text index: no-provider mini comparison
 
