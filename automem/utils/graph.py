@@ -14,6 +14,9 @@ def _serialize_node(node: Any) -> Dict[str, Any]:
     else:
         return {"value": node}
 
+    # Internal derived index fields are never part of the public memory object.
+    data.pop("original_search_text", None)
+
     if "metadata" in data:
         data["metadata"] = _parse_metadata_field(data["metadata"])
 
