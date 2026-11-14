@@ -451,10 +451,21 @@ def _state_reason_for_memory(memory: Dict[str, Any], now: datetime) -> Optional[
     return None
 
 
-def _filter_inline_relation_state(results: List[Dict[str, Any]], graph: Any, logger: Any) -> None:
-    """Keep edge provenance, but expose payloads only for current relation targets.
+def _filter_inline_relation_state(
+    results: List[Dict[str, Any]],
+    graph: Any,
+    logger: Any,
+    *,
+    current_only: bool = True,
+    result_passes_filters: Optional[Callable[..., bool]] = None,
+    tag_filters: Optional[List[str]] = None,
+    tag_mode: str = "any",
+    tag_match: str = "prefix",
+    exclude_tags: Optional[List[str]] = None,
+) -> None:
+    """Keep edge provenance while verifying target state and optional tag scope.
 
-    Inline summaries omit lifecycle fields, so check authoritative graph nodes
+    Inline summaries omit lifecycle fields and can truncate tags, so check authoritative graph nodes
     after all result paths have hydrated their relations. Missing/unverifiable
     targets retain only their ID, including when the graph lookup fails.
     """
@@ -484,12 +495,16 @@ def _filter_inline_relation_state(results: List[Dict[str, Any]], graph: Any, log
             )
             for node, replacements in getattr(records, "result_set", []) or []:
                 memory = _serialize_node(node)
-                if _state_reason_for_memory(memory, now) is not None:
+                if current_only and _state_reason_for_memory(memory, now) is not None:
                     continue
-                if any(
+                if current_only and any(
                     _state_reason_for_memory(_serialize_node(replacement), now) is None
                     for replacement in replacements or []
                     if replacement is not None
+                ):
+                    continue
+                if result_passes_filters is not None and not result_passes_filters(
+                    {"memory": memory}, None, None, tag_filters, tag_mode, tag_match, exclude_tags
                 ):
                     continue
                 active_ids.add(str(memory.get("id") or ""))
@@ -2583,8 +2598,19 @@ def handle_recall(
     # do not fan out into graph relation queries before most of them are dropped.
     _hydrate_vector_relations(graph, results, logger)
 
-    if current_only:
-        _filter_inline_relation_state(results, graph, logger)
+    inline_scope_enabled = expand_respect_tags and bool(tag_filters or exclude_tags)
+    if current_only or inline_scope_enabled:
+        _filter_inline_relation_state(
+            results,
+            graph,
+            logger,
+            current_only=current_only,
+            result_passes_filters=result_passes_filters if inline_scope_enabled else None,
+            tag_filters=tag_filters if inline_scope_enabled else None,
+            tag_mode=tag_mode,
+            tag_match=tag_match,
+            exclude_tags=exclude_tags if inline_scope_enabled else None,
+        )
 
     # Hydrate after scope-fallback fills so appended results get summaries too
     _hydrate_missing_summaries_from_graph(results, graph, logger)
