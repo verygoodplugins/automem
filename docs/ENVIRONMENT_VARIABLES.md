@@ -76,6 +76,7 @@ AutoMem supports five embedding backends with automatic fallback.
 | `EMBEDDING_PROVIDER` | Embedding backend selection | `auto` | `auto`, `voyage`, `openai`, `local`, `ollama`, `placeholder` |
 | `VOYAGE_API_KEY` | Voyage API key (for Voyage provider) | - | `pa-...` |
 | `VOYAGE_MODEL` | Voyage embedding model | `voyage-4` | `voyage-4`, `voyage-4-large`, `voyage-4-lite` |
+| `VOYAGE_INPUT_TYPES` | Voyage `input_type` roles. `query` sends `input_type=query` on recall only and works on existing stores with no re-embed. `both` also embeds stored memories as `document`; switching an existing store to or from `both` requires a full re-embed (`scripts/reembed_embeddings.py`) | `off` | `off`, `query`, `both` |
 | `OPENAI_API_KEY` | API key (OpenAI or compatible provider) | - | `sk-proj-...` |
 | `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs (embeddings and classification/enrichment LLM calls) | - | `https://openrouter.ai/api/v1` |
 | `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` | `http://localhost:11434` |
