@@ -7,8 +7,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/verygoodplugins/automem" alt="License" /></a>
   <a href="https://automem.ai/discord"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://x.com/automem_ai"><img src="https://img.shields.io/badge/X-@automem__ai-000000?logo=x&logoColor=white" alt="X" /></a>
-  <a href="https://automem.ai/benchmarks"><img src="https://img.shields.io/badge/LoCoMo%20(AMB)-85.1%25-success" alt="LoCoMo on the neutral Agent Memory Benchmark" /></a>
-  <a href="benchmarks/EXPERIMENT_LOG.md#results"><img src="https://img.shields.io/badge/LongMemEval%20full-87.0%25-blueviolet" alt="LongMemEval full on AutoMem's internal harness: 87.0%" /></a>
   <a href="https://automem.ai/benchmarks"><img src="https://img.shields.io/badge/BEAM%2010M%20(AMB)-57.4%25-success" alt="BEAM 10M on the neutral Agent Memory Benchmark" /></a>
   <a href="https://railway.com/deploy/automem-ai-memory-service?referralCode=VuFE6g&utm_medium=integration&utm_source=github&utm_campaign=generic"><img src="https://img.shields.io/badge/Deploy%20on-Railway-0B0D0E?logo=railway&logoColor=white" alt="Deploy on Railway" /></a>
 </p>
@@ -37,7 +35,22 @@ Ask, “Why did we choose PostgreSQL?” and AutoMem can return the decision, th
 
 ## Proven where long context gets hard
 
-On the independent [Agent Memory Benchmark](https://automem.ai/benchmarks)'s BEAM long-context tests, AutoMem scored **57.4% at 10 million source tokens** while giving the answerer an average of only **~2.6–4.8k retrieved tokens**. That is the kind of efficiency that lets memory stay useful as an agent's history grows.
+On the independent [Agent Memory Benchmark](https://automem.ai/benchmarks)'s BEAM long-context tests (local FastEmbed embeddings, Gemini answerer and judge), AutoMem scored **57.4% at 10 million source tokens** while giving the answerer an average of only **~2.6–4.8k retrieved tokens**. That is the kind of efficiency that lets memory stay useful as an agent's history grows.
+
+The neutral third-party harness comes first in the table below. AMB results are submitted and the [provider PR](https://github.com/vectorize-io/agent-memory-benchmark/pull/24) is still under review, so they are not yet official on its leaderboard. BEAM scores are a rubric mean (0, 0.5 or 1 per item), not pass/fail like the other rows. The internal rows are AutoMem's own engineering baselines.
+
+| Benchmark | Score | n | Harness | Embedder | Answer model | Judge | Date |
+|---|---|---|---|---|---|---|---|
+| LongMemEval-S | 74.4% | 500 | AMB (neutral) | FastEmbed `bge-base-en-v1.5`, 768d | `gemini-3.1-pro-preview` | `gemini-2.5-flash-lite` | 2026-06-26 |
+| LoCoMo (`locomo10`) | 85.1% | 1,540 | AMB (neutral) | FastEmbed `bge-base-en-v1.5`, 768d | `gemini-3.1-pro-preview` | `gemini-2.5-flash-lite` | 2026-06-26 |
+| PersonaMem 32k | 76.1% | 589 | AMB (neutral) | FastEmbed `bge-base-en-v1.5`, 768d | `gemini-3.1-pro-preview` | `gemini-2.5-flash-lite` | 2026-06-26 |
+| BEAM 100k / 500k / 1M / 10M | 67.5% / 65.6% / 63.8% / 57.4% | 3 runs† / 700 / 700 / 200 | AMB (neutral) | FastEmbed `bge-base-en-v1.5`, 768d | `gemini-3.1-pro-preview` | `gemini-2.5-flash-lite` | 2026-06-26 |
+| LongMemEval-S | 85.4% | 500 | AutoMem internal | Voyage `voyage-4`, 1024d | `gpt-5-mini` | `gpt-5.4-mini-2026-03-17` | 2026-10-22 |
+| LoCoMo | 85.1%, diagnostic only\* | 1,986 | AutoMem internal | Voyage `voyage-4`, 1024d | none (overlap scoring) | `gpt-5.4-mini-2026-03-17`, category 5 only | 2026-10-22 |
+
+\* Not QA accuracy. The internal LoCoMo harness fetches each question's gold evidence dialogs by ID and scores answer overlap against them, so its score is an evidence-assisted regression diagnostic. It measures something different from the AMB LoCoMo row; the matching 85.1 is a coincidence.
+
+† The log records BEAM 100k as three runs (spread 1.8pp) without a per-run n.
 
 The full picture — test setup, raw outputs, methodology, historical runs, and reproduction commands — is in [automem.ai/benchmarks](https://automem.ai/benchmarks) and [`benchmarks/EXPERIMENT_LOG.md`](benchmarks/EXPERIMENT_LOG.md).
 
@@ -46,7 +59,7 @@ The full picture — test setup, raw outputs, methodology, historical runs, and 
 AutoMem combines two storage layers behind a single API:
 
 - **[FalkorDB](https://www.falkordb.com/)** stores memories as nodes with **11 typed relationships** between them. The graph is the canonical record.
-- **[Qdrant](https://qdrant.tech/)** stores an embedding for every memory. Recall is a hybrid query — semantic similarity, graph traversal, temporal alignment, tag overlap, and importance — ranked by a 9-component score.
+- **[Qdrant](https://qdrant.tech/)** stores an embedding for every memory. Recall is a hybrid query — semantic similarity, keyword and metadata matches, graph relations, tag overlap, recency, and importance — ranked by a weighted sum of ten signals, nine of them on by default ([details](docs/COMPARISON.md#recall-scoring-signals)).
 
 ```mermaid
 flowchart TB
