@@ -242,6 +242,7 @@ ADMIN_API_TOKEN=             # For admin endpoints
 EMBEDDING_PROVIDER=auto      # auto|voyage|openai|ollama|local|placeholder
 VOYAGE_API_KEY=              # Recommended for new cloud deployments
 VOYAGE_MODEL=voyage-4
+VOYAGE_INPUT_TYPES=query     # query (default, recall-side input_type) | off | both (requires re-embed)
 OPENAI_API_KEY=              # For OpenAI or compatible provider (optional)
 OPENAI_BASE_URL=             # Custom endpoint for OpenAI-compatible APIs used by embeddings and classification/enrichment (optional)
 OLLAMA_BASE_URL=             # Intentional local/self-hosted Ollama endpoint
