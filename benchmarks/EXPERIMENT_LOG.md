@@ -353,6 +353,44 @@ Failure split from the result-analysis helper: 54 wrong answers had the answer
 session retrieved at recall@5; 11 wrong answers were retrieval misses. This is the basis for
 follow-up issues #158 and #159.
 
+## Deduplication candidate — paired LoCoMo-mini, 2026-11-10
+
+The native LoCoMo-mini harness was run on two fresh, isolated stores with the
+same 788 ingested records and matching content, metadata, and vector hashes.
+The baseline was `1a7ba1a6afe69835f62ad7f6013e33301d1ab83e`; candidate code
+was `0920146d13d77bf55bad7228bc12ca359cc227bc` (PR #282). Both used the same
+cached FastEmbed `BAAI/bge-base-en-v1.5` 768d model and Qdrant configuration.
+Memory UUIDs and ingestion timestamps differed across stores.
+
+| Arm | Scored correct | Questions skipped | Paired verdict changes |
+|-----|----------------|-------------------|------------------------|
+| Baseline | 197/235 (83.83%) | 69/304 | — |
+| Candidate | 197/235 (83.83%) | 69/304 | 0/235 |
+
+By category, both arms scored 27/43, 59/63, 4/13, 105/114, and 2/2
+(category 5 also skipped 69). The dataset SHA-256 was
+`79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4`.
+This is the native harness's **unjudged, evidence-augmented diagnostic**: no
+answerer or judge was invoked, and 69 judge-dependent questions were skipped.
+When recall is nonempty, the harness performs a separate scoped tag-only
+search, filters by gold dialogue IDs, and combines that evidence with retrieved
+context. These verdicts can therefore
+mask retrieval misses. This is not a pure retrieval-accuracy or answer-quality
+score, a leaderboard result, or directly comparable to the Voyage/judged
+baselines above. No paid provider calls were made.
+
+The same unjudged method was repeated over all 10 conversations (1,986
+questions), using 5,882 matched content, tag, metadata, and vector records per
+arm with identical Qdrant index configuration and no memory relations. Generated
+IDs and ingestion timestamps differed. Both baseline and candidate scored
+1,206/1,542 (78.21%); all 1,542 scored question verdicts matched and the 444
+remaining judge-dependent questions were skipped. Category totals were
+123/282, 280/321, 30/96, 771/841, and 2/2 plus the 444 skips. API and driver
+logs contained no recorded errors. This full-corpus result has the same gold
+support injection and no-judge caveats as the mini run. It is not the judged
+Voyage release baseline; a comparable judged release-gate evaluation remains
+outstanding.
+
 ## Exploratory and Historical Benchmarks
 
 These results are useful validation signals, but they are not current headline

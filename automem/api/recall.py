@@ -322,7 +322,7 @@ def _fingerprint_content(content: str) -> Optional[str]:
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if not cleaned:
         return None
-    return cleaned[:320]
+    return cleaned
 
 
 def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
@@ -340,12 +340,22 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
         return None
 
     # Track fingerprints separately to catch same-content with different IDs
-    fp_to_key: Dict[str, str] = {}
+    fp_to_key: Dict[Tuple[str, str], str] = {}
+    id_to_key: Dict[str, str] = {}
 
     for res in results:
         mem = res.get("memory") or {}
         mid = _mem_id(res)
-        fp = _fingerprint_content(mem.get("content") or "")
+        metadata = mem.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (ValueError, TypeError):
+                metadata = {}
+        original = metadata.get("original_content") if isinstance(metadata, dict) else None
+        content_fp = _fingerprint_content(mem.get("content") or "")
+        original_fp = _fingerprint_content(original) if isinstance(original, str) else None
+        fp = (content_fp, original_fp or "") if content_fp else None
         key = f"id:{mid}" if mid else (f"fp:{fp}" if fp else None)
         if key is None:
             buckets[f"raw:{len(buckets)}"] = {"item": res, "sources": []}
@@ -353,7 +363,9 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
 
         # Check for existing by ID first, then by fingerprint
         existing_key = None
-        if key in buckets:
+        if mid and mid in id_to_key:
+            existing_key = id_to_key[mid]
+        elif key in buckets:
             existing_key = key
         elif fp and fp in fp_to_key:
             # Same content but different ID - merge into existing
@@ -374,9 +386,15 @@ def _dedupe_results(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]]
             )
             if choose_new:
                 buckets[existing_key]["item"] = res
-            buckets[existing_key]["sources"].append(mid or fp or "unknown")
+            buckets[existing_key]["sources"].append(mid or "unknown")
+            if mid:
+                id_to_key[mid] = existing_key
+            if fp:
+                fp_to_key.setdefault(fp, existing_key)
         else:
-            buckets[key] = {"item": res, "sources": [mid or fp or "unknown"]}
+            buckets[key] = {"item": res, "sources": [mid or "unknown"]}
+            if mid:
+                id_to_key[mid] = key
             # Track this fingerprint -> key mapping
             if fp:
                 fp_to_key[fp] = key
