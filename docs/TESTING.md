@@ -334,6 +334,15 @@ when the change affects ranking, scoring, entity expansion, or answer quality.
 
 AutoMem also includes a LongMemEval harness for milestone validation against the ICLR 2025 long-term memory dataset. Treat prefix slices as smoke tests only; cite the canonical full run or the stratified representative mini for current results.
 
+Reports and result analysis include `task_averaged.accuracy`, the unweighted mean
+of the six canonical question-type accuracies, alongside overall accuracy.
+Abstention questions contribute to their base type, and unknown types remain in
+existing metrics but do not enter this mean. If any canonical type is absent,
+including an empty run, this field is JSON `null` and the report prints
+`Task-averaged Accuracy: n/a`. Existing metrics and historical results retain
+their values. The aggregation formula matches upstream LongMemEval, but
+comparisons also require compatible datasets and evaluation policies.
+
 ```bash
 # Representative judged mini: stratified 5 questions per question type (30 total)
 make bench-mini-longmemeval
