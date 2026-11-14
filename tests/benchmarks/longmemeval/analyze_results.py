@@ -8,6 +8,22 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+TYPE_NAMES: Dict[str, str] = {
+    "single-session-user": "Single-Session (User)",
+    "single-session-assistant": "Single-Session (Assistant)",
+    "single-session-preference": "Single-Session (Preference)",
+    "multi-session": "Multi-Session",
+    "knowledge-update": "Knowledge Update",
+    "temporal-reasoning": "Temporal Reasoning",
+}
+
+
+def task_averaged_accuracy(by_type: Dict[str, Dict[str, Any]]) -> Optional[float]:
+    """Average the six canonical type accuracies, or return None if any type is absent."""
+    if any(question_type not in by_type for question_type in TYPE_NAMES):
+        return None
+    return sum(by_type[question_type]["accuracy"] for question_type in TYPE_NAMES) / len(TYPE_NAMES)
+
 
 def _pct(correct: int, total: int) -> Optional[float]:
     if total <= 0:
@@ -106,6 +122,7 @@ def analyze_results(results: Dict[str, Any]) -> Dict[str, Any]:
             "recall_total": recall_total,
             "recall_at_5": _pct(recall_hits, recall_total),
         },
+        "task_averaged": {"accuracy": task_averaged_accuracy(by_type)},
         "by_type": by_type,
         "failures_by_recall": _status_counts(failures),
         "judge_errors": judge_errors,
@@ -144,6 +161,7 @@ def format_analysis(analysis: Dict[str, Any], max_failures: int = 20) -> str:
         "",
         f"- Accuracy: {_format_rate(overall['accuracy'])} "
         f"({overall['correct']}/{overall['total']})",
+        f"- Task-averaged Accuracy: {_format_rate(analysis['task_averaged']['accuracy'])}",
         f"- Recall@5: {_format_rate(overall['recall_at_5'])} "
         f"({overall['recall_hits']}/{overall['recall_total']})",
         f"- Judge errors: {analysis['judge_errors']}",
