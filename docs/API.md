@@ -58,6 +58,7 @@ Recall
 
 - GET `/recall`
   - **Basic parameters**: `query`, `limit`, `tags`, `exclude_tags`, `tag_mode` (any|all), `tag_match` (prefix|exact, default prefix), `time_query` (e.g. "last week"), `start`, `end`, `embedding`
+    - `limit` - Maximum total results returned, including expanded memories. Eligible expansions compete with seeds under the requested ordering and priority rules.
     - `exclude_tags` - Comma-separated list or multiple params to exclude memories containing ANY of these tags. Supports both exact and prefix matching (independent of `tag_match`). Example: `exclude_tags=conversation_5` or `exclude_tags=temp,draft`
   - **Tag semantics** (per retrieval path):
     - `tags` is a **hard scope filter** on the vector, keyword, metadata-sidecar, and tag-only fallback paths: memories without a matching tag are excluded *before* scoring.
@@ -91,8 +92,9 @@ Recall
   - Echoed filters (for debugging): `tags`, `exclude_tags`, `tag_mode`, `tag_match`
   - When `tags` were passed, the response includes scope diagnostics: `tag_scope: { "filtered": true, "pool_size_hint": <int|null>, "gated_low_evidence": <int> }` — `pool_size_hint` is the post-tag-filter, pre-limit vector candidate count (null when no semantic query ran, e.g. tag-only recall), and `gated_low_evidence` counts returned results whose score components were ramped down by `RECALL_RELEVANCE_GATE`. Note the hint is capped by the vector fetch limit and sums per-query counts when the request decomposes into multiple queries (`queries[]`/`auto_decompose`), so the same memory can be counted more than once — treat it as a rough pool-size signal, not an exact count. `scope_fallback: true` is echoed when the fallback ran.
   - Echoed state: `state_mode` always reflects the resolved mode after `current_only` precedence. When current-state filtering runs, `state_filter` may include suppressed and replacement IDs, including `INVALIDATED_BY`, `EVOLVED_INTO`, and `CONTRADICTS` handling details when `state_debug=true`.
-  - When `expand_entities=true`: includes `entity_expansion: { enabled, expanded_count, entities_found }`
-  - When `expand_relations=true`: includes `expansion: { enabled, seed_count, expanded_count, relation_limit }`
+  - When `expand_entities=true`: includes `entity_expansion: { enabled, expanded_count, candidate_count, entities_found }`
+  - When `expand_relations=true`: includes `expansion: { enabled, seed_count, expanded_count, candidate_count, relation_limit }`
+  - `expanded_count` counts expansion results returned after filtering and the total limit; `candidate_count` counts generated expansion candidates before those steps.
 
 **Expansion Filtering Example:**
 

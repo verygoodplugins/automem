@@ -757,3 +757,77 @@ def test_checked_lexical_replacement_competes_with_vector_replacement(
         vector_score if expected_winner == "vector" else 0.5
     )
     assert "private-obsolete-fact" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("priority,expected", [(True, "new"), (False, "other")])
+def test_original_hit_priority_alias_keeps_existing_head_during_expansion(
+    monkeypatch, priority, expected
+):
+    configure(monkeypatch)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_VECTOR", 0.8)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_KEYWORD", 0.0)
+    monkeypatch.setattr(scoring, "SEARCH_WEIGHT_EXACT", 0.0)
+    graph = Graph([Node("old", "needle private-obsolete-fact")])
+    monkeypatch.setattr(
+        recall_api,
+        "_active_replacements_for_memories",
+        lambda _graph, ids, _now, _logger: {
+            memory_id: {
+                "id": "new",
+                "content": "corrected fact",
+                "tags": ["scope"],
+                "_state_relation": {"type": "INVALIDATED_BY"},
+            }
+            for memory_id in ids
+            if memory_id == "old"
+        },
+    )
+    monkeypatch.setattr(recall_api, "_hydrate_vector_relations", lambda *_args: None)
+    monkeypatch.setattr(recall_api, "_hydrate_missing_summaries_from_graph", lambda *_args: None)
+    monkeypatch.setattr(recall_api, "_filter_inline_relation_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        recall_api,
+        "_expand_related_memories",
+        lambda **_kwargs: [
+            {
+                "id": "other",
+                "memory": {"id": "other", "content": "unrelated"},
+                "final_score": 0.99,
+                "score": 0.99,
+                "match_type": "relation",
+            }
+        ],
+    )
+    current = {
+        "id": "new",
+        "memory": {"id": "new", "content": "corrected fact"},
+        "match_type": "vector",
+        "match_score": 1.0,
+        "score": 1.0,
+    }
+    with app.app.test_request_context(
+        "/recall?query=needle&limit=1&expand_relations=true&adaptive_floor=false"
+        + ("&priority_ids=old" if priority else "")
+    ):
+        response = handle_recall(
+            get_memory_graph=lambda: graph,
+            get_qdrant_client=lambda: object(),
+            normalize_tag_list=lambda value: value if isinstance(value, list) else [],
+            normalize_timestamp=lambda value: value,
+            parse_time_expression=lambda _value: (None, None),
+            extract_keywords=_extract_keywords,
+            compute_metadata_score=_compute_metadata_score,
+            result_passes_filters=lambda *_args: True,
+            graph_keyword_search=lambda *_a, **_k: [],
+            vector_search=lambda *_a, **_k: [current],
+            vector_filter_only_tag_search=lambda *_a, **_k: [],
+            recall_max_limit=50,
+            logger=Mock(),
+            original_text_search=helper._original_text_search,
+        )
+    body = response.get_json()
+    assert [result["id"] for result in body["results"]] == [expected]
+    assert "private-obsolete-fact" not in response.get_data(as_text=True)
+    if priority:
+        assert body["results"][0]["memory"]["content"] == "corrected fact"
+        assert body["results"][0]["match_type"] == "vector"
