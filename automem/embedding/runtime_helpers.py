@@ -95,6 +95,7 @@ def generate_real_embeddings_batch(
     logger: Any,
     placeholder_embedding: Callable[[str], List[float]],
     allow_placeholder_fallback: bool = True,
+    allow_placeholder_provider: bool = False,
 ) -> List[List[float]]:
     """Generate multiple embeddings in a single batch for efficiency."""
     init_embedding_provider()
@@ -113,7 +114,11 @@ def generate_real_embeddings_batch(
         provider_name = provider.provider_name()
     except Exception:
         provider_name = provider.__class__.__name__ or "unknown"
-    if not allow_placeholder_fallback and str(provider_name).strip().lower() == "placeholder":
+    if (
+        not allow_placeholder_fallback
+        and not allow_placeholder_provider
+        and str(provider_name).strip().lower() == "placeholder"
+    ):
         raise RuntimeError("Placeholder embedding provider is not allowed in strict mode")
     expected_dim = state.effective_vector_size
     try:

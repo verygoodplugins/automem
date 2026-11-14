@@ -211,6 +211,55 @@ class FakeGraph:
                 return FakeResult([])
             return FakeResult([[bool(memory.get("enriched")), bool(memory.get("processed"))]])
 
+        if "SET m.metadata" in query and (
+            "m.enriched = true" in query or "m.enriched = $enriched" in query
+        ):
+            memory_id = str(params.get("id") or "")
+            memory = self.memories.get(memory_id)
+            if "expected_content" in params and memory is not None:
+                for field in ("content", "tags", "metadata", "summary"):
+                    default = [] if field == "tags" else ""
+                    if (memory.get(field) or default) != params[f"expected_{field}"]:
+                        return FakeResult([])
+                if (
+                    "expected_timestamp" in params
+                    and (memory.get("timestamp") or "") != params["expected_timestamp"]
+                ):
+                    return FakeResult([])
+            if any(key.startswith("enrichment_") for key in params):
+                if "MERGE (m1)-[r:PRECEDED_BY]" in query:
+                    self.temporal_calls.append(dict(params))
+                if "MERGE (p:Pattern" in query:
+                    self.pattern_calls.append(dict(params))
+                if "MERGE (m)-[r:EXEMPLIFIES]" in query:
+                    self.exemplifies_calls.append(dict(params))
+            self.update_calls.append(dict(params))
+            if memory is not None:
+                memory.update(
+                    {
+                        "metadata": params.get("metadata", memory.get("metadata", {})),
+                        "tags": params.get("tags", memory.get("tags", [])),
+                        "tag_prefixes": params.get("tag_prefixes", memory.get("tag_prefixes", [])),
+                        "summary": params.get("summary", memory.get("summary")),
+                        "enriched": params.get("enriched", True),
+                        "processed": (
+                            True
+                            if "m.processed = true" in query
+                            else (
+                                False
+                                if "m.processed = false" in query
+                                else memory.get("processed", False)
+                            )
+                        ),
+                        "enriched_at": params.get("enriched_at", memory.get("enriched_at")),
+                    }
+                )
+            return (
+                FakeResult([[FakeNode(memory)]])
+                if "RETURN m" in query and memory is not None
+                else FakeResult([])
+            )
+
         # Enrichment patterns
         if "RETURN m2.id" in query and "PRECEDED_BY" not in query:
             return FakeResult([[memory_id] for memory_id in self.temporal_related_ids])
@@ -228,28 +277,12 @@ class FakeGraph:
 
         if "MERGE (p:Pattern" in query:
             self.pattern_calls.append(dict(params))
+            if "MERGE (m)-[r:EXEMPLIFIES]" in query:
+                self.exemplifies_calls.append(dict(params))
             return FakeResult([])
 
         if "MERGE (m)-[r:EXEMPLIFIES]" in query:
             self.exemplifies_calls.append(dict(params))
-            return FakeResult([])
-
-        if "SET m.metadata" in query and "m.enriched = true" in query:
-            self.update_calls.append(dict(params))
-            memory_id = str(params.get("id") or "")
-            memory = self.memories.get(memory_id)
-            if memory is not None:
-                memory.update(
-                    {
-                        "metadata": params.get("metadata", memory.get("metadata", {})),
-                        "tags": params.get("tags", memory.get("tags", [])),
-                        "tag_prefixes": params.get("tag_prefixes", memory.get("tag_prefixes", [])),
-                        "summary": params.get("summary", memory.get("summary")),
-                        "enriched": True,
-                        "processed": True,
-                        "enriched_at": params.get("enriched_at", memory.get("enriched_at")),
-                    }
-                )
             return FakeResult([])
 
         # Full graph backup export
@@ -409,6 +442,22 @@ class FakeGraph:
                 if memory is None or memory.get("summary") is None:
                     continue
                 rows.append([str(memory_id), memory.get("summary")])
+            return FakeResult(rows)
+
+        if "RETURN m, collect(replacement) AS state_replacements" in query:
+            rows = []
+            for memory_id in params.get("ids") or []:
+                memory = self.memories.get(memory_id)
+                if memory is None:
+                    continue
+                replacements = [
+                    FakeNode(self.memories[rel["id2"]])
+                    for rel in self.relationships
+                    if rel.get("id1") == memory_id
+                    and rel.get("type") in params["types"]
+                    and rel.get("id2") in self.memories
+                ]
+                rows.append([FakeNode(memory), replacements])
             return FakeResult(rows)
 
         # Search by exact tag pattern
@@ -640,7 +689,8 @@ class FakeGraph:
             return FakeResult(rows[: int(params.get("limit") or len(rows) or 1)])
 
         if (
-            "UNWIND $ids AS source_id" in query
+            "MATCH (m:Memory)-[r]->(related:Memory)" in query
+            and "m.id IN $ids" in query
             and "RETURN source_id" in query
             and "related" in query
         ):

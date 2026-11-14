@@ -4,7 +4,7 @@ from typing import Iterable, List, Optional
 
 from qdrant_client import models as qdrant_models
 
-from automem.utils.tags import _prepare_tag_filters
+from automem.utils.tags import _canonicalize_prefix_filters, _prepare_tag_filters
 
 
 def _build_qdrant_tag_filter(
@@ -18,6 +18,8 @@ def _build_qdrant_tag_filter(
     Extracted for reuse by Qdrant interactions.
     """
     normalized_tags = _prepare_tag_filters(tags)
+    if match == "prefix":
+        normalized_tags = _canonicalize_prefix_filters(normalized_tags)
     normalized_excluded_types = [
         str(memory_type).strip()
         for memory_type in (excluded_types or [])

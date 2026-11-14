@@ -164,8 +164,18 @@ rendered `tools/call` text — must be identical.
 
 ## How parity is enforced
 
-A differential harness drives both transports against a single
-docker-compose AutoMem and diffs them:
+### Required PR contract checks
+
+CI's required `node-test` job runs `npm test` in `mcp-sse-server` on every PR.
+This keeps the bridge's normal tests and the deterministic
+`test/recall-parity.test.js` contract guard: tool definition, API request
+mapping, ID fetches, pagination, validation, rendered output and response
+budgets. These tests need no live AutoMem stack and remain required.
+
+### Manual live parity audit
+
+The broader differential harness drives stdio and Streamable HTTP against a
+single docker-compose AutoMem and diffs them:
 
 ```bash
 make test-parity
@@ -198,18 +208,29 @@ It lives in `mcp-sse-server/parity/` with its entry point at
    score.
 
 The harness is gated on `AUTOMEM_RUN_PARITY_TESTS=1` because it needs a live
-service. Without the gate it skips cleanly, which is what CI's `node-test` job
-sees. `.github/workflows/mcp-parity.yml` runs it with the stack up on PRs that
-touch `mcp-sse-server/**`, `automem/api/**`, or `app.py`.
+service. Without the gate only the live audit skips; the deterministic contract
+tests still run in CI's `node-test` job. The full audit is intentionally red
+while the other five tools retain known differences, so it does not run on PRs.
+
+To run it in GitHub Actions, manually dispatch **MCP Transport Parity Audit**
+(`.github/workflows/mcp-parity.yml`) on the branch to audit. For example, once
+this workflow change is on `develop`:
+
+```bash
+gh workflow run mcp-parity.yml --ref develop
+```
+
+The manual workflow starts its own stack and reports test failures as failures;
+it no longer masks them with `continue-on-error`. A red audit currently means
+the full migration is incomplete, so inspect its test output to distinguish
+known gaps from a new regression. It is not a PR readiness gate.
 
 It brings its own stack up on port **8011**, not the usual 8001. The harness
 writes fixtures and bulk-deletes by tag, and a developer running a local
 AutoMem install (`~/.automem/server`) already holds 8001 — pointing the harness
 at that instance would seed test data into a real memory store.
 
-**There is no scheduled drift run yet, deliberately.** While the harness is
-intentionally red against the known gaps, `continue-on-error` leaves the
-workflow successful either way, so a cron job could not distinguish "same known
-gaps" from "a newly published `mcp-automem` added drift". That would be an alarm
-that cannot alarm. The weekly check lands with the change that turns the harness
-green, where a failure is a real signal.
+**There is no scheduled drift run.** Restore automatic execution only after the
+full comparison has a useful passing baseline, so a failure can signal new
+drift. Until then, use the manual audit to inspect migration progress and the
+required contract tests to catch regressions in the supported recall surface.

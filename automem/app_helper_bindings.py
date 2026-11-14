@@ -63,7 +63,10 @@ def create_app_helper_runtime(
         )
 
     def generate_real_embeddings_batch(
-        contents: List[str], *, allow_placeholder_fallback: bool = True
+        contents: List[str],
+        *,
+        allow_placeholder_fallback: bool = True,
+        allow_placeholder_provider: bool = False,
     ) -> List[List[float]]:
         return generate_real_embeddings_batch_value_fn(
             contents,
@@ -72,6 +75,7 @@ def create_app_helper_runtime(
             logger=logger,
             placeholder_embedding=get_generate_placeholder_embedding_fn(),
             allow_placeholder_fallback=allow_placeholder_fallback,
+            allow_placeholder_provider=allow_placeholder_provider,
         )
 
     def fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:

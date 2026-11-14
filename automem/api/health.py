@@ -56,6 +56,19 @@ def create_health_blueprint(
             except Exception:
                 pass
 
+        # Index creation may be asynchronous or fail after connection. Query its
+        # live state so the diagnostic cannot remain stuck at startup status.
+        original_text_index = getattr(state, "original_text_index_status", "unknown")
+        if graph_available and original_text_index != "unknown":
+            try:
+                from automem.stores.original_text_index import original_text_index_status
+
+                original_text_index = original_text_index_status(get_memory_graph())
+                state.original_text_index_status = original_text_index
+            except Exception:
+                original_text_index = "unavailable"
+                state.original_text_index_status = original_text_index
+
         # Determine sync status
         sync_status = "unknown"
         if memory_count is not None and vector_count is not None:
@@ -70,7 +83,7 @@ def create_health_blueprint(
         # Overall status considers sync
         if not graph_available or not qdrant_available:
             status = "degraded"
-        elif sync_status == "drift_detected":
+        elif sync_status == "drift_detected" or original_text_index in {"unavailable", "failed"}:
             status = "degraded"
         else:
             status = "healthy"
@@ -91,6 +104,7 @@ def create_health_blueprint(
             "memory_count": memory_count,
             "vector_count": vector_count,
             "sync_status": sync_status,
+            "original_text_index": original_text_index,
             "vector_dimensions": {
                 "configured": VECTOR_SIZE,
                 "effective": effective_dim,
@@ -104,6 +118,12 @@ def create_health_blueprint(
                 "inflight": enrichment_inflight,
                 "processed": state.enrichment_stats.successes,
                 "failed": state.enrichment_stats.failures,
+            },
+            "embedding": {
+                **state.embedding_stats,
+                "queue_depth": state.embedding_queue.qsize() if state.embedding_queue else 0,
+                "pending": len(state.embedding_pending),
+                "inflight": len(state.embedding_inflight),
             },
             "timestamp": utc_now(),
             "graph": graph_name,

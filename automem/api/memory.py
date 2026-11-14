@@ -15,8 +15,22 @@ from automem.config import (
     MEMORY_CONTENT_HARD_LIMIT,
     MEMORY_CONTENT_SOFT_LIMIT,
     MEMORY_SUMMARY_TARGET_LENGTH,
+    normalize_memory_type,
 )
+from automem.stores.vector_payload import build_qdrant_payload
 from automem.utils.text import should_summarize_content, summarize_content
+
+
+def _explicit_memory_type(raw_type: Any, logger: Any) -> str:
+    """Canonicalize known aliases while retaining existing custom string types."""
+    if not isinstance(raw_type, str) or not raw_type.strip():
+        abort(400, description="'type' must be a non-empty string")
+
+    normalized, _ = normalize_memory_type(raw_type.strip())
+    if normalized:
+        return normalized
+    logger.warning("Preserving custom memory type", extra={"memory_type": raw_type})
+    return raw_type
 
 
 def _validate_memory_id(memory_id: str) -> None:
@@ -493,6 +507,10 @@ def create_memory_blueprint_full(
         if not content:
             abort(400, description="'content' is required")
 
+        # The retrieval sidecar indexes the original request body, even when the
+        # stored content is subsequently summarized.
+        original_search_text = content
+
         # Content size governance: check if summarization or rejection is needed
         original_content: Optional[str] = None
         content_action = should_summarize_content(
@@ -559,11 +577,9 @@ def create_memory_blueprint_full(
         metadata_json = json.dumps(metadata, default=str)
 
         # Accept explicit type/confidence or classify automatically
-        memory_type = payload.get("type")
         type_confidence = payload.get("confidence")
-        if memory_type:
-            # Validate explicit type
-            # (Memory types are validated by the classifier caller; keep permissive here)
+        if "type" in payload:
+            memory_type = _explicit_memory_type(payload["type"], logger)
             if type_confidence is None:
                 type_confidence = 0.9
             else:
@@ -626,6 +642,7 @@ def create_memory_blueprint_full(
                 MERGE (m:Memory {id: $id})
                 ON CREATE SET
                     m.content = $content,
+                    m.original_search_text = $original_search_text,
                     m.timestamp = $timestamp,
                     m.importance = $importance,
                     m.tags = $tags,
@@ -639,6 +656,7 @@ def create_memory_blueprint_full(
                     m.metadata = $metadata,
                     m.processed = false
                 SET m.content = $content,
+                    m.original_search_text = $original_search_text,
                     m.timestamp = $timestamp,
                     m.importance = $importance,
                     m.tags = $tags,
@@ -651,11 +669,13 @@ def create_memory_blueprint_full(
                     m.last_accessed = $last_accessed,
                     m.metadata = $metadata,
                     m.processed = false
+                SET m:MemoryOriginalText
                 RETURN m
                 """,
                 {
                     "id": memory_id,
                     "content": content,
+                    "original_search_text": original_search_text,
                     "timestamp": created_at,
                     "importance": importance,
                     "tags": tags,
@@ -691,20 +711,22 @@ def create_memory_blueprint_full(
                             point_struct(
                                 id=memory_id,
                                 vector=embedding,
-                                payload={
-                                    "content": content,
-                                    "tags": tags,
-                                    "tag_prefixes": tag_prefixes,
-                                    "importance": importance,
-                                    "timestamp": created_at,
-                                    "type": memory_type,
-                                    "confidence": type_confidence,
-                                    "t_valid": t_valid or created_at,
-                                    "t_invalid": t_invalid,
-                                    "updated_at": updated_at,
-                                    "last_accessed": last_accessed,
-                                    "metadata": metadata,
-                                },
+                                payload=build_qdrant_payload(
+                                    {
+                                        "content": content,
+                                        "tags": tags,
+                                        "tag_prefixes": tag_prefixes,
+                                        "importance": importance,
+                                        "timestamp": created_at,
+                                        "type": memory_type,
+                                        "confidence": type_confidence,
+                                        "t_valid": t_valid or created_at,
+                                        "t_invalid": t_invalid,
+                                        "updated_at": updated_at,
+                                        "last_accessed": last_accessed,
+                                        "metadata": metadata,
+                                    }
+                                ),
                             )
                         ],
                     )
@@ -844,6 +866,12 @@ def create_memory_blueprint_full(
 
         current_node = result.result_set[0][0]
         current = serialize_node(current_node)
+        # The derived text is intentionally hidden from API serialization, but
+        # unchanged updates need the raw graph property to retain it.
+        current_properties = getattr(current_node, "properties", None)
+        if not isinstance(current_properties, dict):
+            current_properties = current_node if isinstance(current_node, dict) else {}
+        current_search_text = current_properties.get("original_search_text")
 
         new_content = payload.get("content", current.get("content"))
         tags = normalize_tag_list(payload.get("tags", current.get("tags")))
@@ -851,20 +879,45 @@ def create_memory_blueprint_full(
         tag_prefixes = compute_tag_prefixes(tags_lower)
         importance = payload.get("importance", current.get("importance"))
         memory_type = payload.get("type", current.get("type"))
+        if "type" in payload:
+            memory_type = _explicit_memory_type(payload["type"], logger)
         confidence = payload.get("confidence", current.get("confidence"))
         timestamp = payload.get("timestamp", current.get("timestamp"))
         t_valid = payload.get("t_valid", current.get("t_valid"))
         t_invalid = payload.get("t_invalid", current.get("t_invalid"))
-        metadata_raw = payload.get("metadata", parse_metadata_field(current.get("metadata")))
+        current_metadata = parse_metadata_field(current.get("metadata"))
+        metadata_raw = payload.get("metadata", current_metadata)
         updated_at = payload.get("updated_at", current.get("updated_at", utc_now()))
         last_accessed = payload.get("last_accessed", current.get("last_accessed"))
 
         if metadata_raw is None:
             metadata: Dict[str, Any] = {}
         elif isinstance(metadata_raw, dict):
-            metadata = metadata_raw
+            metadata = dict(metadata_raw)
         else:
             abort(400, description="'metadata' must be an object")
+
+        content_changed = new_content != current.get("content")
+        # Existing original metadata describes the *old* summarized content.
+        # A replacement body becomes authoritative; a caller-supplied metadata
+        # field cannot prove that a distinct original matches the new body.
+        if content_changed:
+            for key in ("original_content", "was_summarized", "original_length"):
+                metadata.pop(key, None)
+        old_metadata = current_metadata if isinstance(current_metadata, dict) else {}
+        original_fields = ("original_content", "was_summarized", "original_length")
+        original_changed = "metadata" in payload and any(
+            metadata.get(key) != old_metadata.get(key) for key in original_fields
+        )
+        if (
+            content_changed
+            or original_changed
+            or not isinstance(current_search_text, str)
+            or not current_search_text
+        ):
+            original_search_text = new_content
+        else:
+            original_search_text = current_search_text
         metadata_json = json.dumps(metadata, default=str)
 
         if timestamp:
@@ -900,6 +953,7 @@ def create_memory_blueprint_full(
         update_query = """
             MATCH (m:Memory {id: $id})
             SET m.content = $content,
+                m.original_search_text = $original_search_text,
                 m.tags = $tags,
                 m.tag_prefixes = $tag_prefixes,
                 m.importance = $importance,
@@ -911,6 +965,7 @@ def create_memory_blueprint_full(
                 m.metadata = $metadata,
                 m.updated_at = $updated_at,
                 m.last_accessed = $last_accessed
+            SET m:MemoryOriginalText
             RETURN m
         """
 
@@ -919,6 +974,7 @@ def create_memory_blueprint_full(
             {
                 "id": memory_id,
                 "content": new_content,
+                "original_search_text": original_search_text,
                 "tags": tags,
                 "tag_prefixes": tag_prefixes,
                 "importance": importance,
@@ -952,20 +1008,24 @@ def create_memory_blueprint_full(
                     vector = generate_real_embedding(new_content)
 
             if vector is not None:
-                payload = {
-                    "content": new_content,
-                    "tags": tags,
-                    "tag_prefixes": tag_prefixes,
-                    "importance": importance,
-                    "timestamp": timestamp,
-                    "type": memory_type,
-                    "confidence": confidence,
-                    "t_valid": t_valid,
-                    "t_invalid": t_invalid,
-                    "updated_at": updated_at,
-                    "last_accessed": last_accessed,
-                    "metadata": metadata,
-                }
+                payload = build_qdrant_payload(
+                    {
+                        "archived": current.get("archived", False),
+                        "relevance_score": current.get("relevance_score"),
+                        "content": new_content,
+                        "tags": tags,
+                        "tag_prefixes": tag_prefixes,
+                        "importance": importance,
+                        "timestamp": timestamp,
+                        "type": memory_type,
+                        "confidence": confidence,
+                        "t_valid": t_valid,
+                        "t_invalid": t_invalid,
+                        "updated_at": updated_at,
+                        "last_accessed": last_accessed,
+                        "metadata": metadata,
+                    }
+                )
                 try:
                     qdrant_client.upsert(
                         collection_name=collection_name,
@@ -1237,6 +1297,10 @@ def create_memory_blueprint_full(
                     f"({len(content)}/{MEMORY_CONTENT_HARD_LIMIT})",
                 )
 
+            # Retain the original before auto-summarization for the graph index.
+            original_search_text = content
+            original_content: Optional[str] = None
+
             # Apply soft-limit auto-summarization (same policy as single store)
             content_action = should_summarize_content(
                 content, MEMORY_CONTENT_SOFT_LIMIT, MEMORY_CONTENT_HARD_LIMIT
@@ -1258,6 +1322,7 @@ def create_memory_blueprint_full(
                             len(content),
                             len(summary),
                         )
+                        original_content = content
                         content = summary
 
             memory_id = str(uuid.uuid4())
@@ -1278,12 +1343,16 @@ def create_memory_blueprint_full(
                     )
 
             metadata_raw = mem.get("metadata")
-            metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+            metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+            if original_content:
+                metadata["original_content"] = original_content
+                metadata["was_summarized"] = True
+                metadata["original_length"] = len(original_content)
             metadata_json = json.dumps(metadata, default=str)
 
-            memory_type = mem.get("type")
             type_confidence = mem.get("confidence")
-            if memory_type:
+            if "type" in mem:
+                memory_type = _explicit_memory_type(mem["type"], logger)
                 type_confidence = (
                     coerce_importance(type_confidence) if type_confidence is not None else 0.9
                 )
@@ -1294,6 +1363,7 @@ def create_memory_blueprint_full(
                 {
                     "id": memory_id,
                     "content": content,
+                    "original_search_text": original_search_text,
                     "tags": tags,
                     "tag_prefixes": tag_prefixes,
                     "importance": importance,
@@ -1353,6 +1423,7 @@ def create_memory_blueprint_full(
                 MERGE (node:Memory {id: m.id})
                 SET
                     node.content = m.content,
+                    node.original_search_text = m.original_search_text,
                     node.timestamp = m.timestamp,
                     node.importance = m.importance,
                     node.tags = m.tags,
@@ -1365,6 +1436,7 @@ def create_memory_blueprint_full(
                     node.last_accessed = m.last_accessed,
                     node.metadata = m.metadata,
                     node.processed = false
+                SET node:MemoryOriginalText
                 RETURN node.id
                 """,
                 {"memories": validated},
@@ -1393,18 +1465,7 @@ def create_memory_blueprint_full(
                         point_struct(
                             id=v["id"],
                             vector=emb,
-                            payload={
-                                "content": v["content"],
-                                "tags": v["tags"],
-                                "tag_prefixes": v["tag_prefixes"],
-                                "importance": v["importance"],
-                                "timestamp": v["timestamp"],
-                                "type": v["type"],
-                                "confidence": v["confidence"],
-                                "updated_at": v["updated_at"],
-                                "last_accessed": v["last_accessed"],
-                                "metadata": v["metadata_dict"],
-                            },
+                            payload=build_qdrant_payload(v),
                         )
                     )
             # Enqueue embedding retry for items that failed individually

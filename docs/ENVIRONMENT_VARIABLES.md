@@ -23,6 +23,26 @@ nano .env
 | `FALKORDB_PASSWORD` | FalkorDB password (optional) | - | `your-secure-password` |
 | `FALKORDB_GRAPH` | Graph database name | `memories` | `memories` |
 
+### Local Docker Compose host ports
+
+These variables affect host-side port publishing in `docker-compose.yml`, not
+connections between the Compose services.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AUTOMEM_DB_BIND_ADDRESS` | Host address for FalkorDB, its browser, and Qdrant | `127.0.0.1` |
+| `FALKORDB_HOST_PORT` | FalkorDB host port | `6379` |
+| `FALKORDB_BROWSER_HOST_PORT` | FalkorDB browser host port | `3000` |
+| `QDRANT_HOST_PORT` | Qdrant HTTP host port | `6333` |
+| `QDRANT_GRPC_HOST_PORT` | Qdrant gRPC host port | `6334` |
+
+Set `AUTOMEM_DB_BIND_ADDRESS` only when a different host address is needed;
+use brackets around an IPv6 address, such as `[::1]`. `0.0.0.0` makes these
+ports available on all IPv4 interfaces, so configure authentication and
+network controls first. The AutoMem API uses its existing host-port binding.
+See [Docker Compose setup](../INSTALLATION.md#docker-compose-local) for how to
+apply a changed binding to an existing installation.
+
 ### Authentication
 
 | Variable | Description | Required | Example |
@@ -171,7 +191,7 @@ See [Voyage pricing](https://docs.voyageai.com/docs/pricing) for current free-ti
 | `QDRANT_HOST` | Qdrant hostname; auto-constructs `http://<host>:<port>` | - | `qdrant` (Railway) or `localhost` |
 | `QDRANT_PORT` | Qdrant port (used with `QDRANT_HOST`) | `6333` | `6333` |
 | `QDRANT_API_KEY` | Qdrant API key | - | `your-qdrant-key` |
-| `QDRANT_COLLECTION` | Collection name | `memories` | `memories` |
+| `QDRANT_COLLECTION` | Collection used by the API, background workers and consolidation | `memories` | `memories` |
 | `QDRANT_ENSURE_PAYLOAD_INDEXES` | Create payload indexes on startup for faster filtered search | `true` | set `false` for read-only Qdrant credentials |
 | `VECTOR_SIZE` | Embedding dimension | `1024` | `1024` (voyage-4 or Ollama bge-m3), `3072` (OpenAI large), `768` (truncated OpenAI small) |
 | `VECTOR_SIZE_AUTODETECT` | Adopt existing collection dimension instead of failing on mismatch | `true` | `false` to enforce strict matching |
@@ -183,7 +203,7 @@ See [Voyage pricing](https://docs.voyageai.com/docs/pricing) for current free-ti
 **Notes**:
 - Without Qdrant, AutoMem uses deterministic placeholder embeddings (for testing only).
 - **Existing deployments on 3072d or 768d**: `VECTOR_SIZE_AUTODETECT=true` (default) automatically adopts the existing collection dimension on startup. This avoids a dimension-startup failure; it does **not** migrate vectors to a new model.
-- To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The server will exit with a clear error message and fix instructions.
+- To enforce strict matching (fail on mismatch), set `VECTOR_SIZE_AUTODETECT=false`. The default `python app.py` server exits with a clear error message and fix instructions. WSGI servers importing `app:app` validate lazily and return an error when a request first initializes Qdrant.
 - When creating a new collection, the configured `VECTOR_SIZE` (default 1024 for voyage-4) is used.
 - Changing embedding provider or model always requires a clean collection and a full re-embed, even when the old and new outputs are both 1024d.
 
@@ -224,7 +244,7 @@ operational tools that consume these values.
 
 | Variable | Description | Default | Used By |
 |----------|-------------|---------|---------|
-| `AUTOMEM_API_URL` | AutoMem API endpoint | `http://localhost:8001` | `recover_from_qdrant.py`, `health_monitor.py` |
+| `AUTOMEM_API_URL` | AutoMem API endpoint | `http://localhost:8001` | `health_monitor.py` |
 
 **Backward Compatibility**: `MCP_MEMORY_HTTP_ENDPOINT` is deprecated but still supported (falls back to this if `AUTOMEM_API_URL` not set).
 
@@ -247,7 +267,9 @@ Use this with `QDRANT_RESTORE_VECTOR_ON_DISK=true` and `QDRANT_RESTORE_ON_DISK_P
 | `HEALTH_MONITOR_DRIFT_THRESHOLD` | Warning threshold (%) | `5` |
 | `HEALTH_MONITOR_CRITICAL_THRESHOLD` | Critical threshold (%) for recovery | `50` |
 
-**Note**: Auto-recovery is **disabled by default**. Use `--auto-recover` flag to enable (not recommended without testing).
+Threshold precedence is explicit CLI flag, then environment variable, then the defaults above. Zero is a valid explicit threshold.
+
+**Note**: Auto-recovery is **disabled by default**. `--auto-recover` enables missing-memory salvage only when FalkorDB has fewer memories than Qdrant. It preserves existing graph data and cannot recover lost relationships; prefer a FalkorDB backup for a full restore.
 
 ---
 
@@ -345,7 +367,7 @@ Controls entity extraction and relationship linking.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ENRICHMENT_MAX_ATTEMPTS` | Max retry attempts | `3` |
+| `ENRICHMENT_MAX_ATTEMPTS` | Total attempts per enrichment job, including the first attempt | `3` |
 | `ENRICHMENT_SIMILARITY_LIMIT` | Max similar memories to link | `5` |
 | `ENRICHMENT_SIMILARITY_THRESHOLD` | Min similarity for linking | `0.8` |
 | `ENRICHMENT_IDLE_SLEEP_SECONDS` | Sleep when queue empty | `2` |
@@ -614,3 +636,34 @@ After the full run, verify the service health and run a representative recall. `
 - [Railway Deployment Guide](./RAILWAY_DEPLOYMENT.md)
 - [Post-Deploy Checklist](./RAILWAY_DEPLOYMENT.md#post-deploy-checklist)
 - [Installation Guide](../INSTALLATION.md)
+
+### Background embedding retries
+
+`EMBEDDING_MAX_ATTEMPTS` defaults to `3`, including the initial attempt.
+`EMBEDDING_RETRY_BACKOFF_SECONDS` defaults to `1`; failed items wait 1, then
+2 seconds before subsequent attempts. Generated vectors are reused when only
+Qdrant storage fails, and successful items are not replayed. Failed items stay
+inflight until success or exhaustion, so duplicate API enqueues do not create
+concurrent retries. `/health.embedding` exposes successes, failed attempts,
+retries, exhausted memories, skipped deleted memories, last error and queue counts.
+A process restart resets these counters. Exhausted jobs remain eligible for the
+existing sync repair or an explicit `/admin/sync`.
+
+All vector writers preserve graph temporal bounds, archive state, relevance and
+hierarchical tag prefixes. Existing incomplete vector payloads are not repaired
+just by upgrading: run `POST /admin/reembed` with `{"force": true}` or
+`scripts/reembed_embeddings.py` against the intended deployment after taking a
+backup. `/admin/sync` only repairs missing points, so it cannot backfill payload
+fields on existing points. Reembedding preserves archived/expired state and
+recomputes prefixes from graph tags.
+
+Background retries suppress automatic placeholder fallback after a real provider
+fails, allowing the failure to be retried and counted. An explicitly configured
+`EMBEDDING_PROVIDER=placeholder` continues to work for local/dev installations.
+
+The background worker checks graph content before storage and again after Qdrant
+confirms the write. A content change invalidates that vector and retries with the
+current text. These refreshes share the configured attempt limit; repeated edits
+or a concurrent edit on the final attempt can exhaust the job. Such a write is
+counted as failed/exhausted, never successful. If the point already exists, use
+forced reembedding to repair it; missing-point sync alone cannot detect stale text.

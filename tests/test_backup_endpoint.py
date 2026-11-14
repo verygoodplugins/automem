@@ -495,7 +495,10 @@ def test_lab_clone_uses_paced_qdrant_restore_defaults() -> None:
     assert 'QDRANT_PREFER_GRPC="${QDRANT_PREFER_GRPC:-true}"' in script
     assert 'QDRANT_GRPC_PORT="$QDRANT_GRPC_HOST_PORT"' in script
     assert "--qdrant-grpc-port PORT" in script
-    assert '"${QDRANT_GRPC_HOST_PORT:-6334}:6334"' in Path("docker-compose.yml").read_text()
+    assert (
+        '"${AUTOMEM_DB_BIND_ADDRESS:-127.0.0.1}:${QDRANT_GRPC_HOST_PORT:-6334}:6334"'
+        in Path("docker-compose.yml").read_text()
+    )
 
 
 def test_lab_clone_disables_falkordb_persistence_during_restore() -> None:

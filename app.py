@@ -120,7 +120,13 @@ CORS(
     resources={
         r"/*": {
             "origins": _parse_viewer_allowed_origins(),
-            "allow_headers": ["Content-Type", "X-API-Key", "Authorization"],
+            "allow_headers": [
+                "Content-Type",
+                "X-API-Key",
+                "Authorization",
+                "X-Admin-Token",
+                "X-Admin-Api-Key",
+            ],
         }
     },
 )
@@ -187,6 +193,7 @@ from automem.search.runtime_keywords import load_keyword_runtime
 from automem.search.runtime_recall_helpers import (
     _graph_keyword_search,
     _metadata_keyword_search,
+    _original_text_search,
     _result_passes_filters,
     _vector_filter_only_tag_search,
     _vector_search,
@@ -357,6 +364,7 @@ enrichment_worker = _enrichment_queue_runtime.enrichment_worker
 _consolidation_runtime = create_consolidation_runtime(
     state=state,
     logger=logger,
+    collection_name=COLLECTION_NAME,
     get_memory_graph_fn=get_memory_graph,
     get_qdrant_client_fn=get_qdrant_client,
     emit_event_fn=emit_event,
@@ -413,7 +421,9 @@ _embedding_runtime = create_embedding_runtime(
     point_struct_cls=PointStruct,
     utc_now_fn=utc_now,
     generate_real_embedding_fn=lambda content: _generate_real_embedding(content),
-    generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(contents),
+    generate_real_embeddings_batch_fn=lambda contents: _generate_real_embeddings_batch(
+        contents, allow_placeholder_fallback=False, allow_placeholder_provider=True
+    ),
 )
 
 init_embedding_pipeline = _embedding_runtime.init_embedding_pipeline

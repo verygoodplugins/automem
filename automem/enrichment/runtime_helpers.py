@@ -7,6 +7,38 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Set, Tuple
 
 
+class EnrichmentWritePlan:
+    """Keep explicit helper mutations pending until the memory CAS succeeds."""
+
+    def __init__(self, graph: Any):
+        self.graph = graph
+        self.writes: List[Tuple[str, Dict[str, Any]]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.graph, name)
+
+    def write_enrichment(self, query: str, params: Dict[str, Any]) -> None:
+        self.writes.append((query, dict(params)))
+
+    def compile(self) -> Tuple[str, Dict[str, Any]]:
+        """Compose known helper clauses inside the source CAS, preserving its row."""
+        clauses, parameters = [], {}
+        for index, (query, params) in enumerate(self.writes):
+            names = {key: f"enrichment_{index}_{key}" for key in params}
+            # Rewrite parameter tokens only; mutation sites are explicit, not parsed
+            # or classified from arbitrary Cypher. Separate namespaces avoid aliases
+            # like helper `id` and the source CAS `id` sharing parameter values.
+            query = re.sub(r"\$([A-Za-z_]\w*)", lambda match: "$" + names[match[1]], query)
+            clauses.append("WITH m\n" + query)
+            parameters.update({names[key]: value for key, value in params.items()})
+        return ("\n".join(clauses) + "\nWITH m\n" if clauses else ""), parameters
+
+
+def _write_enrichment(graph: Any, query: str, params: Dict[str, Any]) -> None:
+    write = getattr(graph, "write_enrichment", graph.query)
+    write(query, params)
+
+
 def temporal_cutoff() -> str:
     """Return an ISO timestamp 7 days ago to bound temporal queries."""
     return (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
@@ -47,13 +79,16 @@ def find_temporal_relationships(
             if not related_id:
                 continue
             try:
-                graph.query(
+                _write_enrichment(
+                    graph,
                     """
                     MATCH (m1:Memory {id: $id1})
-                    MATCH (m2:Memory {id: $id2})
-                    MERGE (m1)-[r:PRECEDED_BY]->(m2)
-                    SET r.updated_at = $timestamp,
-                        r.count = COALESCE(r.count, 0) + 1
+                    OPTIONAL MATCH (m2:Memory {id: $id2})
+                    FOREACH (_ IN CASE WHEN m2 IS NULL THEN [] ELSE [1] END |
+                        MERGE (m1)-[r:PRECEDED_BY]->(m2)
+                        ON CREATE SET r.count = 1
+                        SET r.updated_at = $timestamp
+                    )
                     """,
                     {"id1": memory_id, "id2": related_id, "timestamp": timestamp},
                 )
@@ -116,47 +151,42 @@ def detect_patterns(
                 f" highlighting {', '.join(top_terms)}" if top_terms else ""
             )
 
-            graph.query(
+            _write_enrichment(
+                graph,
                 """
+                MATCH (m:Memory {id: $memory_id})
                 MERGE (p:Pattern {type: $type})
                 ON CREATE SET
                     p.id = $pattern_id,
                     p.content = $description,
                     p.confidence = $initial_confidence,
-                    p.observations = 1,
+                    p.observations = 0,
                     p.key_terms = $key_terms,
                     p.created_at = $timestamp
-                ON MATCH SET
-                    p.confidence = CASE
-                        WHEN p.confidence < 0.95 THEN p.confidence + 0.05
-                        ELSE 0.95
-                    END,
-                    p.observations = p.observations + 1,
-                    p.key_terms = $key_terms,
-                    p.updated_at = $timestamp
-                """,
-                {
-                    "type": memory_type,
-                    "pattern_id": pattern_id,
-                    "description": description,
-                    "initial_confidence": 0.35,
-                    "key_terms": top_terms,
-                    "timestamp": utc_now_fn(),
-                },
-            )
-
-            graph.query(
-                """
-                MATCH (m:Memory {id: $memory_id})
-                MATCH (p:Pattern {type: $type})
                 MERGE (m)-[r:EXEMPLIFIES]->(p)
-                SET r.confidence = $confidence,
+                ON CREATE SET r.observation_counted = false
+                WITH m, p, r, coalesce(r.observation_counted, true) AS counted,
+                     coalesce(p.observations, 0) AS observations
+                SET p.confidence = CASE
+                        WHEN counted THEN p.confidence
+                        WHEN observations = 0 THEN $initial_confidence
+                        WHEN p.confidence < 0.95 THEN p.confidence + 0.05
+                        ELSE 0.95 END,
+                    p.observations = observations + CASE WHEN counted THEN 0 ELSE 1 END,
+                    p.key_terms = $key_terms,
+                    p.updated_at = $timestamp,
+                    r.observation_counted = true,
+                    r.confidence = $confidence,
                     r.updated_at = $timestamp
                 """,
                 {
                     "type": memory_type,
                     "memory_id": memory_id,
                     "confidence": confidence,
+                    "pattern_id": pattern_id,
+                    "description": description,
+                    "initial_confidence": 0.35,
+                    "key_terms": top_terms,
                     "timestamp": utc_now_fn(),
                 },
             )
@@ -235,16 +265,19 @@ def link_semantic_neighbors(
             "timestamp": timestamp,
         }
 
-        graph.query(
+        _write_enrichment(
+            graph,
             """
             MATCH (a:Memory {id: $id1})
-            MATCH (b:Memory {id: $id2})
-            MERGE (a)-[r1:SIMILAR_TO]->(b)
-            MERGE (b)-[r2:SIMILAR_TO]->(a)
-            SET r1.score = $score,
-                r2.score = $score,
-                r1.updated_at = $timestamp,
-                r2.updated_at = $timestamp
+            OPTIONAL MATCH (b:Memory {id: $id2})
+            FOREACH (_ IN CASE WHEN b IS NULL THEN [] ELSE [1] END |
+                MERGE (a)-[r1:SIMILAR_TO]->(b)
+                MERGE (b)-[r2:SIMILAR_TO]->(a)
+                SET r1.score = $score,
+                    r2.score = $score,
+                    r1.updated_at = $timestamp,
+                    r2.updated_at = $timestamp
+            )
             """,
             params,
         )

@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 from typing import Any, Callable, Dict, List, Optional
 
 from flask import Blueprint, abort, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 from automem.utils.entity_quality import validate_entity_tag
 
@@ -393,6 +394,8 @@ def create_entity_blueprint(
                     "merge_candidates_skipped": summary and not include_merge_candidates,
                 }
             )
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.exception("Failed to audit entities")
             return jsonify({"error": "Failed to audit entities", "details": str(exc)}), 500

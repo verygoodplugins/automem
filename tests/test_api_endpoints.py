@@ -1727,6 +1727,222 @@ def test_recall_current_only_filters_relation_expansion(client, mock_state, auth
     assert data["state_filter"]["suppressed_count"] == 1
 
 
+@pytest.mark.parametrize(
+    "state", ["expired", "future", "archived", "INVALIDATED_BY", "EVOLVED_INTO"]
+)
+@pytest.mark.parametrize("mode", ["", "&state_mode=history", "&current_only=false"])
+@pytest.mark.parametrize("use_summary", [False, True])
+@pytest.mark.parametrize("source", ["graph", "qdrant"])
+def test_recall_inline_relations_respect_state(
+    client, mock_state, auth_headers, state, mode, use_summary, source
+):
+    graph = mock_state.memory_graph
+    graph.memories.clear()
+    graph.relationships.clear()
+    _store_memory(mock_state, "seed", "Current seed", ["seed"], 0.9)
+    _store_memory(mock_state, "obsolete", "Obsolete inline secret", ["other"], 0.8)
+    _store_memory(mock_state, "active", "Active inline fact", ["other"], 0.7)
+    now = datetime.now(timezone.utc)
+    if state == "expired":
+        graph.memories["obsolete"]["t_invalid"] = (now - timedelta(days=1)).isoformat()
+    elif state == "future":
+        graph.memories["obsolete"]["t_valid"] = (now + timedelta(days=1)).isoformat()
+    elif state == "archived":
+        graph.memories["obsolete"]["archived"] = True
+    else:
+        graph.relationships.append(
+            {"id1": "obsolete", "id2": "active", "type": state, "strength": 0.9}
+        )
+    if use_summary:
+        graph.memories["obsolete"]["summary"] = "Obsolete inline secret"
+    for target in ("obsolete", "active"):
+        graph.relationships.append(
+            {"id1": "seed", "id2": target, "type": "RELATES_TO", "strength": 0.8}
+        )
+
+    query = ""
+    if source == "qdrant":
+        mock_state.qdrant.search = lambda **_kwargs: [
+            SimpleNamespace(id="seed", score=0.99, payload=dict(graph.memories["seed"]))
+        ]
+        query = "&query=Current%20seed"
+    response = client.get(f"/recall?tags=seed&limit=1{mode}{query}", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert [result["id"] for result in data["results"]] == ["seed"]
+    assert data["results"][0]["source"] == source
+    relations = {rel["memory"]["id"]: rel for rel in data["results"][0]["relations"]}
+    assert relations["active"]["memory"]["content"] == "Active inline fact"
+    assert relations["obsolete"]["type"] == "RELATES_TO"
+    assert relations["obsolete"]["strength"] == 0.8
+    if mode:
+        assert "Obsolete inline secret" in response.get_data(as_text=True)
+    else:
+        assert relations["obsolete"]["memory"] == {"id": "obsolete"}
+        assert "Obsolete inline secret" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_inline_relation_state_keeps_provenance_without_unverified_payload(unavailable):
+    results = [
+        {
+            "relations": [
+                {"type": "INVALIDATED_BY", "from": "original", "strength": 0.9},
+                {"type": "RELATES_TO", "memory": {"id": "missing", "summary": "Old summary"}},
+            ]
+        }
+    ]
+    graph = Mock()
+    if unavailable:
+        graph.query.side_effect = RuntimeError("graph unavailable")
+    else:
+        graph.query.return_value = FakeResult([])
+    recall_module._filter_inline_relation_state(results, graph, Mock())
+    assert results[0]["relations"] == [
+        {"type": "INVALIDATED_BY", "from": "original", "strength": 0.9},
+        {"type": "RELATES_TO", "memory": {"id": "missing"}},
+    ]
+
+
+@pytest.mark.parametrize("mode", ["current", "history"])
+@pytest.mark.parametrize("expand", ["false", "true"])
+def test_recall_respect_tags_redacts_foreign_inline_payloads(
+    client, mock_state, auth_headers, mode, expand
+):
+    graph = mock_state.memory_graph
+    graph.memories.clear()
+    graph.relationships.clear()
+    _store_memory(mock_state, "seed", "Scoped seed", ["scope", "required"], 0.99)
+    # The requested tags occur after the five-tag inline summary cutoff.
+    _store_memory(
+        mock_state, "allowed", "Allowed inline", ["a", "b", "c", "d", "e", "scope", "required"], 0.2
+    )
+    _store_memory(mock_state, "foreign", "Foreign secret", ["foreign", "required"], 0.1)
+    _store_memory(
+        mock_state, "excluded", "Excluded secret", ["scope", "required", "private/team"], 0.1
+    )
+    _store_memory(
+        mock_state,
+        "expired",
+        "Old scoped fact",
+        ["scope", "required"],
+        0.1,
+        t_invalid=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+    )
+    for target in ("allowed", "foreign", "excluded", "expired"):
+        graph.relationships.append(
+            {"id1": "seed", "id2": target, "type": "RELATES_TO", "strength": 0.8}
+        )
+
+    response = client.get(
+        f"/recall?tags=scope&tags=required&tag_mode=all&tag_match=exact&exclude_tags=private"
+        f"&expand_respect_tags=true&expand_relations={expand}&state_mode={mode}&limit=1&relation_limit=5",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    seed = next(result for result in response.get_json()["results"] if result["id"] == "seed")
+    relations = {rel["memory"]["id"]: rel for rel in seed["relations"]}
+    assert relations["allowed"]["memory"]["content"] == "Allowed inline"
+    assert relations["foreign"]["memory"] == {"id": "foreign"}
+    assert relations["excluded"]["memory"] == {"id": "excluded"}
+    assert relations["foreign"]["type"] == "RELATES_TO"
+    assert relations["foreign"]["strength"] == 0.8
+    if mode == "history":
+        assert relations["expired"]["memory"]["content"] == "Old scoped fact"
+    else:
+        assert relations["expired"]["memory"] == {"id": "expired"}
+
+
+@pytest.mark.parametrize("match, expected", [("exact", False), ("prefix", True)])
+def test_recall_inline_scope_uses_requested_tag_matching(
+    client, mock_state, auth_headers, match, expected
+):
+    graph = mock_state.memory_graph
+    graph.memories.clear()
+    graph.relationships.clear()
+    _store_memory(mock_state, "seed", "Scoped seed", ["scope"], 0.9)
+    _store_memory(mock_state, "child", "Child inline", ["scope/child"], 0.2)
+    graph.relationships.append(
+        {"id1": "seed", "id2": "child", "type": "RELATES_TO", "strength": 0.7}
+    )
+    response = client.get(
+        f"/recall?tags=scope&tag_match={match}&expand_respect_tags=true&limit=1&state_mode=history",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    result = next(result for result in response.get_json()["results"] if result["id"] == "seed")
+    payload = result["relations"][0]["memory"]
+    assert (payload.get("content") == "Child inline") is expected
+
+
+@pytest.mark.parametrize("tag_mode, expected", [("any", True), ("all", False)])
+def test_recall_inline_scope_honors_tag_mode(client, mock_state, auth_headers, tag_mode, expected):
+    graph = mock_state.memory_graph
+    graph.memories.clear()
+    graph.relationships.clear()
+    _store_memory(mock_state, "seed", "Scoped seed", ["scope", "required"], 0.9)
+    _store_memory(mock_state, "partial", "Partial scope", ["scope"], 0.2)
+    graph.relationships.append(
+        {"id1": "seed", "id2": "partial", "type": "RELATES_TO", "strength": 0.7}
+    )
+    response = client.get(
+        f"/recall?tags=scope&tags=required&tag_mode={tag_mode}&tag_match=exact"
+        "&expand_respect_tags=true&limit=1&state_mode=history",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    result = next(result for result in response.get_json()["results"] if result["id"] == "seed")
+    assert (result["relations"][0]["memory"].get("content") == "Partial scope") is expected
+
+
+def test_recall_inline_scope_is_opt_in_for_history(client, mock_state, auth_headers):
+    graph = mock_state.memory_graph
+    graph.memories.clear()
+    graph.relationships.clear()
+    _store_memory(mock_state, "seed", "Scoped seed", ["scope"], 0.9)
+    _store_memory(mock_state, "foreign", "Visible with default settings", ["other"], 0.2)
+    graph.relationships.append(
+        {"id1": "seed", "id2": "foreign", "type": "RELATES_TO", "strength": 0.7}
+    )
+    response = client.get("/recall?tags=scope&limit=1&state_mode=history", headers=auth_headers)
+    assert response.status_code == 200
+    result = next(result for result in response.get_json()["results"] if result["id"] == "seed")
+    assert result["relations"][0]["memory"]["content"] == "Visible with default settings"
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+@pytest.mark.parametrize("current_only", [False, True])
+def test_inline_scope_redacts_unverified_payload_in_all_state_modes(unavailable, current_only):
+    results = [
+        {
+            "relations": [
+                {
+                    "type": "RELATES_TO",
+                    "strength": 0.9,
+                    "memory": {"id": "missing", "content": "unverified"},
+                }
+            ]
+        }
+    ]
+    graph = Mock()
+    if unavailable:
+        graph.query.side_effect = RuntimeError("graph unavailable")
+    else:
+        graph.query.return_value = FakeResult([])
+    recall_module._filter_inline_relation_state(
+        results,
+        graph,
+        Mock(),
+        current_only=current_only,
+        result_passes_filters=lambda *_args: True,
+        tag_filters=["scope"],
+    )
+    assert results[0]["relations"] == [
+        {"type": "RELATES_TO", "strength": 0.9, "memory": {"id": "missing"}}
+    ]
+
+
 def test_recall_prioritizes_style_context(client, mock_state, auth_headers):
     """Ensure coding-style memories rise to the top when editing Python."""
     mock_state.memory_graph.memories.clear()

@@ -76,7 +76,7 @@ Major data loss - triggers recovery process (if enabled).
 
 **Example**: FalkorDB has 200 memories, Qdrant has 636 (68.6% drift)
 - Status: Critical
-- Action: Alert sent + recovery triggered (if `--auto-recover`)
+- Action: Alert sent; with `--auto-recover`, missing graph memories are salvaged only if FalkorDB has fewer memories than Qdrant. A Qdrant deficit requires manual vector repair.
 - Recovery: Yes (if enabled)
 
 ### Customize Thresholds
@@ -251,6 +251,9 @@ Deploy as separate service:
 - ✅ Response time
 - ✅ FalkorDB/Qdrant connection status from API
 
+Threshold precedence is **explicit CLI flag > environment variable > default**.
+`--drift-threshold 0` and `--critical-threshold 0` are accepted.
+
 ### Consistency Check
 
 - ✅ Memory count drift between FalkorDB and Qdrant
@@ -282,12 +285,23 @@ When critical drift detected:
 
 ### Auto-Recovery Mode (Opt-In)
 
-When critical drift detected:
+When critical drift is detected and FalkorDB has fewer memories than Qdrant:
 
 1. **Send "recovery starting" alert**
-2. **Execute**: `python scripts/recover_from_qdrant.py`
+2. **Execute** the adjacent `recover_from_qdrant.py` script to insert missing Memory nodes without deleting or overwriting existing graph data.
 3. **Monitor recovery progress**
 4. **Send completion/failure alert**
+
+Qdrant payloads contain no graph edges or Entity nodes. Salvage preserves surviving
+relationships but cannot restore lost ones. Re-enrichment can recreate some derived
+relationships; a FalkorDB backup is needed for the original graph. Prefer
+`python scripts/restore_from_backup.py --dry-run --falkordb-only` when a graph
+backup is available. Auto-recovery does not select or apply backups automatically.
+
+The source is fully fetched and validated before graph writes. An empty/invalid
+source or any failed write returns a nonzero exit code, reported as recovery
+failure. If Qdrant has fewer memories, the monitor alerts for manual vector repair
+and does not run graph recovery. Memory counts alone do not prove data integrity.
 
 **Example Alert Flow**:
 ```
@@ -342,7 +356,7 @@ python scripts/health_monitor.py --drift-threshold 10  # More lenient
 Auto-recovery only triggers when:
 1. `--auto-recover` flag is set
 2. Drift exceeds critical threshold (default: 50%)
-3. Both stores are healthy (can connect)
+3. Both stores are healthy and FalkorDB has fewer memories than Qdrant
 
 **Check**: Run one-time check to see current drift:
 ```bash

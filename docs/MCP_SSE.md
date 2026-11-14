@@ -15,6 +15,11 @@ AutoMem supports two MCP transport protocols:
 
 **SSE** is still supported for backward compatibility with older clients.
 
+Legacy SSE streams remain open while connected, including quiet streams. A
+disconnect removes the session and heartbeat immediately. The bridge also sweeps
+abandoned sessions every five minutes after one hour without a message; this idle
+timeout does not terminate a connected stream.
+
 ## Why Use the MCP Bridge?
 
 **Use Case: Cloud AI Platforms**

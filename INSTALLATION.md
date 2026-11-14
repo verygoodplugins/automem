@@ -177,7 +177,7 @@ railway init
 
 1. Create new Railway service:
 
-   - Image: `falkordb/falkordb:latest`
+   - Image: `falkordb/falkordb:v4.20.7`
    - Add persistent volume (critical for data persistence)
 
 2. Note the internal connection details (shown in service settings)
@@ -379,8 +379,33 @@ docker compose up -d
 
 - AutoMem Flask API (port 8001)
 - FalkorDB (port 6379)
-- Qdrant (port 6333)
+- Qdrant HTTP and gRPC (ports 6333 and 6334)
 - FalkorDB Browser via FalkorDB built-in UI (port 3000)
+
+FalkorDB, its browser, and both Qdrant ports bind to `127.0.0.1` by default.
+AutoMem reaches the databases over the Docker network, so this does not change
+connections between containers. The AutoMem API port keeps its existing binding.
+
+To make the database ports available on a different host address, explicitly set
+`AUTOMEM_DB_BIND_ADDRESS` when starting Compose. For IPv6, use brackets (for
+example, `[::1]`). Binding to `0.0.0.0` exposes the database ports on every IPv4
+interface; secure them with authentication and network controls before doing so.
+Localhost binding limits network exposure but does not authenticate local users.
+Use Docker Engine 28 or newer: [older Docker releases have a localhost-publishing
+limitation](https://docs.docker.com/engine/network/port-publishing/).
+
+**Existing local installs:** Updating the checkout alone does not change running
+containers. After updating `docker-compose.yml`, recreate the two database services
+to apply the new bindings. This briefly interrupts database connections but keeps
+the named data volumes:
+
+```bash
+docker compose up -d --no-deps falkordb qdrant
+```
+
+Check `docker compose ps` and the AutoMem `/health` endpoint afterward. The guided
+installer's existing-server update rebuilds the API only, so it does not apply
+these database bindings by itself.
 
 Stop services:
 

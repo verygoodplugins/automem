@@ -462,6 +462,53 @@ class TestEntityMigration:
 
         assert not hasattr(migration, "MIGRATION_READINESS_BLOCKERS")
 
+    def test_migration_scope_counts_unique_references_after_canonicalization(self) -> None:
+        from scripts.migrate_entity_nodes import run_migration
+
+        graph = EntityFakeGraph()
+        graph.memories.update({key: {"id": key} for key in ("m1", "m2", "m3")})
+        entity_map = {
+            "entity:person:mara-patel-s": ["m1", "m1"],
+            "entity:people:mara-patel": ["m2"],
+            "entity:people:lina-chen": ["m3", "m3"],
+            "entity:organizations:acme-corp": ["m1", "m2"],
+            "entity:people:completed": ["m1", "m2"],
+        }
+        stats = run_migration(
+            graph, entity_map, dry_run=False, categories=frozenset({"people"}), min_references=2
+        )
+
+        assert set(graph.entities) == {"entity:people:mara-patel"}
+        assert stats["accepted"][0]["references"] == 2
+        assert len(graph.entity_edges) == 2
+        assert {row["id"]: row["reason"] for row in stats["skipped_entities"]} == {
+            "entity:organizations:acme-corp": "outside_category_scope",
+            "entity:people:lina-chen": "below_min_references",
+        }
+        assert [row["tag"] for row in stats["rejected_entities"]] == ["entity:people:completed"]
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            "--categories=",
+            "--categories=people,",
+            "--categories=person,widgets",
+            "--min-references=0",
+            "--min-references=-1",
+            "--min-references=1.5",
+        ],
+    )
+    def test_migration_rejects_invalid_scope_before_connecting(self, option, monkeypatch) -> None:
+        import scripts.migrate_entity_nodes as migration
+
+        monkeypatch.setattr("sys.argv", ["migrate_entity_nodes.py", option])
+        connect = MagicMock()
+        monkeypatch.setattr(migration, "connect_falkordb", connect)
+        with pytest.raises(SystemExit) as error:
+            migration.main()
+        assert error.value.code == 2
+        connect.assert_not_called()
+
     def test_entity_audit_summary_counts_reasons_and_samples(self) -> None:
         """Summary audit returns compact counts and samples instead of full arrays."""
         from automem.api.entity import _audit_memory_entity_tags

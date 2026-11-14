@@ -72,6 +72,7 @@ def create_consolidation_runtime(
     importance_floor_factor: float = 0.3,
     cluster_similarity_threshold: float | None = None,
     min_cluster_size: int | None = None,
+    collection_name: str = "memories",
 ) -> ConsolidationRuntimeBindings:
     def _load_control_record(graph: Any) -> Dict[str, Any]:
         return _load_control_record_runtime(
@@ -119,6 +120,7 @@ def create_consolidation_runtime(
             graph,
             vector_store,
             memory_consolidator_cls=MemoryConsolidator,
+            collection_name=collection_name,
             delete_threshold=delete_threshold,
             archive_threshold=archive_threshold,
             grace_period_days=grace_period_days,

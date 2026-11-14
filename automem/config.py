@@ -593,3 +593,7 @@ RECALL_RECENCY_BIAS = (
 # API tokens
 API_TOKEN = os.getenv("AUTOMEM_API_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_API_TOKEN")
+
+# Bounded background embedding retries (initial attempt included).
+EMBEDDING_MAX_ATTEMPTS = max(1, int(os.getenv("EMBEDDING_MAX_ATTEMPTS", "3")))
+EMBEDDING_RETRY_BACKOFF_SECONDS = max(0.0, float(os.getenv("EMBEDDING_RETRY_BACKOFF_SECONDS", "1")))

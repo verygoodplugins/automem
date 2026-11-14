@@ -45,6 +45,16 @@ def init_falkordb(
             "FalkorDB connection established (auth: %s)",
             "enabled" if password else "disabled",
         )
+        # Index setup is fail-soft: preserve the ordinary recall service if the
+        # backend is temporarily unavailable or does not support full-text.
+        from automem.stores.original_text_index import ensure_original_text_index
+
+        try:
+            state.original_text_index_status = ensure_original_text_index(state.memory_graph)
+            logger.info("Original-text index status: %s", state.original_text_index_status)
+        except Exception:
+            state.original_text_index_status = "unavailable"
+            logger.exception("Original-text full-text index unavailable")
     except Exception:  # pragma: no cover
         logger.exception("Failed to initialize FalkorDB connection")
         state.falkordb = None
@@ -96,7 +106,8 @@ def init_qdrant(
             qdrant_kwargs["timeout"] = float(timeout_seconds)
         state.qdrant = qdrant_client_cls(**qdrant_kwargs)
         ensure_collection_fn()
-        logger.info("Qdrant connection established")
+        if state.qdrant is not None:
+            logger.info("Qdrant connection established")
     except VectorDimensionMismatchError as e:
         logger.error("%s", e)
         state.qdrant = None
@@ -123,6 +134,8 @@ def ensure_qdrant_collection(
     payload_schema_type_enum: Any,
 ) -> None:
     """Create the Qdrant collection if it does not already exist."""
+    from automem.utils.validation import VectorDimensionMismatchError
+
     if state.qdrant is None:
         return
 
@@ -176,7 +189,7 @@ def ensure_qdrant_collection(
                 field_name=field_name,
                 field_schema=keyword_schema,
             )
-    except ValueError:
+    except (VectorDimensionMismatchError, ValueError):
         raise
     except Exception:  # pragma: no cover
         logger.exception("Failed to ensure Qdrant collection; disabling client")
