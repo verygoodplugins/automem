@@ -20,6 +20,50 @@ from automem.config import (
 from automem.stores.vector_payload import build_qdrant_payload
 from automem.utils.text import should_summarize_content, summarize_content
 
+# Fields copied from each validated batch item into the FalkorDB query parameters.
+# FalkorDB serializes map parameters with unquoted keys, so caller-controlled maps
+# (such as the raw metadata dict) must never reach the graph query; metadata is
+# passed only as its JSON string.
+_BATCH_GRAPH_FIELDS = (
+    "id",
+    "content",
+    "original_search_text",
+    "tags",
+    "tag_prefixes",
+    "importance",
+    "timestamp",
+    "type",
+    "confidence",
+    "updated_at",
+    "last_accessed",
+    "metadata",
+    "t_valid",
+    "t_invalid",
+)
+
+
+def _graph_param_value(value: Any) -> Any:
+    """Return a caller-supplied value in a form safe for FalkorDB query parameters.
+
+    FalkorDB stores only scalars and arrays of scalars as properties, and its client
+    serializes map keys unquoted into the query header. Maps (and maps or arrays
+    nested inside arrays) are therefore stored as JSON strings instead.
+
+    Args:
+        value: The caller-supplied property value.
+
+    Returns:
+        The value unchanged when it is a scalar, otherwise a JSON-encoded equivalent.
+    """
+    if isinstance(value, dict):
+        return json.dumps(value, default=str)
+    if isinstance(value, (list, tuple)):
+        return [
+            json.dumps(item, default=str) if isinstance(item, (dict, list, tuple)) else item
+            for item in value
+        ]
+    return value
+
 
 def _explicit_memory_type(raw_type: Any, logger: Any) -> str:
     """Canonicalize known aliases while retaining existing custom string types."""
@@ -86,7 +130,7 @@ def _prepare_association_props(
     relation_config = relationship_types.get(relation_type, {})
     for prop in relation_config.get("properties", []):
         if prop in payload and prop not in relationship_props:
-            relationship_props[prop] = payload[prop]
+            relationship_props[prop] = _graph_param_value(payload[prop])
     return relationship_props
 
 
@@ -1439,7 +1483,12 @@ def create_memory_blueprint_full(
                 SET node:MemoryOriginalText
                 RETURN node.id
                 """,
-                {"memories": validated},
+                {
+                    "memories": [
+                        {field: memory[field] for field in _BATCH_GRAPH_FIELDS}
+                        for memory in validated
+                    ]
+                },
             )
         except Exception:
             logger.exception("Batch graph write failed")
