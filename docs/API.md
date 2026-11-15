@@ -29,6 +29,12 @@ are not migrated by this change.
   - Body: `{ "content": "...", "tags": ["tag"], "importance": 0.7, "metadata": {} }`
   - Response: `{ "status": "success", "memory_id": "...", ... }`
 
+- POST `/memory/batch`
+  - Body: `{ "memories": [{ "content": "...", "tags": ["tag"], "importance": 0.7, "metadata": {}, "timestamp": "...", "type": "...", "confidence": 0.9 }], "sync_embeddings": false }` (max 500; items do not accept `embedding`, `t_valid` or `t_invalid`)
+  - Response: `{ "status": "success", "stored": N, "memory_ids": [...], "qdrant": "queued", "enrichment": "queued", "query_time_ms": 12.3 }`
+  - All memories are written to FalkorDB first. By default their vectors are then queued for the background embedding worker, like `POST /memory`, so the response does not wait on the embedding provider and `qdrant` is `"queued"` (`"unconfigured"` without Qdrant).
+  - `"sync_embeddings": true` generates and upserts vectors before responding (still after the graph write). Benchmark ingestion uses it because it snapshots or evaluates immediately afterwards. `qdrant` is then `"stored (N)"`, `"stored (N), queued (M)"`, `"queued"` or `"queued (fallback)"`.
+
 - GET `/memory/{id}`
   - Response: `{ "status": "success", "memory": { ... } }`
   - Errors: `404` if memory is missing, `500` on query failure, `503` if graph database is unavailable.

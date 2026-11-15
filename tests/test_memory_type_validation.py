@@ -36,7 +36,7 @@ def write_type(api, operation, value, *, omitted=False):
     elif operation == "batch":
         response = client.post(
             "/memory/batch",
-            json={"memories": [{"content": "batch memory", **payload}]},
+            json={"memories": [{"content": "batch memory", **payload}], "sync_embeddings": True},
             headers=headers,
         )
         memory_id = response.json.get("memory_ids", [None])[0]

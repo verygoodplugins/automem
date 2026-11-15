@@ -55,7 +55,10 @@ def test_batch_vector_payload(client, mock_state, auth_headers):
     response = client.post(
         "/memory/batch",
         headers=auth_headers,
-        json={"memories": [{"content": "alpha", "type": "Insight", "tags": ["auth/login"]}]},
+        json={
+            "memories": [{"content": "alpha", "type": "Insight", "tags": ["auth/login"]}],
+            "sync_embeddings": True,
+        },
     )
     assert response.status_code == 201, response.json
     payload = next(iter(mock_state.qdrant.points.values()))["payload"]

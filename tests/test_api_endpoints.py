@@ -2,7 +2,9 @@
 
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
+from queue import Queue
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
@@ -4116,7 +4118,7 @@ def test_batch_store_requires_confirmed_graph_write(client, mock_state, auth_hea
 
 
 def test_batch_store_success_confirms_graph_ids(client, mock_state, auth_headers):
-    """Successful POST /memory/batch writes graph rows before vector upsert."""
+    """Opt-in synchronous batch embeddings still upsert vectors before responding."""
     mock_state.embedding_provider = FakeEmbeddingProvider([[0.4] * config.VECTOR_SIZE])
 
     response = client.post(
@@ -4128,7 +4130,8 @@ def test_batch_store_success_confirms_graph_ids(client, mock_state, auth_headers
                     "type": "Context",
                     "tags": ["issue-202"],
                 }
-            ]
+            ],
+            "sync_embeddings": True,
         },
         headers=auth_headers,
     )
@@ -4136,6 +4139,7 @@ def test_batch_store_success_confirms_graph_ids(client, mock_state, auth_headers
     assert response.status_code == 201
     data = response.get_json()
     assert data["status"] == "success"
+    assert data["qdrant"] == "stored (1)"
     [memory_id] = data["memory_ids"]
     assert memory_id in mock_state.memory_graph.memories
     assert memory_id in mock_state.qdrant.points
@@ -4169,7 +4173,10 @@ def test_batch_store_graph_params_exclude_caller_metadata_maps(client, mock_stat
 
     response = client.post(
         "/memory/batch",
-        json={"memories": [{"content": "Batch metadata key probe", "metadata": metadata}]},
+        json={
+            "memories": [{"content": "Batch metadata key probe", "metadata": metadata}],
+            "sync_embeddings": True,
+        },
         headers=auth_headers,
     )
 
@@ -4239,6 +4246,131 @@ def test_create_association_encodes_map_property_values(client, mock_state, auth
     assert row["props"]["observations"] == ["plain", json.dumps({"x-y": 2})]
     # Rows and props are maps with server-chosen keys; no caller-supplied map remains.
     assert _map_param_paths(list(row["props"].values())) == []
+
+
+class SlowFailingEmbeddingProvider(FailingEmbeddingProvider):
+    """Provider that blocks like a rate-limited API before failing."""
+
+    def __init__(self, delay_seconds):
+        super().__init__()
+        self.delay_seconds = delay_seconds
+
+    def generate_embedding(self, text):
+        time.sleep(self.delay_seconds)
+        return super().generate_embedding(text)
+
+    def generate_embeddings_batch(self, texts):
+        time.sleep(self.delay_seconds)
+        return super().generate_embeddings_batch(texts)
+
+
+def _queued_embeddings(state):
+    items = []
+    while not state.embedding_queue.empty():
+        items.append(state.embedding_queue.get_nowait())
+    return items
+
+
+def test_batch_store_queues_embeddings_without_calling_provider(client, mock_state, auth_headers):
+    """Default batch store persists the graph and returns without waiting on the provider."""
+    provider = SlowFailingEmbeddingProvider(delay_seconds=5)
+    mock_state.embedding_provider = provider
+    mock_state.embedding_queue = Queue()
+    contents = ["Queued batch one", "Queued batch two", "Queued batch three"]
+
+    started = time.perf_counter()
+    response = client.post(
+        "/memory/batch",
+        json={"memories": [{"content": c, "type": "Context"} for c in contents]},
+        headers=auth_headers,
+    )
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 201, response.get_json()
+    assert elapsed < provider.delay_seconds
+    assert provider.batch_calls == []
+    assert provider.single_calls == []
+    data = response.get_json()
+    assert data["qdrant"] == "queued"
+    assert data["stored"] == len(contents)
+    memory_ids = data["memory_ids"]
+    assert all(mid in mock_state.memory_graph.memories for mid in memory_ids)
+    assert mock_state.qdrant.upsert_calls == []
+    assert _queued_embeddings(mock_state) == list(zip(memory_ids, contents))
+
+
+def test_batch_store_without_qdrant_skips_embeddings(client, mock_state, auth_headers):
+    """No vector store means nothing to embed or queue, as with POST /memory."""
+    provider = FailingEmbeddingProvider()
+    mock_state.embedding_provider = provider
+    mock_state.embedding_queue = Queue()
+    mock_state.qdrant = None
+
+    for sync_embeddings in (False, True):
+        response = client.post(
+            "/memory/batch",
+            json={"memories": [{"content": "No vector store"}], "sync_embeddings": sync_embeddings},
+            headers=auth_headers,
+        )
+        assert response.status_code == 201, response.get_json()
+        assert response.get_json()["qdrant"] == "unconfigured"
+    assert provider.batch_calls == []
+    assert provider.single_calls == []
+    assert mock_state.embedding_queue.empty()
+
+
+def test_batch_store_sync_embeddings_writes_graph_first(client, mock_state, auth_headers):
+    """Opt-in synchronous embedding starts only after every memory is persisted."""
+    seen_in_graph = []
+
+    class RecordingProvider(FakeEmbeddingProvider):
+        def generate_embeddings_batch(self, texts):
+            stored = {m["content"] for m in mock_state.memory_graph.memories.values()}
+            seen_in_graph.append(all(text in stored for text in texts))
+            return super().generate_embeddings_batch(texts)
+
+    mock_state.embedding_provider = RecordingProvider([[0.5] * config.VECTOR_SIZE] * 2)
+    response = client.post(
+        "/memory/batch",
+        json={
+            "memories": [{"content": "Sync first"}, {"content": "Sync second"}],
+            "sync_embeddings": True,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201, response.get_json()
+    assert seen_in_graph == [True]
+    assert set(response.get_json()["memory_ids"]) <= set(mock_state.qdrant.points)
+
+
+def test_batch_store_sync_embeddings_skipped_when_graph_write_fails(
+    client, mock_state, auth_headers
+):
+    """A failed graph write no longer wastes embedding provider calls."""
+    provider = FakeEmbeddingProvider([[0.3] * config.VECTOR_SIZE])
+    mock_state.embedding_provider = provider
+    mock_state.memory_graph = EmptyStoreResultGraph()
+
+    response = client.post(
+        "/memory/batch",
+        json={"memories": [{"content": "Doomed write"}], "sync_embeddings": True},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 500
+    assert provider.batch_calls == []
+
+
+def test_batch_store_rejects_non_boolean_sync_embeddings(client, mock_state, auth_headers):
+    response = client.post(
+        "/memory/batch",
+        json={"memories": [{"content": "Flag check"}], "sync_embeddings": "yes"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert mock_state.memory_graph.memories == {}
 
 
 def test_invalid_json_payload(client, mock_state, auth_headers):
