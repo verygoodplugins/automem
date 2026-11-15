@@ -72,7 +72,12 @@ on memories. It is intentionally a product/runtime spec, not an experiment note.
 
 - Async and just-in-time enrichment parse existing metadata and merge generated
   entity data into `metadata.entities`.
-- Enrichment also writes operational details under `metadata.enrichment`.
+- Enrichment also writes operational details under `metadata.enrichment`,
+  including `content_hash`, the fingerprint of the content it was derived from.
+- Every full Qdrant payload carries an indexed `content_hash`
+  (`sha256:` + hex digest of `content`). Enrichment's Qdrant writes filter on it,
+  so if a content PATCH lands while enrichment runs, the derived metadata is
+  skipped instead of attached to the newer content.
 - Enrichment can add entity tags and tag prefixes, but metadata sidecar search
   does not depend on those generated tags.
 

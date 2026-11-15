@@ -286,6 +286,25 @@ upgrading.
 python scripts/backfill_tag_prefixes.py
 ```
 
+### Backfill content fingerprints
+
+Enrichment writes derived Qdrant metadata (`metadata.entities`,
+`metadata.enrichment`, entity tags) only to a point whose `content_hash` matches
+the text it enriched, so a concurrent content PATCH never receives metadata
+derived from the old text. Points written before this change have no
+`content_hash` and are skipped (logged as a warning) until you backfill them.
+Run once after upgrading; the default is a dry run.
+
+```bash
+python scripts/backfill_content_hash.py           # count legacy points
+python scripts/backfill_content_hash.py --apply   # write content_hash
+```
+
+To repair derived metadata that is already stale, send every memory whose
+`metadata.enrichment.content_hash` is missing or differs from its `content_hash`
+payload field to `POST /enrichment/reprocess` (admin token, `{"ids": [...]}`),
+which re-enriches them with `forced=True`.
+
 ### Rescore relevance
 
 Recomputes every `relevance_score` with the corrected consolidation decay
