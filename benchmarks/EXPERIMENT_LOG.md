@@ -35,6 +35,12 @@ than the pass/fail Core-3 benchmarks):
 | beam/1m | 63.8% ±2.7 (n=700) | 63.1% | +0.7pp | ~3.9k |
 | beam/10m | **57.4% ±5.5 (n=200)** | **40.6%** | **+16.8pp** | ~3.9k |
 
+Only the 10M gap (+16.8pp) is larger than AutoMem's 95% CI (±5.5pp). The 500k
+and 1M gaps (+0.7pp) sit inside AutoMem's CIs (±2.8pp and ±2.7pp), so those
+tiers show no measurable difference from Honcho. The 100k row reports a
+three-run spread rather than a CI, so it gets no significance call. Do not
+describe AutoMem as ahead of Honcho on every BEAM tier.
+
 AutoMem degrades gracefully (67.5% → 57.4%, −10pp across a 100× haystack
 increase) where Honcho collapses (63.0% → 40.6% — flat through 1M, then a cliff
 at 10M). Clear **#2 on BEAM** behind vectorize's own Hindsight (~73→64% across
@@ -85,13 +91,18 @@ per-split run summary lives in `automem-evals`
 
 Internal-harness headline results (engineering baselines — superseded for
 outbound/release claims by the **Neutral Agent Memory Benchmark (AMB)** section
-above):
+above). The current internal numbers come from the
+[2026-10-22 combined post-merge baseline](#2026-10-22-combined-post-merge-baseline-complete-23-october)
+([manifest](baselines/postmerge-20261022.json)):
 
-| Benchmark | Scope | Score | Retrieval | Notes |
-|-----------|-------|-------|-----------|-------|
-| LongMemEval full | 500 questions | **87.00% (435/500)** | recall@5 **97.00% (485/500)** | Fresh publication verification run with `gpt-5-mini` answerer + `gpt-5.4-mini-2026-03-17` judge; `judge_errors=0`, `memory_ingest_failures=0`, harness `publishable=true`. |
-| LongMemEval mini | 30 questions, stratified 5 per type | **70.00% (21/30)** | recall@5 **96.67% (29/30)** | Representative canary from the May 2026 publication verification run; do not compare to legacy prefix slices. |
-| LoCoMo full | 10 conversations, 1986 questions | **84.74% (1683/1986)** | -- | Fresh publication verification run with pinned `gpt-5.4-mini-2026-03-17` judge; 444 judge calls, 0 skips/errors. |
+| Date | Benchmark | Scope | Score | Regime | Notes |
+|------|-----------|-------|-------|--------|-------|
+| 2026-10-22 | LongMemEval-S | 500 questions | **85.40% (427/500)** QA accuracy | Voyage `voyage-4` 1024d; `gpt-5-mini` answerer; `gpt-5.4-mini-2026-03-17` judge | Six-task macro accuracy 83.60%; any-support Recall@5 97.6% (488/500). |
+| 2026-10-22 | LongMemEval mini | 30 questions, stratified 5 per type | **70.00% (21/30)** QA accuracy | Same as LongMemEval-S | Stratified canary; do not compare to legacy prefix slices. |
+| 2026-10-22 | LoCoMo full | 10 conversations, 1986 questions | **85.10% (1690/1986)**, evidence-assisted diagnostic, **not QA accuracy** | Voyage `voyage-4` 1024d; no answer model (deterministic matching against recall plus gold evidence dialogs); `gpt-5.4-mini-2026-03-17` judges category 5 only | 444 judge calls, zero errors/skips. See [LoCoMo harness: evidence-assisted diagnostic](#2026-11-14-locomo-harness-evidence-assisted-diagnostic-not-qa-accuracy). |
+
+The May 2026 publication verification runs (LongMemEval 87.00%, LoCoMo
+84.74%) stay in the detailed history below as dated historical rows.
 
 Detailed experiment history:
 
@@ -129,6 +140,31 @@ Detailed experiment history:
 | 2026-10-21 | PR #266 prefix filters (no judge) | fix/tag-prefix-filtering @ e360619 | **82.98% (195/235)** | **78.27% (1207/1542)** | -- | -- | Same settings and fresh snapshots: mini **0.00pp**, full **-0.19pp** (four lost/one gained QA rows). Candidate mini/full 147.051s/685.356s. Controlled shared-store replay with identical Python hash seed matches both refs on all five changed rows; the original full delta accompanies preexisting process-dependent query decomposition. Details below. |
 | 2026-11-11 | PR #285 original text (no judge) | develop `1a7ba1a` / candidate `4431d20` mini, `8fb5621` full | **197/235 both** | **1206/1542 → 1207/1542** | -- | -- | Fresh isolated local BGE-768; 69/444 judge-dependent questions skipped, respectively. Strict API and driver audits passed, including zero replacement-query failures or timeouts. Native scorer augments recalled context with labeled evidence. These are directional diagnostics, not official judged scores or buried-text tests. |
 | 2026-11-13 | PR #288 expansion limit (no judge) | develop `2a52c48` / candidate `281ac19` | **197/235 both** | **1206/1542 both** | -- | -- | Matched isolated local BGE-768 runs; no paired verdict changes, with 69/444 judge-dependent questions skipped. Strict API and driver audits passed. Gold evidence augmentation and absence of memory relations limit interpretation; see details below. |
+| 2026-11-14 | Relabel (no new run) | docs/benchmark-claims-accuracy | -- | -- | -- | -- | Every LoCoMo-mini and LoCoMo-full score in this table is an **evidence-assisted diagnostic, not QA accuracy**. `tests/benchmarks/test_locomo.py` fetches the gold evidence dialogs by ID for categories 1-4 and scores answer overlap against them, and the category-5 judge sees them too. Use these columns only for regression deltas between runs of this harness. The harness now prints and stores this label; scoring is unchanged. → [details](#2026-11-14-locomo-harness-evidence-assisted-diagnostic-not-qa-accuracy) |
+
+### 2026-11-14 LoCoMo harness: evidence-assisted diagnostic, not QA accuracy
+
+No new run; this entry relabels existing results. For every category 1-4
+question, `check_answer_in_memories` in `tests/benchmarks/test_locomo.py` calls
+`fetch_evidence_memories`. That fetches the dataset's gold evidence dialogs by
+dialog ID and places them ahead of the recalled memories (capped at 80). The
+question then counts as correct on deterministic matches against that combined
+context: answer dates, at least 30% answer-word overlap with a gold evidence
+dialog, substring or word overlap, and embedding similarity for multi-hop
+questions. Recall must return at least one memory, but beyond that the gold
+evidence arrives regardless of retrieval quality. No answer model writes an
+answer unless LLM extraction is explicitly enabled. The category-5 judge also
+receives the gold evidence dialogs.
+
+Every LoCoMo-mini and LoCoMo-full number in this log, including 84.74% on
+2026-05-17 and 85.10% on 2026-10-22, is therefore a regression diagnostic,
+comparable only with other runs of this harness. None is a QA accuracy. Do not
+compare them with published LoCoMo QA results (CORE, Hindsight) or with
+AutoMem's own AMB `locomo/locomo10` score of 85.1%, which is a QA accuracy from
+a Gemini answerer and judge on n=1540. The matching 85.1 figures are a
+coincidence of two different measurements. The harness now prints
+`Run label: evidence-assisted diagnostic, not QA accuracy` and writes the same
+string to `run_label` in its result JSON. Scoring logic is unchanged.
 
 ### 2026-11-13 expansion limit: isolated no-provider comparison
 
@@ -208,7 +244,7 @@ neutral AMB results above retain their original dates and configurations.
 | Control stratified LongMemEval canary | 21/30 | 70.00% | First five questions per type |
 | Candidate stratified LongMemEval canary | 21/30 | 70.00% | Identical question IDs and ranked retrieved session IDs |
 | Candidate LongMemEval-S | 427/500 | 85.40% | Six-task macro accuracy **83.60%** |
-| Candidate LoCoMo | 1690/1986 | 85.10% | All five categories; 444 judge calls, zero errors/skips |
+| Candidate LoCoMo | 1690/1986 | 85.10% (evidence-assisted diagnostic, not QA accuracy) | All five categories; 444 judge calls, zero errors/skips |
 
 LongMemEval types: knowledge 65/78, multi-session 108/133, assistant 55/56,
 preference 17/30, user 67/70, temporal 115/133. Task average is the unweighted
@@ -313,7 +349,7 @@ verbatim out of the table cell for readability. Nothing here is dropped.
 
 ### Category Breakdown (LoCoMo-mini)
 
-Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-in LLM judge when `BENCH_JUDGE_MODEL` or `--judge` is enabled; otherwise it remains `N/A`.
+Categories 1-4 are scored by word-overlap/date matching against recalled memories plus the gold evidence dialogs, which the harness fetches by ID. Category 5 uses an opt-in LLM judge when `BENCH_JUDGE_MODEL` or `--judge` is enabled, and the judge also sees the gold evidence; otherwise it remains `N/A`. These are evidence-assisted diagnostics, not QA accuracy ([details](#2026-11-14-locomo-harness-evidence-assisted-diagnostic-not-qa-accuracy)).
 
 | Date | Issue/PR | Single-hop | Temporal | Multi-hop | Open Domain | Complex | Overall |
 |------|----------|------------|----------|-----------|-------------|---------|---------|
@@ -335,10 +371,12 @@ Categories 1-4 are scored by word-overlap/date matching. Category 5 uses an opt-
 \* Temporal was artificially low: evaluator compared question dates (empty) vs memory dates instead of answer dates.
 \*\* Complex was artificially 100%: dataset has no `answer` field for cat5 → empty string → `"" in content` always True.
 
-### Category Breakdown (LongMemEval full)
+### Category Breakdown (LongMemEval full, 2026-05-17 publication verification run)
 
-Canonical run: `benchmarks/results/longmemeval-full-publication-20260518.json`.
-Answerer `gpt-5-mini`; judge `gpt-5.4-mini-2026-03-17`.
+Historical run (87.00%, superseded as the current internal number by the
+2026-10-22 run): `benchmarks/results/longmemeval-full-publication-20260518.json`.
+Answerer `gpt-5-mini`; judge `gpt-5.4-mini-2026-03-17`. The 2026-10-22 per-type
+counts are in the [2026-10-22 section](#2026-10-22-combined-post-merge-baseline-complete-23-october).
 
 | Question type | Accuracy | Recall@5 |
 |---------------|----------|----------|
