@@ -491,6 +491,7 @@ Admin operations additionally require `X-Admin-Token: <admin_token>` header.
 | `EMBEDDING_MODEL`   | OpenAI embedding model                | `text-embedding-3-small` |
 | `VOYAGE_API_KEY`    | Voyage API key (Voyage provider)      | _unset_    |
 | `VOYAGE_MODEL`      | Voyage model (Voyage provider)        | `voyage-4` |
+| `VOYAGE_INPUT_TYPES`| Voyage `input_type` roles: `query` (recall only), `off`, or `both` (requires re-embed) | `query` |
 | `OPENAI_API_KEY`    | API key (OpenAI or compatible provider) | _unset_  |
 | `OPENAI_BASE_URL`   | Custom endpoint for OpenAI-compatible providers | _unset_ |
 | `OLLAMA_BASE_URL`   | Ollama endpoint for intentional local/self-hosted use | `http://localhost:11434` |

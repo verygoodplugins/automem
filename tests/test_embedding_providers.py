@@ -533,6 +533,7 @@ def test_provider_selection_explicit_voyage(monkeypatch):
     """Test explicit Voyage provider selection."""
     import app
 
+    monkeypatch.delenv("VOYAGE_INPUT_TYPES", raising=False)
     monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
     monkeypatch.setattr(app.state, "qdrant", None, raising=False)
     monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
@@ -549,6 +550,7 @@ def test_provider_selection_explicit_voyage(monkeypatch):
             api_key="voyage-key",
             model="voyage-4",
             dimension=1024,
+            query_input_type="query",
         )
 
 
@@ -1055,3 +1057,37 @@ def test_provider_selection_voyage_input_types_query_only(monkeypatch):
         kwargs = mock_voyage_class.call_args[1]
         assert "input_type" not in kwargs
         assert kwargs["query_input_type"] == "query"
+
+
+def _init_voyage_with_input_types(monkeypatch, value):
+    import app
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    monkeypatch.setenv("VOYAGE_API_KEY", "voyage-key")
+    if value is None:
+        monkeypatch.delenv("VOYAGE_INPUT_TYPES", raising=False)
+    else:
+        monkeypatch.setenv("VOYAGE_INPUT_TYPES", value)
+    monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
+    monkeypatch.setattr(app.state, "embedding_provider", None, raising=False)
+
+    with patch("automem.embedding.voyage.VoyageEmbeddingProvider") as mock_voyage_class:
+        mock_voyage_class.return_value = Mock(provider_name=Mock(return_value="voyage:voyage-4"))
+        app.init_embedding_provider()
+        return mock_voyage_class.call_args[1]
+
+
+@pytest.mark.parametrize("value", [None, "", "on", "true"])
+def test_provider_selection_voyage_input_types_defaults_to_query(monkeypatch, value):
+    kwargs = _init_voyage_with_input_types(monkeypatch, value)
+    assert "input_type" not in kwargs
+    assert kwargs["query_input_type"] == "query"
+
+
+@pytest.mark.parametrize("value", ["off", "false", "0", "none"])
+def test_provider_selection_voyage_input_types_off_sends_no_roles(monkeypatch, value):
+    kwargs = _init_voyage_with_input_types(monkeypatch, value)
+    assert "input_type" not in kwargs
+    assert "query_input_type" not in kwargs

@@ -15,14 +15,18 @@ _PROVIDER_DIMENSION_CONSTRAINTS: dict[str, set[int]] = {
 
 
 def _voyage_input_type_kwargs(logger: Any) -> dict:
-    """Voyage input_type roles from VOYAGE_INPUT_TYPES: off | query | both."""
-    mode = os.getenv("VOYAGE_INPUT_TYPES", "off").strip().lower()
-    if mode in ("", "off", "false", "0", "no"):
+    """Voyage input_type roles from VOYAGE_INPUT_TYPES: query (default) | off | both.
+
+    Generic "enable" values map to ``query`` because it needs no re-embed;
+    ``both`` changes stored vectors, so it must be named explicitly.
+    """
+    mode = os.getenv("VOYAGE_INPUT_TYPES", "query").strip().lower()
+    if mode in ("off", "false", "0", "no", "none"):
         return {}
-    if mode == "query":
+    if mode in ("", "query", "true", "1", "yes", "on"):
         logger.info("Voyage input_type: query on recall only (stored vectors untyped)")
         return {"query_input_type": "query"}
-    if mode in ("both", "true", "1", "yes", "on"):
+    if mode == "both":
         logger.info("Voyage input_type: document on store, query on recall")
         return {"input_type": "document", "query_input_type": "query"}
     logger.warning("Unknown VOYAGE_INPUT_TYPES=%r; sending no input_type", mode)

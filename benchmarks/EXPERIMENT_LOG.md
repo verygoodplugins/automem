@@ -140,6 +140,7 @@ Detailed experiment history:
 | 2026-10-21 | PR #266 prefix filters (no judge) | fix/tag-prefix-filtering @ e360619 | **82.98% (195/235)** | **78.27% (1207/1542)** | -- | -- | Same settings and fresh snapshots: mini **0.00pp**, full **-0.19pp** (four lost/one gained QA rows). Candidate mini/full 147.051s/685.356s. Controlled shared-store replay with identical Python hash seed matches both refs on all five changed rows; the original full delta accompanies preexisting process-dependent query decomposition. Details below. |
 | 2026-11-11 | PR #285 original text (no judge) | develop `1a7ba1a` / candidate `4431d20` mini, `8fb5621` full | **197/235 both** | **1206/1542 → 1207/1542** | -- | -- | Fresh isolated local BGE-768; 69/444 judge-dependent questions skipped, respectively. Strict API and driver audits passed, including zero replacement-query failures or timeouts. Native scorer augments recalled context with labeled evidence. These are directional diagnostics, not official judged scores or buried-text tests. |
 | 2026-11-13 | PR #288 expansion limit (no judge) | develop `2a52c48` / candidate `281ac19` | **197/235 both** | **1206/1542 both** | -- | -- | Matched isolated local BGE-768 runs; no paired verdict changes, with 69/444 judge-dependent questions skipped. Strict API and driver audits passed. Gold evidence augmentation and absence of memory relations limit interpretation; see details below. |
+| 2026-11-13 | `VOYAGE_INPUT_TYPES=query` default (no judge) | develop `2a52c48` + PR #289 | -- | **78.31% → 78.44% (+0.13)** | -- | -- | Evidence-assisted diagnostic, not QA accuracy (see the 2026-11-14 relabel). automem-evals gated-flag sweep, Voyage `voyage-4` 1024d, LoCoMo10 categories 1-4 (1,542 questions), same-stack `off` vs `query`: 15 gained / 13 lost (sign p = 0.85), equal to the drift-repeat floor. BEAM 100K keyword-bag source MRR@10 +0.020 (95% CI +0.009, +0.032). Details below. |
 | 2026-11-14 | Relabel (no new run) | docs/benchmark-claims-accuracy | -- | -- | -- | -- | Every LoCoMo-mini and LoCoMo-full score in this table is an **evidence-assisted diagnostic, not QA accuracy**. `tests/benchmarks/test_locomo.py` fetches the gold evidence dialogs by ID for categories 1-4 and scores answer overlap against them, and the category-5 judge sees them too. Use these columns only for regression deltas between runs of this harness. The harness now prints and stores this label; scoring is unchanged. → [details](#2026-11-14-locomo-harness-evidence-assisted-diagnostic-not-qa-accuracy) |
 
 ### 2026-11-14 LoCoMo harness: evidence-assisted diagnostic, not QA accuracy
@@ -165,6 +166,31 @@ a Gemini answerer and judge on n=1540. The matching 85.1 figures are a
 coincidence of two different measurements. The harness now prints
 `Run label: evidence-assisted diagnostic, not QA accuracy` and writes the same
 string to `run_label` in its result JSON. Scoring logic is unchanged.
+
+### 2026-11-13 Voyage query input_type: gated-flag sweep
+
+The default flip to `VOYAGE_INPUT_TYPES=query` cites the automem-evals
+`EXP-GATED-FLAG-SWEEP` run (`data/results/SUMMARY-20261113-gated-flag-sweep.md`).
+The image was develop `2a52c48` plus the PR #289 commit. Each corpus was seeded
+once, and only the API container was recreated per arm, with the mode confirmed
+from the in-container Voyage log line. Stored vectors stay untyped in `query`
+mode, so both arms share one store.
+
+- LoCoMo10, judge off (`OPENAI_API_KEY` blank), categories 1-4, run through
+  `tests/benchmarks/test_locomo.py`, so it is an evidence-assisted diagnostic,
+  not QA accuracy: 78.31% to 78.44% (+0.13 pt, 95% CI -0.52 to +0.78), 15
+  gained and 13 lost. The
+  same-stack no-change repeat moved +0.13 pt with 2 flips. Judge-off LoCoMo
+  scores word overlap over 50-75 recalled memories, so it cannot see rank moves
+  inside the top 10.
+- BEAM 100K retrieval proxy, 400 questions: natural-language source MRR@10
+  +0.005 (CI spans 0); keyword-bag rewrite +0.020 (CI +0.009 to +0.032), 47
+  better and 13 worse.
+- Synthetic session-start corpora leaned slightly negative, within noise.
+
+This is not a judged LoCoMo run. The production evidence in PR #289 (131k
+memories, blind judge, `/recall` nDCG@10 0.762 to 0.807) supports the same
+direction.
 
 ### 2026-11-13 expansion limit: isolated no-provider comparison
 
