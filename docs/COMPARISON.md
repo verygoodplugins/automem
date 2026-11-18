@@ -41,7 +41,7 @@ What AutoMem adds over a bare vector store:
 - **Multi-hop reasoning.** Bridge discovery follows graph relationships from seed memories to find the connecting nodes — see the README's [Multi-hop bridge discovery](../README.md#multi-hop-bridge-discovery) example.
 - **Eleven relationship types.** Structured semantics rather than cosine similarity alone.
 - **Background intelligence.** Auto-enrichment, pattern detection, scheduled decay cycles — none of which exist in a raw vector store.
-- **Hybrid scoring.** A 9-component recall score (see below) that combines vector similarity with graph strength, temporal alignment, importance, confidence, and tag overlap. Pure vector search collapses all of this into a single distance metric.
+- **Hybrid scoring.** A weighted recall score over ten signals, nine of them on by default (see below), that combines vector similarity with keyword and metadata matches, graph strength, recency, importance, confidence, and tag overlap. Pure vector search collapses all of this into a single distance metric.
 
 When a vector database alone is the right answer:
 
@@ -55,10 +55,10 @@ When a vector database alone is the right answer:
 
 You can absolutely build a custom memory layer on Postgres + pgvector + a queue + your own enrichment service. That's how a lot of teams start. What you're signing up for:
 
-- **The recall scoring problem.** Tuning a hybrid score across vector, keyword, graph, temporal, and importance signals takes weeks of iteration. AutoMem ships with a [validated baseline](#9-component-recall-scoring) and a [recall-quality lab](https://github.com/verygoodplugins/automem-evals) for tuning.
+- **The recall scoring problem.** Tuning a hybrid score across vector, keyword, graph, temporal, and importance signals takes weeks of iteration. AutoMem ships with a [validated baseline](#recall-scoring-signals) and a [recall-quality lab](https://github.com/verygoodplugins/automem-evals) for tuning.
 - **The consolidation problem.** Decay rates, importance floors, archival thresholds — get any of these wrong and recall quality silently degrades over months. AutoMem encodes the [neuroscience-derived defaults](../README.md#memory-consolidation-neuroscience-inspired) and exposes them as env vars.
 - **The integration problem.** MCP, REST, SSE, embedding provider abstraction (Voyage / OpenAI / Ollama / FastEmbed), client-specific configs for Cursor / Claude Desktop / ChatGPT — this is months of plumbing.
-- **The benchmark problem.** Without a benchmark, "it feels like it works" is the only quality signal you have. AutoMem publishes transparent [LoCoMo baselines](../benchmarks/EXPERIMENT_LOG.md) and a reproducible harness.
+- **The benchmark problem.** Without a benchmark, "it feels like it works" is the only quality signal you have. AutoMem publishes its benchmark history in [`benchmarks/EXPERIMENT_LOG.md`](../benchmarks/EXPERIMENT_LOG.md), keeping the neutral Agent Memory Benchmark runs separate from its internal engineering baselines, and ships a reproducible harness.
 
 When building your own is the right answer:
 
@@ -68,14 +68,15 @@ When building your own is the right answer:
 
 ---
 
-## 9-component recall scoring
+## Recall scoring signals
 
-`GET /recall` ranks results by a weighted sum of nine signals. Every weight is tunable via the `SEARCH_WEIGHT_*` environment variables — see [`docs/ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md) for the canonical list.
+`GET /recall` ranks results by a weighted sum of ten signals (`automem/utils/scoring.py`). Nine have non-zero default weights; consolidation relevance defaults to `0.0`, so it is off. Every weight is tunable via the `SEARCH_WEIGHT_*` environment variables — see [`docs/ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md) for the canonical list.
 
 | Component | Default weight | What it measures |
 |---|---|---|
 | **Vector** | 0.35 | Cosine similarity between query embedding and memory embedding |
 | **Keyword** | 0.35 | TF-IDF style overlap between query terms and memory content |
+| **Metadata** | 0.35 | Match score for candidates admitted through the metadata sidecar channel |
 | **Relation** | 0.25 | Strength of graph edges into the memory (boosted by traversal depth) |
 | **Tag** | 0.20 | Tag overlap between query and memory |
 | **Exact** | 0.20 | Exact phrase match in memory metadata |
@@ -84,7 +85,9 @@ When building your own is the right answer:
 | **Confidence** | 0.05 | The memory's `confidence` score (0–1) |
 | **Relevance** | 0.00 | Consolidation decay relevance — disabled by default |
 
-These defaults reflect the current canonical benchmark posture: LongMemEval full at 87.00% with 97.00% recall@5, and LoCoMo full at 84.74%. For a query like `GET /recall?query=database+migration&tags=decision&time_query=last+month`, the temporal-alignment and tag components dominate; for `GET /recall?query=why+postgres&expand_relations=true`, the relation component does.
+Two terms sit outside that weighted sum. An additive context bonus applies when a request passes context hints such as `context_tags` or `context_types`. `SEARCH_WEIGHT_TEMPORAL` (default `0.1`) adds a relative-recency bonus only when the `recency_bias` re-rank runs, which is off by default (`RECALL_RECENCY_BIAS=off`).
+
+For benchmark results, see the dated table in the [README](../README.md#proven-where-long-context-gets-hard), which names the harness, embedder, answer model, and judge for each row, and the full history in [`benchmarks/EXPERIMENT_LOG.md`](../benchmarks/EXPERIMENT_LOG.md). For a query like `GET /recall?query=database+migration&tags=decision&time_query=last+month`, the `tags` and `time_query` parameters filter the candidate pool before any scoring; for `GET /recall?query=why+postgres&expand_relations=true`, memories reached through graph expansion score through the relation component.
 
 The Recall Quality Lab (`scripts/lab/`) lets you sweep any weight and A/B-compare configs against snapshots of production data without touching the service. The [scripts catalog](../scripts/README.md) explains when to clone, generate queries, test, compare, or sweep.
 

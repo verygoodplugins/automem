@@ -2,6 +2,13 @@
 
 All notable changes to AutoMem will be documented in this file.
 
+## [0.16.3](https://github.com/verygoodplugins/automem/compare/v0.16.2...v0.16.3) (2026-11-08)
+
+
+### Bug Fixes
+
+* **docker:** promote localhost database bindings ([#279](https://github.com/verygoodplugins/automem/issues/279)) ([2d4dedb](https://github.com/verygoodplugins/automem/commit/2d4dedbf9a17de8b7b878d3d307a3307b86dd703))
+
 ## [0.16.2](https://github.com/verygoodplugins/automem/compare/v0.16.1...v0.16.2) (2026-08-28)
 
 
