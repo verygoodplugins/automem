@@ -4141,6 +4141,106 @@ def test_batch_store_success_confirms_graph_ids(client, mock_state, auth_headers
     assert memory_id in mock_state.qdrant.points
 
 
+def _map_param_paths(value: Any, path: str = "") -> list[str]:
+    """Return the paths of every map nested anywhere inside a query parameter value."""
+    if isinstance(value, dict):
+        return [path or "<root>"]
+    if isinstance(value, (list, tuple)):
+        return [
+            found
+            for index, item in enumerate(value)
+            for found in _map_param_paths(item, f"{path}[{index}]")
+        ]
+    return []
+
+
+def test_batch_store_graph_params_exclude_caller_metadata_maps(client, mock_state, auth_headers):
+    """POST /memory/batch passes metadata to FalkorDB only as a JSON string."""
+    mock_state.embedding_provider = FakeEmbeddingProvider([[0.5] * config.VECTOR_SIZE])
+    hostile_key = "a:1}] MATCH (n) RETURN n //"
+    metadata = {
+        "files-modified": ["automem/api/memory.py"],
+        "key with spaces": "value",
+        "dotted.key": 1,
+        "1leading": True,
+        "nested": {"inner-key": {"deep:key": "x"}},
+        hostile_key: "probe",
+    }
+
+    response = client.post(
+        "/memory/batch",
+        json={"memories": [{"content": "Batch metadata key probe", "metadata": metadata}]},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    [memory_id] = response.get_json()["memory_ids"]
+    batch_query, batch_params = next(
+        (query, params)
+        for query, params in mock_state.memory_graph.queries
+        if "UNWIND $memories AS m" in query
+    )
+    [row] = batch_params["memories"]
+    # FalkorDB serializes map keys unquoted, so no field of a batch row may be a map.
+    assert _map_param_paths(list(row.values())) == []
+    assert json.loads(row["metadata"]) == metadata
+    assert json.loads(mock_state.memory_graph.memories[memory_id]["metadata"]) == metadata
+    assert mock_state.qdrant.points[memory_id]["payload"]["metadata"] == metadata
+    assert "m.metadata_dict" not in batch_query
+
+
+def test_create_association_encodes_map_property_values(client, mock_state, auth_headers):
+    """Association property values that are maps reach FalkorDB as JSON strings."""
+    mem1_id = "11111111-1111-1111-1111-111111111111"
+    mem2_id = "22222222-2222-2222-2222-222222222222"
+    mem3_id = "33333333-3333-3333-3333-333333333333"
+    for memory_id in (mem1_id, mem2_id, mem3_id):
+        mock_state.memory_graph.memories[memory_id] = {"id": memory_id, "content": memory_id}
+    reason = {"why-not": {"a b": 1}}
+
+    single = client.post(
+        "/associate",
+        json={
+            "memory1_id": mem1_id,
+            "memory2_id": mem2_id,
+            "type": "PREFERS_OVER",
+            "reason": reason,
+        },
+        headers=auth_headers,
+    )
+    batch = client.post(
+        "/associate",
+        json={
+            "associations": [
+                {
+                    "memory1_id": mem2_id,
+                    "memory2_id": mem3_id,
+                    "type": "REINFORCES",
+                    "observations": ["plain", {"x-y": 2}],
+                }
+            ]
+        },
+        headers=auth_headers,
+    )
+
+    assert single.status_code == 201
+    assert batch.status_code == 201
+    assert single.get_json()["reason"] == json.dumps(reason)
+    single_params = next(
+        params
+        for query, params in mock_state.memory_graph.queries
+        if "MERGE (m1)-[r:PREFERS_OVER]->(m2)" in query
+    )
+    assert single_params["reason"] == json.dumps(reason)
+    batch_params = next(
+        params for query, params in mock_state.memory_graph.queries if "UNWIND $rows" in query
+    )
+    [row] = batch_params["rows"]
+    assert row["props"]["observations"] == ["plain", json.dumps({"x-y": 2})]
+    # Rows and props are maps with server-chosen keys; no caller-supplied map remains.
+    assert _map_param_paths(list(row["props"].values())) == []
+
+
 def test_invalid_json_payload(client, mock_state, auth_headers):
     """Test handling of invalid JSON payload."""
     response = client.post(
