@@ -103,6 +103,14 @@ def _install_qdrant_stub() -> None:
         def __init__(self, has_id):
             self.has_id = has_id
 
+    class PayloadField:
+        def __init__(self, key: str):
+            self.key = key
+
+    class IsEmptyCondition:
+        def __init__(self, is_empty):
+            self.is_empty = is_empty
+
     class ValuesCount:
         def __init__(self, gte=None, lte=None):
             self.gte = gte
@@ -128,6 +136,8 @@ def _install_qdrant_stub() -> None:
     models_module.MatchExcept = MatchExcept
     models_module.FieldCondition = FieldCondition
     models_module.HasIdCondition = HasIdCondition
+    models_module.PayloadField = PayloadField
+    models_module.IsEmptyCondition = IsEmptyCondition
     models_module.ValuesCount = ValuesCount
     models_module.Filter = Filter
     models_module.PointIdsList = PointIdsList

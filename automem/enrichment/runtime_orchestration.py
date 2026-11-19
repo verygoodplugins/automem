@@ -172,6 +172,12 @@ def _sync_enrichment_payload(
     metadata. Nested payload updates preserve caller metadata keys, and a tag filter
     prevents restoring an old tag list over the newer PATCH payload. Returns False
     when the guard skipped the update.
+
+    A legacy point written before `content_hash` existed is healed in place: when its
+    stored content equals the source text, the hash is stamped with a write filtered on
+    the field still being empty. Every writer now sets the field, so a PATCH landing
+    between the read and the stamp makes the stamp match nothing and the guarded writes
+    below skip, exactly as for a hashed point.
     """
     if client is None:
         return True
@@ -192,6 +198,31 @@ def _sync_enrichment_payload(
         )
 
     try:
+        current = client.retrieve(
+            collection_name=collection_name,
+            ids=[memory_id],
+            with_payload=["content_hash", "content"],
+        )
+        current_payload = (getattr(current[0], "payload", None) or {}) if current else None
+        if current_payload is not None and not current_payload.get("content_hash"):
+            if content_fingerprint(current_payload.get("content")) != expected_hash:
+                logger.debug(
+                    "Skipped Qdrant enrichment sync for %s: legacy point content differs "
+                    "from the enriched source",
+                    memory_id,
+                )
+                return False
+            client.set_payload(
+                collection_name=collection_name,
+                points=models.Filter(
+                    must=[
+                        models.HasIdCondition(has_id=[memory_id]),
+                        models.IsEmptyCondition(is_empty=models.PayloadField(key="content_hash")),
+                    ]
+                ),
+                payload={"content_hash": expected_hash},
+                wait=True,
+            )
         if updated["tags"] != source_tags:
             tag_conditions = [
                 models.FieldCondition(key="tags", match=models.MatchValue(value=tag))
@@ -248,11 +279,7 @@ def _sync_enrichment_payload(
     if current_hash == expected_hash:
         return True
     if current_hash is None:
-        logger.warning(
-            "Skipped Qdrant enrichment sync for %s: point has no content_hash "
-            "(run scripts/backfill_content_hash.py)",
-            memory_id,
-        )
+        logger.debug("Skipped Qdrant enrichment sync for %s: point has no content_hash", memory_id)
     else:
         logger.info(
             "Skipped Qdrant enrichment sync for %s: content changed after enrichment read it",
