@@ -640,10 +640,11 @@ def test_tag_score_token_cap_config_falls_back_on_negative_values():
 
 
 def _pin_default_scoring(monkeypatch, gate: float = 0.0) -> None:
-    """Pin scoring config to documented defaults.
+    """Pin scoring config so a tuned .env cannot leak into these tests.
 
-    config.py runs load_dotenv() at import, so a tuned .env could otherwise
-    leak into these tests.
+    config.py runs load_dotenv() at import. SEARCH_WEIGHT_RELEVANCE is pinned
+    to 0 (the production default is 0.25) so these cases stay on the
+    relevance-off formula their expected scores were written against.
     """
     monkeypatch.setattr(scoring, "SEARCH_WEIGHT_VECTOR", 0.35)
     monkeypatch.setattr(scoring, "SEARCH_WEIGHT_KEYWORD", 0.35)
@@ -881,8 +882,8 @@ def test_compute_metadata_score_gate_does_not_touch_context_bonus(monkeypatch):
 
 def test_compute_metadata_score_gate_scales_relevance_score(monkeypatch):
     """relevance_score (consolidation decay) is query-independent and gated
-    with the other crumbs. With the default SEARCH_WEIGHT_RELEVANCE=0.0 this
-    is a no-op today; pin a non-zero weight to observe the scaling."""
+    with the other crumbs. Pin a known non-zero weight (the helper forces 0)
+    so the scaling is observable independent of the config default."""
     _pin_default_scoring(monkeypatch, gate=0.2)
     monkeypatch.setattr(scoring, "SEARCH_WEIGHT_RELEVANCE", 0.3)
 
