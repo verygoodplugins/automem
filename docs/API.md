@@ -34,6 +34,7 @@ are not migrated by this change.
   - Response: `{ "status": "success", "stored": N, "memory_ids": [...], "qdrant": "queued", "enrichment": "queued", "query_time_ms": 12.3 }`
   - All memories are written to FalkorDB first. By default their vectors are then queued for the background embedding worker, like `POST /memory`, so the response does not wait on the embedding provider and `qdrant` is `"queued"` (`"unconfigured"` without Qdrant).
   - `"sync_embeddings": true` generates and upserts vectors before responding (still after the graph write). Benchmark ingestion uses it because it snapshots or evaluates immediately afterwards. `qdrant` is then `"stored (N)"`, `"stored (N), queued (M)"`, `"queued"` or `"queued (fallback)"`.
+  - Ordering: in the default path, enrichment is enqueued at the same time as the embedding queue, so it can run before a memory's vector exists. Semantic neighbor links (`SIMILAR_TO`) may then be missing. With `sync_embeddings: true`, enrichment is queued after vectors are stored, except for any `queued (fallback)` vectors. Sync mode also embeds without re-checking content after the upsert, so it assumes a single writer; a concurrent `PATCH` to the same memory during embedding can leave a stale vector.
 
 - GET `/memory/{id}`
   - Response: `{ "status": "success", "memory": { ... } }`

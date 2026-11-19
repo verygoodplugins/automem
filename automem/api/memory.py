@@ -1365,6 +1365,10 @@ def create_memory_blueprint_full(
         Max 500 memories per request. ``sync_embeddings: true`` generates and
         upserts vectors before responding (still after the graph write), for
         benchmark ingestion that snapshots or evaluates immediately afterwards.
+        In the default path enrichment is queued alongside the embedding queue,
+        so it may run before vectors exist and miss ``SIMILAR_TO`` links; sync
+        mode queues enrichment after vectors are stored. Sync mode does not
+        re-check content after upsert, so it assumes a single writer.
         """
         query_start = time.perf_counter()
         payload = request.get_json(silent=True)
