@@ -28,7 +28,14 @@ def enqueue_enrichment(
     forced: bool,
     attempt: int,
     enrichment_job_cls: Any,
+    supersede_inflight: bool = False,
 ) -> None:
+    """Queue one enrichment job per memory.
+
+    A pending job always absorbs a new request. An in-flight job absorbs a fresh
+    request too, unless `supersede_inflight` says the in-flight run read content
+    that has since changed: then one follow-up job is queued behind it.
+    """
     if not memory_id or state.enrichment_queue is None:
         return
 
@@ -37,7 +44,7 @@ def enqueue_enrichment(
     with state.enrichment_lock:
         if not forced and (
             memory_id in state.enrichment_pending
-            or (attempt == 0 and memory_id in state.enrichment_inflight)
+            or (attempt == 0 and not supersede_inflight and memory_id in state.enrichment_inflight)
         ):
             return
 
