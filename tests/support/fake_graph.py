@@ -396,6 +396,10 @@ class FakeGraph:
                     "t_invalid": params.get("t_invalid", memory.get("t_invalid")),
                 }
             )
+            # A content PATCH also resets the enrichment-derived graph fields.
+            for key in ("summary", "enriched", "enriched_at", "processed"):
+                if key in params:
+                    memory[key] = params[key]
             return FakeResult([[FakeNode(memory)]])
 
         # Memory retrieval by id
