@@ -1,17 +1,16 @@
 """Backfill the Qdrant `content_hash` payload field on points written before #270.
 
-Enrichment only writes derived metadata to a point whose `content_hash` matches the
-text it enriched, so legacy points without the field receive no derived updates
-until this runs. Each write is filtered on `content_hash` still being empty: every
-writer now sets the field, so a point that is still empty has not been PATCHed
-since it was scrolled, and the backfill cannot stamp an old hash on new content.
+Optional: enrichment stamps a legacy point lazily the next time it enriches it, so
+this script is only a bulk option for stamping every point at once. Each write is
+filtered on `content_hash` still being empty: every writer now sets the field, so a
+point that is still empty has not been PATCHed since it was scrolled, and the
+backfill cannot stamp an old hash on new content.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import pathlib
 import sys
 
@@ -32,12 +31,15 @@ def main() -> int:
 
     from qdrant_client import QdrantClient, models
 
-    url = (os.getenv("QDRANT_URL") or "").strip()
+    from automem.config import COLLECTION_NAME, QDRANT_API_KEY, QDRANT_URL
+
+    # automem.config builds QDRANT_URL from QDRANT_HOST + QDRANT_PORT (Railway) when unset.
+    url = (QDRANT_URL or "").strip()
     if not url:
-        print("QDRANT_URL is required", file=sys.stderr)
+        print("QDRANT_URL or QDRANT_HOST is required", file=sys.stderr)
         return 1
-    client = QdrantClient(url=url, api_key=(os.getenv("QDRANT_API_KEY") or "").strip() or None)
-    collection = (os.getenv("QDRANT_COLLECTION") or "memories").strip()
+    client = QdrantClient(url=url, api_key=(QDRANT_API_KEY or "").strip() or None)
+    collection = (COLLECTION_NAME or "memories").strip()
     missing = models.IsEmptyCondition(is_empty=models.PayloadField(key="content_hash"))
 
     scanned = updated = failures = 0
