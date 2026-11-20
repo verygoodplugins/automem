@@ -79,6 +79,65 @@ def update_last_accessed(
         logger.exception("Failed to update last_accessed for memories")
 
 
+EMBEDDING_WAIT_POLL_SECONDS = 0.25
+
+
+def _wait_for_pending_embedding(
+    *,
+    state: Any,
+    memory_id: str,
+    timeout_seconds: float,
+    logger: Any,
+    perf_counter_fn: Callable[[], float],
+    sleep_fn: Callable[[float], None],
+) -> bool:
+    """Wait, bounded by ``timeout_seconds``, for a memory's queued embedding to be stored.
+
+    Semantic linking reads the stored vector. If enrichment runs before the
+    embedding worker upserts it, no SIMILAR_TO links are created and nothing
+    retries them. On timeout this returns and the caller enriches anyway, which
+    is the behaviour without waiting. The caller is then expected to suppress
+    further waiting for one timeout window, so a slow embedding provider stalls
+    the worker at most about once per window rather than once per job.
+
+    Args:
+        state: Service state holding ``embedding_lock``, ``embedding_pending``
+            and ``embedding_inflight``. States without them skip waiting.
+        memory_id: Memory whose embedding must settle before enrichment.
+        timeout_seconds: Maximum wait; values ``<= 0`` disable waiting.
+        logger: Logger used to report a timeout.
+        perf_counter_fn: Monotonic clock used for the deadline.
+        sleep_fn: Sleep used between polls.
+
+    Returns:
+        True if the wait timed out with the embedding still queued, else False.
+    """
+    lock = getattr(state, "embedding_lock", None)
+    pending = getattr(state, "embedding_pending", None)
+    inflight = getattr(state, "embedding_inflight", None)
+    if lock is None or pending is None or inflight is None or timeout_seconds <= 0:
+        return False
+
+    deadline: float | None = None
+    while True:
+        with lock:
+            if memory_id not in pending and memory_id not in inflight:
+                return False
+        now = perf_counter_fn()
+        if deadline is None:
+            deadline = now + timeout_seconds
+        if now >= deadline:
+            logger.warning(
+                "Embedding for %s still pending after %.1fs; enriching without it and "
+                "skipping embedding waits for %.1fs",
+                memory_id,
+                timeout_seconds,
+                timeout_seconds,
+            )
+            return True
+        sleep_fn(EMBEDDING_WAIT_POLL_SECONDS)
+
+
 def enrichment_worker(
     *,
     state: Any,
@@ -86,6 +145,7 @@ def enrichment_worker(
     enrichment_idle_sleep_seconds: float,
     enrichment_max_attempts: int,
     enrichment_failure_backoff_seconds: float,
+    embedding_wait_timeout_seconds: float,
     empty_exc: Any,
     enrich_memory_fn: Callable[..., bool],
     emit_event_fn: Callable[[str, Dict[str, Any], Callable[[], str]], None],
@@ -94,7 +154,12 @@ def enrichment_worker(
     perf_counter_fn: Callable[[], float],
     sleep_fn: Callable[[float], None],
 ) -> None:
-    """Background worker that processes memories for enrichment."""
+    """Background worker that processes memories for enrichment.
+
+    A pending-embedding wait that times out suppresses further waits until
+    ``embedding_wait_timeout_seconds`` has elapsed on ``perf_counter_fn``.
+    """
+    embedding_wait_suppressed_until: float | None = None
     while True:
         try:
             if state.enrichment_queue is None:
@@ -109,6 +174,23 @@ def enrichment_worker(
             with state.enrichment_lock:
                 state.enrichment_pending.discard(job.memory_id)
                 state.enrichment_inflight.add(job.memory_id)
+
+            if (
+                embedding_wait_suppressed_until is None
+                or perf_counter_fn() >= embedding_wait_suppressed_until
+            ):
+                timed_out = _wait_for_pending_embedding(
+                    state=state,
+                    memory_id=job.memory_id,
+                    timeout_seconds=embedding_wait_timeout_seconds,
+                    logger=logger,
+                    perf_counter_fn=perf_counter_fn,
+                    sleep_fn=sleep_fn,
+                )
+                if timed_out:
+                    embedding_wait_suppressed_until = (
+                        perf_counter_fn() + embedding_wait_timeout_seconds
+                    )
 
             enrich_start = perf_counter_fn()
             emit_event_fn(
