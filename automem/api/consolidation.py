@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from flask import Blueprint, abort, jsonify, request
@@ -19,6 +22,10 @@ def create_consolidation_blueprint_full(
 ) -> Blueprint:
     bp = Blueprint("consolidation", __name__)
 
+    # Tracks the in-flight manual run so a retried POST cannot start a second one.
+    run_lock = threading.Lock()
+    active_run: Dict[str, Optional[Dict[str, Any]]] = {"run": None}
+
     @bp.route("/consolidate", methods=["POST"])
     def consolidate() -> Any:
         data = request.get_json(silent=True) or {}
@@ -28,6 +35,25 @@ def create_consolidation_blueprint_full(
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
+
+        with run_lock:
+            current = active_run["run"]
+            if current is not None:
+                return (
+                    jsonify(
+                        {
+                            "error": "Consolidation already in progress",
+                            "active_run": dict(current),
+                        }
+                    ),
+                    409,
+                )
+            active_run["run"] = {
+                "run_id": str(uuid.uuid4()),
+                "mode": mode,
+                "dry_run": dry_run,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
 
         try:
             vector_store = get_qdrant_client()
@@ -39,6 +65,9 @@ def create_consolidation_blueprint_full(
         except Exception as e:
             logger.error(f"Consolidation failed: {e}")
             return jsonify({"error": "Consolidation failed", "details": str(e)}), 500
+        finally:
+            with run_lock:
+                active_run["run"] = None
 
     @bp.route("/consolidate/status", methods=["GET"])
     def status() -> Any:
@@ -50,12 +79,16 @@ def create_consolidation_blueprint_full(
             scheduler = build_scheduler(graph)
             history = load_recent_runs(graph, history_limit)
             next_runs = scheduler.get_next_runs() if scheduler else {}
+            with run_lock:
+                current = active_run["run"]
+                active = dict(current) if current is not None else None
             return (
                 jsonify(
                     {
                         "status": "success",
                         "next_runs": next_runs,
                         "history": history,
+                        "active_run": active,
                         "thread_alive": bool(
                             state.consolidation_thread and state.consolidation_thread.is_alive()
                         ),
