@@ -3561,6 +3561,46 @@ def test_consolidate_status(client, mock_state, auth_headers):
     assert "next_runs" in data  # API returns 'next_runs' not 'tasks'
 
 
+def test_consolidate_rejects_concurrent_run(client, mock_state, auth_headers, monkeypatch):
+    """A second POST while a run is in flight gets 409 and does not start another run."""
+    calls = []
+    observed = {}
+
+    class ReentrantConsolidator:
+        def __init__(self, graph, vector_store, **kwargs):
+            pass
+
+        def consolidate(self, mode="full", dry_run=True):
+            calls.append(mode)
+            if len(calls) == 1:
+                # Simulate a retried request arriving while this run is still executing.
+                other = app.app.test_client()
+                observed["status"] = other.get("/consolidate/status", headers=auth_headers)
+                observed["second"] = other.post(
+                    "/consolidate", json={"mode": "full"}, headers=auth_headers
+                )
+            return {"mode": mode, "dry_run": dry_run}
+
+    monkeypatch.setattr(
+        "automem.consolidation.runtime_bindings.MemoryConsolidator", ReentrantConsolidator
+    )
+
+    first = client.post("/consolidate", json={"mode": "full"}, headers=auth_headers)
+    assert first.status_code == 200
+    assert calls == ["full"]  # the retry did not start a second run
+
+    active = observed["status"].get_json()["active_run"]
+    assert active["mode"] == "full"
+    assert observed["second"].status_code == 409
+    assert observed["second"].get_json()["active_run"]["run_id"] == active["run_id"]
+
+    # The guard is released once the run finishes.
+    assert client.get("/consolidate/status", headers=auth_headers).get_json()["active_run"] is None
+    rerun = client.post("/consolidate", json={"mode": "full"}, headers=auth_headers)
+    assert rerun.status_code == 200
+    assert calls == ["full", "full"]
+
+
 # ==================== Test Enrichment ====================
 
 
