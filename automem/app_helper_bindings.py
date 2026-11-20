@@ -53,9 +53,10 @@ def create_app_helper_runtime(
             content, get_state_fn().effective_vector_size
         )
 
-    def generate_real_embedding(content: str) -> List[float]:
+    def generate_real_embedding(content: str, *, query: bool = False) -> List[float]:
         return generate_real_embedding_value_fn(
             content,
+            query=query,
             init_embedding_provider=init_embedding_provider_fn,
             state=get_state_fn(),
             logger=logger,
@@ -63,7 +64,10 @@ def create_app_helper_runtime(
         )
 
     def generate_real_embeddings_batch(
-        contents: List[str], *, allow_placeholder_fallback: bool = True
+        contents: List[str],
+        *,
+        allow_placeholder_fallback: bool = True,
+        allow_placeholder_provider: bool = False,
     ) -> List[List[float]]:
         return generate_real_embeddings_batch_value_fn(
             contents,
@@ -72,6 +76,7 @@ def create_app_helper_runtime(
             logger=logger,
             placeholder_embedding=get_generate_placeholder_embedding_fn(),
             allow_placeholder_fallback=allow_placeholder_fallback,
+            allow_placeholder_provider=allow_placeholder_provider,
         )
 
     def fetch_relations(graph: Any, memory_id: str) -> List[Dict[str, Any]]:

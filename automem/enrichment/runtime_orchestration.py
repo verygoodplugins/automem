@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from automem.enrichment.runtime_helpers import EnrichmentWritePlan
+from automem.stores.vector_payload import content_fingerprint
 from automem.utils.entity_quality import validate_entity_value
 
 
@@ -26,6 +29,263 @@ def _validated_entities(entities: Dict[str, List[str]], content: str) -> Dict[st
 
     validated["tools"].difference_update(validated["people"])
     return {category: sorted(values) for category, values in validated.items()}
+
+
+class EnrichmentConflictError(RuntimeError):
+    """A concurrent memory edit requires enrichment to start with fresh content."""
+
+
+def _persist_enrichment(
+    *,
+    graph: Any,
+    memory_id: str,
+    content: str,
+    entities: Dict[str, List[str]],
+    summary: Any,
+    previous_summary: Any,
+    enrichment_updates: Dict[str, Any],
+    processed: bool,
+    parse_metadata_field_fn: Callable[[Any], Any],
+    normalize_tag_list_fn: Callable[[Any], List[str]],
+    slugify_fn: Callable[[str], str],
+    compute_tag_prefixes_fn: Callable[[List[str]], List[str]],
+    enriched_at: str,
+    write_plan: Optional[EnrichmentWritePlan] = None,
+    source_timestamp: Any = None,
+) -> Optional[Tuple[Dict[str, Any], List[str]]]:
+    """Merge derived fields into a fresh snapshot, committing only if it is current.
+
+    Expensive extraction happens outside this helper. A concurrent tag/metadata edit
+    rebases the derived additions; a content edit invalidates the extraction itself.
+    """
+    write_clauses, write_params = write_plan.compile() if write_plan else ("", {})
+    for _ in range(3):
+        result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
+        if not getattr(result, "result_set", None):
+            return None
+        node = result.result_set[0][0]
+        current = dict(getattr(node, "properties", {}))
+        if (current.get("content") or "") != content:
+            raise EnrichmentConflictError(f"Memory {memory_id} changed during enrichment")
+        if write_plan is not None and current.get("timestamp") != source_timestamp:
+            raise EnrichmentConflictError(f"Memory {memory_id} timestamp changed during enrichment")
+
+        metadata = deepcopy(parse_metadata_field_fn(current.get("metadata")) or {})
+        if not isinstance(metadata, dict):
+            metadata = {"_raw_metadata": metadata}
+        entity_updates = {category: values for category, values in entities.items() if values}
+        if entity_updates:
+            entity_metadata = metadata.get("entities")
+            if not isinstance(entity_metadata, dict):
+                entity_metadata = {}
+            entity_metadata.update(entity_updates)
+            metadata["entities"] = entity_metadata
+        enrichment_metadata = metadata.get("enrichment")
+        if not isinstance(enrichment_metadata, dict):
+            enrichment_metadata = {}
+        enrichment_metadata.update(enrichment_updates)
+        metadata["enrichment"] = enrichment_metadata
+
+        source_tags = current.get("tags") or []
+        tags = list(dict.fromkeys(normalize_tag_list_fn(source_tags)))
+        for category, values in entity_updates.items():
+            for value in values:
+                slug = slugify_fn(value)
+                tag = f"entity:{category}:{slug}"
+                if slug and tag not in tags:
+                    tags.append(tag)
+        tag_prefixes = compute_tag_prefixes_fn(tags)
+        saved_summary = (
+            summary if current.get("summary") == previous_summary else current.get("summary")
+        )
+        update_payload = {
+            "id": memory_id,
+            "metadata": json.dumps(metadata, default=str),
+            "tags": tags,
+            "tag_prefixes": tag_prefixes,
+            "summary": saved_summary,
+            "enriched_at": enriched_at,
+            "enriched": True,
+            "expected_content": content,
+            "expected_tags": source_tags,
+            "expected_metadata": current.get("metadata") or "",
+            "expected_summary": current.get("summary") or "",
+            "expected_timestamp": current.get("timestamp") or "",
+        }
+        processed_clause = ", m.processed = true" if processed else ""
+        result = graph.query(
+            """
+            MATCH (m:Memory {id: $id})
+            WHERE coalesce(m.content, '') = $expected_content
+              AND coalesce(m.tags, []) = $expected_tags
+              AND coalesce(m.metadata, '') = $expected_metadata
+              AND coalesce(m.summary, '') = $expected_summary
+              AND coalesce(m.timestamp, '') = $expected_timestamp
+            """
+            + write_clauses
+            + """
+            SET m.metadata = $metadata,
+                m.tags = $tags,
+                m.tag_prefixes = $tag_prefixes,
+                m.summary = $summary,
+                m.enriched = $enriched,
+                m.enriched_at = $enriched_at
+            """
+            + processed_clause
+            + " RETURN m",
+            {**update_payload, **write_params},
+        )
+        if getattr(result, "result_set", None):
+            saved_node = result.result_set[0][0]
+            updated = dict(getattr(saved_node, "properties", current))
+            updated.update(
+                metadata=metadata,
+                tags=tags,
+                tag_prefixes=tag_prefixes,
+                summary=saved_summary,
+                enriched=True,
+                enriched_at=enriched_at,
+            )
+            if processed:
+                updated["processed"] = True
+            return updated, source_tags
+    raise EnrichmentConflictError(f"Memory {memory_id} kept changing during enrichment")
+
+
+def _sync_enrichment_payload(
+    *,
+    client: Any,
+    collection_name: str,
+    memory_id: str,
+    content: str,
+    source_tags: List[str],
+    updated: Dict[str, Any],
+    entities: Dict[str, List[str]],
+    enrichment_updates: Dict[str, Any],
+    logger: Any,
+) -> bool:
+    """Update only derived metadata, and only on the point revision it was derived from.
+
+    PATCH may commit after the graph update and before this sync. Every write filters
+    on the indexed `content_hash` of the source text, so Qdrant evaluates the guard
+    when it applies the update; a newer PATCH payload is never given obsolete derived
+    metadata. Nested payload updates preserve caller metadata keys, and a tag filter
+    prevents restoring an old tag list over the newer PATCH payload. Returns False
+    when the guard skipped the update.
+
+    A legacy point written before `content_hash` existed is healed in place: when its
+    stored content equals the source text, the hash is stamped with a write filtered on
+    the field still being empty. Every writer now sets the field, so a PATCH landing
+    between the read and the stamp makes the stamp match nothing and the guarded writes
+    below skip, exactly as for a hashed point.
+    """
+    if client is None:
+        return True
+    from qdrant_client import models
+
+    expected_hash = content_fingerprint(content)
+
+    def guarded(*conditions: Any, must_not: Optional[List[Any]] = None) -> Any:
+        return models.Filter(
+            must=[
+                models.HasIdCondition(has_id=[memory_id]),
+                models.FieldCondition(
+                    key="content_hash", match=models.MatchValue(value=expected_hash)
+                ),
+                *conditions,
+            ],
+            must_not=must_not,
+        )
+
+    try:
+        current = client.retrieve(
+            collection_name=collection_name,
+            ids=[memory_id],
+            with_payload=["content_hash", "content"],
+        )
+        current_payload = (getattr(current[0], "payload", None) or {}) if current else None
+        if current_payload is not None and not current_payload.get("content_hash"):
+            if content_fingerprint(current_payload.get("content")) != expected_hash:
+                logger.debug(
+                    "Skipped Qdrant enrichment sync for %s: legacy point content differs "
+                    "from the enriched source",
+                    memory_id,
+                )
+                return False
+            client.set_payload(
+                collection_name=collection_name,
+                points=models.Filter(
+                    must=[
+                        models.HasIdCondition(has_id=[memory_id]),
+                        models.IsEmptyCondition(is_empty=models.PayloadField(key="content_hash")),
+                    ]
+                ),
+                payload={"content_hash": expected_hash},
+                wait=True,
+            )
+        if updated["tags"] != source_tags:
+            tag_conditions = [
+                models.FieldCondition(key="tags", match=models.MatchValue(value=tag))
+                for tag in set(source_tags)
+            ]
+            tag_conditions.append(
+                models.FieldCondition(
+                    key="tags",
+                    values_count=models.ValuesCount(gte=len(source_tags), lte=len(source_tags)),
+                )
+            )
+            client.set_payload(
+                collection_name=collection_name,
+                points=guarded(
+                    *tag_conditions,
+                    must_not=[
+                        models.FieldCondition(
+                            key="tags",
+                            match=models.MatchExcept(**{"except": list(set(source_tags))}),
+                        )
+                    ],
+                ),
+                payload={"tags": updated["tags"], "tag_prefixes": updated["tag_prefixes"]},
+                wait=True,
+            )
+        entity_updates = {category: values for category, values in entities.items() if values}
+        if entity_updates:
+            client.set_payload(
+                collection_name=collection_name,
+                points=guarded(),
+                key="metadata.entities",
+                payload=entity_updates,
+                wait=True,
+            )
+        client.set_payload(
+            collection_name=collection_name,
+            points=guarded(),
+            key="metadata.enrichment",
+            payload=enrichment_updates,
+            wait=True,
+        )
+        # A filtered set_payload reports no match count, so confirm which revision won.
+        points = client.retrieve(
+            collection_name=collection_name,
+            ids=[memory_id],
+            with_payload=["content_hash"],
+        )
+    except Exception:
+        logger.exception("Failed to sync Qdrant enrichment fields for %s", memory_id)
+        return False
+    current_hash = (
+        (getattr(points[0], "payload", None) or {}).get("content_hash") if points else None
+    )
+    if current_hash == expected_hash:
+        return True
+    if current_hash is None:
+        logger.debug("Skipped Qdrant enrichment sync for %s: point has no content_hash", memory_id)
+    else:
+        logger.info(
+            "Skipped Qdrant enrichment sync for %s: content changed after enrichment read it",
+            memory_id,
+        )
+    return False
 
 
 def jit_enrich_lightweight(
@@ -69,95 +329,53 @@ def jit_enrich_lightweight(
 
     entities = _validated_entities(extract_entities_fn(content), content)
 
-    tags = list(dict.fromkeys(normalize_tag_list_fn(properties.get("tags"))))
-    entity_tags: Set[str] = set()
-
-    metadata_raw = properties.get("metadata")
-    metadata = parse_metadata_field_fn(metadata_raw) or {}
-    if not isinstance(metadata, dict):
-        metadata = {"_raw_metadata": metadata}
-
-    if entities:
-        entities_section = metadata.setdefault("entities", {})
-        if not isinstance(entities_section, dict):
-            entities_section = {}
-        for category, values in entities.items():
-            if not values:
-                continue
-            entities_section[category] = sorted(values)
-            for value in values:
-                slug = slugify_fn(value)
-                if slug:
-                    entity_tags.add(f"entity:{category}:{slug}")
-        metadata["entities"] = entities_section
-
-    if entity_tags:
-        tags = list(dict.fromkeys(tags + sorted(entity_tags)))
-
-    tag_prefixes = compute_tag_prefixes_fn(tags)
-
-    if enrichment_enable_summaries:
-        summary = generate_summary_fn(content, properties.get("summary"))
-    else:
-        summary = properties.get("summary")
-
+    summary = (
+        generate_summary_fn(content, properties.get("summary"))
+        if enrichment_enable_summaries
+        else properties.get("summary")
+    )
     enriched_at = utc_now_fn()
-
-    enrichment_meta = metadata.setdefault("enrichment", {})
-    if not isinstance(enrichment_meta, dict):
-        enrichment_meta = {}
-    enrichment_meta["jit"] = True
-    enrichment_meta["jit_at"] = enriched_at
-    metadata["enrichment"] = enrichment_meta
-
-    update_payload = {
-        "id": memory_id,
-        "metadata": json.dumps(metadata, default=str),
-        "tags": tags,
-        "tag_prefixes": tag_prefixes,
-        "summary": summary,
-        "enriched_at": enriched_at,
+    enrichment_updates = {
+        "jit": True,
+        "jit_at": enriched_at,
+        "content_hash": content_fingerprint(content),
     }
     try:
-        graph.query(
-            """
-            MATCH (m:Memory {id: $id})
-            SET m.metadata = $metadata,
-                m.tags = $tags,
-                m.tag_prefixes = $tag_prefixes,
-                m.summary = $summary,
-                m.enriched = true,
-                m.enriched_at = $enriched_at
-            """,
-            update_payload,
+        persisted = _persist_enrichment(
+            graph=graph,
+            memory_id=memory_id,
+            content=content,
+            entities=entities,
+            summary=summary,
+            previous_summary=properties.get("summary"),
+            enrichment_updates=enrichment_updates,
+            processed=False,
+            parse_metadata_field_fn=parse_metadata_field_fn,
+            normalize_tag_list_fn=normalize_tag_list_fn,
+            slugify_fn=slugify_fn,
+            compute_tag_prefixes_fn=compute_tag_prefixes_fn,
+            enriched_at=enriched_at,
         )
+    except EnrichmentConflictError:
+        logger.debug("JIT enrichment skipped after concurrent edit of %s", memory_id)
+        return None
     except Exception:
         logger.exception("JIT enrichment graph update failed for %s", memory_id)
         return None
-
-    qdrant_client = get_qdrant_client_fn()
-    if qdrant_client is not None:
-        try:
-            qdrant_client.set_payload(
-                collection_name=collection_name,
-                points=[memory_id],
-                payload={
-                    "tags": tags,
-                    "tag_prefixes": tag_prefixes,
-                    "metadata": metadata,
-                },
-            )
-        except Exception as exc:  # noqa: BLE001 - Qdrant client raises multiple exception types
-            logger.debug("JIT Qdrant payload sync skipped for %s: %s", memory_id, exc)
-
-    updated = dict(properties)
-    updated["tags"] = tags
-    updated["tag_prefixes"] = tag_prefixes
-    updated["metadata"] = metadata
-    updated["summary"] = summary
-    updated["enriched"] = True
-    updated["enriched_at"] = enriched_at
-
+    if persisted is None:
+        return None
+    updated, source_tags = persisted
+    _sync_enrichment_payload(
+        client=get_qdrant_client_fn(),
+        collection_name=collection_name,
+        memory_id=memory_id,
+        content=content,
+        source_tags=source_tags,
+        updated=updated,
+        entities=entities,
+        enrichment_updates=enrichment_updates,
+        logger=logger,
+    )
     logger.debug("JIT-enriched memory %s (entities=%s)", memory_id, bool(entities))
     return updated
 
@@ -199,43 +417,15 @@ def enrich_memory(
     if not isinstance(properties, dict):
         properties = dict(getattr(node, "__dict__", {}))
 
-    metadata_raw = properties.get("metadata")
-    metadata = parse_metadata_field_fn(metadata_raw) or {}
-    if not isinstance(metadata, dict):
-        metadata = {"_raw_metadata": metadata}
-
-    already_processed = bool(properties.get("processed"))
-    if already_processed and not forced:
+    if properties.get("processed") and not forced:
         return False
-
     content = properties.get("content", "") or ""
     entities = _validated_entities(extract_entities_fn(content), content)
 
-    tags = list(dict.fromkeys(normalize_tag_list_fn(properties.get("tags"))))
-    entity_tags: Set[str] = set()
-
-    if entities:
-        entities_section = metadata.setdefault("entities", {})
-        if not isinstance(entities_section, dict):
-            entities_section = {}
-        for category, values in entities.items():
-            if not values:
-                continue
-            entities_section[category] = sorted(values)
-            for value in values:
-                slug = slugify_fn(value)
-                if slug:
-                    entity_tags.add(f"entity:{category}:{slug}")
-        metadata["entities"] = entities_section
-
-    if entity_tags:
-        tags = list(dict.fromkeys(tags + sorted(entity_tags)))
-
-    tag_prefixes = compute_tag_prefixes_fn(tags)
-
-    temporal_links = find_temporal_relationships_fn(graph, memory_id)
-    pattern_info = detect_patterns_fn(graph, memory_id, content)
-    semantic_neighbors = link_semantic_neighbors_fn(graph, memory_id)
+    write_plan = EnrichmentWritePlan(graph)
+    temporal_links = find_temporal_relationships_fn(write_plan, memory_id)
+    pattern_info = detect_patterns_fn(write_plan, memory_id, content)
+    semantic_neighbors = link_semantic_neighbors_fn(write_plan, memory_id)
 
     if enrichment_enable_summaries:
         existing_summary = properties.get("summary")
@@ -243,66 +433,48 @@ def enrich_memory(
     else:
         summary = properties.get("summary")
 
-    enrichment_meta = metadata.setdefault("enrichment", {})
-    if not isinstance(enrichment_meta, dict):
-        enrichment_meta = {}
-    enrichment_meta.update(
-        {
-            "last_run": utc_now_fn(),
-            "forced": forced,
-            "temporal_links": temporal_links,
-            "patterns_detected": pattern_info,
-            "semantic_neighbors": [
-                {"id": neighbour_id, "score": score} for neighbour_id, score in semantic_neighbors
-            ],
-        }
-    )
-    metadata["enrichment"] = enrichment_meta
-
-    update_payload = {
-        "id": memory_id,
-        "metadata": json.dumps(metadata, default=str),
-        "tags": tags,
-        "tag_prefixes": tag_prefixes,
-        "summary": summary,
-        "enriched_at": utc_now_fn(),
+    enriched_at = utc_now_fn()
+    enrichment_updates = {
+        "last_run": enriched_at,
+        "forced": forced,
+        "temporal_links": temporal_links,
+        "patterns_detected": pattern_info,
+        "semantic_neighbors": [
+            {"id": neighbour_id, "score": score} for neighbour_id, score in semantic_neighbors
+        ],
+        "content_hash": content_fingerprint(content),
     }
-
-    graph.query(
-        """
-        MATCH (m:Memory {id: $id})
-        SET m.metadata = $metadata,
-            m.tags = $tags,
-            m.tag_prefixes = $tag_prefixes,
-            m.summary = $summary,
-            m.enriched = true,
-            m.enriched_at = $enriched_at,
-            m.processed = true
-        """,
-        update_payload,
+    persisted = _persist_enrichment(
+        graph=graph,
+        memory_id=memory_id,
+        content=content,
+        entities=entities,
+        summary=summary,
+        previous_summary=properties.get("summary"),
+        enrichment_updates=enrichment_updates,
+        processed=True,
+        write_plan=write_plan,
+        source_timestamp=properties.get("timestamp"),
+        parse_metadata_field_fn=parse_metadata_field_fn,
+        normalize_tag_list_fn=normalize_tag_list_fn,
+        slugify_fn=slugify_fn,
+        compute_tag_prefixes_fn=compute_tag_prefixes_fn,
+        enriched_at=enriched_at,
     )
-
-    qdrant_client = get_qdrant_client_fn()
-    if qdrant_client is not None:
-        try:
-            qdrant_client.set_payload(
-                collection_name=collection_name,
-                points=[memory_id],
-                payload={
-                    "tags": tags,
-                    "tag_prefixes": tag_prefixes,
-                    "metadata": metadata,
-                },
-            )
-        except unexpected_response_exc as exc:
-            if exc.status_code == 404:
-                logger.debug(
-                    "Qdrant payload sync skipped - point not yet uploaded: %s", memory_id[:8]
-                )
-            else:
-                logger.warning("Qdrant payload sync failed (%d): %s", exc.status_code, memory_id)
-        except Exception:
-            logger.exception("Failed to sync Qdrant payload for enriched memory %s", memory_id)
+    if persisted is None:
+        return False
+    updated, source_tags = persisted
+    _sync_enrichment_payload(
+        client=get_qdrant_client_fn(),
+        collection_name=collection_name,
+        memory_id=memory_id,
+        content=content,
+        source_tags=source_tags,
+        updated=updated,
+        entities=entities,
+        enrichment_updates=enrichment_updates,
+        logger=logger,
+    )
 
     logger.debug(
         "Enriched memory %s (temporal=%s, patterns=%s, semantic=%s)",

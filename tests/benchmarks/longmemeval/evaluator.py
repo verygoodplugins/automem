@@ -13,6 +13,7 @@ from collections import Counter
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from tests.benchmarks.judge_policy import CANONICAL_BENCHMARK_JUDGE_MODEL, is_gpt5_family
+from tests.benchmarks.longmemeval.analyze_results import TYPE_NAMES, task_averaged_accuracy
 
 try:
     from openai import OpenAI
@@ -264,14 +265,7 @@ class LongMemEvalScorer:
     """Aggregates scores across questions and produces reports."""
 
     # Question type display names
-    TYPE_NAMES: ClassVar[Dict[str, str]] = {
-        "single-session-user": "Single-Session (User)",
-        "single-session-assistant": "Single-Session (Assistant)",
-        "single-session-preference": "Single-Session (Preference)",
-        "multi-session": "Multi-Session",
-        "knowledge-update": "Knowledge Update",
-        "temporal-reasoning": "Temporal Reasoning",
-    }
+    TYPE_NAMES: ClassVar[Dict[str, str]] = TYPE_NAMES
 
     # Competitive landscape for comparison
     COMPETITORS: ClassVar[Dict[str, float]] = {
@@ -299,6 +293,7 @@ class LongMemEvalScorer:
         if not self.results:
             return {
                 "overall": {"accuracy": 0.0, "correct": 0, "total": 0},
+                "task_averaged": {"accuracy": task_averaged_accuracy({})},
                 "retrieval": {"recall_any_at_5": 0.0, "hits": 0, "total": 0},
                 "by_type": {},
                 "retrieval_by_type": {},
@@ -345,6 +340,7 @@ class LongMemEvalScorer:
                 "correct": correct,
                 "total": total,
             },
+            "task_averaged": {"accuracy": task_averaged_accuracy(by_type)},
             "retrieval": {
                 "recall_any_at_5": retrieval_hits / total if total > 0 else 0.0,
                 "hits": retrieval_hits,
@@ -377,6 +373,9 @@ class LongMemEvalScorer:
         print(
             f"\nOverall Accuracy: {overall['accuracy']:.2%} ({overall['correct']}/{overall['total']})"
         )
+        task_accuracy = scores["task_averaged"]["accuracy"]
+        task_accuracy_text = "n/a" if task_accuracy is None else f"{task_accuracy:.2%}"
+        print(f"Task-averaged Accuracy: {task_accuracy_text}")
         print(
             f"Retrieval Recall@5: {retrieval['recall_any_at_5']:.2%} ({retrieval['hits']}/{retrieval['total']})"
         )

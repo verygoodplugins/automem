@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, List, Tuple
 
+from automem.config import EMBEDDING_MAX_ATTEMPTS, EMBEDDING_RETRY_BACKOFF_SECONDS
 from automem.embedding.runtime_pipeline import embedding_worker as _embedding_worker_runtime
 from automem.embedding.runtime_pipeline import enqueue_embedding as _enqueue_embedding_runtime
 from automem.embedding.runtime_pipeline import (
@@ -60,8 +61,8 @@ def create_embedding_runtime(
     def enqueue_embedding(memory_id: str, content: str) -> None:
         _enqueue_embedding_runtime(state=get_state_fn(), memory_id=memory_id, content=content)
 
-    def store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[float]) -> None:
-        _store_embedding_in_qdrant_runtime(
+    def store_embedding_in_qdrant(memory_id: str, content: str, embedding: List[float]) -> bool:
+        return _store_embedding_in_qdrant_runtime(
             memory_id=memory_id,
             content=content,
             embedding=embedding,
@@ -88,6 +89,9 @@ def create_embedding_runtime(
             logger=logger,
             generate_real_embeddings_batch_fn=generate_real_embeddings_batch_fn,
             store_embedding_in_qdrant_fn=store_embedding_in_qdrant,
+            max_attempts=EMBEDDING_MAX_ATTEMPTS,
+            retry_backoff_seconds=EMBEDDING_RETRY_BACKOFF_SECONDS,
+            sleep_fn=sleep_fn,
         )
 
     def embedding_worker() -> None:

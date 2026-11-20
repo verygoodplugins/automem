@@ -287,7 +287,7 @@ class TestEnsureQdrantCollectionPayloadIndexes:
         assert create_kwargs["vectors_config"].on_disk is True
         assert create_kwargs["hnsw_config"].on_disk is True
         assert create_kwargs["on_disk_payload"] is True
-        assert qdrant.create_payload_index.call_count == 3
+        assert qdrant.create_payload_index.call_count == 4
 
     def _run_ensure(self, payload_schema_type_enum):
         from automem.stores.runtime_clients import ensure_qdrant_collection
@@ -316,13 +316,13 @@ class TestEnsureQdrantCollectionPayloadIndexes:
         qdrant = self._run_ensure(SimpleNamespace(KEYWORD="keyword"))
 
         indexed = {call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list}
-        assert indexed == {"tags", "tag_prefixes", "type"}
+        assert indexed == {"tags", "tag_prefixes", "type", "content_hash"}
 
     def test_indexes_every_field_without_payload_schema_enum(self):
         qdrant = self._run_ensure(None)
 
         indexed = {call.kwargs["field_name"] for call in qdrant.create_payload_index.call_args_list}
-        assert indexed == {"tags", "tag_prefixes", "type"}
+        assert indexed == {"tags", "tag_prefixes", "type", "content_hash"}
         assert all(
             call.kwargs["field_schema"] == "keyword"
             for call in qdrant.create_payload_index.call_args_list

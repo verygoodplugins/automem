@@ -378,7 +378,7 @@ flowchart TD
     Start -->|Both databases| BackupCheck2{Have recent<br/>backups?}
     Start -->|None just testing| NoAction[No action needed]
 
-    QdrantCheck -->|Yes| RecoverQdrant[Use recover_from_qdrant.py<br/>⚡ Fastest 5-10 min]
+    QdrantCheck -->|Yes| RecoverQdrant[Salvage missing Memory nodes<br/>Prefer graph backup for lost edges]
     QdrantCheck -->|No| BackupCheck3{Have backups?}
 
     BackupCheck1 -->|Yes| RestoreQdrant[Restore Qdrant from backup<br/>Then rebuild FalkorDB<br/>⏱️ 15-30 min]
@@ -397,7 +397,7 @@ flowchart TD
     FullRestore --> Verify
 ```
 
-### Restore from Qdrant (Fastest)
+### Salvage Missing Memories from Qdrant
 
 If FalkorDB data is lost but Qdrant is intact:
 
@@ -405,27 +405,34 @@ If FalkorDB data is lost but Qdrant is intact:
 railway run --service automem python scripts/recover_from_qdrant.py
 ```
 
-This rebuilds the FalkorDB graph from Qdrant vectors and payloads.
+This fetches and validates Qdrant payloads before inserting missing Memory nodes
+with their original IDs, JSON metadata, tag prefixes and temporal fields. It never
+clears the graph or overwrites existing nodes, so surviving entities and edges
+remain intact. Empty/invalid source data and partial write failures exit nonzero.
+
+Qdrant does not contain graph relationships or Entity nodes. This is memory salvage,
+not a full graph restore. Re-enrichment can recreate some derived relationships;
+only a FalkorDB backup can restore original edges. When a graph backup exists,
+preview `python scripts/restore_from_backup.py --dry-run --falkordb-only` first,
+then follow that tool's restore instructions. The health monitor's opt-in
+`--auto-recover` uses salvage only for a graph memory deficit, and alerts without
+running it for a Qdrant deficit.
 
 ### Restore from Backup Files
 
 If both FalkorDB and Qdrant are lost, restore from backup:
 
 ```bash
-# Download from S3
-aws s3 cp s3://my-automem-backups/qdrant/qdrant_20251005_143000.json.gz ./restore/
+# Preview the complete downloaded backup, including FalkorDB relationships
+python scripts/restore_from_backup.py --backup-dir ./restore --dry-run
 
-# Extract
-gunzip restore/qdrant_20251005_143000.json.gz
-
-# Restore to Qdrant
-python scripts/restore_from_backup.py restore/qdrant_20251005_143000.json
-
-# Then restore FalkorDB from Qdrant
-python scripts/recover_from_qdrant.py
+# Restore the selected backup after checking the preview and target stores
+python scripts/restore_from_backup.py --backup-dir ./restore
 ```
 
-**Note**: We'll create `restore_from_backup.py` if you need it.
+If only a Qdrant backup is available, restore it with `--qdrant-only`, then use
+missing-memory salvage above. Original graph relationships cannot be recovered
+from that backup.
 
 ---
 
@@ -593,7 +600,8 @@ The health monitor sends JSON payloads:
 # Check health details
 python scripts/health_monitor.py --once
 
-# If critical, run recovery
+# If FalkorDB has missing memories and Qdrant is known-good, salvage them
+# Prefer a FalkorDB backup when relationships also need restoration
 python scripts/recover_from_qdrant.py
 ```
 

@@ -62,8 +62,9 @@ def generate_real_embedding(
     state: Any,
     logger: Any,
     placeholder_embedding: Callable[[str], List[float]],
+    query: bool = False,
 ) -> List[float]:
-    """Generate an embedding using the configured provider."""
+    """Generate an embedding using the configured provider (query=True for search queries)."""
     init_embedding_provider()
 
     if state.embedding_provider is None:
@@ -72,7 +73,11 @@ def generate_real_embedding(
 
     expected_dim = state.effective_vector_size
     try:
-        embedding = state.embedding_provider.generate_embedding(content)
+        provider = state.embedding_provider
+        if query and hasattr(provider, "generate_query_embedding"):
+            embedding = provider.generate_query_embedding(content)
+        else:
+            embedding = provider.generate_embedding(content)
         if not isinstance(embedding, list) or len(embedding) != expected_dim:
             logger.warning(
                 "Provider %s returned %s dims (expected %d); falling back to placeholder",
@@ -95,6 +100,7 @@ def generate_real_embeddings_batch(
     logger: Any,
     placeholder_embedding: Callable[[str], List[float]],
     allow_placeholder_fallback: bool = True,
+    allow_placeholder_provider: bool = False,
 ) -> List[List[float]]:
     """Generate multiple embeddings in a single batch for efficiency."""
     init_embedding_provider()
@@ -113,7 +119,11 @@ def generate_real_embeddings_batch(
         provider_name = provider.provider_name()
     except Exception:
         provider_name = provider.__class__.__name__ or "unknown"
-    if not allow_placeholder_fallback and str(provider_name).strip().lower() == "placeholder":
+    if (
+        not allow_placeholder_fallback
+        and not allow_placeholder_provider
+        and str(provider_name).strip().lower() == "placeholder"
+    ):
         raise RuntimeError("Placeholder embedding provider is not allowed in strict mode")
     expected_dim = state.effective_vector_size
     try:

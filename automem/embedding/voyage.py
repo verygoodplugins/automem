@@ -36,6 +36,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         timeout: float = 30.0,
         max_retries: int = 2,
         input_type: Optional[str] = None,
+        query_input_type: Optional[str] = None,
     ) -> None:
         """Initialize Voyage embedding provider.
 
@@ -46,6 +47,8 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
             timeout: Request timeout in seconds (default 30)
             max_retries: Maximum number of retries (default 2)
             input_type: Optional input type hint ("query" or "document")
+            query_input_type: Optional input type for search queries; when set,
+                generate_query_embedding sends it instead of input_type
 
         Raises:
             ValueError: If API key is not provided or dimension is invalid
@@ -64,6 +67,7 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         self.timeout = timeout
         self.max_retries = max_retries
         self.input_type = input_type
+        self.query_input_type = query_input_type
 
         self.client = httpx.Client(
             timeout=timeout,
@@ -213,6 +217,12 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         embeddings = self._make_request([text])
         logger.debug("Generated Voyage embedding for text (length: %d)", len(text))
         return embeddings[0]
+
+    def generate_query_embedding(self, text: str) -> List[float]:
+        """Generate a search-query embedding, using query_input_type when configured."""
+        if not self.query_input_type:
+            return self.generate_embedding(text)
+        return self._make_request([text], input_type=self.query_input_type)[0]
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts in one API call.

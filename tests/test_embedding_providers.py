@@ -533,6 +533,7 @@ def test_provider_selection_explicit_voyage(monkeypatch):
     """Test explicit Voyage provider selection."""
     import app
 
+    monkeypatch.delenv("VOYAGE_INPUT_TYPES", raising=False)
     monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
     monkeypatch.setattr(app.state, "qdrant", None, raising=False)
     monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
@@ -549,6 +550,7 @@ def test_provider_selection_explicit_voyage(monkeypatch):
             api_key="voyage-key",
             model="voyage-4",
             dimension=1024,
+            query_input_type="query",
         )
 
 
@@ -971,3 +973,121 @@ def test_end_to_end_memory_storage_with_provider(monkeypatch):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def _voyage_ok_client(mock_httpx_client_class):
+    mock_httpx_client = Mock()
+    mock_httpx_client_class.return_value = mock_httpx_client
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.status_code = 200
+    response.json.return_value = {"data": [{"embedding": [0.1] * 1024}]}
+    mock_httpx_client.post.return_value = response
+    return mock_httpx_client
+
+
+@patch("automem.embedding.voyage.httpx.Client")
+def test_voyage_query_embedding_without_roles_sends_no_input_type(mock_httpx_client_class):
+    client = _voyage_ok_client(mock_httpx_client_class)
+    from automem.embedding.voyage import VoyageEmbeddingProvider
+
+    provider = VoyageEmbeddingProvider(api_key="k", dimension=1024)
+    provider.generate_query_embedding("find this")
+    assert "input_type" not in client.post.call_args[1]["json"]
+
+
+@patch("automem.embedding.voyage.httpx.Client")
+def test_voyage_roles_send_document_on_store_and_query_on_recall(mock_httpx_client_class):
+    client = _voyage_ok_client(mock_httpx_client_class)
+    from automem.embedding.voyage import VoyageEmbeddingProvider
+
+    provider = VoyageEmbeddingProvider(
+        api_key="k", dimension=1024, input_type="document", query_input_type="query"
+    )
+    provider.generate_embedding("stored memory")
+    assert client.post.call_args[1]["json"]["input_type"] == "document"
+    provider.generate_embeddings_batch(["a"])
+    assert client.post.call_args[1]["json"]["input_type"] == "document"
+    provider.generate_query_embedding("find this")
+    assert client.post.call_args[1]["json"]["input_type"] == "query"
+
+
+def test_base_provider_query_embedding_defaults_to_generate_embedding():
+    provider = PlaceholderEmbeddingProvider(dimension=8)
+    assert provider.generate_query_embedding("x") == provider.generate_embedding("x")
+
+
+@patch.dict(
+    os.environ,
+    {"EMBEDDING_PROVIDER": "voyage", "VOYAGE_API_KEY": "voyage-key", "VOYAGE_INPUT_TYPES": "both"},
+    clear=False,
+)
+def test_provider_selection_voyage_input_types_opt_in(monkeypatch):
+    import app
+
+    monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
+    monkeypatch.setattr(app.state, "embedding_provider", None, raising=False)
+
+    with patch("automem.embedding.voyage.VoyageEmbeddingProvider") as mock_voyage_class:
+        mock_voyage_class.return_value = Mock(provider_name=Mock(return_value="voyage:voyage-4"))
+        app.init_embedding_provider()
+        kwargs = mock_voyage_class.call_args[1]
+        assert kwargs["input_type"] == "document"
+        assert kwargs["query_input_type"] == "query"
+
+
+@patch.dict(
+    os.environ,
+    {"EMBEDDING_PROVIDER": "voyage", "VOYAGE_API_KEY": "voyage-key", "VOYAGE_INPUT_TYPES": "query"},
+    clear=False,
+)
+def test_provider_selection_voyage_input_types_query_only(monkeypatch):
+    import app
+
+    monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
+    monkeypatch.setattr(app.state, "embedding_provider", None, raising=False)
+
+    with patch("automem.embedding.voyage.VoyageEmbeddingProvider") as mock_voyage_class:
+        mock_voyage_class.return_value = Mock(provider_name=Mock(return_value="voyage:voyage-4"))
+        app.init_embedding_provider()
+        kwargs = mock_voyage_class.call_args[1]
+        assert "input_type" not in kwargs
+        assert kwargs["query_input_type"] == "query"
+
+
+def _init_voyage_with_input_types(monkeypatch, value):
+    import app
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    monkeypatch.setenv("VOYAGE_API_KEY", "voyage-key")
+    if value is None:
+        monkeypatch.delenv("VOYAGE_INPUT_TYPES", raising=False)
+    else:
+        monkeypatch.setenv("VOYAGE_INPUT_TYPES", value)
+    monkeypatch.setattr(app, "VECTOR_SIZE", 1024)
+    monkeypatch.setattr(app.state, "qdrant", None, raising=False)
+    monkeypatch.setattr(app.state, "effective_vector_size", 1024, raising=False)
+    monkeypatch.setattr(app.state, "embedding_provider", None, raising=False)
+
+    with patch("automem.embedding.voyage.VoyageEmbeddingProvider") as mock_voyage_class:
+        mock_voyage_class.return_value = Mock(provider_name=Mock(return_value="voyage:voyage-4"))
+        app.init_embedding_provider()
+        return mock_voyage_class.call_args[1]
+
+
+@pytest.mark.parametrize("value", [None, "", "on", "true"])
+def test_provider_selection_voyage_input_types_defaults_to_query(monkeypatch, value):
+    kwargs = _init_voyage_with_input_types(monkeypatch, value)
+    assert "input_type" not in kwargs
+    assert kwargs["query_input_type"] == "query"
+
+
+@pytest.mark.parametrize("value", ["off", "false", "0", "none"])
+def test_provider_selection_voyage_input_types_off_sends_no_roles(monkeypatch, value):
+    kwargs = _init_voyage_with_input_types(monkeypatch, value)
+    assert "input_type" not in kwargs
+    assert "query_input_type" not in kwargs
