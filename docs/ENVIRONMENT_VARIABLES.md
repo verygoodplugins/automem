@@ -401,12 +401,12 @@ Controls how different factors are weighted in memory recall scoring.
 | `SEARCH_RECENCY_WINDOW_DAYS` | Recency decay window in days | `180` | Used by the recency score, not a weight |
 | `SEARCH_RECENCY_CURVE` | Recency decay curve | `linear` | `linear` (score reaches 0 at the window) or `exp` (window acts as half-life); invalid values fall back to `linear` |
 | `SEARCH_WEIGHT_CONFIDENCE` | Confidence score | `0.05` | Memory reliability |
-| `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.0` (experimental) | Decay-derived score; `0.0` is a no-op (off). See note below before enabling |
+| `SEARCH_WEIGHT_RELEVANCE` | Consolidation relevance | `0.25` | Decay-derived `relevance_score` (0–1). Same scale as `SEARCH_WEIGHT_RELATION`. Missing scores contribute 0 |
 | `SEARCH_WEIGHT_TEMPORAL` | Relative-recency re-rank bonus | `0.1` | Only applied when the `recency_bias` re-rank runs (see `RECALL_RECENCY_BIAS`); candidate timestamps are min-max normalized across the result set. Negative values clamp to `0.0`. Inert by default |
 
 The `SEARCH_WEIGHT_*` variables act as **relative weights** in the scoring formula. Keeping them roughly normalized (summing to ~1.0) is recommended for interpretability, but the service does not auto-normalize them.
 
-**`SEARCH_WEIGHT_RELEVANCE` (experimental):** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.0` (disabled) — set to e.g. `0.15` to boost frequently-accessed memories. Use the Recall Quality Lab to test different values before changing production.
+**`SEARCH_WEIGHT_RELEVANCE`:** This weight incorporates `relevance_score`, a value maintained by the consolidation decay engine that reflects access patterns and age. It's synced to both FalkorDB and Qdrant payloads. Default is `0.25`, the same scale as `SEARCH_WEIGHT_RELATION`. The stored score is capped at 1.0, so this term adds at most 0.25 to the final score. Memories with no numeric `relevance_score` yet (new writes, before decay runs) contribute 0. Set the weight to `0.0` to turn the term off.
 
 ### Memory Content Limits
 

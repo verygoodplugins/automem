@@ -70,7 +70,7 @@ When building your own is the right answer:
 
 ## Recall scoring signals
 
-`GET /recall` ranks results by a weighted sum of ten signals (`automem/utils/scoring.py`). Nine have non-zero default weights; consolidation relevance defaults to `0.0`, so it is off. Every weight is tunable via the `SEARCH_WEIGHT_*` environment variables — see [`docs/ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md) for the canonical list.
+`GET /recall` ranks results by a weighted sum of ten signals (`automem/utils/scoring.py`). All ten have non-zero default weights. Consolidation relevance defaults to `0.25`, the same scale as relation strength. Every weight is tunable via the `SEARCH_WEIGHT_*` environment variables — see [`docs/ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md) for the canonical list.
 
 | Component | Default weight | What it measures |
 |---|---|---|
@@ -83,7 +83,7 @@ When building your own is the right answer:
 | **Importance** | 0.10 | The memory's `importance` score (0–1) |
 | **Recency** | 0.10 | Configurable decay (default: linear over 180 days) |
 | **Confidence** | 0.05 | The memory's `confidence` score (0–1) |
-| **Relevance** | 0.00 | Consolidation decay relevance — disabled by default |
+| **Relevance** | 0.25 | Consolidation decay relevance (`relevance_score`, 0–1). Missing scores contribute 0 |
 
 Two terms sit outside that weighted sum. An additive context bonus applies when a request passes context hints such as `context_tags` or `context_types`. `SEARCH_WEIGHT_TEMPORAL` (default `0.1`) adds a relative-recency bonus only when the `recency_bias` re-rank runs, which is off by default (`RECALL_RECENCY_BIAS=off`).
 

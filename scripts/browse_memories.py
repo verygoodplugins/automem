@@ -849,7 +849,7 @@ def cmd_diagnose(args, graph, qdrant_client, qdrant_collection):
 
     # Search weight info
     w_recency = float(os.getenv("SEARCH_WEIGHT_RECENCY", "0.10"))
-    w_relevance = float(os.getenv("SEARCH_WEIGHT_RELEVANCE", "0.0"))
+    w_relevance = float(os.getenv("SEARCH_WEIGHT_RELEVANCE", "0.25"))
     w_importance = float(os.getenv("SEARCH_WEIGHT_IMPORTANCE", "0.10"))
 
     if w_relevance == 0.0:
