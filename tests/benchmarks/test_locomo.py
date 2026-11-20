@@ -453,7 +453,8 @@ class LoCoMoEvaluator:
                 response = requests.post(
                     f"{self.config.base_url}/memory/batch",
                     headers=self.headers,
-                    json={"memories": batch},
+                    # Vectors must exist before snapshot/eval runs.
+                    json={"memories": batch, "sync_embeddings": True},
                     timeout=60,
                 )
 

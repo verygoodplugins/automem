@@ -286,7 +286,8 @@ class AutoMemBackend(BenchmarkBackend):
                     response = requests.post(
                         urljoin(f"{self.base_url}/", "memory/batch"),
                         headers=self.headers,
-                        json={"memories": stripped},
+                        # Vectors must exist before snapshot/eval runs.
+                        json={"memories": stripped, "sync_embeddings": True},
                         timeout=60,
                     )
                     if response.status_code in {200, 201}:
