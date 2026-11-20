@@ -5,6 +5,7 @@ from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from automem.enrichment.runtime_helpers import EnrichmentWritePlan
+from automem.stores.vector_payload import content_fingerprint
 from automem.utils.entity_quality import validate_entity_value
 
 
@@ -156,23 +157,72 @@ def _sync_enrichment_payload(
     client: Any,
     collection_name: str,
     memory_id: str,
+    content: str,
     source_tags: List[str],
     updated: Dict[str, Any],
     entities: Dict[str, List[str]],
     enrichment_updates: Dict[str, Any],
     logger: Any,
-) -> None:
-    """Update only derived metadata; atomically guard whole-array tag replacement.
+) -> bool:
+    """Update only derived metadata, and only on the point revision it was derived from.
 
-    PATCH may commit after the graph update and before this sync. Nested payload
-    updates preserve caller metadata keys, and a tag filter prevents restoring an
-    old tag list over the newer PATCH payload.
+    PATCH may commit after the graph update and before this sync. Every write filters
+    on the indexed `content_hash` of the source text, so Qdrant evaluates the guard
+    when it applies the update; a newer PATCH payload is never given obsolete derived
+    metadata. Nested payload updates preserve caller metadata keys, and a tag filter
+    prevents restoring an old tag list over the newer PATCH payload. Returns False
+    when the guard skipped the update.
+
+    A legacy point written before `content_hash` existed is healed in place: when its
+    stored content equals the source text, the hash is stamped with a write filtered on
+    the field still being empty. Every writer now sets the field, so a PATCH landing
+    between the read and the stamp makes the stamp match nothing and the guarded writes
+    below skip, exactly as for a hashed point.
     """
     if client is None:
-        return
+        return True
     from qdrant_client import models
 
+    expected_hash = content_fingerprint(content)
+
+    def guarded(*conditions: Any, must_not: Optional[List[Any]] = None) -> Any:
+        return models.Filter(
+            must=[
+                models.HasIdCondition(has_id=[memory_id]),
+                models.FieldCondition(
+                    key="content_hash", match=models.MatchValue(value=expected_hash)
+                ),
+                *conditions,
+            ],
+            must_not=must_not,
+        )
+
     try:
+        current = client.retrieve(
+            collection_name=collection_name,
+            ids=[memory_id],
+            with_payload=["content_hash", "content"],
+        )
+        current_payload = (getattr(current[0], "payload", None) or {}) if current else None
+        if current_payload is not None and not current_payload.get("content_hash"):
+            if content_fingerprint(current_payload.get("content")) != expected_hash:
+                logger.debug(
+                    "Skipped Qdrant enrichment sync for %s: legacy point content differs "
+                    "from the enriched source",
+                    memory_id,
+                )
+                return False
+            client.set_payload(
+                collection_name=collection_name,
+                points=models.Filter(
+                    must=[
+                        models.HasIdCondition(has_id=[memory_id]),
+                        models.IsEmptyCondition(is_empty=models.PayloadField(key="content_hash")),
+                    ]
+                ),
+                payload={"content_hash": expected_hash},
+                wait=True,
+            )
         if updated["tags"] != source_tags:
             tag_conditions = [
                 models.FieldCondition(key="tags", match=models.MatchValue(value=tag))
@@ -186,8 +236,8 @@ def _sync_enrichment_payload(
             )
             client.set_payload(
                 collection_name=collection_name,
-                points=models.Filter(
-                    must=[models.HasIdCondition(has_id=[memory_id]), *tag_conditions],
+                points=guarded(
+                    *tag_conditions,
                     must_not=[
                         models.FieldCondition(
                             key="tags",
@@ -196,23 +246,46 @@ def _sync_enrichment_payload(
                     ],
                 ),
                 payload={"tags": updated["tags"], "tag_prefixes": updated["tag_prefixes"]},
+                wait=True,
             )
         entity_updates = {category: values for category, values in entities.items() if values}
         if entity_updates:
             client.set_payload(
                 collection_name=collection_name,
-                points=[memory_id],
+                points=guarded(),
                 key="metadata.entities",
                 payload=entity_updates,
+                wait=True,
             )
         client.set_payload(
             collection_name=collection_name,
-            points=[memory_id],
+            points=guarded(),
             key="metadata.enrichment",
             payload=enrichment_updates,
+            wait=True,
+        )
+        # A filtered set_payload reports no match count, so confirm which revision won.
+        points = client.retrieve(
+            collection_name=collection_name,
+            ids=[memory_id],
+            with_payload=["content_hash"],
         )
     except Exception:
         logger.exception("Failed to sync Qdrant enrichment fields for %s", memory_id)
+        return False
+    current_hash = (
+        (getattr(points[0], "payload", None) or {}).get("content_hash") if points else None
+    )
+    if current_hash == expected_hash:
+        return True
+    if current_hash is None:
+        logger.debug("Skipped Qdrant enrichment sync for %s: point has no content_hash", memory_id)
+    else:
+        logger.info(
+            "Skipped Qdrant enrichment sync for %s: content changed after enrichment read it",
+            memory_id,
+        )
+    return False
 
 
 def jit_enrich_lightweight(
@@ -262,7 +335,11 @@ def jit_enrich_lightweight(
         else properties.get("summary")
     )
     enriched_at = utc_now_fn()
-    enrichment_updates = {"jit": True, "jit_at": enriched_at}
+    enrichment_updates = {
+        "jit": True,
+        "jit_at": enriched_at,
+        "content_hash": content_fingerprint(content),
+    }
     try:
         persisted = _persist_enrichment(
             graph=graph,
@@ -292,6 +369,7 @@ def jit_enrich_lightweight(
         client=get_qdrant_client_fn(),
         collection_name=collection_name,
         memory_id=memory_id,
+        content=content,
         source_tags=source_tags,
         updated=updated,
         entities=entities,
@@ -364,6 +442,7 @@ def enrich_memory(
         "semantic_neighbors": [
             {"id": neighbour_id, "score": score} for neighbour_id, score in semantic_neighbors
         ],
+        "content_hash": content_fingerprint(content),
     }
     persisted = _persist_enrichment(
         graph=graph,
@@ -389,6 +468,7 @@ def enrich_memory(
         client=get_qdrant_client_fn(),
         collection_name=collection_name,
         memory_id=memory_id,
+        content=content,
         source_tags=source_tags,
         updated=updated,
         entities=entities,

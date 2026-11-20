@@ -6,7 +6,8 @@ from typing import Any, Callable
 # Qdrant rejects an entire search with 400 when a filter references an unindexed payload
 # field, so every field recall filters on must be indexed. `type` backs RECALL_EXCLUDED_TYPES,
 # which applies to all vector searches since that setting defaults to a non-empty value.
-QDRANT_FILTERED_PAYLOAD_FIELDS = ("tags", "tag_prefixes", "type")
+# `content_hash` backs the enrichment write guard, which must hold in strict deployments.
+QDRANT_FILTERED_PAYLOAD_FIELDS = ("tags", "tag_prefixes", "type", "content_hash")
 
 
 def init_falkordb(

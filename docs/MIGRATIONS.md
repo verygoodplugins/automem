@@ -286,6 +286,33 @@ upgrading.
 python scripts/backfill_tag_prefixes.py
 ```
 
+### Backfill content fingerprints (optional)
+
+Enrichment writes derived Qdrant metadata (`metadata.entities`,
+`metadata.enrichment`, entity tags) only to a point whose `content_hash` matches
+the text it enriched, so a concurrent content PATCH never receives metadata
+derived from the old text. Points written before this change have no
+`content_hash`. No ops step is needed: the next time enrichment runs for such a
+point, it compares the stored `content` with the source text and, when they
+match, stamps the hash (a write that only applies while the field is still
+empty) before its guarded writes. A legacy point whose stored content differs
+is skipped, as before.
+
+The backfill script is an optional bulk alternative that stamps every legacy
+point at once. It reads the Qdrant connection from the same settings as the
+service (`QDRANT_URL`, or `QDRANT_HOST` + `QDRANT_PORT`, plus `QDRANT_API_KEY`
+and `QDRANT_COLLECTION`). The default is a dry run.
+
+```bash
+python scripts/backfill_content_hash.py           # count legacy points
+python scripts/backfill_content_hash.py --apply   # write content_hash
+```
+
+To repair derived metadata that is already stale, send every memory whose
+`metadata.enrichment.content_hash` is missing or differs from its `content_hash`
+payload field to `POST /enrichment/reprocess` (admin token, `{"ids": [...]}`),
+which re-enriches them with `forced=True`.
+
 ### Rescore relevance
 
 Recomputes every `relevance_score` with the corrected consolidation decay

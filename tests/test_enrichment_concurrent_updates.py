@@ -9,6 +9,7 @@ import pytest
 
 from automem.enrichment import runtime_helpers
 from automem.enrichment.runtime_orchestration import enrich_memory, jit_enrich_lightweight
+from automem.stores.vector_payload import build_qdrant_payload, content_fingerprint
 from automem.utils.tags import _compute_tag_prefixes, _normalize_tag_list
 from tests.support.fake_graph import FakeGraph, FakeNode, FakeResult
 
@@ -180,33 +181,49 @@ def test_jit_returns_latest_untouched_fields_after_concurrent_importance_edit():
 
 
 class InterleavingVector:
-    def __init__(self, *, content_changed=False):
+    def __init__(self, *, content_changed=False, legacy=False):
         self.content_changed = content_changed
-        self.payload = {
-            "content": "Notes from Project Launchpad",
-            "tags": ["old"],
-            "metadata": {"source": "old"},
-        }
+        self.payload = self._point("Notes from Project Launchpad", ["old"], {"source": "old"})
+        if legacy:
+            # Written before #270: every current writer stamps the hash, legacy points lack it.
+            del self.payload["content_hash"]
         self.first = True
+        self.waits = []
+        self.writes = []
 
-    def set_payload(self, *, points, payload, key=None, **kwargs):
+    @staticmethod
+    def _point(content, tags, metadata):
+        return {
+            "content": content,
+            "content_hash": content_fingerprint(content),
+            "tags": tags,
+            "metadata": metadata,
+        }
+
+    def set_payload(self, *, points, payload, key=None, wait=False, **kwargs):
+        self.waits.append(wait)
+        self.writes.append(key or sorted(payload))
         # A PATCH reaches Qdrant after enrichment committed to the graph.
         if self.first:
             self.first = False
-            self.payload = {
-                "content": (
-                    "Updated source" if self.content_changed else "Notes from Project Launchpad"
-                ),
-                "tags": ["new"],
-                "metadata": {"status": "patched"},
-            }
+            self.payload = self._point(
+                "Updated source" if self.content_changed else "Notes from Project Launchpad",
+                ["new"],
+                {"status": "patched"},
+            )
         if not isinstance(points, list):
             for condition in points.must_not or []:
                 if any(tag not in condition.match.except_values for tag in self.payload["tags"]):
                     return
             conditions = points.must
             for condition in conditions:
-                if getattr(condition, "key", None) is not None:
+                if getattr(condition, "has_id", None) is not None:
+                    if "memory" not in condition.has_id:
+                        return
+                elif getattr(condition, "is_empty", None) is not None:
+                    if self.payload.get(condition.is_empty.key):
+                        return
+                elif getattr(condition, "key", None) is not None:
                     if condition.values_count is not None:
                         if len(self.payload["tags"]) != condition.values_count.gte:
                             return
@@ -221,6 +238,9 @@ class InterleavingVector:
         for part in key.split(".") if key else []:
             target = target.setdefault(part, {})
         target.update(copy.deepcopy(payload))
+
+    def retrieve(self, *, ids, with_payload=True, **kwargs):
+        return [SimpleNamespace(id=ids[0], payload=copy.deepcopy(self.payload))]
 
 
 @pytest.mark.parametrize("jit", [False, True])
@@ -252,6 +272,90 @@ def test_vector_sync_preserves_caller_fields_after_late_content_patch(jit):
     assert vector.payload["content"] == "Updated source"
     assert vector.payload["tags"] == ["new"]
     assert vector.payload["metadata"]["status"] == "patched"
+
+
+@pytest.mark.parametrize("jit", [False, True])
+def test_late_content_patch_never_receives_obsolete_derived_metadata(jit):
+    # Regression for #270: enrichment read v1 and committed the graph, a content PATCH
+    # then upserted the v2 point, and only afterwards did enrichment sync Qdrant.
+    graph = InterleavingGraph()
+    vector = InterleavingVector(content_changed=True)
+    perform_enrichment(graph, jit=jit, qdrant=vector)
+    assert vector.payload["content_hash"] == content_fingerprint("Updated source")
+    assert "entities" not in vector.payload["metadata"]
+    assert "enrichment" not in vector.payload["metadata"]
+    assert vector.payload["tags"] == ["new"]
+    assert all(vector.waits)
+
+
+@pytest.mark.parametrize("jit", [False, True])
+def test_vector_sync_records_source_fingerprint(jit):
+    graph = InterleavingGraph()
+    vector = InterleavingVector()
+    vector.first = False
+    assert perform_enrichment(graph, jit=jit, qdrant=vector)
+    expected = content_fingerprint("Notes from Project Launchpad")
+    assert vector.payload["metadata"]["enrichment"]["content_hash"] == expected
+    assert (
+        json.loads(graph.memories["memory"]["metadata"])["enrichment"]["content_hash"] == expected
+    )
+
+
+@pytest.mark.parametrize("jit", [False, True])
+def test_legacy_point_with_equal_content_is_stamped_then_enriched(jit):
+    graph = InterleavingGraph()
+    vector = InterleavingVector(legacy=True)
+    vector.first = False
+    assert perform_enrichment(graph, jit=jit, qdrant=vector)
+    expected = content_fingerprint("Notes from Project Launchpad")
+    assert vector.writes[0] == ["content_hash"]
+    assert vector.payload["content_hash"] == expected
+    assert vector.payload["metadata"]["entities"]["projects"] == ["Launchpad"]
+    assert vector.payload["metadata"]["enrichment"]["content_hash"] == expected
+    assert vector.payload["tags"] == ["old", "entity:projects:launchpad"]
+    assert all(vector.waits)
+
+
+@pytest.mark.parametrize("jit", [False, True])
+def test_legacy_point_with_different_content_is_skipped(jit):
+    graph = InterleavingGraph()
+    vector = InterleavingVector(legacy=True)
+    vector.first = False
+    vector.payload["content"] = "Content the graph no longer holds"
+    original = copy.deepcopy(vector.payload)
+    perform_enrichment(graph, jit=jit, qdrant=vector)
+    assert vector.writes == []
+    assert vector.payload == original
+
+
+@pytest.mark.parametrize("content_changed", [False, True])
+@pytest.mark.parametrize("jit", [False, True])
+def test_patch_between_legacy_read_and_stamp_skips_derived_writes(jit, content_changed):
+    # The PATCH lands on the first set_payload, after the legacy read and before the
+    # stamp applies. It sets content_hash, so the IsEmpty stamp matches nothing.
+    graph = InterleavingGraph()
+    vector = InterleavingVector(legacy=True, content_changed=content_changed)
+    result = perform_enrichment(graph, jit=jit, qdrant=vector)
+    assert vector.writes[0] == ["content_hash"]
+    patched = "Updated source" if content_changed else "Notes from Project Launchpad"
+    assert vector.payload["content_hash"] == content_fingerprint(patched)
+    assert vector.payload["tags"] == ["new"]
+    assert vector.payload["metadata"]["status"] == "patched"
+    if content_changed:
+        assert "entities" not in vector.payload["metadata"]
+        assert "enrichment" not in vector.payload["metadata"]
+    else:
+        # Same text: the PATCH hash equals the source hash, so derived data still applies.
+        assert result
+        assert vector.payload["metadata"]["entities"]["projects"] == ["Launchpad"]
+
+
+def test_payload_fingerprint_matches_stored_content():
+    payload = build_qdrant_payload({"content": "Café notes"})
+    assert payload["content_hash"] == content_fingerprint("Café notes")
+    assert payload["content_hash"].startswith("sha256:")
+    assert len(payload["content_hash"]) == 71
+    assert build_qdrant_payload({})["content_hash"] == content_fingerprint("")
 
 
 @pytest.mark.parametrize("jit", [False, True])
