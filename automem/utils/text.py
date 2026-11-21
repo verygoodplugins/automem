@@ -83,13 +83,14 @@ def _extract_keywords(text: str) -> List[str]:
     if not text:
         return []
 
-    words = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
+    words = re.findall(r"[\w\-]+", text.lower())
     keywords: List[str] = []
     seen: set[str] = set()
 
     for word in words:
         cleaned = word.strip("-_")
-        if len(cleaned) < 3:
+        # Two characters is already a word in scripts such as Chinese.
+        if len(cleaned) < (3 if cleaned.isascii() else 2):
             continue
         if cleaned in SEARCH_STOPWORDS:
             continue
