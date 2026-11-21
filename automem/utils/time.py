@@ -139,9 +139,11 @@ def _parse_time_expression(expression: str | None) -> tuple[str | None, str | No
     elif expr.startswith("last ") and expr.endswith(" days"):
         try:
             days = int(expr.split()[1])
+            if days < 0:
+                return None, None
             end = now
             start = now - timedelta(days=days)
-        except ValueError:
+        except (ValueError, OverflowError):
             return None, None
     elif expr in {"last year", "past year", "this year"}:
         start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
