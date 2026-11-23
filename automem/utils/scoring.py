@@ -234,7 +234,8 @@ def _compute_metadata_score(
     evidence = max(vector_component, keyword_component, metadata_component, exact_match)
 
     # Relevance score from consolidation decay (reflects access patterns + age).
-    # Default weight is 0.0 (disabled) — enable via SEARCH_WEIGHT_RELEVANCE env var.
+    # Default weight is 0.25, matching SEARCH_WEIGHT_RELATION. Override via
+    # SEARCH_WEIGHT_RELEVANCE. A missing or non-numeric score contributes 0.
     relevance = memory.get("relevance_score")
     relevance_score = float(relevance) if isinstance(relevance, (int, float)) else 0.0
 
@@ -245,8 +246,8 @@ def _compute_metadata_score(
     # enabled and evidence falls short, ramp those components down linearly
     # (evidence / gate — no cliff). Components are scaled *before* weighting
     # so the `components` breakdown stays truthful. relevance_score is gated
-    # for completeness; with the default SEARCH_WEIGHT_RELEVANCE=0.0 that is
-    # a no-op today. The context bonus is untouched: context_tags is the
+    # with the other crumbs; the default SEARCH_WEIGHT_RELEVANCE=0.25 means a
+    # shortfall scales that term too. The context bonus is untouched: context_tags is the
     # explicit soft-boost channel. Gate 0.0 (default) must not even enter
     # this branch so legacy scores stay bit-identical.
     relevance_gated = False
