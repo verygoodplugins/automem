@@ -184,9 +184,10 @@ Consolidation
 - POST `/consolidate`
   - Body: `{ "mode": "full"|"decay"|"creative"|"cluster"|"forget", "dry_run": true }`
   - Response: `{ "status": "success", "consolidation": {...} }`
+  - Returns `409` with `{ "error": ..., "active_run": {...} }` if a run started through this endpoint is still in flight, instead of starting a second run.
 
 - GET `/consolidate/status`
-  - Response: `{ "status": "success", "next_runs": {...}, "history": [...] }`
+  - Response: `{ "status": "success", "next_runs": {...}, "history": [...], "active_run": null | {"run_id", "mode", "dry_run", "started_at"} }`
 
 Stream
 
