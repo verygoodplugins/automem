@@ -201,6 +201,30 @@ def _compute_metadata_score(
         else 0.0
     )
 
+    # A current replacement can inherit topical evidence from the superseded
+    # memory that led to it. The original-text channel records that evidence
+    # separately; retain it without treating it as a vector match or exposing
+    # the superseded text in the result.
+    if result.get("match_type") == "state_replacement" and result.get("state_replaces"):
+        inherited_components = result.get("score_components") or {}
+        original_text_score = inherited_components.get("original_text")
+        if isinstance(original_text_score, (int, float)):
+            keyword_component = max(keyword_component, min(1.0, max(0.0, original_text_score)))
+        # This was the actual vector match for the superseded memory, not an
+        # embedding comparison against the replacement's content.
+        inherited_vector = inherited_components.get("inherited_vector")
+        if isinstance(inherited_vector, (int, float)):
+            vector_component = min(1.0, max(0.0, inherited_vector))
+        inherited_keyword = inherited_components.get("inherited_keyword")
+        if isinstance(inherited_keyword, (int, float)):
+            keyword_component = max(keyword_component, min(1.0, max(0.0, inherited_keyword)))
+        inherited_metadata = inherited_components.get("inherited_metadata")
+        if isinstance(inherited_metadata, (int, float)):
+            metadata_component = min(1.0, max(0.0, inherited_metadata))
+        inherited_exact = inherited_components.get("inherited_exact")
+        if isinstance(inherited_exact, (int, float)):
+            exact_match = max(exact_match, min(1.0, max(0.0, inherited_exact)))
+
     # Query-topical evidence: the strongest signal that this result is about
     # the query itself. Tag overlap is excluded even though it is computed
     # from query-token hits: inside a tag-scoped pool the scope tag itself

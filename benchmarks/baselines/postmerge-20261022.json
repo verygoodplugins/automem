@@ -1,0 +1,775 @@
+{
+  "id": "postmerge-20261022",
+  "snapshot_state": "complete",
+  "source_generated_at": "2026-10-23T02:15:59.085167+00:00",
+  "source_rich_record": {
+    "file": "postmerge-official-draft.json",
+    "sha256": "698f4b83d2aa8aed6ea7b37e12d03e0256c6228faeca25575ea8008e8c49a86f"
+  },
+  "prior_snapshot": {
+    "file": "compactofficialdraft-pre-ledger12.json",
+    "sha256": "ac76d1a3d48c5a17fd601db69c67aae2e5736cc4b8d7d7ec10d76be5d7c40a87"
+  },
+  "artifact_locations": {
+    "free": {
+      "root": "data/sweep_runs/postmerge-20261022",
+      "inventory": "ARTIFACTS.sha256",
+      "inventory_sha256": "95e5c40420e5f722b260fb6ecb0cadf734653cc96b31a215cd819c734cd65bd2",
+      "status": "inventory_hashes_verified",
+      "verified_entries": 26
+    },
+    "initial_official_manifest": {
+      "file": "initial-official-manifest.json",
+      "sha256": "021590b0798247b4dfb4b2cf507ad21b01e7547558d73fc3502da6bde8ba9708"
+    },
+    "paid": {
+      "ledger_subdirectory": "ledgers",
+      "root": "data/sweep_runs/postmerge-20261022/final-paid-credits09v2",
+      "status": "referenced_files_hash_verified",
+      "verified_paid_files": 54,
+      "ledger_sha256": {
+        "budget.sqlite3": "f7ba87258ab3c05c329a49497fbf9e3696fe5d763cb28cbc9e1ce389e7d2f5c1",
+        "budget-02.sqlite3": "1c9f4bcaa08888ed18143c532d38c7a8a2d109f7110e2be43dc65ab09658cf7e",
+        "budget-03.sqlite3": "5932e158882635a9f1ba80d832874deccc268f6378b38b8b3b07d17610cb90b4",
+        "budget-04.sqlite3": "8084f657905253b4c9a776e6978c5ccff78ae57857ba622b7cd2cb0f5bace024",
+        "budget-05.sqlite3": "4707dca259b2e9c20e54b44f6589835276f12f554ebadc1217454402ab15ba10",
+        "budget-06.sqlite3": "bfef7537c7d72e9cc738a4d7417fcffbb90955b29db8a8d43b8da7bb5fd86c0f",
+        "budget-07.sqlite3": "e337372aa8ccc9fe5c227bbe8186d5412c9bfcfa2eac7557b4728a6078f96327",
+        "budget-08.sqlite3": "09ce459cab1c6102865bd3ba40fe31eb31a8bbfef13961aa5c1f73643e83fa35",
+        "budget-09.sqlite3": "3ad7125b54699b4148a0a75eff5199262036f0ef306a2eda51efa48b3a916d4a",
+        "budget-10.sqlite3": "672ab29b93b5200b6ca0e1203902979c471adf1e836466398a150732ff30fd54",
+        "budget-11.sqlite3": "b2158cf622e1db29dcb8d3e6f475c7550ad65a162e35383f06fdc820d2b96c83",
+        "budget-12.sqlite3": "234f5a63c60929506949d403d2bcfca330669c8263b90f77676566ff18e0254c"
+      }
+    },
+    "path_basis": "Roots/report paths are repository-relative; paid file basenames resolve under paid.root, ledgers under paid.root/ledgers; free inventory paths resolve under free.root.",
+    "repository": "verygoodplugins/automem-evals"
+  },
+  "decision_report": {
+    "path": "docs/session_20261022_postmerge_baseline.md",
+    "status": "source_and_retained_copy_hash_verified",
+    "sha256": "d27db22e013597ebcf8932232b19cb0a5a567967e25b222d9e88e9224d05d1df",
+    "retained_copy": {
+      "file": "session_20261022_postmerge_baseline.md",
+      "sha256": "d27db22e013597ebcf8932232b19cb0a5a567967e25b222d9e88e9224d05d1df"
+    }
+  },
+  "execution_draft_log": {
+    "file": "postmerge-official-draft-log.md",
+    "sha256": "c247fc54d9407cc1c792cb873efd012d9d30ecd278fbc16b80c615d3fb7e6ee2"
+  },
+  "projector_sha256": "50d18dd5b8ed3ec061f4697d1b817b725553c6e6b9bce07c1e4f6b66378a8e3d",
+  "datasets": {
+    "longmemeval": {
+      "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+      "bytes": 277383467,
+      "question_count": 500,
+      "category_counts": {
+        "knowledge-update": 78,
+        "multi-session": 133,
+        "single-session-assistant": 56,
+        "single-session-preference": 30,
+        "single-session-user": 70,
+        "temporal-reasoning": 133
+      },
+      "canary": {
+        "strategy": "first5 per question_type in source order; canonical --per-type 5",
+        "question_ids": [
+          "e47becba", "118b2229", "51a45a95", "58bf7951", "1e043500", "0a995998", "6d550036", "gpt4_59c863d7",
+          "b5ef892d", "e831120c", "8a2466db", "06878be2", "75832dbd", "0edc2aef", "35a27287", "gpt4_59149c77",
+          "gpt4_f49edff3", "71017276", "b46e15ed", "gpt4_fa19884c", "6a1eabeb", "6aeb4375", "830ce83f",
+          "852ce960", "945e3d21", "7161e7e2", "c4f10528", "89527b6b", "e9327a54", "4c36ccef"
+        ]
+      }
+    },
+    "locomo": {
+      "bytes": 2805274,
+      "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+      "question_count": 1986
+    }
+  },
+  "profile": {
+    "answerer": "gpt-5-mini",
+    "answerer_applies_to": "LongMemEval",
+    "consolidation": false,
+    "dimensions": 1024,
+    "embedding_model": "voyage-4",
+    "enrichment": false,
+    "jit": false,
+    "judge": "gpt-5.4-mini-2026-03-17",
+    "locomo_scoring": {
+      "answering": "canonical retrieval/extraction pipeline",
+      "auxiliary_embedding_model": "text-embedding-3-small",
+      "category_5_judge": "gpt-5.4-mini-2026-03-17",
+      "embedding_similarity": true,
+      "llm_extraction": false
+    },
+    "maturation": "cold",
+    "python_hash_seed": 0
+  },
+  "runtime": {
+    "python_version": "3.12.13",
+    "runtime_kind": "native",
+    "memory_content_hard_limit": 100000,
+    "max_prepared_content_chars": 78135,
+    "alias_fixture": {
+      "question_id": "58bf7951",
+      "prepared_payloads": 57,
+      "logical_keys": 56,
+      "physical_writes": 57
+    },
+    "helper_sha256": {
+      "api_bootstrap_v2.py": "e42e665386e0204907072275ab83ec6de7255b7c7e7f9e29e45563d789f9bb99",
+      "driver_resume_v2.py": "c7c0ca08468a3e5e8c8b237dbee0e0391edd4c595263281e4ccc5d453aff520a",
+      "harness_resume_v2.py": "f6c5d47a3792e8dbdf6ac8add93b6158e824144b1f288eb154f07c6421fb132c"
+    },
+    "proxy_diagnostic_bootstrap": {
+      "file": "proxy_resume_v6_diagnostics_12.py",
+      "sha256": "4f6e9dfa3f8f3cdd5a669dcd859890953ef88a713d4bd33d361e90f1106416f4"
+    }
+  },
+  "free_adapters": {
+    "forgeteval": "4723034d2d5fe7a29f448ee4fed9d93e838c2724",
+    "lethe": "b6053b7bdacc78a91b9ea4bb25f32edad278c495",
+    "precisionmembench_adapter": "9b3e7cb5c964295714a561f2c86f3c4be75c7cc7",
+    "precisionmembench_upstream": "61a712a1754e7d27b6dee42da32a2c214b003ece"
+  },
+  "free_runtime": {
+    "api_image": "sha256:668fccdfd77afba9be262df8b1ef944da072b72834da098bdd5fc87c7feb722d",
+    "falkordb": "v4.18.10",
+    "jit": "off except separately labelled local-JIT graph probe",
+    "paid_credentials": "absent",
+    "qdrant": "v1.11.3"
+  },
+  "ingestion_modes": {
+    "enrichment": "deterministic extractor interleaves real HTTP PATCH; real graph/vector persistence; background and JIT functions",
+    "free": "fresh HTTP writes; local BGE-small-en-v1.5 /384d; cold",
+    "paid": "fresh cold native Python3.12.13 HTTP ingestion; Voyage-4/1024d; no existing embedded snapshots; enrichment/JIT/consolidation disabled",
+    "repair": "four disposable fresh fixtures with lifecycle payload keys deliberately removed, then forced reembedding"
+  },
+  "prices_usd_per_million": {
+    "gpt-5-mini": {"input_usd_per_million": "0.25", "output_usd_per_million": "2"},
+    "gpt-5.4-mini-2026-03-17": {"input_usd_per_million": "0.75", "output_usd_per_million": "4.5"},
+    "text-embedding-3-small": {"input_usd_per_million": "0.02", "output_usd_per_million": "0"},
+    "voyage-4": {"input_usd_per_million": "0.06", "output_usd_per_million": "0"}
+  },
+  "pricing_sources": {
+    "gpt-5-mini": "https://developers.openai.com/api/docs/models/gpt-5-mini",
+    "gpt-5.4-mini-2026-03-17": "https://developers.openai.com/api/docs/models/gpt-5.4-mini",
+    "text-embedding-3-small": "https://developers.openai.com/api/docs/models/text-embedding-3-small",
+    "voyage-4": "https://docs.voyageai.com/docs/pricing"
+  },
+  "accounting": {
+    "cap_nusd": 20000000000,
+    "charged_or_reserved_nusd": 9809397650,
+    "remaining_nusd": 10190602350,
+    "legacy_reserved_or_ambiguous_nusd": 13023000,
+    "all_reserved_or_ambiguous_nusd": 73130570,
+    "actual_invoice_usd": null,
+    "note": "All preflights, abandoned partials, duplicate q11 work, and both control attempts remain in global liability. Completed receipt deltas cover only their own attempt; no whole-arm cost is inferred.",
+    "ledgers": [
+      {
+        "file": "budget.sqlite3",
+        "cap_nusd": 20000000000,
+        "prior_liability_nusd": 0,
+        "charged_nusd": 563250,
+        "reserved_or_ambiguous_nusd": 563250,
+        "attempts": 1,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-02.sqlite3",
+        "cap_nusd": 19999436750,
+        "prior_liability_nusd": 563250,
+        "charged_nusd": 563250,
+        "reserved_or_ambiguous_nusd": 563250,
+        "attempts": 1,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-03.sqlite3",
+        "cap_nusd": 19998873500,
+        "prior_liability_nusd": 1126500,
+        "charged_nusd": 563250,
+        "reserved_or_ambiguous_nusd": 563250,
+        "attempts": 1,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-04.sqlite3",
+        "cap_nusd": 19998310250,
+        "prior_liability_nusd": 1689750,
+        "charged_nusd": 563250,
+        "reserved_or_ambiguous_nusd": 563250,
+        "attempts": 1,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-05.sqlite3",
+        "cap_nusd": 19997747000,
+        "prior_liability_nusd": 2253000,
+        "charged_nusd": 563250,
+        "reserved_or_ambiguous_nusd": 563250,
+        "attempts": 1,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-06.sqlite3",
+        "cap_nusd": 19997183750,
+        "prior_liability_nusd": 2816250,
+        "charged_nusd": 10357500,
+        "reserved_or_ambiguous_nusd": 10206750,
+        "attempts": 2,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-07.sqlite3",
+        "cap_nusd": 19986826250,
+        "prior_liability_nusd": 13173750,
+        "charged_nusd": 13433220,
+        "reserved_or_ambiguous_nusd": 0,
+        "attempts": 8,
+        "halt_reason": "request_rejected"
+      },
+      {
+        "file": "budget-08.sqlite3",
+        "cap_nusd": 19973393030,
+        "prior_liability_nusd": 26606970,
+        "charged_nusd": 43003250,
+        "reserved_or_ambiguous_nusd": 0,
+        "attempts": 18,
+        "halt_reason": "request_rejected"
+      },
+      {
+        "file": "budget-09.sqlite3",
+        "cap_nusd": 19930389780,
+        "prior_liability_nusd": 69610220,
+        "charged_nusd": 165156720,
+        "reserved_or_ambiguous_nusd": 0,
+        "attempts": 65,
+        "halt_reason": "request_rejected"
+      },
+      {
+        "file": "budget-10.sqlite3",
+        "cap_nusd": 19765233060,
+        "prior_liability_nusd": 234766940,
+        "charged_nusd": 3195619470,
+        "reserved_or_ambiguous_nusd": 12667320,
+        "attempts": 1203,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-11.sqlite3",
+        "cap_nusd": 16569613590,
+        "prior_liability_nusd": 3430386410,
+        "charged_nusd": 1696070260,
+        "reserved_or_ambiguous_nusd": 47440250,
+        "attempts": 625,
+        "halt_reason": "accounting_error"
+      },
+      {
+        "file": "budget-12.sqlite3",
+        "cap_nusd": 14873543330,
+        "prior_liability_nusd": 5126456670,
+        "charged_nusd": 4682940980,
+        "reserved_or_ambiguous_nusd": 0,
+        "attempts": 6995,
+        "halt_reason": null
+      }
+    ]
+  },
+  "guard_timeline": {
+    "versions": {
+      "v2": {
+        "file": "paid_budget_proxy_v2.py",
+        "revision": "df11e83988ff3eb2f4dfe73df94f82946cbe5eff",
+        "source_sha256": "943edd5055af25d028d48e2059b12d6f371ac1fea0673139a2c6d70a95e25e50",
+        "fake_tests": 37
+      },
+      "v3": {
+        "file": "paid_budget_proxy_v3.py",
+        "revision": "857980d73658b562fc78ff1f42e8ef944ae40f43",
+        "source_sha256": "4217e806a55eca7b1633c3e63bc691355ea9e4df7e4429b6e5696c02222671b2",
+        "fake_tests": 43
+      },
+      "v4": {
+        "file": "paid_budget_proxy_v4.py",
+        "revision": "21d871ef94551bc6535d51f1a06a3ff78fa8fdbd",
+        "source_sha256": "23cf20b022460aa9bb0fca5967f3d51e0cf019d407b542134b059bf3ded2fbed",
+        "fake_tests": 45
+      },
+      "v6": {
+        "file": "paid_budget_proxy_v6.py",
+        "revision": "9872563dc7d4bd8ef6df874d46419fd1814180d1",
+        "source_sha256": "388bb6c2df239cfdf70289d40e9bd42f7e268bc6352bb97cbfde76e45546defa",
+        "fake_tests": 49
+      }
+    },
+    "control_canary": [
+      {"completed_questions": 10, "guard": "v2", "ledger": "budget-09.sqlite3"},
+      {"completed_questions": 20, "guard": "v3", "ledger": "budget-10.sqlite3"}
+    ],
+    "candidate_canary": {"completed_questions": 30, "guard": "v3", "ledger": "budget-10.sqlite3"},
+    "candidate_longmemeval_s": [
+      {
+        "completed_questions": 149,
+        "guard": "v4",
+        "ledger": "budget-10.sqlite3",
+        "status": "stopped_accounting_error",
+        "retained_reservation_nusd": 12667320
+      },
+      {
+        "completed_questions": 102,
+        "guard": "v6",
+        "ledger": "budget-11.sqlite3",
+        "status": "stopped_accounting_error",
+        "resume_after": 149,
+        "retained_reservation_nusd": 47440250
+      },
+      {
+        "completed_questions": 249,
+        "guard": "v6",
+        "ledger": "budget-12.sqlite3",
+        "status": "complete",
+        "resume_after": 251
+      }
+    ],
+    "candidate_locomo": {
+      "guard": "v6",
+      "load_status": "same_guard_ledger_api14_after497_prefix_recovery",
+      "planned_guard": "v6",
+      "ledger": "budget-12.sqlite3",
+      "boundary_receipt": {
+        "file": "full-to-locomo-boundary.json",
+        "sha256": "4c860e2716ce448a77420951d7e79e03b9fc5bcfdd26cb2dc069e3b284601398"
+      },
+      "start_receipt": {
+        "file": "locomo-start-12.json",
+        "sha256": "bfc2999f25c316a921a07565b3a7606fdd20b4e4d68f2d61be993eb4a2f05ccc"
+      }
+    },
+    "transition_note": "Ledger10 stopped at149; ledger11 added102 then stopped at251 on OpenAI400/codeother, exactcauseunknown. Ledger12 is loaded only if its actual resume receipt validates. Parent manually gates LoCoMo; no planned API restart is treated as completed.",
+    "rollover11_receipts": [
+      {
+        "file": "accounting-resume-11.json",
+        "sha256": "4094e34f50322675d3fb5309a9ae4623cbebaedcd1079f64429c47c47eee5474"
+      },
+      {
+        "file": "preflight-11.json",
+        "sha256": "46233159002420afd645865e5763ce9609ebd53058b9ad78d6a8069491c4ab81"
+      },
+      {
+        "file": "resume-launch-11.json",
+        "sha256": "1f69f5abf2014c6952858f204facdff46327a2b98a7d47ac43e6cd4d70e157c8"
+      }
+    ],
+    "rollover12_receipts": [
+      {
+        "file": "accounting-resume-12.json",
+        "sha256": "6533a02bb736d2a458e79a65c1174ab1b1e1b0b4051c5608da478fc1cb1d4ae7"
+      },
+      {
+        "file": "preflight-12.json",
+        "sha256": "adf64bd69c6e13ea6bf47662b65f83194465f43a27ec0a416698600041d4c222"
+      },
+      {
+        "file": "resume-launch-12.json",
+        "sha256": "39b64bd669b5b0610695887814748645dc41e2bd38492a46424c3a0820981f40"
+      }
+    ],
+    "q252_retry": "Checkpointed on ledger12 with unchanged frozen contract; original HTTP400 cause remains unknown."
+  },
+  "locomo_storage_recovery": {
+    "cause": "Coordinated storage SIGTERM; actor unproven, OOM flags false. Whole conv-42 tail quarantined after soft-failed recall; unchanged497 prefix retained, conv-42 reingested.",
+    "counts": {
+      "original_rows": 757,
+      "quarantined_conv42": 260,
+      "resumed_questions": 1489,
+      "retained_prefix": 497
+    },
+    "incident": {
+      "file": "docker-stop-incident.json",
+      "sha256": "edf6be2a6462fd9f48ed279d0e1b372d79a661c594c3db02b11a18ff3231bfbf"
+    },
+    "latency": "LoCoMo server timing unavailable/inconclusive after recovery; native elapsed covers resumed1489 only; all failed/repeated costs retained globally.",
+    "monitor": {
+      "file": "driver_backend_guard.py",
+      "sha256": "7c5bb5930b26f152c046ddfadb38248e9c8ffc038f90fd1597689d063db6ce83"
+    },
+    "monitor_limit": "Polling(.5s plus probe time) reduces continued work; it is not race-free publication proof. Finalized accepted-window audit is required.",
+    "recovery": {
+      "file": "locomo-prefix-recovery-497.json",
+      "sha256": "6c7f5866a42905413c2e27ec22820e404a4c16a204e0b2fd28c69d24826ac135"
+    },
+    "restart": {
+      "file": "locomo-restart-14.json",
+      "sha256": "cefd01f733fa1f585431207edcc00177951955a85eb77d304e78576dc8a6f6ed"
+    },
+    "retained_prefix_sha256": "c8ce561c75a8c347d32c16ff666e02dc8b89b4ecd34d2ced4ea6a30835697ab4"
+  },
+  "server_recall_call_latency": {
+    "artifact": {
+      "file": "recall-latency-after-lme500.json",
+      "sha256": "101e7cd819fa5c0fcd81465852f1fb09f6d909ff6fc41fb087914aef77415710"
+    },
+    "control": "Unavailable: formatter discarded latency fields;31 raw calls for30 scored questions.",
+    "full_denominator": "501 endpoint calls for500 scored questions includes unscored q252 before answerer HTTP400; no call excluded.",
+    "gates": "Native completion plus exact call counts, all attempt windows, finalized single-caller logs, helper and every source hash revalidated offline.",
+    "helper": {
+      "file": "summarize_recall_latency_v2.py",
+      "sha256": "afa20d655cca9740f2e69d80e1b7c4cd3da704efa949ad1d9f7c44274ef6010c"
+    },
+    "manifest": {
+      "file": "latency-stages.json",
+      "sha256": "bfcd36832d3f16757cc7aa5304029489755681726f33ac5a16021be30db847ad"
+    },
+    "method": "Server recall_complete processing ms, rounded0.01; query embedding/retrieval/scoring/response construction included. Ingest, answers/judges, client transport, final serialization and post-timer work excluded. Linear-interpolated percentiles.",
+    "paired_comparison_available": false,
+    "stages": {
+      "candidate_canary": {
+        "metrics": {
+          "max_ms": 993.69,
+          "mean_ms": 727.8736666666666,
+          "n": 30,
+          "p50_ms": 798.27,
+          "p95_ms": 951.965
+        },
+        "status": "complete",
+        "unit": "one recall call per scored question",
+        "window_event_counts": [30]
+      },
+      "candidate_longmemeval_s": {
+        "metrics": {
+          "max_ms": 2039.92,
+          "mean_ms": 730.3608183632734,
+          "n": 501,
+          "p50_ms": 795.27,
+          "p95_ms": 939.24
+        },
+        "status": "complete",
+        "unit": "endpoint call including one unscored q252 attempt",
+        "window_event_counts": [149, 103, 249]
+      },
+      "control_canary": {"reason": "control_formatter_discarded_latency_fields", "status": "unavailable"}
+    },
+    "strict_per_question_latency_ms": null
+  },
+  "stages": {
+    "control_canary": {
+      "benchmark": "longmemeval",
+      "status": "complete",
+      "activity": "completed",
+      "completed": 30,
+      "expected": 30,
+      "arm": "control",
+      "server_revision": "01a17aa38e678924c07a51015ef705b8474e2193",
+      "harness_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+      "dataset_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+      "ingestion_mode": "fresh per-question per-session canonical HTTP writes; cold; no embedded snapshots",
+      "profile_ref": "#/profile",
+      "config": {"profile_name": "baseline", "use_llm_eval": true, "answer_focus_prompt": false},
+      "run_id": "e24a4638-876a-47a2-84cb-165ffaa82a0a",
+      "launch": {
+        "file": "lme-control-canary-credits09v2.launch.json",
+        "file_sha256": "7cb7e7ca050a983578013c7bcc1aa6b445601d6beb04c99d7062a7e5205da5f8"
+      },
+      "guard_phase_ref": "#/guard_timeline/control_canary",
+      "metrics": {
+        "accuracy": 0.7,
+        "correct": 21,
+        "total": 30,
+        "macro_accuracy": 0.7000000000000001,
+        "by_type": {
+          "knowledge-update": {"accuracy": 0.4, "correct": 2, "total": 5},
+          "multi-session": {"accuracy": 0.6, "correct": 3, "total": 5},
+          "single-session-assistant": {"accuracy": 1.0, "correct": 5, "total": 5},
+          "single-session-preference": {"accuracy": 0.4, "correct": 2, "total": 5},
+          "single-session-user": {"accuracy": 0.8, "correct": 4, "total": 5},
+          "temporal-reasoning": {"accuracy": 1.0, "correct": 5, "total": 5}
+        },
+        "native_any_support_at_5": {"hits": 30, "denominator": 30},
+        "full_labeled_support_coverage": {
+          "matched": 48,
+          "micro_rate": 0.9056603773584906,
+          "supporting_denominator": 53
+        },
+        "support_precision_proxy": {"matched": 48, "micro_rate": 0.16, "retrieved_denominator": 300},
+        "failure_coverage": {
+          "all_questions_all_labels_covered": 26,
+          "wrong_all_labeled_support": 6,
+          "wrong_some_but_not_all_labeled_support": 3,
+          "wrong_zero_labeled_support": 0
+        },
+        "native_elapsed_s": 360.0805230140686,
+        "native_elapsed_scope": "Resumed control native timer covers only the remaining 20 questions; use per-attempt receipts for active process times."
+      },
+      "evidence": [
+        {
+          "file": "lme-control-canary-credits09v2.json",
+          "sha256": "828f10e9accafb7120d22d3d8a40857fb664d16e40a26ade28e2a1a074ac7b24"
+        },
+        {
+          "file": "lme-control-canary-credits09v2.execution.json",
+          "sha256": "52c861f721b1e76b2877b6e93d1ccca4cadd9f9cd0f46fa7749a6d5f8a47cd67"
+        },
+        {
+          "file": "lme-control-canary-credits09v2.checkpoint.jsonl",
+          "sha256": "4c9c40b2e897e2c978327024fc3fbc9b7224e5f5f7affcf9c4ea0157e415d0e7"
+        },
+        {
+          "file": "lme-control-canary-credits09v2.attempt-c0b24ad43b80490c96defbd5b625093d.receipt.json",
+          "sha256": "5cf4044b3cdfc50abdcff371341547601b6e4383dc7e34bc9a939729306ad9df"
+        },
+        {
+          "file": "lme-control-canary-credits09v2.attempt-e5de10c7f5074393be53d39865827686.receipt.json",
+          "sha256": "bd54442f5aceccca1b1a0d1410cf79ba44fe8bf8de1caa2ffc926389b7bff7a5"
+        }
+      ]
+    },
+    "candidate_canary": {
+      "benchmark": "longmemeval",
+      "status": "complete",
+      "activity": "completed",
+      "completed": 30,
+      "expected": 30,
+      "arm": "candidate",
+      "server_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+      "harness_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+      "dataset_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+      "ingestion_mode": "fresh per-question per-session canonical HTTP writes; cold; no embedded snapshots",
+      "profile_ref": "#/profile",
+      "config": {"profile_name": "baseline", "use_llm_eval": true, "answer_focus_prompt": false},
+      "run_id": "9552f254-5ba9-4108-b737-22b3780108bc",
+      "launch": {
+        "file": "lme-candidate-canary-credits09v2.launch.json",
+        "file_sha256": "19fbcd0130155595186bdacf8bf45319ef3b238bca7220f846f66259dc1650e4"
+      },
+      "guard_phase_ref": "#/guard_timeline/candidate_canary",
+      "metrics": {
+        "accuracy": 0.7,
+        "correct": 21,
+        "total": 30,
+        "macro_accuracy": 0.7000000000000001,
+        "by_type": {
+          "knowledge-update": {"accuracy": 0.6, "correct": 3, "total": 5},
+          "multi-session": {"accuracy": 0.4, "correct": 2, "total": 5},
+          "single-session-assistant": {"accuracy": 1.0, "correct": 5, "total": 5},
+          "single-session-preference": {"accuracy": 0.4, "correct": 2, "total": 5},
+          "single-session-user": {"accuracy": 0.8, "correct": 4, "total": 5},
+          "temporal-reasoning": {"accuracy": 1.0, "correct": 5, "total": 5}
+        },
+        "native_any_support_at_5": {"hits": 30, "denominator": 30},
+        "full_labeled_support_coverage": {
+          "matched": 48,
+          "micro_rate": 0.9056603773584906,
+          "supporting_denominator": 53
+        },
+        "support_precision_proxy": {"matched": 48, "micro_rate": 0.16, "retrieved_denominator": 300},
+        "failure_coverage": {
+          "all_questions_all_labels_covered": 26,
+          "wrong_all_labeled_support": 6,
+          "wrong_some_but_not_all_labeled_support": 3,
+          "wrong_zero_labeled_support": 0
+        },
+        "native_elapsed_s": 515.2802798748016,
+        "native_elapsed_scope": "Native harness elapsed time; distinct from index drain waits and receipt active attempt time."
+      },
+      "evidence": [
+        {
+          "file": "lme-candidate-canary-credits09v2.json",
+          "sha256": "5bc19ae547dd633bf355807305601eccab2a354492a5553509ec574c9fc484b8"
+        },
+        {
+          "file": "lme-candidate-canary-credits09v2.execution.json",
+          "sha256": "fb56a498405754b9d4529a5a22f6f2ae093208fca291bc04878e4d5fa81261c7"
+        },
+        {
+          "file": "lme-candidate-canary-credits09v2.checkpoint.jsonl",
+          "sha256": "c03bb0c8bcdd4c31a237c3ab9e1e27c4e2bf0174a957bc0d9671fe0ba0400339"
+        },
+        {
+          "file": "lme-candidate-canary-credits09v2.attempt-c5e4bff5bcc84f499b674f75999fada8.receipt.json",
+          "sha256": "1b413d0c9bf0398779ed72d573299336fae1efbc642550022c7dc4c2bf2f0816"
+        }
+      ]
+    },
+    "candidate_longmemeval_s": {
+      "benchmark": "longmemeval",
+      "status": "complete",
+      "activity": "complete",
+      "completed": 500,
+      "expected": 500,
+      "arm": "candidate",
+      "server_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+      "harness_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+      "dataset_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+      "ingestion_mode": "fresh per-question per-session canonical HTTP writes; cold; no embedded snapshots",
+      "profile_ref": "#/profile",
+      "config": {"profile_name": "baseline", "use_llm_eval": true, "answer_focus_prompt": false},
+      "run_id": "4d0d3fb0-4cc2-4ddb-8c17-04641e21db03",
+      "launch": {
+        "file": "lme-candidate-full-credits09v2.launch.json",
+        "file_sha256": "a60086034f87095968e9693eb3e553d52113cabd1f39efebac3855c420473b9a"
+      },
+      "guard_phase_ref": "#/guard_timeline/candidate_longmemeval_s",
+      "metrics": {
+        "accuracy": 0.854,
+        "correct": 427,
+        "total": 500,
+        "macro_accuracy": 0.8359962406015038,
+        "by_type": {
+          "knowledge-update": {"accuracy": 0.8333333333333334, "correct": 65, "total": 78},
+          "multi-session": {"accuracy": 0.8120300751879699, "correct": 108, "total": 133},
+          "single-session-assistant": {"accuracy": 0.9821428571428571, "correct": 55, "total": 56},
+          "single-session-preference": {"accuracy": 0.5666666666666667, "correct": 17, "total": 30},
+          "single-session-user": {"accuracy": 0.9571428571428572, "correct": 67, "total": 70},
+          "temporal-reasoning": {"accuracy": 0.8646616541353384, "correct": 115, "total": 133}
+        },
+        "native_any_support_at_5": {"hits": 488, "denominator": 500},
+        "full_labeled_support_coverage": {
+          "matched": 904,
+          "micro_rate": 0.9535864978902954,
+          "supporting_denominator": 948
+        },
+        "support_precision_proxy": {"matched": 904, "micro_rate": 0.1808, "retrieved_denominator": 5000},
+        "failure_coverage": {
+          "all_questions_all_labels_covered": 463,
+          "wrong_all_labeled_support": 51,
+          "wrong_some_but_not_all_labeled_support": 17,
+          "wrong_zero_labeled_support": 5
+        },
+        "native_elapsed_s": 4336.942342996597,
+        "native_elapsed_scope": "Native elapsed covers only final resumed249 rows after251; original149 and resumed102 have separate attempt receipts. This is not whole-run time or benchmark latency."
+      },
+      "evidence": [
+        {
+          "file": "lme-candidate-full-credits09v2.json",
+          "sha256": "858f0e259cc98a988f4f0b3a87712d22e7c4de9bf792c9a1fc1d8b8d78806e12"
+        },
+        {
+          "file": "lme-candidate-full-credits09v2.execution.json",
+          "sha256": "0c479c2096aa6d096021971722972ff4db569b0158a1829a724850c4f3dfa452"
+        },
+        {
+          "file": "lme-candidate-full-credits09v2.checkpoint.jsonl",
+          "sha256": "605bcfed67352d7d77f4781738c5f5d85f1a128f32bd5114f416af5c1f45d7b2"
+        },
+        {
+          "file": "lme-candidate-full-credits09v2.attempt-82d20ea4afe54ec78b9f6b69a059ad56.receipt.json",
+          "sha256": "49857579efdb9e7e219fc3635d54bcf8fd59197e070f7135d2a26a32f6ee412c"
+        },
+        {
+          "file": "lme-candidate-full-credits09v2.attempt-baf2d325b0d747879485b0f617d54e8e.receipt.json",
+          "sha256": "b732a6b8166d6166cb614a422e92bd84cfcba36c52ae037e4aa5e86369562ad9"
+        },
+        {
+          "file": "lme-candidate-full-credits09v2.attempt-fa4aee0bcc9a4667bf26c5cc2c22dacd.receipt.json",
+          "sha256": "b94e135c34d779f52593ab432250360be5aa5110198d85acd5307e12c1571b03"
+        }
+      ]
+    },
+    "candidate_locomo": {
+      "benchmark": "locomo",
+      "status": "complete",
+      "activity": "completed",
+      "completed": 1986,
+      "expected": 1986,
+      "arm": "candidate",
+      "server_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+      "harness_revision": "3eaa1f5d4a622db8d85fa9e5f45519fbb67f8876",
+      "dataset_sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4",
+      "ingestion_mode": "canonical fresh LoCoMo ingestion; cold; no embedded snapshots",
+      "profile_ref": "#/profile",
+      "config": {
+        "profile_name": "canonical retrieval/extraction",
+        "llm_extraction": false,
+        "embedding_similarity": true,
+        "judge_scope": "LoCoMo category5 only"
+      },
+      "run_id": "f4e03b2b-5e88-47aa-be4b-a1171a8b8828",
+      "launch": {
+        "file": "locomo-candidate-full-credits09v2.json.launch.json",
+        "file_sha256": "03c69449711bf773ad2c88415865342ce09839619c886b5a4d8b14b6d154e029"
+      },
+      "guard_phase_ref": "#/guard_timeline/candidate_locomo",
+      "publication_gate": "native1986_and_clean_finalized_accepted_window_audit_required",
+      "metrics": {
+        "accuracy": 0.850956696878147,
+        "correct": 1690,
+        "total": 1986,
+        "categories": {
+          "1": {"accuracy": 0.5319148936170213, "correct": 150, "total": 282},
+          "2": {"accuracy": 0.8691588785046729, "correct": 279, "total": 321},
+          "3": {"accuracy": 0.4479166666666667, "correct": 43, "total": 96},
+          "4": {"accuracy": 0.9381688466111772, "correct": 789, "total": 841},
+          "5": {"accuracy": 0.9618834080717489, "correct": 429, "total": 446}
+        },
+        "judge": {
+          "errors": 0,
+          "skipped": 0,
+          "api_calls": 444,
+          "latency_ms": {"avg": 1188.128, "max": 3087.315, "p50": 1140.665, "p95": 1589.537}
+        },
+        "cat5_excluded": 0,
+        "native_elapsed_s": 3088.975914001465,
+        "native_elapsed_scope": "Native timer covers only resumed1489 questions after accepted497 prefix; not full1986 elapsed or benchmark latency."
+      },
+      "evidence": [
+        {
+          "file": "locomo-candidate-full-credits09v2.json",
+          "sha256": "b67c06da2c354017ffdab7d8d46b6d0eb76daeecccfb9ec8a2fc608890c0a57c"
+        },
+        {
+          "file": "locomo-candidate-full-credits09v2.json.execution.json",
+          "sha256": "7f16edb74ff6b77ed9cfb3e1e95f4bf1747672f93928e0f92c90b2d2a5b99550"
+        },
+        {
+          "file": "locomo-candidate-full-credits09v2.json.checkpoint.jsonl",
+          "sha256": "23a294f4ed0be8e092ce68e4ac3321f194737b9a9c75b8696c5262dff08f8b66"
+        },
+        {
+          "file": "locomo-candidate-full-credits09v2.json.attempt-74a44fa9a86f4cc5b2778a5633bf95df.receipt.json",
+          "sha256": "ee6873a2e683978a59d8355ef86c729f6bfdd97ab509a53e2da997ae5281afb4"
+        },
+        {
+          "file": "locomo-candidate-full-credits09v2.json.attempt-754a92b73ecd48ae92f87f152c98f544.receipt.json",
+          "sha256": "1d7bb6f0db0620521bab3667ce95f1b67e7c138615f6b80f4f9f48f3ceed8cbf"
+        }
+      ],
+      "accepted_window_audit": {
+        "file": "locomo-accepted-backend-audit.json",
+        "sha256": "2f0c0da357d95d13e57f2e82e279a9f16c5fb89a88194f93f33223b79d904743",
+        "gate": "clean_finalized_accepted_windows_and_native1986_and_complete_driver"
+      }
+    }
+  },
+  "paired_canaries": {
+    "paired_questions": 30,
+    "full_ranked_id_lists_identical": 30,
+    "correctness_flips": [
+      {
+        "id": "0a995998",
+        "control_correct": true,
+        "candidate_correct": false,
+        "control_support_ranks": {"answer_afa9873b_1": 2, "answer_afa9873b_2": 3, "answer_afa9873b_3": 1},
+        "candidate_support_ranks": {"answer_afa9873b_1": 2, "answer_afa9873b_2": 3, "answer_afa9873b_3": 1}
+      },
+      {
+        "id": "6a1eabeb",
+        "control_correct": false,
+        "candidate_correct": true,
+        "control_support_ranks": {"answer_a25d4a91_1": 2, "answer_a25d4a91_2": 1},
+        "candidate_support_ranks": {"answer_a25d4a91_1": 2, "answer_a25d4a91_2": 1}
+      }
+    ],
+    "interpretation": "Descriptive only: identical ordered retrieval IDs with answer/judge correctness flips; no causal or statistical inference. Full QA/rank-score arrays remain in native evidence.",
+    "explanation_ref": "#/decision_report"
+  },
+  "limits": [
+    "Canary scores are descriptive, never the full500 headline. Incomplete stages emit counts/status without scores.",
+    "Any-support hit@5 differs from all-label coverage. Precision/off-label and zero/some/all failure classes are label proxies, not exhaustive relevance or causes.",
+    "Full attempt scopes are149 then102 then remaining249; control resumed native timer covers20. Latest native elapsed is attempt-only, never end-to-end. Wall-time receipts include downtime; they are not benchmark latency.",
+    "Strict per-question timing remains null and control timing unavailable. Separately gated server recall-call processing distributions are recorded in server_recall_call_latency; no paired latency claim. Paid stale exposure is unmeasured; free full-envelope graph probes remain5/10 per arm; LoCoMo supporting coverage is not saved.",
+    "07/08 route-rejection initiators remain inconclusive;09 is high-confidence Headroom scanner attribution. Global accounting retains every preflight/abandoned attempt; invoices are unknown."
+  ]
+}

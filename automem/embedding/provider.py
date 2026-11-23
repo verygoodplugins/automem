@@ -26,6 +26,14 @@ class EmbeddingProvider(ABC):
         """
         pass
 
+    def generate_query_embedding(self, text: str) -> List[float]:
+        """Generate an embedding for a search query.
+
+        Providers with asymmetric query/document embeddings override this;
+        the default embeds queries the same way as stored content.
+        """
+        return self.generate_embedding(text)
+
     @abstractmethod
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts in a single batch.

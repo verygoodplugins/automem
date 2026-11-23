@@ -1,15 +1,25 @@
 name: Docs Dispatch
 
+# Docs on automem.ai follow published releases, so this runs once per release:
+# release-please.yml calls it after creating one. A manual run documents a
+# release tag (the latest release by default), which also covers a release
+# published by hand, since that never sets release_created.
+
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Release tag to document."
+        required: true
+        type: string
+      reason:
+        description: "Why docs should be audited."
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
-      base_sha:
-        description: "Base SHA or ref for the docs diff. Defaults to head^."
-        required: false
-      head_sha:
-        description: "Head SHA or ref to document. Defaults to main."
+      release_tag:
+        description: "Release tag to document. Defaults to the latest release."
         required: false
       reason:
         description: "Why docs should be audited."
@@ -29,51 +39,35 @@ jobs:
       - name: Get changed files
         id: changed
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_BASE_REF: ${{ inputs.base_sha }}
-          INPUT_HEAD_REF: ${{ inputs.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           INPUT_REASON: ${{ inputs.reason }}
-          PUSH_BASE_REF: ${{ github.event.before }}
-          PUSH_HEAD_REF: ${{ github.event.after }}
         run: |
-          ZERO_SHA="0000000000000000000000000000000000000000"
+          RELEASE_TAG="$INPUT_RELEASE_TAG"
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" -q '.tag_name')
+          fi
+          git fetch --tags --force origin
 
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            HEAD_REF="${INPUT_HEAD_REF:-main}"
-            BASE_REF="$INPUT_BASE_REF"
-            REASON="${INPUT_REASON:-Manual docs dispatch for ${HEAD_REF}}"
+          HEAD_SHA=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          # Diff against the previous release so the docs audit sees the whole release.
+          if PREVIOUS_TAG=$(git describe --tags --abbrev=0 --match 'v*' "${HEAD_SHA}^" 2>/dev/null); then
+            BASE_SHA=$(git rev-parse "${PREVIOUS_TAG}^{commit}")
           else
-            HEAD_REF="$PUSH_HEAD_REF"
-            BASE_REF="$PUSH_BASE_REF"
-            REASON="Push to main"
-          fi
-
-          HEAD_SHA=$(git rev-parse "$HEAD_REF")
-
-          if [ -z "$BASE_REF" ]; then
-            if git rev-parse --verify "${HEAD_REF}^" >/dev/null 2>&1; then
-              BASE_REF="${HEAD_REF}^"
-            else
-              BASE_REF=$(git rev-list --max-parents=0 --max-count=1 "$HEAD_SHA")
-            fi
-          fi
-
-          if [ "$BASE_REF" = "$ZERO_SHA" ]; then
-            echo "::warning::No previous SHA found, diffing against first commit"
+            echo "::warning::No previous release tag found, diffing against first commit"
             BASE_SHA=$(git rev-list --max-parents=0 --max-count=1 "$HEAD_SHA")
-          else
-            BASE_SHA=$(git rev-parse "$BASE_REF")
           fi
+          REASON="${INPUT_REASON:-Release ${RELEASE_TAG}}"
 
-          COMMIT_URL="https://github.com/${GITHUB_REPOSITORY}/commit/${HEAD_SHA}"
           COMPARE_URL="https://github.com/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}"
           FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | jq -R -s -c 'split("\n") | map(select(. != ""))')
 
           {
+            echo "release_tag=$RELEASE_TAG"
+            echo "release_version=${RELEASE_TAG##*v}"
             echo "base_sha=$BASE_SHA"
             echo "head_sha=$HEAD_SHA"
             echo "files=$FILES"
-            echo "commit_url=$COMMIT_URL"
             echo "compare_url=$COMPARE_URL"
             echo "reason<<EOF"
             echo "$REASON"
@@ -127,39 +121,42 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           SOURCE_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.changed.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.changed.outputs.release_version }}
           HEAD_SHA: ${{ steps.changed.outputs.head_sha }}
           BASE_SHA: ${{ steps.changed.outputs.base_sha }}
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
           AFFECTED_DOCS: ${{ steps.check.outputs.affected }}
           MAPPING_STATUS: ${{ steps.check.outputs.mapping_status }}
           REASON: ${{ steps.changed.outputs.reason }}
-          COMMIT_URL: ${{ steps.changed.outputs.commit_url }}
           COMPARE_URL: ${{ steps.changed.outputs.compare_url }}
         run: |
+          # client_payload allows at most 10 top-level properties; source_sha is
+          # the release commit, so there is no separate head_sha or commit_url.
           jq -n \
             --arg event_type "docs-update" \
             --arg source_repo "$SOURCE_REPO" \
             --arg source_sha "$HEAD_SHA" \
+            --arg release_tag "$RELEASE_TAG" \
+            --arg release_version "$RELEASE_VERSION" \
             --arg base_sha "$BASE_SHA" \
-            --arg head_sha "$HEAD_SHA" \
             --arg changed_files "$CHANGED_FILES" \
             --arg affected_docs "$AFFECTED_DOCS" \
             --arg mapping_status "$MAPPING_STATUS" \
             --arg reason "$REASON" \
-            --arg commit_url "$COMMIT_URL" \
             --arg compare_url "$COMPARE_URL" \
             '{
               event_type: $event_type,
               client_payload: {
                 source_repo: $source_repo,
                 source_sha: $source_sha,
+                release_tag: $release_tag,
+                release_version: $release_version,
                 base_sha: $base_sha,
-                head_sha: $head_sha,
                 changed_files: ($changed_files | fromjson),
                 affected_docs: ($affected_docs | fromjson),
                 mapping_status: $mapping_status,
                 reason: $reason,
-                commit_url: $commit_url,
                 compare_url: $compare_url
               }
             }' | gh api repos/verygoodplugins/automem-website/dispatches --input -

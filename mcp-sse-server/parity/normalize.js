@@ -29,7 +29,8 @@ export function normalizeKeys(value) {
 const REQUEST_ID_SUFFIX_RE = /\s*\(request_id: [^)]*\)/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
-const SCORE_RE = /(score=|Score: |"final_score":\s*|"score":\s*)[\d.]+/g;
+// `recency` is the one score component that moves with the clock.
+const SCORE_RE = /(score=|Score: |"final_score":\s*|"score":\s*|"recency":\s*)[\d.]+/g;
 const MS_RE = /("query_time_ms":\s*)[\d.]+/g;
 
 // Global service counters. The two transports run their scenario batches
@@ -52,6 +53,16 @@ const JSON_COUNT_RE = new RegExp(
   'g'
 );
 const LABEL_COUNT_RE = /((?:Memory|Vector) count: )\d+/g;
+
+/**
+ * Strip how a transport frames a tool error, leaving the message itself. The
+ * remote returns an isError result prefixed "AutoMem error: "; stdio prefixes
+ * "Error: ", and its recall handler lets errors escape as JSON-RPC errors,
+ * which the harness records as "THREW: MCP error <code>: ".
+ */
+export function stripErrorFraming(text) {
+  return String(text).replace(/^(?:THREW: )?(?:MCP error -?\d+: |AutoMem error: |Error: )/, '');
+}
 
 /**
  * Replace values that legitimately differ run-to-run so two transports can be

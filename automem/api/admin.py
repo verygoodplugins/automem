@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from flask import Blueprint, abort, jsonify, request
 
 from automem.config import RECALL_EXCLUDED_TYPES
+from automem.stores.vector_payload import build_qdrant_payload
 from automem.sync.accounting import fetch_falkor_memory_ids, fetch_qdrant_point_ids
 
 
@@ -93,7 +94,11 @@ def create_admin_blueprint_full(
                    m.confidence AS confidence,
                    m.metadata AS metadata,
                    m.updated_at AS updated_at,
-                   m.last_accessed AS last_accessed
+                   m.last_accessed AS last_accessed,
+                   m.t_valid AS t_valid,
+                   m.t_invalid AS t_invalid,
+                   m.archived AS archived,
+                   m.relevance_score AS relevance_score
             ORDER BY m.timestamp DESC
         """
         if not force_reembed:
@@ -109,7 +114,11 @@ def create_admin_blueprint_full(
                        m.confidence AS confidence,
                        m.metadata AS metadata,
                        m.updated_at AS updated_at,
-                       m.last_accessed AS last_accessed
+                       m.last_accessed AS last_accessed,
+                       m.t_valid AS t_valid,
+                       m.t_invalid AS t_invalid,
+                       m.archived AS archived,
+                       m.relevance_score AS relevance_score
                 ORDER BY m.timestamp DESC
             """
         if limit:
@@ -136,6 +145,10 @@ def create_admin_blueprint_full(
                         "metadata": _parse_metadata(row[7]),
                         "updated_at": row[8],
                         "last_accessed": row[9],
+                        "t_valid": row[10] if len(row) > 10 else row[4],
+                        "t_invalid": row[11] if len(row) > 11 else None,
+                        "archived": row[12] if len(row) > 12 else False,
+                        "relevance_score": row[13] if len(row) > 13 else None,
                     }
                 )
 
@@ -169,17 +182,7 @@ def create_admin_blueprint_full(
                 points = []
                 for mem, embedding in zip(batch, embeddings):
                     # Preserve full payload from FalkorDB
-                    payload_data = {
-                        "content": mem["content"],
-                        "tags": mem["tags"],
-                        "importance": mem["importance"],
-                        "timestamp": mem["timestamp"],
-                        "type": mem["type"],
-                        "confidence": mem["confidence"],
-                        "metadata": mem["metadata"],
-                        "updated_at": mem["updated_at"],
-                        "last_accessed": mem["last_accessed"],
-                    }
+                    payload_data = build_qdrant_payload(mem)
                     points.append(
                         point_struct(id=mem["id"], vector=embedding, payload=payload_data)
                     )
@@ -297,7 +300,11 @@ def create_admin_blueprint_full(
                        m.confidence AS confidence,
                        m.metadata AS metadata,
                        m.updated_at AS updated_at,
-                       m.last_accessed AS last_accessed
+                       m.last_accessed AS last_accessed,
+                       m.t_valid AS t_valid,
+                       m.t_invalid AS t_invalid,
+                       m.archived AS archived,
+                       m.relevance_score AS relevance_score
             """
             result = graph.query(fetch_query, {"ids": batch_ids})
             for row in getattr(result, "result_set", []) or []:
@@ -316,6 +323,10 @@ def create_admin_blueprint_full(
                             "metadata": _parse_metadata(row[7]),
                             "updated_at": row[8],
                             "last_accessed": row[9],
+                            "t_valid": row[10] if len(row) > 10 else row[4],
+                            "t_invalid": row[11] if len(row) > 11 else None,
+                            "archived": row[12] if len(row) > 12 else False,
+                            "relevance_score": row[13] if len(row) > 13 else None,
                         }
                     )
 
@@ -338,17 +349,7 @@ def create_admin_blueprint_full(
 
                 points = []
                 for mem, embedding in zip(batch, embeddings):
-                    payload_data = {
-                        "content": mem["content"],
-                        "tags": mem["tags"],
-                        "importance": mem["importance"],
-                        "timestamp": mem["timestamp"],
-                        "type": mem["type"],
-                        "confidence": mem["confidence"],
-                        "metadata": mem["metadata"],
-                        "updated_at": mem["updated_at"],
-                        "last_accessed": mem["last_accessed"],
-                    }
+                    payload_data = build_qdrant_payload(mem)
                     points.append(
                         point_struct(id=mem["id"], vector=embedding, payload=payload_data)
                     )

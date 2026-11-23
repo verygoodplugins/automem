@@ -155,6 +155,7 @@ class EnrichmentJob:
 class ServiceState:
     falkordb: Optional[FalkorDB] = None
     memory_graph: Any = None
+    original_text_index_status: str = "unknown"
     qdrant: Optional[QdrantClient] = None
     openai_client: Any = None  # Keep for backward compatibility (type classification, etc.)
     embedding_provider: Optional[EmbeddingProvider] = None
@@ -171,6 +172,16 @@ class ServiceState:
     consolidation_thread: Optional[Thread] = None
     consolidation_stop_event: Optional[Event] = None
     # Async embedding generation
+    embedding_stats: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "successes": 0,
+            "failures": 0,
+            "retries": 0,
+            "exhausted": 0,
+            "skipped": 0,
+            "last_error": None,
+        }
+    )
     embedding_queue: Optional[Queue] = None
     embedding_thread: Optional[Thread] = None
     embedding_inflight: Set[str] = field(default_factory=set)

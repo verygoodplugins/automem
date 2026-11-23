@@ -10,7 +10,25 @@ LoCoMo (ACL 2024) evaluates memory systems across 5 categories:
 - Category 5: Complex reasoning
 
 Dataset: 10 conversations, 1,986 questions total
-CORE (SOTA): 88.24% overall accuracy
+CORE (published): 88.24% QA accuracy; not comparable with this harness (see below)
+
+Evidence-assisted diagnostic, not QA accuracy
+---------------------------------------------
+The score this harness prints is NOT a question-answering accuracy. For each
+category 1-4 question, ``check_answer_in_memories`` calls
+``fetch_evidence_memories`` to fetch the dataset's gold evidence dialogs by ID
+and puts them ahead of whatever recall returned. It then scores deterministic
+matches (answer dates, answer-word overlap with a gold evidence dialog,
+substring or word overlap, and embedding similarity for multi-hop questions)
+against that combined context. Any non-empty recall therefore receives the
+gold evidence. No answer model writes an answer for categories 1-4 unless LLM
+extraction is explicitly enabled. The category-5 judge also receives the gold
+evidence dialogs.
+
+Use the result only as a regression signal between runs of this harness. Do
+not cite it as accuracy, and do not compare it with published LoCoMo QA
+results such as CORE's. Outbound benchmark numbers come from the neutral Agent
+Memory Benchmark runs recorded in ``benchmarks/EXPERIMENT_LOG.md``.
 
 References:
 - Paper: https://github.com/snap-research/locomo/tree/main/static/paper/locomo.pdf
@@ -55,6 +73,9 @@ DEFAULT_CAT5_JUDGE_MODEL = CANONICAL_BENCHMARK_JUDGE_MODEL
 JUDGE_API_SURFACE = "chat.completions"
 LOCOMO_CAT5_JUDGE_PROMPT_VERSION = "locomo-cat5-v1"
 LOCOMO_CAT5_JUDGE_SCHEMA_VERSION = "locomo-cat5-json-v1"
+# Printed with every run and stored in the result JSON so the score is never
+# mistaken for QA accuracy. See the module docstring.
+LOCOMO_RUN_LABEL = "evidence-assisted diagnostic, not QA accuracy"
 JUDGE_PRICING_USD_PER_1M = {
     "gpt-5.4": {"input": 2.50, "output": 15.00},
     "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
@@ -869,6 +890,10 @@ class LoCoMoEvaluator:
 
         This is more precise than semantic search - we know exactly which
         memories contain the answer based on the benchmark's evidence field.
+
+        Because these gold evidence dialogs are merged into the scored context,
+        the harness score is an evidence-assisted diagnostic, not QA accuracy
+        (see the module docstring and ``LOCOMO_RUN_LABEL``).
         """
         evidence_memories = []
 
@@ -1923,7 +1948,7 @@ Respond with ONLY a JSON object:
 
         skip_note = f"  [{skipped} skipped (no ground truth)]" if skipped else ""
         print("\n📊 Conversation Results:")
-        print(f"  Accuracy: {accuracy:.2%} ({correct_count}/{total_count}){skip_note}")
+        print(f"  Score: {accuracy:.2%} ({correct_count}/{total_count}){skip_note}")
 
         return {
             "sample_id": sample_id,
@@ -1954,6 +1979,7 @@ Respond with ONLY a JSON object:
         """
         print("\n" + "=" * 60)
         print(f"{self.backend.name} LoCoMo Benchmark Evaluation")
+        print(f"Run label: {LOCOMO_RUN_LABEL}")
         print("=" * 60)
 
         # Health check
@@ -2048,6 +2074,7 @@ Respond with ONLY a JSON object:
         # Calculate overall statistics
         print("\n" + "=" * 60)
         print("📊 FINAL RESULTS")
+        print(f"Run label: {LOCOMO_RUN_LABEL}")
         print("=" * 60)
 
         # Overall accuracy
@@ -2055,7 +2082,10 @@ Respond with ONLY a JSON object:
         total_correct = sum(r["correct"] for r in conversation_results)
         overall_accuracy = total_correct / total_questions if total_questions > 0 else 0.0
 
-        print(f"\n🎯 Overall Accuracy: {overall_accuracy:.2%} ({total_correct}/{total_questions})")
+        print(
+            f"\n🎯 Overall score ({LOCOMO_RUN_LABEL}): "
+            f"{overall_accuracy:.2%} ({total_correct}/{total_questions})"
+        )
         print(f"⏱️  Total Time: {elapsed_time:.1f}s")
         print(f"💾 Total Memories Stored: {sum(r['memory_count'] for r in conversation_results)}")
         if self.config.judge_model:
@@ -2176,6 +2206,7 @@ Respond with ONLY a JSON object:
                 "total": total_questions,
                 "elapsed_time": elapsed_time,
             },
+            "run_label": LOCOMO_RUN_LABEL,
             "backend": self.backend.name,
             "judge_requested": bool(self.config.judge_model),
             "judge_available": bool(self.config.judge_model and self.openai_client),
@@ -2189,6 +2220,10 @@ Respond with ONLY a JSON object:
                 "automem": overall_accuracy,
                 "improvement": improvement,
                 "cat5_excluded": cat5_skipped,
+                "caveat": (
+                    "AutoMem score is an evidence-assisted diagnostic (gold evidence "
+                    "dialogs are fetched by ID); not comparable with CORE QA accuracy"
+                ),
                 "note": (
                     "CORE 88.24% includes cat-5 via GPT-4 judge"
                     if cat5_skipped and not self.config.judge_model
