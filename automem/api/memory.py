@@ -17,7 +17,7 @@ from automem.config import (
     MEMORY_SUMMARY_TARGET_LENGTH,
     normalize_memory_type,
 )
-from automem.stores.vector_payload import build_qdrant_payload
+from automem.stores.vector_payload import build_qdrant_payload, content_fingerprint
 from automem.utils.entity_extraction import _slugify
 from automem.utils.text import should_summarize_content, summarize_content
 
@@ -85,6 +85,56 @@ def _enrichment_entity_tags(metadata: Any) -> Set[str]:
             if slug:
                 tags.add(f"entity:{category}:{slug}")
     return tags
+
+
+def _resync_payload_enriched_during_patch(
+    *,
+    graph: Any,
+    qdrant_client: Any,
+    collection_name: str,
+    memory_id: str,
+    content: str,
+    logger: Any,
+) -> None:
+    """Copy derived fields onto the new point when enrichment finished before its upsert.
+
+    A queued job can start after a content PATCH resets the graph and before the PATCH
+    upserts the new point. It enriches the new text and sets `processed`, but its
+    `content_hash`-guarded Qdrant sync finds only the old point and skips, and the
+    upsert then writes the cleared snapshot. The graph holds the derived tags and
+    metadata, so they are copied over, guarded on the new `content_hash` so a later
+    PATCH that already replaced the point is left alone.
+    """
+    from qdrant_client import models
+
+    try:
+        result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
+        rows = getattr(result, "result_set", None)
+        if not rows:
+            return
+        node = rows[0][0]
+        properties = getattr(node, "properties", None)
+        if not isinstance(properties, dict):
+            properties = node if isinstance(node, dict) else {}
+        if not properties.get("processed") or properties.get("content") != content:
+            return
+        derived = build_qdrant_payload(properties)
+        qdrant_client.set_payload(
+            collection_name=collection_name,
+            points=models.Filter(
+                must=[
+                    models.HasIdCondition(has_id=[memory_id]),
+                    models.FieldCondition(
+                        key="content_hash",
+                        match=models.MatchValue(value=content_fingerprint(content)),
+                    ),
+                ]
+            ),
+            payload={key: derived[key] for key in ("tags", "tag_prefixes", "metadata")},
+            wait=True,
+        )
+    except Exception:
+        logger.exception("Failed to resync enriched Qdrant payload for %s", memory_id)
 
 
 def _explicit_memory_type(raw_type: Any, logger: Any) -> str:
@@ -1130,6 +1180,16 @@ def create_memory_blueprint_full(
                         memory_id,
                         collection_name,
                     )
+                else:
+                    if content_changed:
+                        _resync_payload_enriched_during_patch(
+                            graph=graph,
+                            qdrant_client=qdrant_client,
+                            collection_name=collection_name,
+                            memory_id=memory_id,
+                            content=new_content,
+                            logger=logger,
+                        )
 
         if content_changed:
             # Queue after the new point is written so the run syncs onto it. A run

@@ -37,6 +37,13 @@ class GuardedQdrant(MockQdrantClient):
     def __init__(self):
         super().__init__()
         self.before_set_payload = None
+        self.before_upsert = None
+
+    def upsert(self, collection_name, points):
+        if self.before_upsert is not None:
+            callback, self.before_upsert = self.before_upsert, None
+            callback()
+        super().upsert(collection_name, points)
 
     def _matches(self, payload, flt):
         for condition in flt.must or []:
@@ -265,6 +272,45 @@ def test_inflight_enrichment_finishing_after_patch_writes_no_stale_entities(
     memory = mock_state.memory_graph.memories[MEMORY_ID]
     assert json.loads(memory["metadata"])["entities"] == {"projects": ["Orbit"]}
     assert qdrant.points[MEMORY_ID]["payload"]["metadata"]["entities"] == {"projects": ["Orbit"]}
+
+
+def test_job_finishing_before_patch_upsert_keeps_derived_fields_in_qdrant(
+    client, mock_state, auth_headers
+):
+    # An earlier queued job starts after the PATCH reset the graph but before the new
+    # Qdrant point exists (while the PATCH is embedding the new text).
+    qdrant = _seed(mock_state)
+
+    def early_job():
+        mock_state.enrichment_inflight.add(MEMORY_ID)
+        assert _run_enrichment(mock_state)
+        mock_state.enrichment_inflight.discard(MEMORY_ID)
+        # Its guarded sync found only the old point and skipped.
+        assert qdrant.points[MEMORY_ID]["payload"]["content"] == OLD_CONTENT
+
+    qdrant.before_upsert = early_job
+    response = client.patch(
+        f"/memory/{MEMORY_ID}", headers=auth_headers, json={"content": NEW_CONTENT}
+    )
+    assert response.status_code == 200, response.json
+
+    memory = mock_state.memory_graph.memories[MEMORY_ID]
+    assert memory["processed"] is True
+    assert json.loads(memory["metadata"])["entities"] == {"projects": ["Orbit"]}
+
+    # The new point carries what the graph derived, not the cleared PATCH snapshot.
+    payload = qdrant.points[MEMORY_ID]["payload"]
+    assert payload["content_hash"] == content_fingerprint(NEW_CONTENT)
+    assert payload["metadata"]["entities"] == {"projects": ["Orbit"]}
+    assert payload["metadata"]["enrichment"]["content_hash"] == content_fingerprint(NEW_CONTENT)
+    assert payload["tags"] == memory["tags"]
+    assert "entity:projects:orbit" in payload["tags"]
+    assert "entity:projects:launchpad" not in payload["tags"]
+
+    # The follow-up job then finds the memory done and leaves both stores as they are.
+    assert _queued_ids(mock_state) == [MEMORY_ID]
+    assert _run_enrichment(mock_state) is False
+    assert qdrant.points[MEMORY_ID]["payload"] == payload
 
 
 def test_requeue_happens_once_per_patch(client, mock_state, auth_headers, monkeypatch):
