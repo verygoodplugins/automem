@@ -17,7 +17,8 @@ from automem.config import (
     MEMORY_SUMMARY_TARGET_LENGTH,
     normalize_memory_type,
 )
-from automem.stores.vector_payload import build_qdrant_payload
+from automem.stores.vector_payload import build_qdrant_payload, content_fingerprint
+from automem.utils.entity_extraction import _slugify
 from automem.utils.text import should_summarize_content, summarize_content
 
 # Fields copied from each validated batch item into the FalkorDB query parameters.
@@ -63,6 +64,77 @@ def _graph_param_value(value: Any) -> Any:
             for item in value
         ]
     return value
+
+
+# Metadata blocks that enrichment derives from `content`. A content PATCH drops them
+# and re-queues enrichment, which rebuilds them from the new text.
+ENRICHMENT_DERIVED_METADATA_KEYS = ("entities", "enrichment")
+
+
+def _enrichment_entity_tags(metadata: Any) -> Set[str]:
+    """Return the `entity:<category>:<slug>` tags enrichment added for `metadata.entities`."""
+    entities = metadata.get("entities") if isinstance(metadata, dict) else None
+    if not isinstance(entities, dict):
+        return set()
+    tags: Set[str] = set()
+    for category, values in entities.items():
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            slug = _slugify(value) if isinstance(value, str) else ""
+            if slug:
+                tags.add(f"entity:{category}:{slug}")
+    return tags
+
+
+def _resync_payload_enriched_during_patch(
+    *,
+    graph: Any,
+    qdrant_client: Any,
+    collection_name: str,
+    memory_id: str,
+    content: str,
+    logger: Any,
+) -> None:
+    """Copy derived fields onto the new point when enrichment finished before its upsert.
+
+    A queued job can start after a content PATCH resets the graph and before the PATCH
+    upserts the new point. It enriches the new text and sets `processed`, but its
+    `content_hash`-guarded Qdrant sync finds only the old point and skips, and the
+    upsert then writes the cleared snapshot. The graph holds the derived tags and
+    metadata, so they are copied over, guarded on the new `content_hash` so a later
+    PATCH that already replaced the point is left alone.
+    """
+    from qdrant_client import models
+
+    try:
+        result = graph.query("MATCH (m:Memory {id: $id}) RETURN m", {"id": memory_id})
+        rows = getattr(result, "result_set", None)
+        if not rows:
+            return
+        node = rows[0][0]
+        properties = getattr(node, "properties", None)
+        if not isinstance(properties, dict):
+            properties = node if isinstance(node, dict) else {}
+        if not properties.get("processed") or properties.get("content") != content:
+            return
+        derived = build_qdrant_payload(properties)
+        qdrant_client.set_payload(
+            collection_name=collection_name,
+            points=models.Filter(
+                must=[
+                    models.HasIdCondition(has_id=[memory_id]),
+                    models.FieldCondition(
+                        key="content_hash",
+                        match=models.MatchValue(value=content_fingerprint(content)),
+                    ),
+                ]
+            ),
+            payload={key: derived[key] for key in ("tags", "tag_prefixes", "metadata")},
+            wait=True,
+        )
+    except Exception:
+        logger.exception("Failed to resync enriched Qdrant payload for %s", memory_id)
 
 
 def _explicit_memory_type(raw_type: Any, logger: Any) -> str:
@@ -525,7 +597,7 @@ def create_memory_blueprint_full(
     serialize_node: Callable[[Any], Dict[str, Any]],
     parse_metadata_field: Callable[[Any], Any],
     generate_real_embedding: Callable[[str], List[float]],
-    enqueue_enrichment: Callable[[str], None],
+    enqueue_enrichment: Callable[..., None],
     enqueue_embedding: Callable[[str, str], None],
     memory_classify: Callable[[str], tuple[str, float]],
     point_struct: Any,
@@ -918,7 +990,14 @@ def create_memory_blueprint_full(
         current_search_text = current_properties.get("original_search_text")
 
         new_content = payload.get("content", current.get("content"))
+        content_changed = new_content != current.get("content")
+        current_metadata = parse_metadata_field(current.get("metadata"))
         tags = normalize_tag_list(payload.get("tags", current.get("tags")))
+        if content_changed and "tags" not in payload:
+            # Entity tags enrichment derived from the old text go with its entities.
+            # Explicit caller tags are kept as sent.
+            derived_tags = _enrichment_entity_tags(current_metadata)
+            tags = [tag for tag in tags if tag not in derived_tags]
         tags_lower = [t.strip().lower() for t in tags if isinstance(t, str) and t.strip()]
         tag_prefixes = compute_tag_prefixes(tags_lower)
         importance = payload.get("importance", current.get("importance"))
@@ -929,7 +1008,6 @@ def create_memory_blueprint_full(
         timestamp = payload.get("timestamp", current.get("timestamp"))
         t_valid = payload.get("t_valid", current.get("t_valid"))
         t_invalid = payload.get("t_invalid", current.get("t_invalid"))
-        current_metadata = parse_metadata_field(current.get("metadata"))
         metadata_raw = payload.get("metadata", current_metadata)
         updated_at = payload.get("updated_at", current.get("updated_at", utc_now()))
         last_accessed = payload.get("last_accessed", current.get("last_accessed"))
@@ -941,12 +1019,14 @@ def create_memory_blueprint_full(
         else:
             abort(400, description="'metadata' must be an object")
 
-        content_changed = new_content != current.get("content")
         # Existing original metadata describes the *old* summarized content.
         # A replacement body becomes authoritative; a caller-supplied metadata
         # field cannot prove that a distinct original matches the new body.
+        # The same holds for the metadata enrichment derived from the old body.
         if content_changed:
             for key in ("original_content", "was_summarized", "original_length"):
+                metadata.pop(key, None)
+            for key in ENRICHMENT_DERIVED_METADATA_KEYS:
                 metadata.pop(key, None)
         old_metadata = current_metadata if isinstance(current_metadata, dict) else {}
         original_fields = ("original_content", "was_summarized", "original_length")
@@ -1009,6 +1089,24 @@ def create_memory_blueprint_full(
                 m.metadata = $metadata,
                 m.updated_at = $updated_at,
                 m.last_accessed = $last_accessed
+        """
+        derived_reset: Dict[str, Any] = {}
+        if content_changed:
+            # Graph fields enrichment derived from the old text. Clearing them marks
+            # the memory as pending enrichment again (`processed = false`, as on store).
+            update_query += """
+            SET m.summary = $summary,
+                m.enriched = $enriched,
+                m.enriched_at = $enriched_at,
+                m.processed = $processed
+            """
+            derived_reset = {
+                "summary": None,
+                "enriched": False,
+                "enriched_at": None,
+                "processed": False,
+            }
+        update_query += """
             SET m:MemoryOriginalText
             RETURN m
         """
@@ -1016,6 +1114,7 @@ def create_memory_blueprint_full(
         graph.query(
             update_query,
             {
+                **derived_reset,
                 "id": memory_id,
                 "content": new_content,
                 "original_search_text": original_search_text,
@@ -1036,7 +1135,7 @@ def create_memory_blueprint_full(
         qdrant_client = get_qdrant_client()
         vector = None
         if qdrant_client is not None:
-            if new_content != current.get("content"):
+            if content_changed:
                 vector = generate_real_embedding(new_content)
             else:
                 try:
@@ -1081,6 +1180,22 @@ def create_memory_blueprint_full(
                         memory_id,
                         collection_name,
                     )
+                else:
+                    if content_changed:
+                        _resync_payload_enriched_during_patch(
+                            graph=graph,
+                            qdrant_client=qdrant_client,
+                            collection_name=collection_name,
+                            memory_id=memory_id,
+                            content=new_content,
+                            logger=logger,
+                        )
+
+        if content_changed:
+            # Queue after the new point is written so the run syncs onto it. A run
+            # already in flight read the old text and the content_hash guards stop its
+            # writes, so one follow-up job is queued behind it instead of absorbed.
+            enqueue_enrichment(memory_id, supersede_inflight=True)
 
         emit_event(
             "memory.update",
