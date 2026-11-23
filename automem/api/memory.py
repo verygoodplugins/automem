@@ -1419,15 +1419,71 @@ def create_memory_blueprint_full(
         )
         return jsonify(response), 201
 
+    def _generate_batch_embeddings_sync(contents: List[str]) -> List[Optional[List[float]]]:
+        """Generate vectors inline; failed items are returned as ``None``."""
+        embeddings: List[Optional[List[float]]] = [None] * len(contents)
+        if generate_real_embeddings_batch:
+            try:
+                batch_result = generate_real_embeddings_batch(contents)
+                if len(batch_result) != len(contents):
+                    logger.warning(
+                        "Batch embedding returned %d vectors for %d contents, falling back",
+                        len(batch_result),
+                        len(contents),
+                    )
+                    raise ValueError("embedding count mismatch")
+                return list(batch_result)
+            except Exception:
+                logger.exception("Batch embedding failed, falling back to individual")
+        for j, c in enumerate(contents):
+            try:
+                embeddings[j] = generate_real_embedding(c)
+            except Exception as e:
+                logger.warning("Individual embedding failed for item %d: %s", j, e)
+        return embeddings
+
+    def _store_batch_embeddings_sync(qdrant_client: Any, validated: List[Dict[str, Any]]) -> str:
+        """Embed and upsert persisted batch memories inline; queue any failures."""
+        embeddings = _generate_batch_embeddings_sync([v["content"] for v in validated])
+        points = [
+            point_struct(id=v["id"], vector=emb, payload=build_qdrant_payload(v))
+            for v, emb in zip(validated, embeddings, strict=True)
+            if emb is not None
+        ]
+        failed = [v for v, emb in zip(validated, embeddings, strict=True) if emb is None]
+        for v in failed:
+            enqueue_embedding(v["id"], v["content"])
+        if not points:
+            return "queued"
+        try:
+            qdrant_client.upsert(collection_name=collection_name, points=points)
+        except Exception:
+            logger.exception("Batch Qdrant upsert failed")
+            for v in validated:
+                enqueue_embedding(v["id"], v["content"])
+            return "queued (fallback)"
+        if failed:
+            return f"stored ({len(points)}), queued ({len(failed)})"
+        return f"stored ({len(points)})"
+
     @bp.route("/memory/batch", methods=["POST"])
     def store_batch() -> Any:
         """Store multiple memories in a single request.
 
-        Optimised for benchmark ingestion: batches embedding generation,
-        graph writes (UNWIND), and Qdrant upserts into single operations.
+        Graph writes are batched into one UNWIND query and committed before any
+        embedding work. Vectors are then queued for the background embedding
+        worker, matching ``POST /memory``, so a slow or rate-limited embedding
+        provider never delays the response or the durable write.
 
-        Body: {"memories": [{"content": "...", "tags": [...], ...}, ...]}
-        Max 500 memories per request.
+        Body: {"memories": [{"content": "...", "tags": [...], ...}, ...],
+               "sync_embeddings": false}
+        Max 500 memories per request. ``sync_embeddings: true`` generates and
+        upserts vectors before responding (still after the graph write), for
+        benchmark ingestion that snapshots or evaluates immediately afterwards.
+        In the default path enrichment is queued alongside the embedding queue,
+        so it may run before vectors exist and miss ``SIMILAR_TO`` links; sync
+        mode queues enrichment after vectors are stored. Sync mode does not
+        re-check content after upsert, so it assumes a single writer.
         """
         query_start = time.perf_counter()
         payload = request.get_json(silent=True)
@@ -1439,6 +1495,9 @@ def create_memory_blueprint_full(
             abort(400, description="'memories' must be a non-empty array")
         if len(memories_input) > 500:
             abort(400, description="Batch size limit is 500 memories per request")
+        sync_embeddings = payload.get("sync_embeddings", False)
+        if not isinstance(sync_embeddings, bool):
+            abort(400, description="'sync_embeddings' must be a boolean")
 
         # 1. Validate and prepare all memories
         validated = []
@@ -1540,37 +1599,8 @@ def create_memory_blueprint_full(
                 }
             )
 
-        # 2. Batch embed all contents
-        contents = [v["content"] for v in validated]
-        embeddings: List[Optional[List[float]]] = [None] * len(validated)
-
-        if generate_real_embeddings_batch:
-            try:
-                batch_result = generate_real_embeddings_batch(contents)
-                if len(batch_result) != len(contents):
-                    logger.warning(
-                        "Batch embedding returned %d vectors for %d contents, falling back",
-                        len(batch_result),
-                        len(contents),
-                    )
-                    raise ValueError("embedding count mismatch")
-                embeddings = batch_result
-            except Exception:
-                logger.exception("Batch embedding failed, falling back to individual")
-                for j, c in enumerate(contents):
-                    try:
-                        embeddings[j] = generate_real_embedding(c)
-                    except Exception as e:
-                        logger.warning("Individual embedding failed for item %d: %s", j, e)
-        else:
-            # Fall back to individual embedding calls
-            for j, c in enumerate(contents):
-                try:
-                    embeddings[j] = generate_real_embedding(c)
-                except Exception as e:
-                    logger.warning("Individual embedding failed for item %d: %s", j, e)
-
-        # 3. Batch graph write via UNWIND
+        # 2. Persist to FalkorDB first so slow or failing embedding providers
+        #    cannot delay or discard the durable write (matches POST /memory).
         graph = get_memory_graph()
         if graph is None:
             abort(503, description="FalkorDB is unavailable")
@@ -1618,49 +1648,20 @@ def create_memory_blueprint_full(
             )
             abort(500, description="Failed to store memories in FalkorDB")
 
-        # 4. Batch Qdrant upsert
+        # 3. Vectors. By default hand every memory to the background embedding
+        #    worker, which retries provider errors (e.g. 429s) off the request
+        #    path. Benchmark ingestion opts into ``sync_embeddings`` because it
+        #    snapshots or evaluates immediately after the request returns.
         qdrant_client = get_qdrant_client()
-        qdrant_status = "unconfigured"
-        if qdrant_client is not None:
-            points = []
-            for v, emb in zip(validated, embeddings, strict=True):
-                if emb is not None:
-                    points.append(
-                        point_struct(
-                            id=v["id"],
-                            vector=emb,
-                            payload=build_qdrant_payload(v),
-                        )
-                    )
-            # Enqueue embedding retry for items that failed individually
-            failed_emb_ids = [
-                v["id"] for v, emb in zip(validated, embeddings, strict=True) if emb is None
-            ]
-            for fid in failed_emb_ids:
-                v_match = next(v for v in validated if v["id"] == fid)
-                enqueue_embedding(fid, v_match["content"])
+        if qdrant_client is None:
+            qdrant_status = "unconfigured"
+        elif not sync_embeddings:
+            for v in validated:
+                enqueue_embedding(v["id"], v["content"])
+            qdrant_status = "queued"
+        else:
+            qdrant_status = _store_batch_embeddings_sync(qdrant_client, validated)
 
-            if points:
-                try:
-                    qdrant_client.upsert(
-                        collection_name=collection_name,
-                        points=points,
-                    )
-                    if failed_emb_ids:
-                        qdrant_status = f"stored ({len(points)}), queued ({len(failed_emb_ids)})"
-                    else:
-                        qdrant_status = f"stored ({len(points)})"
-                except Exception:
-                    logger.exception("Batch Qdrant upsert failed")
-                    # Still queue all embeddings as fallback
-                    for v in validated:
-                        enqueue_embedding(v["id"], v["content"])
-                    qdrant_status = "queued (fallback)"
-            else:
-                # No embeddings succeeded, queue them all
-                for v in validated:
-                    enqueue_embedding(v["id"], v["content"])
-                qdrant_status = "queued"
         elapsed_ms = round((time.perf_counter() - query_start) * 1000, 2)
         logger.info(
             "batch_stored",

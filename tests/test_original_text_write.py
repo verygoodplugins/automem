@@ -118,7 +118,8 @@ def test_batch_preserves_each_original_and_metadata(
             "memories": [
                 {"content": original, "metadata": {"source": "batch"}, "type": "Decision"},
                 {"content": "short body", "type": "Decision"},
-            ]
+            ],
+            "sync_embeddings": True,
         },
         headers=auth_headers,
     )
