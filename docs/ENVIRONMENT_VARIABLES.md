@@ -374,6 +374,7 @@ Controls entity extraction and relationship linking.
 | `ENRICHMENT_SIMILARITY_THRESHOLD` | Min similarity for linking | `0.8` |
 | `ENRICHMENT_IDLE_SLEEP_SECONDS` | Sleep when queue empty | `2` |
 | `ENRICHMENT_FAILURE_BACKOFF_SECONDS` | Backoff on failure | `5` |
+| `ENRICHMENT_EMBEDDING_WAIT_SECONDS` | Max seconds an enrichment job waits for that memory's pending embedding before enriching anyway (so semantic `SIMILAR_TO` links can see the vector). A timeout suppresses further waiting for one timeout window, so a slow embedding provider stalls enrichment about once per window rather than once per job; `0` disables waiting | `30` |
 | `ENRICHMENT_ENABLE_SUMMARIES` | Enable summarization | `true` |
 | `ENRICHMENT_CIRCUIT_COOLDOWN_SECONDS` | Cooldown after LLM quota exhaustion before one recovery probe is allowed | `300` |
 | `ENRICHMENT_SPACY_MODEL` | spaCy model name | `en_core_web_sm` |
